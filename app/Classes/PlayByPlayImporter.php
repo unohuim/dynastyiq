@@ -30,7 +30,8 @@ class PlayByPlayImporter
     public function import()
     {
         $date = Carbon::now()->yesterday();
-        $end_date = Carbon::now()->subDays(6);
+        //$end_date = Carbon::now()->subDays(6);
+        $end_date = new Carbon('first day of October 2024');
         // $end_date = Carbon::now()->subWeeks(2);
 
 
