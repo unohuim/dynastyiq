@@ -50,9 +50,9 @@ class PlayByPlayImporter
         }
 
         Bus::chain([
-            $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays'),
-            $batShifts = Bus::batch($jobsShifts)->name('Import Shifts'),
-            $batSums = Bus::batch($sumGames)->name('Summarize Games')
+            $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays - ' . $date),
+            $batShifts = Bus::batch($jobsShifts)->name('Import Shifts - ' . $date),
+            $batSums = Bus::batch($sumGames)->name('Summarize Games - ' . $date)
         ])->dispatch();
     }
 
