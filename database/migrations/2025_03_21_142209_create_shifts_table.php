@@ -31,11 +31,11 @@ return new class extends Migration
             $table->string('last_name');
             $table->string('event_description')->nullable();
             $table->string('event_details')->nullable();
-            $table->string('event_number');
-            $table->string('hex_value');
+            $table->string('event_number')->nullable();
+            $table->string('hex_value')->nullable();
             $table->integer('shift_number');
             $table->string('team_name');
-            $table->integer('type_code');
+            $table->integer('type_code')->nullable();
 
             $table->timestamps();
         });
