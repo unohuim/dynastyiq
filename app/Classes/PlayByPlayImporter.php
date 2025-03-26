@@ -5,11 +5,11 @@ namespace App\Classes;
 use App\Models\PlayByPlay;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Bus;
-use Carbon\Carbon;
 use App\Jobs\ImportGamePlayByPlaysJob;
 use App\Jobs\SumGameJob;
 use App\Jobs\ImportShiftsJob;
 use App\Classes\ShiftsImporter;
+
 
 
 class PlayByPlayImporter
@@ -25,21 +25,6 @@ class PlayByPlayImporter
         $this->shiftsImporter = new ShiftsImporter();
     }
 
-
-
-    public function import()
-    {
-        $date = Carbon::now()->yesterday();
-        //$end_date = Carbon::now()->subDays(6);
-        $end_date = new Carbon('first day of October 2024');
-        // $end_date = Carbon::now()->subWeeks(2);
-
-
-        while($date > $end_date) {
-            $this->importPlayByPlaysByDate($date->toDateString());
-            $date->subDays(1);
-        }
-    }
 
 
 

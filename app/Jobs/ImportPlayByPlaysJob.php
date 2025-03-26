@@ -13,13 +13,15 @@ class ImportPlayByPlaysJob implements ShouldQueue
     use Queueable;
 
     protected $importer;
+    protected $date;
     
 
     /**
      * Create a new job instance.
      */
-    public function __construct()
+    public function __construct($date)
     {
+        $this->date = $date;
         $this->importer = new PlayByPlayImporter();
     }
 
@@ -28,6 +30,6 @@ class ImportPlayByPlaysJob implements ShouldQueue
      */
     public function handle(): void
     {
-        $this->importer->import();
+        $this->importer->importPlayByPlaysByDate($this->date);
     }
 }
