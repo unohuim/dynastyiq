@@ -28,7 +28,7 @@ class PlayByPlayImporter
 
 
 
-    private function importPlayByPlaysByDate(string $date)
+    public function importPlayByPlaysByDate(string $date)
     {        
         $games = $this->getGamesByDate($date);
         $jobsPlayByPlay = [];
