@@ -38,7 +38,8 @@ class PlayByPlayController extends Controller
             $date->subDays(1);
         }
         
-        $batPlayByPlays = Bus::batch($playByPlays)->name('Processing Games - ' . $date->toDateString());
+        $batPlayByPlays = Bus::batch($playByPlays)->name('Processing Games - ' . $date->toDateString())
+            ->dispatch();
         
         echo("Finished importing");
     }
