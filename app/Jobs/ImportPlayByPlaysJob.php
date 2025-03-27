@@ -5,12 +5,13 @@ namespace App\Jobs;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use App\Classes\PlayByPlayImporter;
+use Illuminate\Bus\Batchable;
 
 
 
 class ImportPlayByPlaysJob implements ShouldQueue
 {
-    use Queueable;
+    use Queueable, Batchable;
 
     protected $importer;
     protected $date;
