@@ -13,6 +13,8 @@ class ImportPlayByPlay implements ShouldQueue
 {
     use Queueable, HasClockTimeTrait, Batchable;
 
+    public $tries = 5;
+    
     protected $game;
     protected $play;
     protected $strength;

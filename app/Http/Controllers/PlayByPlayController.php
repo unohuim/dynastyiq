@@ -31,15 +31,15 @@ class PlayByPlayController extends Controller
         $playByPlays = [];
 
         while($date > $end_date) {
-            $playByPlays[] = new ImportPlayByPlaysJob($date->toDateString());
-            // ImportPlayByPlaysJob::dispatch($date->toDateString());
+            // $playByPlays[] = new ImportPlayByPlaysJob($date->toDateString());
+            ImportPlayByPlaysJob::dispatch($date->toDateString());
             echo("<p>" . $date->toDateString() . " import started..</p>");
             // $this->importPlayByPlaysByDate($date->toDateString());
             $date->subDays(1);
         }
         
-        $batPlayByPlays = Bus::batch($playByPlays)->name('Processing Games - ' . $date->toDateString())
-            ->dispatch();
+        // $batPlayByPlays = Bus::batch($playByPlays)->name('Processing Games - ' . $date->toDateString())
+        //     ->dispatch();
         
         echo("Finished importing");
     }
