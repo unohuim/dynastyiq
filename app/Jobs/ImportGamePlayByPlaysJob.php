@@ -50,7 +50,7 @@ class ImportGamePlayByPlaysJob implements ShouldQueue
             
             $strength = $this->getStrength($play, $penalties, $secondsInGame, $lastPlaySecondsInGame, $lastPlayStrength);
 
-            ImportPlayByPlay::dispatch($this->game, $play, $strength);
+            ImportPlayByPlay::dispatch($this->game, $play, $strength)->onQueue('play_by_play_record');
 
             $penalties = $this->removeExpiredPenalties($play, $penalties, $secondsInGame);
             $penalties = $this->addPenalty($play, $penalties, $secondsInGame);

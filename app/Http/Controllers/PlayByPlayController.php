@@ -24,7 +24,7 @@ class PlayByPlayController extends Controller
     public function ImportPlayByPlays()
     {
         $date = Carbon::now()->yesterday();
-        $end_date = new Carbon('March 24th 2025');
+        $end_date = new Carbon('March 26th 2025');
         // dd( $end_date->toDateString() );
         //$end_date = Carbon::now()->subDays(6);
         // $end_date = new Carbon('first day of October 2024');

@@ -49,6 +49,7 @@ class PlayByPlayImporter
                 //create the game summary
                 //$this->sumGame($playByPlay);
                 //append season statistics, including averages and /60s
+                echo("<p>import scheduled, game " . $game['id'] . "..</p>");
             }
         }
 
@@ -60,7 +61,10 @@ class PlayByPlayImporter
             $batPlayByPlays,
             $batShifts,
             $batSums
-        ])->dispatch();
+        ])->dispatch();\\\
+
+
+        foreach($jobsPlayByPlay)
     }
 
 
