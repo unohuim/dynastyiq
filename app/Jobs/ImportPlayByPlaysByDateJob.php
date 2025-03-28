@@ -9,7 +9,7 @@ use Illuminate\Bus\Batchable;
 
 
 
-class ImportPlayByPlaysJob implements ShouldQueue
+class ImportPlayByPlaysByDateJob implements ShouldQueue
 {
     use Queueable, Batchable;
 

@@ -49,10 +49,14 @@ class PlayByPlayImporter
             //append season statistics, including averages and /60s
         }
 
+        $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays - ' . $date);
+        $batShifts = Bus::batch($jobsShifts)->name('Import Shifts - ' . $date);
+        $batSums = Bus::batch($sumGames)->name('Summarize Games - ' . $date);
+
         Bus::chain([
-            $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays - ' . $date),
-            $batShifts = Bus::batch($jobsShifts)->name('Import Shifts - ' . $date),
-            $batSums = Bus::batch($sumGames)->name('Summarize Games - ' . $date)
+            $batPlayByPlays,
+            $batShifts,
+            $batSums
         ])->dispatch();
     }
 

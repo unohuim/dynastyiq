@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use App\Models\Shift;
 use App\Models\PlayByPlay;
-use App\Jobs\ImportPlayByPlaysJob;
+use App\Jobs\ImportPlayByPlaysByDateJob;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Bus;
 
@@ -24,7 +24,7 @@ class PlayByPlayController extends Controller
     public function ImportPlayByPlays()
     {
         $date = Carbon::now()->yesterday();
-        $end_date = new Carbon('first day of January 2025');
+        $end_date = new Carbon('first day of March 2025');
         //$end_date = Carbon::now()->subDays(6);
         // $end_date = new Carbon('first day of October 2024');
         // $end_date = Carbon::now()->subWeeks(2);
@@ -32,7 +32,7 @@ class PlayByPlayController extends Controller
 
         while($date > $end_date) {
             // $playByPlays[] = new ImportPlayByPlaysJob($date->toDateString());
-            ImportPlayByPlaysJob::dispatch($date->toDateString());
+            ImportPlayByPlaysByDateJob::dispatch($date->toDateString());
             echo("<p>" . $date->toDateString() . " import started..</p>");
             // $this->importPlayByPlaysByDate($date->toDateString());
             $date->subDays(1);
