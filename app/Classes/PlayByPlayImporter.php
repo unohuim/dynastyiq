@@ -35,18 +35,21 @@ class PlayByPlayImporter
         $jobsShifts = [];
         $sumGames = [];
 
-        foreach($games['games'] as $game) {
-            $playByPlay = $this->getPlayByPlay($game['id']);
-            $jobsPlayByPlay[] = new ImportGamePlayByPlaysJob($playByPlay);
+        //making sure that there are games to process for this day
+        if(!is_null($games) && count($games) > 0){
+            foreach($games['games'] as $game) {
+                $playByPlay = $this->getPlayByPlay($game['id']);
+                $jobsPlayByPlay[] = new ImportGamePlayByPlaysJob($playByPlay);
 
-            $shifts = $this->shiftsImporter->getShifts($game['id']);
-            $jobsShifts[] = new ImportShiftsJob($shifts);
+                $shifts = $this->shiftsImporter->getShifts($game['id']);
+                $jobsShifts[] = new ImportShiftsJob($shifts);
 
-            $sumGames[] = new SumGameJob($playByPlay);
+                $sumGames[] = new SumGameJob($playByPlay);
 
-            //create the game summary
-            //$this->sumGame($playByPlay);
-            //append season statistics, including averages and /60s
+                //create the game summary
+                //$this->sumGame($playByPlay);
+                //append season statistics, including averages and /60s
+            }
         }
 
         $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays - ' . $date);
