@@ -61,7 +61,7 @@ class PlayByPlayImporter
             $batPlayByPlays,
             $batShifts,
             $batSums
-        ])->dispatch();\\\
+        ])->dispatch();
 
 
         foreach($jobsPlayByPlay)
