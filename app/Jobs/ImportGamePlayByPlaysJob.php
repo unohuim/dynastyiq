@@ -5,6 +5,7 @@ namespace App\Jobs;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Bus\Batchable;
+use Illuminate\Support\Facades\Bus;
 use App\Traits\HasClockTimeTrait;
 use App\Jobs\ImportPlayByPlay;
 
@@ -34,6 +35,7 @@ class ImportGamePlayByPlaysJob implements ShouldQueue
     public function handle(): void
     {
         $penalties = [];
+        $jobsPlayByPlay = [];
         $lastPlaySecondsInGame = 0;
         $strength = "EV";
         $lastPlayStrength = "EV";
@@ -49,8 +51,7 @@ class ImportGamePlayByPlaysJob implements ShouldQueue
 
             
             $strength = $this->getStrength($play, $penalties, $secondsInGame, $lastPlaySecondsInGame, $lastPlayStrength);
-
-            ImportPlayByPlay::dispatch($this->game, $play, $strength)->onQueue('play_by_play_record');
+            $jobsPlayByPlay[] = new ImportPlayByPlay($this->game, $play, $strength);
 
             $penalties = $this->removeExpiredPenalties($play, $penalties, $secondsInGame);
             $penalties = $this->addPenalty($play, $penalties, $secondsInGame);
@@ -58,6 +59,8 @@ class ImportGamePlayByPlaysJob implements ShouldQueue
             $lastPlaySecondsInGame = $secondsInGame;
             $lastPlayStrength = $strength;
         }
+        $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Play Record')->onQueue('play_by_play_record')->dispatch();
+
     }
 
 

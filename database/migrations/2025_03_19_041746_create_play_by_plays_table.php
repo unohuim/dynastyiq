@@ -16,6 +16,7 @@ return new class extends Migration
             $table->foreignId('nhl_game_id');
             $table->string('season_id');
             $table->string('game_date');
+            $table->integer('game_type');
             $table->foreignId('away_team_id');
             $table->foreignId('home_team_id');
             $table->string('away_team_abbrev');

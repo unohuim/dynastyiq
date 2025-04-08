@@ -33,7 +33,7 @@ class PlayByPlayImporter
         $games = $this->getGamesByDate($date);
         $jobsPlayByPlay = [];
         $jobsShifts = [];
-        $sumGames = [];
+        $sumGamesJobs = [];
 
         //making sure that there are games to process for this day
         if(!is_null($games) && count($games) > 0){
@@ -44,7 +44,7 @@ class PlayByPlayImporter
                 $shifts = $this->shiftsImporter->getShifts($game['id']);
                 $jobsShifts[] = new ImportShiftsJob($shifts);
 
-                $sumGames[] = new SumGameJob($playByPlay);
+                $sumGamesJobs[] = new SumGameJob($playByPlay);
 
                 //create the game summary
                 //$this->sumGame($playByPlay);
@@ -55,13 +55,17 @@ class PlayByPlayImporter
 
         $batPlayByPlays = Bus::batch($jobsPlayByPlay)->name('Import Play By Plays - ' . $date);
         $batShifts = Bus::batch($jobsShifts)->name('Import Shifts - ' . $date);
-        $batSums = Bus::batch($sumGames)->name('Summarize Games - ' . $date);
+        // $batSums = Bus::batch($sumGamesJobs)->name('Summarize Games - ' . $date);
+        $batSums = Bus::batch($sumGamesJobs)->name('Summarize Games - ' . $date)->onQueue('play_by_play_record');
+
 
         Bus::chain([
             $batPlayByPlays,
             $batShifts,
             $batSums
         ])->dispatch();
+
+        // $batSums = Bus::batch($sumGamesJobs)->name('Summarize Games - ' . $date)->onQueue('play_by_play_record')->dispatch();
     }
 
 

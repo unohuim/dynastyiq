@@ -44,6 +44,7 @@ class ImportPlayByPlay implements ShouldQueue
         $pbp->nhl_game_id = $this->game['id'];
         $pbp->season_id = $this->game['season'];
         $pbp->game_date = $this->game['gameDate'];
+        $pbp->game_type = $this->game['gameType'];
         $pbp->away_team_id = $this->game['awayTeam']['id'];
         $pbp->home_team_id = $this->game['homeTeam']['id'];
         $pbp->away_team_abbrev = $this->game['awayTeam']['abbrev'];

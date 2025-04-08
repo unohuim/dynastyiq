@@ -15,6 +15,7 @@ class SumGame
         //get all the playbyplay records for this game from db
         $plays = PlayByPlay::where('nhl_game_id', $game['id'])->get();
 
+
         //use the players from api json in $game
         foreach($game['rosterSpots'] as $player) {
             $summary = GameSummary::where('nhl_game_id', $game['id'])

@@ -32,8 +32,8 @@ Route::middleware([
 
 
     Route::controller(PlayByPlayController::class)->group(function() {
-        Route::get('/import-playbyplay/{game_id}', 'ImportPlayByPlay');
-        Route::get('/import-games-by-date/{date}', 'ImportPlayByPlaysByDate');
+        //Route::get('/import-playbyplay/{game_id}', 'ImportPlayByPlay');
+        //Route::get('/import-games-by-date/{date}', 'ImportPlayByPlaysByDate');
         Route::get('/import-playbyplays', 'ImportPlayByPlays');
     });
 
