@@ -1,48 +1,139 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Traits;
 
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
+use Illuminate\Http\Client\RequestException;
 
+/**
+ * Trait HasAPITrait
+ *
+ * Provides helper methods for fetching data from external APIs based
+ * on service definitions in config/apiurls.php, handling authentication
+ * placement (header or query) automatically.
+ *
+ * @package App\Traits
+ */
 trait HasAPITrait
 {
-    private function getAPIData(string $url)
-    {
-        //init cURL session
-        $ch = curl_init();
+    /**
+     * Send a GET request to a configured API service.
+     *
+     * @param string $service      The service key as defined in config/apiurls.php
+     * @param string $endpointKey  The endpoint key under that service
+     * @param array  $replacements Placeholder replacements for the endpoint path
+     * @param array  $query        Additional query parameters
+     * @param bool   $decodeJson   If true, decode JSON to array; return raw body otherwise
+     * @return array|string        Response data
+     * @throws RequestException    When HTTP client or server error occurs
+     */
+    public function getAPIData(
+        string $service,
+        string $endpointKey,
+        array $replacements = [],
+        array $query = [],
+        bool $decodeJson = true
+    ): array|string {
+        // Build the base URL and path
+        $config = config("apiurls.{$service}", []);
+        $path   = rtrim($config['base'] ?? '', '/') . '/' . ltrim(
+            str_replace(
+                array_map(fn($k) => "{{$k}}", array_keys($replacements)),
+                array_values($replacements),
+                $config['endpoints'][$endpointKey] ?? ''
+            ),
+            '/'
+        );
 
-        //set cURL options
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HEADER, false);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true); // Follow redirects if any
-        curl_setopt($ch, CURLOPT_TIMEOUT, 30); // Set timeout
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true); // Verify SSL
+        // Handle auth configuration
+        $auth = $config['auth'] ?? ['in' => 'none'];
 
-        //execute cURL request
-        $response = curl_exec($ch);
+        if (isset($config['key']) && ! empty($config['key'])) {
+            switch ($auth['in']) {
+                case 'header':
+                    $headerValue = $auth['type']
+                        ? sprintf('%s %s', $auth['type'], $config['key'])
+                        : $config['key'];
+                    $headers = [$auth['name'] => $headerValue];
+                    break;
 
-        //check for cURL errors
-        if(curl_errno($ch)) {
-            $error = curl_error($ch);
-            curl_close($ch);
-            return "Error fetching data from API: " . $error;
+                case 'query':
+                    $query[$auth['name']] = $config['key'];
+                    $headers = [];
+                    break;
+
+                default:
+                    $headers = [];
+            }
+        } else {
+            $headers = [];
         }
-        elseif(strlen($response) < 1) {
-            return "Empty response";
+
+        // Append query string to URL if present
+        if (! empty($query)) {
+            $path .= (Str::contains($path, '?') ? '&' : '?') . http_build_query($query);
         }
 
-        //close cURL session
-        curl_close($ch);
+        // Prepare the HTTP client
+        $request = Http::timeout(30)
+                       ->acceptJson();
 
-        //decode json response
-        $response_decoded = json_decode($response, true);
-
-
-        //check if json decoding was successful
-        if(json_last_error() !== JSON_ERROR_NONE) {
-            return "Error decoding JSON: " . json_last_error_msg();
+        if (! empty($headers)) {
+            $request = $request->withHeaders($headers);
         }
 
-        return $response_decoded;
+        // Execute and handle errors
+        $response = $request->get($path);
+        $response->throw();
+
+        return $decodeJson ? $response->json() : $response->body();
+    }
+
+
+    /**
+     * Build the full URL that would be used for an API request,
+     * including path, replacements, and query parameters (including auth in query).
+     *
+     * @param string      $service       The service key as defined in config/apiurls.php
+     * @param string      $endpointKey   The endpoint key under that service
+     * @param array       $replacements  Placeholder replacements for the endpoint path
+     * @param array       $query         Additional query parameters
+     * @return string                     Fully assembled URL
+     */
+    public function getApiUrl(
+        string $service,
+        string $endpointKey,
+        array $replacements = [],
+        array $query = []
+    ): string {
+        // Base and endpoint from config
+        $config  = config("apiurls.{$service}", []);
+        $base    = rtrim($config['base'] ?? '', '/');
+        $endpoint = $config['endpoints'][$endpointKey] ?? '';
+
+        // Replace placeholders
+        $path = str_replace(
+            array_map(fn($k) => "{{$k}}", array_keys($replacements)),
+            array_values($replacements),
+            $endpoint
+        );
+
+        $url = $base . '/' . ltrim($path, '/');
+
+        // Handle auth in query
+        $auth = $config['auth'] ?? ['in' => 'none'];
+        if (isset($config['key']) && ! empty($config['key']) && $auth['in'] === 'query') {
+            $query[$auth['name']] = $config['key'];
+        }
+
+        // Append manual query parameters
+        if (! empty($query)) {
+            $url .= (Str::contains($url, '?') ? '&' : '?') . http_build_query($query);
+        }
+
+        return $url;
     }
 }

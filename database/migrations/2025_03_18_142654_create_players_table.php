@@ -13,21 +13,44 @@ return new class extends Migration
     {
         Schema::create('players', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('nhl_id')->nullable();
-            $table->foreignId('nhl_team_id')->nullable();
-            $table->foreignId('yahoo_id')->nullable();
-            $table->foreignId('fantrax_id')->nullable();
-            $table->foreignId('ep_id')->nullable();
+
+            // External IDs (not actual foreign keys)
+            $table->unsignedBigInteger('nhl_id')->nullable();
+            $table->unsignedBigInteger('nhl_team_id')->nullable();
+            $table->unsignedBigInteger('yahoo_id')->nullable();
+            $table->unsignedBigInteger('fantrax_id')->nullable();
+            $table->unsignedBigInteger('ep_id')->nullable();
+
+            // Name and personal info
             $table->string('full_name')->nullable();
             $table->string('first_name');
             $table->string('last_name');
-            $table->boolean('is_prospect')->default(0);
-            $table->string('position');
-            $table->string('pos_type');
-            $table->string('team_abbrev')->nullable();
-            $table->string('current_league_abbrev');
-            $table->string('dob');
-            $table->string('country_code');
+            $table->date('dob')->nullable();
+            $table->string('country_code')->nullable();
+
+            // Hockey-specific info
+            $table->boolean('is_prospect')->default(false);
+            $table->boolean('is_goalie')->default(false); // skater vs goalie
+            $table->string('position')->nullable(); // e.g. "C", "RW", "G"
+            $table->string('pos_type')->nullable(); // e.g. "F", "D", "G"
+            $table->string('team_abbrev')->nullable(); // e.g. "TBL"
+            $table->string('current_league_abbrev')->nullable(); // e.g. "NHL"
+
+            // Physical attributes
+            $table->enum('shoots', ['R', 'L'])->nullable();
+            $table->string('height')->nullable(); // format: "6'2"
+            $table->unsignedSmallInteger('weight')->nullable(); // lbs
+
+            // Images
+            $table->text('head_shot_url')->nullable();
+            $table->text('hero_image_url')->nullable();
+
+            // Optional player status: "active", "free_agent", "retired"
+            $table->string('status')->default('active');
+
+            // Optional JSON blob for external metadata (EP, Fantrax, etc.)
+            $table->json('meta')->nullable();
+
             $table->timestamps();
         });
     }

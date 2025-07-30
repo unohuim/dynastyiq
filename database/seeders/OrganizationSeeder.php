@@ -16,11 +16,27 @@ class OrganizationSeeder extends Seeder
         $orgs = [
 
             [
+                'id' => 1,
                 'name' => 'DynastyIQ',
+                'short_name' => 'DIQ',
             ],
 
             [
+                'id' => 2,
                 'name' => 'Unohuim org',
+                'short_name' => 'Uno',
+            ],
+
+            [
+                'id' => 3,
+                'name' => 'Fantasy Hockey Life',
+                'short_name' => 'FHL',
+            ],
+
+            [
+                'id' => 4,
+                'name' => 'Prospects to Pros',
+                'short_name' => 'P2P'
             ],
 
         ];

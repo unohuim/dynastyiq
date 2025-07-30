@@ -35,8 +35,32 @@ class RoleSeeder extends Seeder
 
             [
                 'id' => 3,
-                'name' => 'User',
-                'slug' => 'user',
+                'name' => 'Manager',
+                'slug' => 'manager',
+                'level' => 2,
+                'is_active' => true
+            ],
+
+            [
+                'id' => 4,
+                'name' => 'Scout',
+                'slug' => 'scout',
+                'level' => 3,
+                'is_active' => true
+            ],
+
+            [
+                'id' => 5,
+                'name' => 'Commissioner',
+                'slug' => 'commissioner',
+                'level' => 3,
+                'is_active' => true
+            ],
+
+            [
+                'id' => 6,
+                'name' => 'Creator',
+                'slug' => 'creator',
                 'level' => 3,
                 'is_active' => true
             ]

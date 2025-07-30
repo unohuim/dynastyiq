@@ -5,3 +5,73 @@
 [x-cloak] {
     display: none;
 }
+
+
+
+
+/* Mobile player card */
+@layer components {
+  .player-stats-card-mobile {
+    @apply flex overflow-hidden bg-white border-b border-gray-100;
+  }
+
+  .player-stats-team-strip-mobile {
+    @apply w-[2rem] flex-none;
+  }
+
+  .player-stats-team-text-mobile {
+    @apply h-full w-full flex items-center justify-center origin-center rotate-[-90deg] text-white text-sm font-extrabold leading-none tracking-tight;
+  }
+
+  .player-stats-content-mobile {
+    @apply flex-1 px-3 pt-1;
+  }
+
+  .player-stats-top-row-mobile {
+    @apply flex justify-between items-start mb-1;
+  }
+
+  .player-stats-left-mobile {
+    @apply flex items-center;
+  }
+
+  .player-stats-pos-tag-mobile {
+    @apply inline-block bg-gray-100 text-gray-800 text-xs px-1 py-0.5 rounded;
+  }
+
+  .player-stats-name-mobile {
+    @apply text-xs leading-tight;
+  }
+
+  .player-stats-right-mobile {
+    @apply flex items-center gap-1 text-sm text-gray-600;
+  }
+
+  .player-stats-sorted-label-mobile {
+    @apply uppercase text-xs tracking-wide text-gray-600;
+  }
+
+  .player-stats-sorted-value-mobile {
+    @apply text-xs font-semibold text-gray-900;
+  }
+
+  .player-stats-bottom-row-mobile {
+    @apply flex items-center mt-2 text-xxs text-gray-800 flex-wrap-reverse justify-end;
+  }
+
+  .player-stats-stat-group-mobile {
+    @apply flex justify-end gap-4 flex-wrap-reverse;
+  }
+
+  .player-stats-stat-mobile {
+    @apply flex items-center gap-1;
+  }
+
+  .player-stats-stat-key-mobile {
+    @apply uppercase text-gray-500;
+  }
+
+  .player-stats-stat-val-mobile {
+    @apply font-medium text-gray-800;
+  }
+}

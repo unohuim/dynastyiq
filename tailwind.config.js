@@ -11,10 +11,65 @@ export default {
         './resources/views/**/*.blade.php',
     ],
 
+    safelist: [
+        'bg-gradient-to-b',
+        'from-orange-600', 'to-black',
+        'from-red-700', 'to-yellow-500',
+        'from-yellow-400', 'to-blue-800',
+        'from-blue-700', 'to-orange-500',
+        'from-blue-800', 'to-red-700',
+        'from-blue-900', 'to-red-600',
+        'from-red-600', 'to-gray-800',
+        'from-green-700', 'to-black',
+        'from-red-700', 'to-gray-100',
+        'from-orange-500', 'to-blue-900',
+        'from-red-700', 'to-blue-700',
+        'from-yellow-400', 'to-blue-800',
+        'from-blue-700', 'to-blue-500',
+        'from-cyan-700', 'to-navy-800',
+        'from-teal-700',
+        'from-green-800', 'to-red-800',
+        'from-gray-600',
+        'from-gray-700', 'to-yellow-400',
+        'from-red-700', 'to-black',
+        'from-blue-800', 'to-yellow-400',
+        'from-blue-800', 'to-gray-400',
+        'text-xxs',
+
+        // Mobile player card custom classes
+        'player-stats-card-mobile',
+        'player-stats-team-strip-mobile',
+        'player-stats-team-text-mobile',
+        'player-stats-content-mobile',
+        'player-stats-top-row-mobile',
+        'player-stats-left-mobile',
+        'player-stats-pos-tag-mobile',
+        'player-stats-name-mobile',
+        'player-stats-right-mobile',
+        'player-stats-sorted-label-mobile',
+        'player-stats-sorted-value-mobile',
+        'player-stats-bottom-row-mobile',
+        'player-stats-stat-group-mobile',
+        'player-stats-stat-mobile',
+        'player-stats-stat-key-mobile',
+        'player-stats-stat-val-mobile',
+    ],
+
     theme: {
         extend: {
             fontFamily: {
                 sans: ['Figtree', ...defaultTheme.fontFamily.sans],
+            },
+            colors: {
+                navy: {
+                    800: '#002868',
+                },
+                gold: {
+                    400: '#FFD700',
+                },
+            },
+            fontSize: {
+                xxs: '0.60rem', // 👈 Add this here
             },
         },
     },
