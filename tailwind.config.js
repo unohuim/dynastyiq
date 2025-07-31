@@ -54,6 +54,11 @@ export default {
         'player-stats-stat-key-mobile',
         'player-stats-stat-val-mobile',
         'searchbar-input',
+        'searchbar-mobile',
+        'mb-1',
+        'sticky',
+        'top-0',
+        'z-50',
     ],
 
     theme: {

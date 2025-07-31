@@ -1,4 +1,7 @@
-export class UIComponent {
+export class UI {
+  static containerSelector = '';
+  static templateUrl = '';
+
   static async loadTemplate(url, params = {}) {
     try {
       const res = await fetch(url);
@@ -31,16 +34,22 @@ export class UIComponent {
 
     this.loadTemplate(this.templateUrl, params).then(template => {
       if (template) {
-        placeholder.innerHTML = template;
+        // Create a temporary container to parse the HTML string
+        const tempContainer = document.createElement('div');
+        tempContainer.innerHTML = template;
 
-        const searchInput = placeholder.querySelector('#searchInput');
+        // Replace the placeholder div with the loaded template's root element
+        container.replaceChild(tempContainer.firstElementChild, placeholder);
+
+        const searchInput = container.querySelector('#searchInput');
+
         if (searchInput) {
           let debounceTimer;
           searchInput.addEventListener('input', e => {
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
               const searchTerm = e.target.value.trim().toLowerCase();
-              placeholder.dispatchEvent(new CustomEvent('searchInput', {
+              container.dispatchEvent(new CustomEvent('searchInput', {
                 detail: { searchTerm },
                 bubbles: true,
               }));
@@ -52,6 +61,13 @@ export class UIComponent {
       }
     });
 
-    return placeholder;
+    return container;
+  }
+
+  static SearchBar(relativeWrapper, placeholder) {
+    this.containerSelector = '#searchbar-mobile';
+    this.templateUrl = '/ui-htm/searchbar-mobile.htm';
+
+    this.html(relativeWrapper, { placeholder: 'search…' });
   }
 }

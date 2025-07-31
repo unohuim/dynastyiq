@@ -1,5 +1,6 @@
 import { teamBg, formatStatValue, sortData } from './player-stats-utils.js';
-import { SearchBar } from './ui/SearchBarMobile.js'; // adjust path as needed
+// import { SearchBar } from './ui/SearchBarMobile.js'; // adjust path as needed
+import { UI } from './ui/UIComponent.js';
 
 export function PlayerStatsMobile({ container, data, headings, settings }) {
     console.log('💻 Mobile render fired with sortKey:', settings.sortKey, 'and data length:', data.length);
@@ -17,17 +18,13 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
     // Wrap list + overlay container
     const relativeWrapper = document.createElement('div');
-    relativeWrapper.className = 'relative hidden'; // initially hidden
+    relativeWrapper.className = 'relative hidden h-screen overflow-auto'; // initially hidden
     container.appendChild(relativeWrapper);
 
     // Render the search bar into relativeWrapper, passing placeholder param
-    SearchBar.html(relativeWrapper, { placeholder: 'Search players…' });
+    UI.SearchBar(relativeWrapper, { placeholder: 'Search players…' });
 
-    // Add overlay and listWrapper inside relativeWrapper for fade and content
-    // const overlay = document.createElement('div');
-    // overlay.className =
-    //   'absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-700 ease-in-out';
-    // relativeWrapper.appendChild(overlay);
+    
 
 
     const listContainer = document.createElement('div');

@@ -41,7 +41,7 @@ export class PlayerStatsPage {
     const sortedPlayers = this.sortPlayers();
 
     const table = document.createElement('div');
-    table.className = 'min-w-full bg-white shadow rounded-lg overflow-hidden border border-gray-200';
+    table.className = 'h-full min-w-full bg-white shadow rounded-lg overflow-hidden border border-gray-200';
 
     const headerRow = document.createElement('div');
     headerRow.className = 'grid text-xs font-semibold bg-gray-100 text-gray-700 px-2 py-2';
