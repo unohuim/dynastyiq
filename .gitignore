@@ -21,3 +21,5 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+app/Providers/HorizonServiceProvider.php
+config/horizon.php
