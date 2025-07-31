@@ -1,3 +1,5 @@
+
+
 export class PlayerStatsPage {
   constructor({ container, data }) {
     this.container = container;

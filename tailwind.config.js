@@ -53,6 +53,7 @@ export default {
         'player-stats-stat-mobile',
         'player-stats-stat-key-mobile',
         'player-stats-stat-val-mobile',
+        'searchbar-input',
     ],
 
     theme: {

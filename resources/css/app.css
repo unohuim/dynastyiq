@@ -74,4 +74,11 @@
   .player-stats-stat-val-mobile {
     @apply font-medium text-gray-800;
   }
+  .searchbar-input {
+    @apply col-start-1 row-start-1 block w-full rounded-md bg-white py-1.5 pl-10 pr-3 text-base text-gray-900 outline outline-1 
+      -outline-offset-1 outline-gray-300 placeholder:text-gray-400 sm:pl-9 sm:text-sm;
+  }
+  .searchbar-input:focus {
+    @apply outline-1 outline-0 ring-0 border-gray-300 border; /* Remove form plugin focus ring and border-2 */
+  }
 }

@@ -21,6 +21,7 @@
             availablePerspectives: @js($perspectives),
             availableRankings: @js($availableRankings),
             availableSeasons: @js($availableSeasons),
+            isLoadingPerspectives: true,
 
             init() {
                 const {
@@ -36,10 +37,14 @@
                 availableRankings,
                 availableSeasons
               });
-              this.fetchPayload();
+              if(this.selectedPerspectiveId) {
+                this.fetchPayload();  
+              }
+              
             },
 
             fetchPayload() {
+              if(this.isLoadingPerspectives) return;
               console.log('⚡ fetchPayload', this.selectedPerspectiveId, this.season);
 
               // build query params
