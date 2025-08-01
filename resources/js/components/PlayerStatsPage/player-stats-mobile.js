@@ -113,7 +113,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
           middleInner.className = "flex w-20";
 
           const aav = document.createElement('span');
-          const contractText = `$${(player.contract_value / 1e6).toFixed(1)}M (${player.contract_length})`;
+          const contractText = `$${(player.contract_value / 1e6).toFixed(1)}M | ${player.contract_last_year}`;
           aav.className = 'player-stats-aav-mobile';
           aav.textContent = contractText;
           

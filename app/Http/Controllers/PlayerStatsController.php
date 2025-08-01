@@ -175,7 +175,7 @@ class PlayerStatsController extends BaseController
 
             $player         = $entry->player;
             $contract       = $player->contracts->first();
-            $contractSeason = $contract?->seasons->first();
+            $contractSeason = $contract?->seasons->last();
             $contractLength = $contract?->seasons->count();
 
 
@@ -192,6 +192,8 @@ class PlayerStatsController extends BaseController
                 'contract_length'=> is_numeric($contractLength)
                     ? $contractLength
                     : 0,
+                'contract_last_year'
+                                 => $contractSeason->label,
                 'head_shot_url'  => $player->head_shot_url,
                 'stats'          => [],
             ];
