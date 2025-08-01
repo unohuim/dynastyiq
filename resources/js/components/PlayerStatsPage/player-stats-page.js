@@ -19,7 +19,7 @@ function createSearchBar(onSearchChange) {
         onSearchChange(e.target.value);
     });
 
-    wrapper.appendChild(input);
+    //wrapper.appendChild(input);
     return wrapper;
 }
 
@@ -83,10 +83,11 @@ export class PlayerStatsPage {
     render() {
         console.log('🖼 Rendering PlayerStatsPage with settings:', this.settings);
         const sorted = sortData(this.originalData, this.settings.sortKey, this.settings.sortDirection);
-        const isMobile = window.innerWidth <= 768;
+        const isMobile = window.innerWidth <= 639;
 
 
         if (isMobile) {
+
             const searchBar = createSearchBar((query) => {
                 const filtered = this.originalData.filter((player) =>
                     player.player_name.toLowerCase().includes(query.toLowerCase())

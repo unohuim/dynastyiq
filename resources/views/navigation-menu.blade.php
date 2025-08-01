@@ -41,7 +41,8 @@
     </nav>
 
     {{-- MOBILE Bottom Nav --}}
-    <nav class="sm:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t shadow">
+    <nav class="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t shadow">
+    <!-- <nav class="sm:hidden z-50 bg-white border-t shadow"> -->
         <ul class="flex items-center justify-between px-4 py-2 text-xs font-medium text-gray-600">
 
             {{-- Home (conditionally dashboard) --}}

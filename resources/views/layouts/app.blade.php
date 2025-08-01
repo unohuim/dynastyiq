@@ -20,7 +20,9 @@
     <body class="font-sans antialiased">
     <x-banner/>
 
-    <div class="min-h-screen bg-gray-100 pb-16 sm:pb-0"><!-- bottom‑padding prevents overlap with sticky mobile nav -->
+    <div class="min-h-screen bg-gray-100 pb-16 sm:pb-0">
+    <!-- <div class="flex flex-col h-screen"> -->
+    
         @livewire('navigation-menu')
 
         <!-- Page Heading -->

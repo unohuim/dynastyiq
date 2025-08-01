@@ -1,7 +1,7 @@
 <x-app-layout>
 
 
-    <div class="space-y-4">
+    <div class="h-full space-y-4">
 
         {{-- Expose initial payload and API path --}}
         <script>
@@ -103,6 +103,6 @@
         </div>
 
         {{-- JS-driven stats table --}}
-        <div id="player-stats-page" class="mt-6"></div>
+        <div id="player-stats-page" class="player-stats-page mt-6 relative"></div>
     </div>
 </x-app-layout>

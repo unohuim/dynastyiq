@@ -1,6 +1,6 @@
 import { teamBg, formatStatValue, sortData } from './player-stats-utils.js';
-// import { SearchBar } from './ui/SearchBarMobile.js'; // adjust path as needed
 import { UI } from './ui/UIComponent.js';
+
 
 export function PlayerStatsMobile({ container, data, headings, settings }) {
     console.log('💻 Mobile render fired with sortKey:', settings.sortKey, 'and data length:', data.length);
@@ -9,6 +9,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
     let isInitialRender = true;
 
     container.innerHTML = '';
+    container.className = "relative";
 
     // Show loading placeholder before data renders
     const loadingPlaceholder = document.createElement('div');
@@ -18,13 +19,11 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
     // Wrap list + overlay container
     const relativeWrapper = document.createElement('div');
-    relativeWrapper.className = 'relative hidden h-screen overflow-auto'; // initially hidden
+    relativeWrapper.className = 'relative hidden overflow-auto'; // initially hidden
     container.appendChild(relativeWrapper);
 
     // Render the search bar into relativeWrapper, passing placeholder param
-    UI.SearchBar(relativeWrapper, { placeholder: 'Search players…' });
-
-    
+    UI.SearchBar(container);
 
 
     const listContainer = document.createElement('div');
@@ -40,6 +39,8 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
     const listWrapper = document.createElement('div');
     listWrapper.className = 'relative space-y-px';
     relativeWrapper.appendChild(listWrapper);
+
+
 
     /* ── Render helper ──────────────────────────────────────────── */
     const renderList = () => {
@@ -166,7 +167,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
 
     // Listen to searchInput custom event dispatched by SearchBar component
-    relativeWrapper.addEventListener('searchInput', (e) => {
+    container.addEventListener('searchInputEvent', (e) => {
       searchTerm = e.detail.searchTerm;
       renderList();
     });
