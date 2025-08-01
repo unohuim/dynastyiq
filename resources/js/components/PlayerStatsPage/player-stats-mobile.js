@@ -180,7 +180,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
           contentWrapper.appendChild(bottomRow);
 
           card.appendChild(teamDivWrapper);
-          card.appendChild(headShotWrapper);
+          // card.appendChild(headShotWrapper);
           card.appendChild(contentWrapper);
           fragment.appendChild(card);
         });
