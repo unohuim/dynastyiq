@@ -27,7 +27,7 @@ export class UI {
     input.id = 'searchInput';
     input.type = 'search';
     input.name = 'searchInput';
-    input.placeholder = 'search..';
+    input.placeholder = 'search players..';
     input.className = 'searchbar-input-mobile';
     input.setAttribute('inputmode', 'search');
     input.setAttribute('autocorrect', 'off');
@@ -44,30 +44,52 @@ export class UI {
     // svgButton.appendChild(caption);
     
 
-    const svgIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgIcon.setAttribute('viewBox', '0 0 16 16');
-    svgIcon.setAttribute('fill', 'none');
-    svgIcon.setAttribute('stroke', 'currentColor');
-    svgIcon.setAttribute('data-slot', 'icon');
-    svgIcon.setAttribute('aria-hidden', true);
-    svgIcon.setAttribute('class', 'searchbar-svg-mobile');
+    const svgIconFilter = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgIconFilter.setAttribute('viewBox', '0 0 16 16');
+    svgIconFilter.setAttribute('fill', 'none');
+    svgIconFilter.setAttribute('stroke', 'currentColor');
+    svgIconFilter.setAttribute('data-slot', 'icon');
+    svgIconFilter.setAttribute('aria-hidden', true);
+    svgIconFilter.setAttribute('class', 'searchbar-svg-mobile');
     
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75");
-    // path.setAttribute('d', "M18.75 12.75h1.5a.75.75 0 0 0 0-1.5h-1.5a.75.75 0 0 0 0 1.5ZM12 6a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 12 6ZM12 18a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 12 18ZM3.75 6.75h1.5a.75.75 0 1 0 0-1.5h-1.5a.75.75 0 0 0 0 1.5ZM5.25 18.75h-1.5a.75.75 0 0 1 0-1.5h1.5a.75.75 0 0 1 0 1.5ZM3 12a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 3 12ZM9 3.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5ZM12.75 12a2.25 2.25 0 1 1 4.5 0 2.25 2.25 0 0 1-4.5 0ZM9 15.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5Z");
-    // path.setAttribute('d', "M2 2.75A.75.75 0 0 1 2.75 2h9.5a.75.75 0 0 1 0 1.5h-9.5A.75.75 0 0 1 2 2.75ZM2 6.25a.75.75 0 0 1 .75-.75h5.5a.75.75 0 0 1 0 1.5h-5.5A.75.75 0 0 1 2 6.25Zm0 3.5A.75.75 0 0 1 2.75 9h3.5a.75.75 0 0 1 0 1.5h-3.5A.75.75 0 0 1 2 9.75ZM9.22 9.53a.75.75 0 0 1 0-1.06l2.25-2.25a.75.75 0 0 1 1.06 0l2.25 2.25a.75.75 0 0 1-1.06 1.06l-.97-.97v5.69a.75.75 0 0 1-1.5 0V8.56l-.97.97a.75.75 0 0 1-1.06 0Z");
     path.setAttribute("clip-rule", "evenodd");
     path.setAttribute("fill-rule", "evenodd");
     
 
-    svgIcon.appendChild(path);
-    svgButton.appendChild(svgIcon);
+    const svgButtonSort = document.createElement('button');
+    svgButtonSort.type = "button";
+    svgButtonSort.className = "searchbar-button-mobile";
+
+
+    const svgIconSort = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgIconSort.setAttribute('viewBox', '0 0 16 16');
+    svgIconSort.setAttribute('fill', 'none');
+    svgIconSort.setAttribute('stroke', 'currentColor');
+    svgIconSort.setAttribute('data-slot', 'icon');
+    svgIconSort.setAttribute('aria-hidden', true);
+    svgIconSort.setAttribute('class', 'searchbar-svg-mobile');
+    
+
+    const pathSort = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    pathSort.setAttribute("d", "M3 4.5h14.25M3 9h9.75M3 13.5h9.75m4.5-4.5v12m0 0-3.75-3.75M17.25 21 21 17.25");
+    pathSort.setAttribute("clip-rule", "evenodd");
+    pathSort.setAttribute("fill-rule", "evenodd");
+
+
+    svgIconFilter.appendChild(path);
+    svgIconSort.appendChild(pathSort);
+
+    svgButton.appendChild(svgIconFilter);
+    svgButtonSort.appendChild(svgIconSort);
 
     gridWrapper.appendChild(input);
 
     innerWrapper.appendChild(gridWrapper);
     innerWrapper.appendChild(svgButton);
+    innerWrapper.appendChild(svgButtonSort);
 
     searchBar.appendChild(innerWrapper);
     

@@ -50,6 +50,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
     /* ── Render helper ──────────────────────────────────────────── */
     const renderList = () => {
+        console.log('rendering..');
       overlay.style.opacity = '1';
       overlay.style.pointerEvents = 'auto';
 
