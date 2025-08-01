@@ -37,6 +37,10 @@ export default {
         'text-xxs',
 
         // Mobile player card custom classes
+        'perspectivesbar',
+        'players-list-mobile',
+        'player-stats-view',
+        'player-stats-page',
         'player-stats-card-mobile',
         'player-stats-team-strip-mobile',
         'player-stats-team-text-mobile',
@@ -45,6 +49,7 @@ export default {
         'player-stats-left-mobile',
         'player-stats-pos-tag-mobile',
         'player-stats-name-mobile',
+        'player-stats-aav-mobile',
         'player-stats-right-mobile',
         'player-stats-sorted-label-mobile',
         'player-stats-sorted-value-mobile',

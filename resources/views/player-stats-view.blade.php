@@ -1,7 +1,7 @@
 <x-app-layout>
 
 
-    <div class="h-full space-y-4">
+    <div class="player-stats-view">
 
         {{-- Expose initial payload and API path --}}
         <script>
@@ -41,6 +41,7 @@
                 this.fetchPayload();  
               }
               
+              this.isLoadingPerspectives = false;
             },
 
             fetchPayload() {
@@ -81,8 +82,8 @@
 
 
             {{-- Perspective Selector --}}
-            <div class="flex items-center space-x-2">
-              <label for="perspective" class="font-semibold text-sm">Perspective:</label>
+            <div id="perspectivesBar" class="perspectivesbar">
+              <label for="perspective" class="z-10 font-semibold text-sm">Perspective:</label>
               <select
                 id="perspective"
                 x-model="selectedPerspectiveId"
@@ -103,6 +104,6 @@
         </div>
 
         {{-- JS-driven stats table --}}
-        <div id="player-stats-page" class="player-stats-page mt-6 relative"></div>
+        <div id="player-stats-page" class="player-stats-page"></div>
     </div>
 </x-app-layout>

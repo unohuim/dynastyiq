@@ -11,6 +11,23 @@
 
 /* Mobile player card */
 @layer components {
+
+  .perspectivesbar {
+    @apply w-full fixed top-0 z-40 bg-white items-center p-1 space-x-2;
+  }
+
+  .player-stats-view {
+    @apply h-full relative bg-blue-200 sm:bg-white;
+  }
+
+  .player-stats-page {
+    @apply relative;
+  }
+
+  .players-list-mobile {
+    @apply relative space-y-px;
+  }
+
   .player-stats-card-mobile {
     @apply flex overflow-hidden bg-white border-b border-gray-100;
   }
@@ -23,16 +40,17 @@
     @apply h-full w-full flex items-center justify-center origin-center rotate-[-90deg] text-white text-sm font-extrabold leading-none tracking-tight;
   }
 
+
   .player-stats-content-mobile {
-    @apply flex-1 px-3 pt-1;
+    @apply flex-1 w-full px-3 pt-1;
   }
 
   .player-stats-top-row-mobile {
-    @apply flex justify-between items-start mb-1;
+    @apply flex w-full justify-between items-start mb-2;
   }
 
   .player-stats-left-mobile {
-    @apply flex items-center;
+    @apply flex w-full min-w-40 justify-between items-center;
   }
 
   .player-stats-pos-tag-mobile {
@@ -43,8 +61,11 @@
     @apply text-xs leading-tight;
   }
 
+  .player-stats-aav-mobile{
+    @apply flex bg-gray-100 text-gray-800 text-xxs ml-4 px-1 py-0.5 rounded;
+  }
   .player-stats-right-mobile {
-    @apply flex items-center gap-1 text-sm text-gray-600;
+    @apply flex min-w-40 items-center justify-between text-sm text-gray-600;
   }
 
   .player-stats-sorted-label-mobile {
@@ -76,7 +97,7 @@
   }
 
   .searchbar-mobile {
-    @apply fixed z-10 w-full bg-white;
+    @apply fixed top-0 inset-x-0 z-50 w-full bg-white;
   }
 
   .searchbar-innerWrapper-mobile {

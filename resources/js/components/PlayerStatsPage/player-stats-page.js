@@ -5,23 +5,6 @@ import { PlayerStatsMobile } from './player-stats-mobile.js';
 let playerStatsComponent = null;
 
 
-function createSearchBar(onSearchChange) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'p-3';
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Filter by player name';
-    input.className =
-        'w-full px-4 py-2 text-sm border rounded-full shadow-sm focus:outline-none focus:ring';
-
-    input.addEventListener('input', (e) => {
-        onSearchChange(e.target.value);
-    });
-
-    //wrapper.appendChild(input);
-    return wrapper;
-}
 
 export class PlayerStatsPage {
     constructor({ container, data }) {
@@ -87,21 +70,6 @@ export class PlayerStatsPage {
 
 
         if (isMobile) {
-
-            const searchBar = createSearchBar((query) => {
-                const filtered = this.originalData.filter((player) =>
-                    player.player_name.toLowerCase().includes(query.toLowerCase())
-                );
-                PlayerStatsMobile({
-                    container: this.container,
-                    data: filtered,
-                    headings: this.headings,
-                    settings: this.settings,
-                });
-            });
-
-            this.container.appendChild(searchBar);
-
             PlayerStatsMobile({
                 container: this.container,
                 data: this.originalData,

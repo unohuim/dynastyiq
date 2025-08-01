@@ -3,18 +3,17 @@ export class UI {
 
 
   static SearchBar(parentContainer) {
-    const container = document.createElement('div');
-    container.id = 'searchbar-mobile';
-    container.className = 'searchbar-mobile'; // fixed + above nav
+    const searchBar = document.createElement('div');
+    searchBar.id = 'searchbar-mobile';
+    searchBar.className = 'searchbar-mobile'; // fixed + above nav
 
-    const nav = document.querySelector('nav.sm\\:hidden'); // select mobile nav
-    const navHeight = nav ? nav.offsetHeight : 0;
-    // console.log('nav height: ', navHeight)
+    const perspectivesBar = document.querySelector('#perspectivesBar');
+    const barHeight = perspectivesBar ? perspectivesBar.offsetHeight : 0;
 
-    container.style.bottom = `${navHeight}px`;
-    // container.style.left = '0';        // fix left to screen start
-    // container.style.right = '0';       // fix right to screen end
-    // container.style.width = '100%';    // full width
+    searchBar.style.top = `${barHeight}px`;
+    parentContainer.appendChild(searchBar);
+    const searchBarHeight = searchBar.offsetHeight;
+  
 
     //contains row
     const innerWrapper = document.createElement('div');
@@ -70,8 +69,8 @@ export class UI {
     innerWrapper.appendChild(gridWrapper);
     innerWrapper.appendChild(svgButton);
 
-    container.appendChild(innerWrapper);
-    parentContainer.appendChild(container);
+    searchBar.appendChild(innerWrapper);
+    
 
     let debounceTimer;
     input.addEventListener('input', e => {
@@ -84,5 +83,9 @@ export class UI {
         }));
       }, 150);
     });
+
+    return searchBar;
   }
+
+
 }

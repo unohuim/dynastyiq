@@ -9,25 +9,31 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
     let isInitialRender = true;
 
     container.innerHTML = '';
-    container.className = "relative";
+    //container.className = "relative";
 
-    // Show loading placeholder before data renders
-    const loadingPlaceholder = document.createElement('div');
-    loadingPlaceholder.className = 'py-10 text-center text-gray-500';
-    loadingPlaceholder.textContent = 'Loading player stats…';
-    container.appendChild(loadingPlaceholder);
+
+    // Render the search bar into relativeWrapper, passing placeholder param
+    const searchBar = UI.SearchBar(container);
+    console.log('searchBar H: ', searchBar.offsetHeight);
+
+
 
     // Wrap list + overlay container
     const relativeWrapper = document.createElement('div');
-    relativeWrapper.className = 'relative hidden overflow-auto'; // initially hidden
+    relativeWrapper.className = 'players-list-mobile'; // initially hidden
     container.appendChild(relativeWrapper);
 
-    // Render the search bar into relativeWrapper, passing placeholder param
-    UI.SearchBar(container);
 
+    const searchBarRect = searchBar.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect(); // if relative positioning needed
 
+    const topValue = searchBarRect.bottom - containerRect.top; // relative to container
+    relativeWrapper.style.top = `${topValue}px`;
+
+    
     const listContainer = document.createElement('div');
-    listContainer.className = 'relative';
+    listContainer.className = ' flex hidden overflow-auto';
+    container.appendChild(listContainer);
 
     // Append overlay and listWrapperapper inside listContainer
     const overlay = document.createElement('div');
@@ -37,7 +43,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
 
     const listWrapper = document.createElement('div');
-    listWrapper.className = 'relative space-y-px';
+    listWrapper.className = 'players-list-mobile';
     relativeWrapper.appendChild(listWrapper);
 
 
@@ -70,14 +76,29 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
           const contentWrapper = document.createElement('div');
           contentWrapper.className = 'player-stats-content-mobile';
 
+
+          const headShotWrapper  = document.createElement('div');
+          headShotWrapper.className = "flex rows-span-2 mt-1";
+
+          const headShot  = document.createElement('div');
+          headShot.className = "w-9 h-9 mt-1 ml-2 overflow-clip align-middle rounded-full";
+
+          const imgHeadShot = document.createElement('img');
+          imgHeadShot.src = player?.head_shot_url ?? '';
+          imgHeadShot.className = 'w-full h-full object-cover rounded-full border border-gray-200';
+
+          headShot.appendChild(imgHeadShot);
+          headShotWrapper.appendChild(headShot);
+
           const topRow = document.createElement('div');
           topRow.className = 'player-stats-top-row-mobile';
 
           const leftSide = document.createElement('div');
-          leftSide.className = 'player-stats-left-side-mobile';
+          leftSide.className = 'player-stats-left-side-mobile';          
+
 
           const leftInner = document.createElement('div');
-          leftInner.className = 'flex items-center gap-1';
+          leftInner.className = 'flex w-full justify-between items-center gap-1';
 
           const posTag = document.createElement('span');
           posTag.className = 'player-stats-pos-tag-mobile';
@@ -87,8 +108,18 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
           name.className = 'player-stats-name-mobile';
           name.textContent = player.name;
 
+          const middleInner = document.createElement('div');
+          middleInner.className = "flex w-20";
+
+          const aav = document.createElement('span');
+          const contractText = `$${(player.contract_value / 1e6).toFixed(1)}M (${player.contract_length})`;
+          aav.className = 'player-stats-aav-mobile';
+          aav.textContent = contractText;
+          
+
           leftInner.appendChild(posTag);
           leftInner.appendChild(name);
+          leftInner.appendChild(aav);
           leftSide.appendChild(leftInner);
 
           const rightSide = document.createElement('div');
@@ -110,9 +141,12 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
           rightInner.appendChild(statLabel);
           rightInner.appendChild(statValue);
+
           rightSide.appendChild(rightInner);
 
+
           topRow.appendChild(leftSide);
+          topRow.appendChild(middleInner);
           topRow.appendChild(rightSide);
 
           const bottomRow = document.createElement('div');
@@ -146,6 +180,7 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
           contentWrapper.appendChild(bottomRow);
 
           card.appendChild(teamDivWrapper);
+          card.appendChild(headShotWrapper);
           card.appendChild(contentWrapper);
           fragment.appendChild(card);
         });
@@ -154,8 +189,8 @@ export function PlayerStatsMobile({ container, data, headings, settings }) {
 
         if (isInitialRender) {
           isInitialRender = false;
-          loadingPlaceholder.remove();
-          relativeWrapper.classList.remove('hidden');
+          // loadingPlaceholder.remove();
+          // relativeWrapper.classList.remove('hidden');
         }
 
         requestAnimationFrame(() => {

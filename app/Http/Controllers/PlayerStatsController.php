@@ -192,6 +192,7 @@ class PlayerStatsController extends BaseController
                 'contract_length'=> is_numeric($contractLength)
                     ? $contractLength
                     : 0,
+                'head_shot_url'  => $player->head_shot_url,
                 'stats'          => [],
             ];
 
