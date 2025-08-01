@@ -30,6 +30,11 @@ export class UI {
     input.name = 'searchInput';
     input.placeholder = 'search..';
     input.className = 'searchbar-input-mobile';
+    input.setAttribute('inputmode', 'search');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('autocomplete', 'off');
 
 
     const svgButton = document.createElement('button');
