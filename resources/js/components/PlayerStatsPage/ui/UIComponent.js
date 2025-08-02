@@ -103,7 +103,7 @@ export class UI {
           detail: { searchTerm },
           bubbles: true,
         }));
-      }, 150);
+      }, 90);
     });
 
     return searchBar;

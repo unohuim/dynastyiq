@@ -17,7 +17,7 @@
   }
 
   .player-stats-view {
-    @apply h-full relative bg-blue-200 sm:bg-white;
+    @apply h-full relative sm:bg-white;
   }
 
   .player-stats-page {
@@ -58,7 +58,7 @@
   }
 
   .player-stats-name-mobile {
-    @apply text-xs leading-tight;
+    @apply text-sm leading-tight;
   }
 
   .player-stats-aav-mobile{
@@ -110,14 +110,14 @@
 
   .searchbar-input-mobile {
     @apply col-start-1 row-start-1 block bg-white py-1.5 pl-10 pr-3 text-base text-gray-500 outline outline-1 -outline-offset-1 
-      outline-gray-200 placeholder:text-gray-400 sm:pl-9 sm:text-sm/6;
+      outline-gray-300 placeholder:text-gray-400 sm:pl-9 sm:text-sm/6;
   }
   .searchbar-input-mobile:focus {
     @apply outline-1 outline-0 ring-0 border-gray-300 border; /* Remove form plugin focus ring and border-2 */
   }
 
   .searchbar-button-mobile {
-    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-white text-xs font-semibold text-gray-600 border-l border-y border-gray-200; 
+    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-white text-xs font-semibold text-gray-700 border-l border-y border-gray-300; 
     /*outline outline-1 -outline-offset-1 outline-gray-300;*/
   }
   .searchbar-button-mobile:focus {

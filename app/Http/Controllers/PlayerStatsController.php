@@ -193,7 +193,7 @@ class PlayerStatsController extends BaseController
                     ? $contractLength
                     : 0,
                 'contract_last_year'
-                                 => $contractSeason->label,
+                                 => $contractSeason?->label ?? '',
                 'head_shot_url'  => $player->head_shot_url,
                 'stats'          => [],
             ];
