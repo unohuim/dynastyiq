@@ -18,7 +18,7 @@ return new class extends Migration
             $table->unsignedBigInteger('nhl_id')->nullable()->unique()->index();
             $table->unsignedBigInteger('nhl_team_id')->nullable()->index();
             $table->unsignedBigInteger('yahoo_id')->nullable()->index();
-            $table->unsignedBigInteger('fantrax_id')->nullable()->index();
+            $table->string('fantrax_id')->nullable()->index();
             $table->unsignedBigInteger('ep_id')->nullable()->index();
 
             // Name and personal info
