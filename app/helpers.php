@@ -49,6 +49,34 @@ if (! function_exists('current_season_id')) {
 
 
 
+if (!function_exists('parseElapsedSeconds')) {
+    /**
+     * Convert time string to elapsed seconds, optionally accounting for period.
+     *
+     * @param string|null $time Format "mm:ss"
+     * @param int|null $period Starting at 1, optional
+     * @param int $periodLengthSeconds Default period length in seconds (e.g. 1200)
+     * @return int|null
+     */
+    function parseElapsedSeconds(?string $time, ?int $period = null, int $periodLengthSeconds = 1200): ?int
+    {
+        if (empty($time) || !str_contains($time, ':')) {
+            return null;
+        }
+        [$min, $sec] = explode(':', $time);
+        $seconds = ((int)$min * 60) + (int)$sec;
+
+        if ($period !== null) {
+            return (($period - 1) * $periodLengthSeconds) + $seconds;
+        }
+
+        return $seconds;
+    }
+}
+
+
+
+
 if (!function_exists('parseToiMinutes')) {
     /**
      * Convert TOI string (e.g., "3268:33") to total minutes as float.

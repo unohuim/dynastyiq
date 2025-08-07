@@ -5,128 +5,97 @@ namespace App\Livewire;
 use Livewire\Component;
 use App\Models\Player;
 use App\Models\PlayerRanking;
+use App\Models\RankingProfile;
 use Illuminate\Support\Facades\Auth;
 
 class PlayerRankingsTable extends Component
 {
     public $players;
-    public $rankingType = 'FHL 2025'; // default type, optional
+    public $rankingType = 'FHL 2025'; // default type, optional but not used to find profile here
     public $editing = [];
     public $editingValues= [];
     public $savedPlayerId = null;
     public $saved = [];
 
-
     protected $listeners = [
-	  'reinitializeRow' => '$refresh',
-	];
+        'reinitializeRow' => '$refresh',
+    ];
 
+    public ?RankingProfile $rankingProfile = null;
 
     public function mount()
     {
+        // Grab first ranking profile for current user (no lookup by name)
+        $this->rankingProfile = RankingProfile::where('author_id', Auth::id())->first();
+
         $this->loadPlayers();
     }
-
-    public function updatedRankingType()
-    {
-        $this->loadPlayers();
-    }
-
 
 
     public function loadPlayers()
-	{
-		// $this->players = Player::with(['currentRanking' => function ($query) {
-		//     $query->where('user_id', auth()->id());
-		// }])->get()->sortByDesc(function ($player) {
-		//     return $player->currentRanking->rank_1 ?? 0;
-		// })->values();
+    {
+        if (!$this->rankingProfile) {
+            $this->players = collect();
+            return;
+        }
 
-		// $this->players = Player::with(['currentRanking', 'rankingsForUser'])->get();
-		$this->players = Player::with(['currentRanking', 'rankingsForUser'])->get()
-        ->sortByDesc(fn ($player) =>
-            optional($player->currentRanking)->rank_1 ?? 0
-        )->values(); // reset keys
+        $profileId = $this->rankingProfile->id;
 
-	}
+        // Eager load currentRanking and rankingsForUser filtered by ranking_profile_id
+        $this->players = Player::with([
+            'currentRanking' => function ($q) use ($profileId) {
+                $q->where('ranking_profile_id', $profileId);
+            },
+            'rankingsForUser' => function ($q) use ($profileId) {
+                $q->where('ranking_profile_id', $profileId);
+            }
+        ])
+        ->get()
+        ->sortByDesc(fn($player) => optional($player->currentRanking)->score ?? 0)
+        ->values();
+    }
 
-
- //    public function loadPlayers()
-	// {
-	//     $players = Player::with(['rankings' => function ($query) {
-	//         $query->where('user_id', auth()->id())
-	//               ->orderByDesc('created_at');
-	//     }])->get();
-
-	//     foreach ($players as $player) {
-	//         $rankings = $player->rankings;
-
-	//         $player->current_ranking = $rankings->first();
-	//         $player->previous_rankings = $rankings->slice(1)->take(2)->values();
-	//     }
-
-	//     $this->players = $players
-	//         ->sortByDesc(function ($player) {
-	//             return isset($player->current_ranking)
-	//                 ? (float) $player->current_ranking->rank_1
-	//                 : 0;
-	//         })
-	//         ->values();
-	// }
-
-
-	public function edit($playerId)
+    public function edit($playerId)
     {
         $this->editing[$playerId] = true;
 
         $player = $this->players->firstWhere('id', $playerId);
-        if ($player && $player->current_ranking) {
-            $this->editingValues[$playerId] = $player->current_ranking->rank_1;
+        if ($player && $player->currentRanking) {
+            $this->editingValues[$playerId] = $player->currentRanking->score;
         }
     }
 
     public function save($playerId, $newValue = null)
-	{
-	    $player = Player::findOrFail($playerId);
+    {
+        if (!$this->rankingProfile) {   
+            return;
+        }
+        
 
-	    // Fetch the latest ranking for this user/player
-	    $ranking = PlayerRanking::where('user_id', auth()->id())
-	        ->where('player_id', $player->id)
-	        ->latest('created_at')
-	        ->first();
+        $player = Player::findOrFail($playerId);
 
-	    // Use the passed-in value or fallback to what's in editingValues
-	    $value = $newValue ?? ($this->editingValues[$playerId] ?? null);
+        $ranking = PlayerRanking::where('ranking_profile_id', $this->rankingProfile->id)
+            ->where('player_id', $player->id)
+            ->first();
 
-	    if ($ranking && $value !== null) {
-	        $ranking->rank_1 = $value;
-	        $ranking->save();
+        $value = $newValue ?? ($this->editingValues[$playerId] ?? null);
 
-	        // Set saved ID for checkmark icon to appear
-	        $this->savedPlayerId = $playerId;
-	    }
+        if ($ranking && $value !== null) {
+            $ranking->score = $value;
+            $ranking->save();
 
-	    // ✅ Ensure $saved is an array before assigning
-	    if (!is_array($this->saved)) {
-	        $this->saved = [];
-	    }
+            $this->savedPlayerId = $playerId;
+        }
 
-	    // Update Livewire state
-	    $this->editing[$playerId] = false;
-	    $this->saved[$playerId] = true;
+        $this->editing[$playerId] = false;
+        $this->saved[$playerId] = true;
+        unset($this->editingValues[$playerId]);
 
-	    // Remove the input value since it was saved
-    	unset($this->editingValues[$playerId]);
-
-	    // Reload list to show updated data
-	    $this->loadPlayers();
-	}
-
-
+        $this->loadPlayers();        
+    }
 
     public function render()
     {
         return view('livewire.player-rankings-table');
     }
-
 }

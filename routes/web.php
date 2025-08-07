@@ -6,6 +6,9 @@ use App\Http\Controllers\PlayByPlayController;
 use App\Http\Controllers\PlayerImportController;
 use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
+use App\Http\Controllers\LeagueController;
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -34,6 +37,15 @@ Route::middleware([
         Route::get('/admin/daily-import',    'importDaily');
     });
 
+
+    Route::controller(PlayByPlayController::class)->group(function () {
+        Route::get('/admin/pbp-import', 'ImportNHLPlayByPlay');
+    });
+
+
+    Route::any('/user/setup/fantrax', [LeagueController::class, 'import']);
+
+
     Route::controller(PlayerRankingController::class)->group(function () {
         Route::get('/players/rankings',         'index')->name('player.rankings.index');
         Route::post('/players/rankings/upload', 'upload')->name('player.rankings.upload');
@@ -41,7 +53,7 @@ Route::middleware([
     });
 
     Route::controller(PlayByPlayController::class)->group(function () {
-        Route::get('/import-playbyplays', 'ImportPlayByPlays');
+        Route::get('/admin/import-playbyplays', 'ImportPlayByPlays');
     });
 
     Route::controller(SeasonStatController::class)->group(function () {

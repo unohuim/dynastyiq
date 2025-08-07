@@ -2,11 +2,10 @@
     
     <div class="bg-white rounded shadow p-4">
 	    <div class="mb-4">
-	        <label class="text-sm text-gray-600 font-semibold mr-2">Ranking Type:</label>
-	        <select wire:model="rankingType" class="border rounded px-3 py-1 text-sm">
+	        <label class="text-sm text-gray-600 font-semibold mr-2">Profile:</label>
+	        <select class="border rounded px-3 py-1 text-sm">
 	            <option value="FHL 2025">FHL 2025</option>
-	            <option value="Dobber">Dobber</option>
-	            <option value="DynastyIQ">DynastyIQ</option>
+	            
 	            <!-- Add more types as needed -->
 	        </select>
 	    </div>
@@ -36,10 +35,10 @@
 			                {{-- Latest Rank Column --}}
 							<td class="px-4 py-2">
 							    <div
-							    	wire:key="player-{{ $player->id }}-rank-{{ $player->currentRanking->rank_1 ?? '' }}"
+							    	wire:key="player-{{ $player->id }}-rank-{{ $player->currentRanking->score ?? '' }}"
 							        x-data="{
 							            editingMode: false,
-							            value: '{{ $player->currentRanking->rank_1 ?? '' }}',
+							            value: '{{ $player->currentRanking->score ?? '' }}',
 							            startEdit() { this.editingMode = true; this.$nextTick(() => $refs.input.focus()) },
 							            saved: false,
 							            timeout: null,
@@ -61,7 +60,7 @@
 							        <template x-if="editingMode">
 							            <input type="number" step="0.01" inputmode="decimal"
 						          				x-model="value"
-							                   wire:model.defer="editingValues.{{ $player->id }}.rank_1"
+							                   wire:model.defer="editingValues.{{ $player->id }}.score"
 							                   @blur="save()"							                  
 							                   @keydown.enter.prevent="save()"
 							                   @keydown.tab.prevent="save()"
@@ -102,10 +101,10 @@
 
 			                {{-- Previous Rankings --}}
 			                <td class="px-4 py-2">
-			                    {{ $player->rankingsForUser[1]->rank_1 ?? '-' }}
+			                    {{ $player->rankingsForUser[1]->score ?? '-' }}
 			                </td>
 			                <td class="px-4 py-2">
-			                    {{ $player->rankingsForUser[2]->rank_1 ?? '-' }}
+			                    {{ $player->rankingsForUser[2]->score ?? '-' }}
 			                </td>
 			            </tr>
 			        @endforeach

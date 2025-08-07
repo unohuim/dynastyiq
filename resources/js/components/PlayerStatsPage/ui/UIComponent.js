@@ -1,7 +1,6 @@
 export class UI {
 
 
-
   static SearchBar(parentContainer) {
     const searchBar = document.createElement('div');
     searchBar.id = 'searchbar-mobile';
@@ -103,7 +102,7 @@ export class UI {
           detail: { searchTerm },
           bubbles: true,
         }));
-      }, 90);
+      }, 60);
     });
 
     return searchBar;

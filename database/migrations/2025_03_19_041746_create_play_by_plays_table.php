@@ -11,18 +11,14 @@ return new class extends Migration
      */
     public function up(): void
     {
+
         Schema::create('play_by_plays', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('nhl_game_id');
-            $table->string('season_id');
-            $table->string('game_date');
-            $table->integer('game_type');
-            $table->foreignId('away_team_id');
-            $table->foreignId('home_team_id');
-            $table->string('away_team_abbrev');
-            $table->string('home_team_abbrev');
-            $table->integer('event_owner_team_id')->nullable();
-            $table->integer('period')->nullable();
+            $table->foreignId('nhl_game_id')->index();            
+            $table->unsignedBigInteger('nhl_player_id')->nullable()->index();
+
+            $table->integer('event_owner_team_id')->nullable()->index();
+            $table->integer('period')->nullable()->index();
             $table->string('time_in_period')->nullable();
             $table->string('time_remaining')->nullable();
             $table->integer('seconds_in_period')->nullable();
@@ -31,58 +27,125 @@ return new class extends Migration
             $table->integer('seconds_since_last_event')->nullable();
             $table->string('type_desc_key')->nullable();
             $table->string('desc_key')->nullable();
-            $table->string('penalty_count')->default(0);
 
-            // $table->integer('away_G');
-            // $table->integer('home_G');
-            // $table->int('away_SOG');
-            // $table->int('home_SOG');
-            $table->string('strength');
+            $table->string('strength')->nullable();
             $table->string('nhl_event_id')->nullable();
             $table->string('period_type')->nullable();
-            $table->integer('situation_code')->nullable();
+            $table->string('situation_code')->nullable(); // string for codes like "1551"
             $table->integer('type_code')->nullable();
 
             $table->integer('duration')->nullable();
             $table->string('penalty_type_code')->nullable();
 
             $table->integer('sort_order')->nullable();
-            $table->integer('fo_winning_player_id')->nullable();
-            $table->integer('fo_losing_player_id')->nullable();
-            $table->integer('x_coord')->default(0);
-            $table->integer('y_coord')->default(0);
+            $table->integer('fo_winning_player_id')->nullable()->index();
+            $table->integer('fo_losing_player_id')->nullable()->index();
+            $table->integer('x_coord')->nullable();
+            $table->integer('y_coord')->nullable();
             $table->string('home_team_defending_side')->nullable();
             $table->string('zone_code')->nullable();
-            $table->string('home_zone_code')->nullable();
-            $table->string('away_zone_code')->nullable();
             $table->string('code_type')->nullable();
 
-            $table->integer('committed_by_player_id')->nullable();
-            $table->integer('drawn_by_player_id')->nullable();
+            $table->integer('scoring_player_id')->nullable()->index();
+            $table->integer('scoring_player_total')->default(0);
+            $table->integer('assist1_player_id')->nullable()->index();
+            $table->integer('assist1_player_total')->default(0);
+            $table->integer('assist2_player_id')->nullable()->index();
+            $table->integer('assist2_player_total')->default(0);
+
+            $table->integer('committed_by_player_id')->nullable()->index();
+            $table->integer('drawn_by_player_id')->nullable()->index();
             $table->string('shot_type')->nullable();
-            $table->integer('shooting_player_id')->nullable();
-            $table->integer('goalie_in_net_player_id')->nullable();
-            $table->integer('away_sog')->default(0);
-            $table->integer('home_sog')->default(0);
-            $table->integer('blocking_player_id')->nullable();
+            $table->integer('shooting_player_id')->nullable()->index();
+            $table->integer('goalie_in_net_player_id')->nullable()->index();
+            $table->integer('away_sog')->nullable()->default(0);
+            $table->integer('home_sog')->nullable()->default(0);
+            $table->integer('blocking_player_id')->nullable()->index();
             $table->string('reason')->nullable();
             $table->string('secondary_reason')->nullable();
-            $table->integer('hitting_player_id')->nullable();
-            $table->integer('hittee_player_id')->nullable();
-            $table->integer('player_id')->nullable();
-            $table->integer('scoring_player_id')->nullable();
-            $table->integer('scoring_player_total')->default(0);
-            $table->integer('assist1_player_id')->nullable();
-            $table->integer('assist1_player_total')->default(0);
-            $table->integer('assist2_player_id')->nullable();
-            $table->integer('assist2_player_total')->default(0);
+            $table->integer('hitting_player_id')->nullable()->index();
+            $table->integer('hittee_player_id')->nullable()->index();
+            
+
             $table->string('highlight_clip_sharing_url')->nullable();
-            $table->bigInteger('highlight_clip_id')->nullable();
-            $table->integer('away_score')->default(0);
-            $table->integer('home_score')->default(0);
+            $table->unsignedBigInteger('highlight_clip_id')->nullable();
+            $table->integer('away_score')->nullable()->default(0);
+            $table->integer('home_score')->nullable()->default(0);
+
+            $table->json('metadata')->nullable(); // for flexible additional data
 
             $table->timestamps();
         });
+
+        // Schema::create('play_by_plays', function (Blueprint $table) {
+        //     $table->id();
+        //     $table->foreignId('nhl_game_id')->index();
+        //     $table->string('season_id');
+        //     $table->date('game_date');
+        //     $table->integer('game_type');
+        //     $table->foreignId('away_team_id');
+        //     $table->foreignId('home_team_id');
+        //     $table->string('away_team_abbrev');
+        //     $table->string('home_team_abbrev');
+        //     $table->integer('event_owner_team_id')->nullable()->index();
+        //     $table->integer('period')->nullable()->index();
+        //     $table->string('time_in_period')->nullable();
+        //     $table->string('time_remaining')->nullable();
+        //     $table->integer('seconds_in_period')->nullable();
+        //     $table->integer('seconds_in_game')->nullable();
+        //     $table->integer('seconds_remaining')->nullable();
+        //     $table->integer('seconds_since_last_event')->nullable();
+        //     $table->string('type_desc_key')->nullable();
+        //     $table->string('desc_key')->nullable();
+
+        //     $table->string('strength')->nullable();
+        //     $table->string('nhl_event_id')->nullable();
+        //     $table->string('period_type')->nullable();
+        //     $table->string('situation_code')->nullable(); // changed to string for codes like "1551"
+        //     $table->integer('type_code')->nullable();
+
+        //     $table->integer('duration')->nullable();
+        //     $table->string('penalty_type_code')->nullable();
+
+        //     $table->integer('sort_order')->nullable();
+        //     $table->integer('fo_winning_player_id')->nullable()->index();
+        //     $table->integer('fo_losing_player_id')->nullable()->index();
+        //     $table->integer('x_coord')->nullable();
+        //     $table->integer('y_coord')->nullable();
+        //     $table->string('home_team_defending_side')->nullable();
+        //     $table->string('zone_code')->nullable();
+        //     $table->string('code_type')->nullable();
+            
+        //     $table->integer('scoring_player_id')->nullable()->index();
+        //     $table->integer('scoring_player_total')->default(0);
+        //     $table->integer('assist1_player_id')->nullable()->index();
+        //     $table->integer('assist1_player_total')->default(0);
+        //     $table->integer('assist2_player_id')->nullable()->index();
+        //     $table->integer('assist2_player_total')->default(0);
+
+        //     $table->integer('committed_by_player_id')->nullable()->index();
+        //     $table->integer('drawn_by_player_id')->nullable()->index();
+        //     $table->string('shot_type')->nullable();
+        //     $table->integer('shooting_player_id')->nullable()->index();
+        //     $table->integer('goalie_in_net_player_id')->nullable()->index();
+        //     $table->integer('away_sog')->nullable()->default(0);
+        //     $table->integer('home_sog')->nullable()->default(0);
+        //     $table->integer('blocking_player_id')->nullable()->index();
+        //     $table->string('reason')->nullable();
+        //     $table->string('secondary_reason')->nullable();
+        //     $table->integer('hitting_player_id')->nullable()->index();
+        //     $table->integer('hittee_player_id')->nullable()->index();
+        //     $table->integer('player_id')->nullable()->index();
+            
+        //     $table->string('highlight_clip_sharing_url')->nullable();
+        //     $table->unsignedBigInteger('highlight_clip_id')->nullable();
+        //     $table->integer('away_score')->nullable()->default(0);
+        //     $table->integer('home_score')->nullable()->default(0);
+
+        //     $table->json('metadata')->nullable(); // for flexible additional data
+
+        //     $table->timestamps();
+        // });
     }
 
     /**

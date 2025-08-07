@@ -25,6 +25,8 @@ return [
             'roster_season'  => '/roster/{teamAbbrev}/{seasonId}',
             'prospects'      => '/prospects/{teamAbbrev}',
             'standings_now'  => '/standings/now',
+            'pbp'            => '/gamecenter/{gameId}/play-by-play',
+            'boxscore'       => 'gamecenter/{gameId}/boxscore',
         ],
     ],
 
@@ -45,6 +47,10 @@ return [
         'endpoints' => [
             'players'     => '/general/getPlayerIds?sport=NHL',
             'player_data' => '/general/getPlayerProfile?leagueId={leagueId}&playerId={playerId}',
+            'user_leagues' => '/general/getLeagues?userSecretId={userSecretId}',
+            'league_info' => '/general/getLeagueInfo?leagueId={leagueId}',
+
+            
         ],
     ],
 

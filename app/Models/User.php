@@ -9,6 +9,9 @@ use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
+use App\Models\RankingProfile;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+
 
 class User extends Authenticatable
 {
@@ -65,6 +68,51 @@ class User extends Authenticatable
         ];
     }
 
+
+    public function rankingProfiles(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            RankingProfile::class,
+            'player_rankings',
+            'player_id',
+            'ranking_profile_id'
+        )->withPivot(['score', 'description', 'visibility', 'settings'])
+         ->withTimestamps();
+    }
+
+
+    /**
+     * The leagues that the user belongs to.
+     */
+    public function leagues()
+    {
+        return $this->belongsToMany(League::class, 'league_user')
+            ->withPivot(['is_commish', 'is_admin'])
+            ->withTimestamps();
+    }
+
+    /**
+     * Check if the user is a commissioner for a given league.
+     */
+    public function isCommissionerForLeague(int $leagueId): bool
+    {
+        return $this->leagues()
+            ->where('league_id', $leagueId)
+            ->wherePivot('is_commish', true)
+            ->exists();
+    }
+
+    /**
+     * Check if the user is an admin for a given league.
+     */
+    public function isAdminForLeague(int $leagueId): bool
+    {
+        return $this->leagues()
+            ->where('league_id', $leagueId)
+            ->wherePivot('is_admin', true)
+            ->exists();
+    }
+    
 
 
     public function roles()

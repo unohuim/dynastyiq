@@ -37,7 +37,7 @@ export default {
         'text-xxs',
 
         // Mobile player card custom classes
-        'perspectivesbar',
+        'perspectivesbar-mobile',
         'players-list-mobile',
         'player-stats-view',
         'player-stats-page',

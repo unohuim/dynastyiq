@@ -19,6 +19,24 @@ use Illuminate\Http\Client\RequestException;
  */
 trait HasAPITrait
 {
+
+    /**
+     * Fetch data from a full URL (for shifts API).
+     *
+     * @param string $url
+     * @return array
+     */
+    public function getAPIDataFullUrl(string $url): array
+    {
+        $client = new \GuzzleHttp\Client();
+
+        $response = $client->get($url);
+
+        return json_decode($response->getBody()->getContents(), true);
+    }
+
+
+    
     /**
      * Send a GET request to a configured API service.
      *

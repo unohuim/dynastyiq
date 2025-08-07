@@ -12,9 +12,6 @@
 /* Mobile player card */
 @layer components {
 
-  .perspectivesbar {
-    @apply w-full fixed top-0 z-40 bg-white items-center p-1 space-x-2;
-  }
 
   .player-stats-view {
     @apply h-full relative sm:bg-white;
@@ -97,8 +94,9 @@
   }
 
   .searchbar-mobile {
-    @apply fixed top-0 inset-x-0 z-50 w-full bg-white;
+    @apply fixed top-0 inset-x-0 z-50 w-full bg-white border-gray-900;
   }
+
 
   .searchbar-innerWrapper-mobile {
     @apply flex;
@@ -110,14 +108,14 @@
 
   .searchbar-input-mobile {
     @apply col-start-1 row-start-1 block bg-white py-1.5 pl-10 pr-3 text-base text-gray-500 outline outline-1 -outline-offset-1 
-      outline-gray-300 placeholder:text-gray-400 sm:pl-9 sm:text-sm/6;
+      outline-gray-900 placeholder:text-gray-400 sm:pl-9 sm:text-sm/6;
   }
   .searchbar-input-mobile:focus {
     @apply outline-1 outline-0 ring-0 border-gray-300 border; /* Remove form plugin focus ring and border-2 */
   }
 
   .searchbar-button-mobile {
-    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-white text-xs font-semibold text-gray-700 border-l border-y border-gray-300; 
+    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-gray-900 text-xs font-semibold text-white border-l border-l border-gray-300; 
     /*outline outline-1 -outline-offset-1 outline-gray-300;*/
   }
   .searchbar-button-mobile:focus {
@@ -128,9 +126,25 @@
   }
 
   .searchbar-svg-mobile {
-    @apply -ml-0.5 m-1 mb-1 pb-1 size-4 overflow-visible size-4 text-gray-800;
+    @apply -ml-0.5 m-1 mb-1 pb-1 size-4 overflow-visible text-gray-200;
   }
 
+
+  .perspectivesbar-mobile {
+    @apply w-full fixed top-0 z-40 bg-white items-center space-x-2;
+  }
+  .perspectivesbar-button-mobile {
+    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-blue-100 text-xs font-semibold text-white border-gray-300; 
+  }
+
+  .perspectivesbar-desktop {
+    @apply flex w-full bg-white items-center space-x-2;
+  }
+  .perspectivesbar-button-desktop {
+    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-blue-800 text-xs font-semibold text-white border-gray-300; 
+  }
+
+  
   .player-stats-page {
     @apply flex flex-col;
   }
