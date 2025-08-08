@@ -21,6 +21,8 @@ class ImportNHLPlayerJob implements ShouldQueue
     protected string $playerId;
     protected bool $isProspect;
 
+    public const TAG_IMPORT = 'import-nhl-player';
+
     /**
      * Create a new job instance.
      *
@@ -39,5 +41,11 @@ class ImportNHLPlayerJob implements ShouldQueue
     public function handle(): void
     {
         (new ImportNHLPlayer())->import($this->playerId, $this->isProspect);
+    }
+
+
+    public function tags(): array
+    {
+        return [self::TAG_IMPORT, "nhl_player_id: {$this->playerId}"];
     }
 }

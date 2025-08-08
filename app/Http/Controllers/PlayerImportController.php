@@ -13,12 +13,14 @@ namespace App\Http\Controllers;
 use App\Jobs\ImportFantraxPlayersJob;
 use App\Jobs\ImportPlayersJob;
 use App\Traits\HasAPITrait;
+use App\Services\ImportCapWages;
+
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
-use App\Jobs\ImportCapWagesJob;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Bus\Batch;
 use Throwable;
+
 
 
 
@@ -166,8 +168,9 @@ class PlayerImportController extends Controller
             'Forbidden'
         );
 
-        // You may pass a custom per-page limit, e.g. ImportCapWagesJob::dispatch(50);
-        ImportCapWagesJob::dispatch();
+
+        (new ImportCapWages())->import();        
+        
 
         return response()->json([
             'message' => 'CapWages contract import job dispatched',
