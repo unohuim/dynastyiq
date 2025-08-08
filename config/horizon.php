@@ -193,6 +193,20 @@ return [
             'timeout' => 600,
             'nice' => 0,
         ],
+
+        'supervisor-pbp' => [
+            'connection' => 'redis',
+            'queue' => ['pbp'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 10,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
@@ -206,7 +220,7 @@ return [
 
         'local' => [
             'supervisor-1' => [
-                'maxProcesses' => 7,
+                'maxProcesses' => 10,
             ],
         ],
     ],
