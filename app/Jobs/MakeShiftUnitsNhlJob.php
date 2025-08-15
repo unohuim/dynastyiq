@@ -19,8 +19,4 @@ class MakeShiftUnitsNhlJob extends BaseNhlJob
         return app(MakeNhlGameShiftUnits::class)->make($gameId);
     }
 
-    public function tags(): array
-    {
-        return ['make-nhl-shift-units', "game-id:{$this->gameId}"];
-    }
 }
