@@ -180,7 +180,7 @@ return [
     */
 
     'defaults' => [
-        'supervisor-default' => [
+        'supervisor-1' => [
             'connection' => 'redis',
             'queue' => ['default'],
             'balance' => 'auto',
@@ -240,23 +240,21 @@ return [
         ],
     ],
 
-    // 'environments' => [
-    //     'production' => [
-    //         'supervisor-default' => [
-    //             'connection'   => 'redis',
-    //             'minProcesses' => 10,
-    //             'maxProcesses' => 15,
-    //             'balanceMaxShift' => 1,
-    //             'balanceCooldown' => 3,
-    //         ],
-    //     ],
+    'environments' => [
+        'production' => [
+            'supervisor-1' => [
+                'minProcesses' => 10,
+                'maxProcesses' => 15,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 3,
+            ],
+        ],
 
-    //     'local' => [
-    //         'supervisor-default' => [
-    //             'connection'   => 'redis',
-    //             'minProcesses' => 10,
-    //             'maxProcesses' => 15,
-    //         ],
-    //     ],
-    // ],
+        'local' => [
+            'supervisor-1' => [                
+                'minProcesses' => 10,
+                'maxProcesses' => 15,
+            ],
+        ],
+    ],
 ];
