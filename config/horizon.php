@@ -283,6 +283,21 @@ return [
             'timeout' => 600,
             'nice' => 0,
         ],
+
+        'supervisor-boxscore' => [
+            'connection' => 'redis',
+            'queue' => ['boxscore'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 1,
+            'maxProcesses' => 3,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
     ],
 
     // 'environments' => [

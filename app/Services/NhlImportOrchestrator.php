@@ -131,7 +131,7 @@ class NhlImportOrchestrator
                 dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId))->onQueue('shifts');
                 break;
             case 'boxscore':
-                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId))->onQueue('pbp');
+                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId))->onQueue('boxscore');
                 break;
             case 'shift-units': 
                 dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId))->onQueue('make-units');
@@ -197,7 +197,7 @@ class NhlImportOrchestrator
         $lockKey = "season-sum-dispatch:{$seasonId}";
         if (Cache::lock($lockKey, 600)->get()) { // 10 min lock
             try {
-                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('boxscore');
+                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('summary');
             } finally {
                 Cache::lock($lockKey)->release();
             }
