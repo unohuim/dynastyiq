@@ -10,7 +10,11 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Carbon;
 
+/**
+ * Dispatch discovery over a date range (inclusive), one day-per-job via NhlDiscovery.
+ */
 class NhlDiscoveryJob implements ShouldQueue
 {
     use Dispatchable;
@@ -18,48 +22,42 @@ class NhlDiscoveryJob implements ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    /**
-     * If set, tells the job to run sync($daysBack) instead of init().
-     *
-     * @var int|null
-     */
-    public ?int $daysBack;
-
     public const TAG_DISCOVERY_RUN = 'nhl-discovery-run';
 
-    /**
-     * @param int|null $daysBack Number of days to look back (sync mode) or null for full init
-     */
-    public function __construct(?int $daysBack = null)
-    {
-        $this->daysBack = $daysBack;
-    }
+    /** @var Carbon */
+    public Carbon $start;
+
+    /** @var Carbon */
+    public Carbon $end;
+
+    /** @var int */
+    public int $timeout = 300;
+
+    /** @var int */
+    public int $tries = 1;
 
     /**
-     * Handle the job.
+     * @param Carbon|string $start Later date (YYYY-MM-DD or Carbon)
+     * @param Carbon|string $end   Earlier date (YYYY-MM-DD or Carbon)
      */
+    public function __construct($start, $end)
+    {
+        $this->start = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse((string) $start)->startOfDay();
+        $this->end   = $end   instanceof Carbon ? $end->copy()->startOfDay()   : Carbon::parse((string) $end)->startOfDay();
+    }
+
     public function handle(NhlDiscovery $discovery): void
     {
-        $discovery->sync($this->daysBack);
+        $discovery->discoverRange($this->start, $this->end);
     }
 
-
-    /**
-     * Tags for Horizon monitoring.
-     */
     public function tags(): array
     {
-        if (is_int($this->daysBack)) {
-            return [
-                self::TAG_DISCOVERY_RUN,
-                "mode:sync",
-                "daysBack:{$this->daysBack}",
-            ];
-        }
-
         return [
             self::TAG_DISCOVERY_RUN,
-            'mode:init',
+            'mode:range',
+            'start:' . $this->start->toDateString(),
+            'end:' . $this->end->toDateString(),
         ];
     }
 }

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Services\NhlDiscovery;
+use App\Jobs\NhlDiscoveryJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -26,67 +26,66 @@ class NhlDiscoverCommand extends Command
 
     protected $description = 'Discover NHL games for a date window and dispatch per-day discovery jobs.';
 
-    public function handle(NhlDiscovery $discovery): int
+    public function handle(): int
     {
-        $season = (string) ($this->option('season') ?? '');
+        $season  = (string) ($this->option('season') ?? '');
         $startOpt = $this->parseDate((string) ($this->option('start') ?? ''));
         $endOpt   = $this->parseDate((string) ($this->option('end') ?? ''));
         $daysRaw  = $this->option('days');
-        $days     = is_null($daysRaw) || $daysRaw === '' ? null : (int) $daysRaw;
+        $days     = ($daysRaw === null || $daysRaw === '') ? null : (int) $daysRaw;
 
-        // 1) Season overrides everything else
+        // Season overrides everything else
         if ($season !== '') {
-            [$seasonStart, $seasonEnd] = $this->seasonBounds($season); // start=later Aug 31, end=earlier Sep 1
+            [$seasonStart, $seasonEnd] = $this->seasonBounds($season);
             if (!$seasonStart || !$seasonEnd) {
                 $this->error("Invalid season: {$season}");
                 return self::INVALID;
             }
-            $discovery->discoverRange($seasonStart, $seasonEnd);
+            dispatch(new NhlDiscoveryJob($seasonStart, $seasonEnd));
             $this->info("Queued discovery for season {$season} ({$seasonStart->toDateString()} → {$seasonEnd->toDateString()}).");
             return self::SUCCESS;
         }
 
-        // 2) If both start and end given, ignore days
+        // If both start and end given, ignore days
         if ($startOpt && $endOpt) {
             [$start, $end] = $this->normalizeOrder($startOpt, $endOpt);
         }
-        // 3) start + days => end = start - days
+        // start + days => end = start - days
         elseif ($startOpt && is_int($days)) {
             $start = $startOpt;
             $end   = $startOpt->copy()->subDays(max(0, $days));
         }
-        // 4) end + days => start = end + days
+        // end + days => start = end + days
         elseif ($endOpt && is_int($days)) {
             $end   = $endOpt;
             $start = $endOpt->copy()->addDays(max(0, $days));
         }
-        // 5) start only => end = minSeasonEndDate
+        // start only => end = minSeasonEndDate
         elseif ($startOpt) {
             $start = $startOpt;
             $end   = $this->minSeasonEndDate();
         }
-        // 6) end only => start = today
+        // end only => start = today
         elseif ($endOpt) {
             $start = Carbon::today();
             $end   = $endOpt;
         }
-        // 7) days only => start = today, end = today - days
+        // days only => start = today, end = today - days
         elseif (is_int($days)) {
             $start = Carbon::today();
             $end   = Carbon::today()->copy()->subDays(max(0, $days));
         }
-        // 8) default => start = today, end = minSeasonEndDate
+        // default => start = today, end = minSeasonEndDate
         else {
             $start = Carbon::today();
             $end   = $this->minSeasonEndDate();
         }
 
-        // Ensure start is the later date (iterate backwards inclusive)
         if ($start->lt($end)) {
             [$start, $end] = [$end, $start];
         }
 
-        $discovery->discoverRange($start, $end);
+        dispatch(new NhlDiscoveryJob($start, $end));
         $this->info("Queued discovery {$start->toDateString()} → {$end->toDateString()}.");
 
         return self::SUCCESS;
