@@ -242,7 +242,8 @@ return [
 
     'environments' => [
         'production' => [
-            'supervisor-1' => [
+            'supervisor-default' => [
+                'connection'   => 'redis',
                 'minProcesses' => 10,
                 'maxProcesses' => 15,
                 'balanceMaxShift' => 1,
@@ -252,6 +253,7 @@ return [
 
         'local' => [
             'supervisor-default' => [
+                'connection'   => 'redis',
                 'minProcesses' => 10,
                 'maxProcesses' => 15,
             ],
