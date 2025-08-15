@@ -32,6 +32,7 @@ class NhlDiscoverDayJob implements ShouldQueue
     public function handle(NhlDiscoverGames $service): void
     {
         try {
+            \Log::warning('Start discovering the day:', 'date'=>$this->date);
             $service->discoverDay($this->date);
         } catch (RequestException $e) {
             $status = $e->response?->status();
