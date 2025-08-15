@@ -240,21 +240,21 @@ return [
         ],
     ],
 
-    'environments' => [
-        'production' => [
-            'supervisor-1' => [
-                'minProcesses' => 10,
-                'maxProcesses' => 15,
-                'balanceMaxShift' => 1,
-                'balanceCooldown' => 3,
-            ],
-        ],
+    // 'environments' => [
+    //     'production' => [
+    //         'supervisor-1' => [
+    //             'minProcesses' => 10,
+    //             'maxProcesses' => 15,
+    //             'balanceMaxShift' => 1,
+    //             'balanceCooldown' => 3,
+    //         ],
+    //     ],
 
-        'local' => [
-            'supervisor-1' => [                
-                'minProcesses' => 10,
-                'maxProcesses' => 15,
-            ],
-        ],
-    ],
+    //     'local' => [
+    //         'supervisor-1' => [                
+    //             'minProcesses' => 1,
+    //             'maxProcesses' => 15,
+    //         ],
+    //     ],
+    // ],
 ];
