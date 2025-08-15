@@ -128,16 +128,16 @@ class NhlImportOrchestrator
                 dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId))->onQueue('summary');
                 break;
             case 'shifts':
-                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId))->onQueue('pbp');
+                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId))->onQueue('shifts');
                 break;
             case 'boxscore':
                 dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId))->onQueue('pbp');
                 break;
             case 'shift-units': 
-                dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId));
+                dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId))->onQueue('make-units');
                 break;
             case 'connect-events':
-                dispatch(new \App\Jobs\ConnectEventsShiftUnitsNhlJob($gameId));
+                dispatch(new \App\Jobs\ConnectEventsShiftUnitsNhlJob($gameId))->onQueue('connect-events');
                 break;
             
         }
@@ -169,7 +169,7 @@ class NhlImportOrchestrator
      */
     private function seasonSummary(int $gameId, string $type): void
     {
-        if ($type !== 'summary') {
+        if ($type !== 'boxscore') {
             return;
         }
 
@@ -185,7 +185,7 @@ class NhlImportOrchestrator
         // Any summaries not completed yet? (scheduled/running/error block the season sum)
         $notDone = DB::table('nhl_import_progress')
             ->where('season_id', $seasonId)
-            ->where('import_type', 'summary')
+            ->where('import_type', 'boxscore')
             ->whereIn('status', ['scheduled', 'running', 'error'])
             ->count();
 
