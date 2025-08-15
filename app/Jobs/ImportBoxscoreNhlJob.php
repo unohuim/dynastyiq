@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\ImportNhlBoxscore;
+use App\Jobs\BaseNhlJob;
 
 class ImportBoxscoreNhlJob extends BaseNhlJob
 {

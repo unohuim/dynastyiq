@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\MakeNhlGameShiftUnits;
+use App\Jobs\BaseNhlJob;
 
 class MakeShiftUnitsNhlJob extends BaseNhlJob
 {

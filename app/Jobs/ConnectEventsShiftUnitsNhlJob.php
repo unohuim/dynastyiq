@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\ConnectEventsToUnitShifts;
+use App\Jobs\BaseNhlJob;
 
 class ConnectEventsShiftUnitsNhlJob extends BaseNhlJob
 {

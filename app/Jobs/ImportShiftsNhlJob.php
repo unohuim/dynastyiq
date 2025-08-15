@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\ImportNhlShifts;
+use App\Jobs\BaseNhlJob;
+
 
 class ImportShiftsNhlJob extends BaseNhlJob
 {
