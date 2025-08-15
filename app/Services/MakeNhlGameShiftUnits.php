@@ -201,18 +201,22 @@ class MakeNhlGameShiftUnits
             $unit = $this->findOrCreateUnit($unitType, $currentPlayerIds, $teamAbbrev);
             $teamId = $teamAbbrev ? $game->getTeamIdByAbbrev($teamAbbrev) : null;
 
-            $unitShift = NhlUnitShift::create([
-                'unit_id'            => $unit->id,
-                'nhl_game_id'        => $game->nhl_game_id,
+            $unitShift = NhlUnitShift::updateOrCreate(
+                [
+                    'unit_id'            => $unit->id,
+                    'nhl_game_id'        => $game->nhl_game_id,
+                    'start_game_seconds' => $startTime,
+                ],
+                [
                 'period'             => $this->periodFromSeconds($startTime),
                 'start_time'         => $this->secondsToTimeString($startTime),
                 'end_time'           => null,
-                'start_game_seconds' => $startTime,
                 'end_game_seconds'   => 0,
                 'seconds'            => 0,
                 'team_id'            => $teamId,
                 'team_abbrev'        => $teamAbbrev,
-            ]);
+                ]
+            );
 
             $activeUnitShiftIds[$unitType] = $unitShift->id;
             $lastUnit = ['unit' => $unit, 'players' => $currentPlayerIds];

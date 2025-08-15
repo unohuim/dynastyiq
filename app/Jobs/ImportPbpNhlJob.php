@@ -19,6 +19,5 @@ class ImportPbpNhlJob extends BaseNhlJob
     {
         return app(ImportNHLPlayByPlay::class)->import($gameId);
     }
-
     
 }
