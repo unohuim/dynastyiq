@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use App\Repositories\NhlImportProgressRepo;
 use App\Jobs\NhlDiscoverRangeJob;
-use App\Jobs\SeasonSumJob;
+
 
 class NhlDiscovery
 {
@@ -29,22 +29,19 @@ class NhlDiscovery
         $this->dispatchSeasonChunkJobs($start, $end);
     }
 
-    /** Nightly sync: discover recent games and then enqueue one SeasonSumJob per touched season. */
+    /** Nightly sync: discover recent games. */
     public function sync(int $daysBack = 14): void
     {
         $end   = Carbon::today()->endOfDay();
         $start = $end->copy()->subDays(max(0, $daysBack))->startOfDay();
 
         $seasonIds = $this->dispatchWindowChunkJobs($start, $end); // returns array of season_ids
-        foreach (array_unique($seasonIds) as $sid) {
-            SeasonSumJob::dispatch($sid);
-        }
     }
 
     /* -------------------- internals -------------------- */
 
     /**
-     * Dispatch 1 job per chunk within each season; batch them, then enqueue SeasonSumJob(seasonId).
+     * Dispatch 1 job per chunk within each season; batch them.
      */
     private function dispatchSeasonChunkJobs(Carbon $globalStart, Carbon $globalEnd): void
     {
@@ -83,8 +80,7 @@ class NhlDiscovery
 
             if ($jobs) {
                 Bus::batch($jobs)
-                    ->name("nhl-discovery:{$seasonId}")
-                    ->then(fn () => SeasonSumJob::dispatch($seasonId))
+                    ->name("nhl-discovery:{$seasonId}")                    
                     ->dispatch();
             }
 

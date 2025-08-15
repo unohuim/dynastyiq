@@ -6,6 +6,9 @@ namespace App\Services;
 
 use App\Repositories\NhlImportProgressRepo;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use App\Jobs\SeasonSumJob;
+
 
 class NhlImportOrchestrator
 {
@@ -57,6 +60,7 @@ class NhlImportOrchestrator
     {
         $items = (int)($meta['items_count'] ?? 0);
         $this->repo->markCompleted($gameId, $type, $items);
+        $this->seasonSummary($gameId, $type);
         $this->advance($gameId, $type);
     }
 
@@ -161,4 +165,48 @@ class NhlImportOrchestrator
             $this->repo->markStaleRunningToError($type, $cutoff);
         }
     }
+
+
+
+    /**
+     * If a SUMMARY just completed, dispatch SeasonSumJob for that season
+     * only when **all** season summaries are completed (no scheduled/running/error left).
+     */
+    private function seasonSummary(int $gameId, string $type): void
+    {
+        if ($type !== 'summary') {
+            return;
+        }
+
+        // Find the season for this game
+        $seasonId = DB::table('nhl_import_progress')
+            ->where('game_id', $gameId)
+            ->value('season_id');
+
+        if (!$seasonId) {
+            return;
+        }
+
+        // Any summaries not completed yet? (scheduled/running/error block the season sum)
+        $notDone = DB::table('nhl_import_progress')
+            ->where('season_id', $seasonId)
+            ->where('import_type', 'summary')
+            ->whereIn('status', ['scheduled', 'running', 'error'])
+            ->count();
+
+        if ($notDone > 0) {
+            return; // still work to do
+        }
+
+        // Best-effort de-dupe so multiple concurrent completions don't double-dispatch
+        $lockKey = "season-sum-dispatch:{$seasonId}";
+        if (Cache::lock($lockKey, 600)->get()) { // 10 min lock
+            try {
+                dispatch(new \App\Jobs\SeasonSumJob($seasonId));
+            } finally {
+                Cache::lock($lockKey)->release();
+            }
+        }
+    }
+
 }
