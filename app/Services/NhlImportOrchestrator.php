@@ -20,28 +20,23 @@ class NhlImportOrchestrator
     }
 
     /** Daily entry point: scan tracker and dispatch eligible jobs. */
-    public function processScheduled(int $perTypeLimit = 500, ?string $seasonId = null, ?int $gameType = null): void
+    public function processScheduled(string $gameDate): void
     {
-        // enforce order: pbp -> summary -> shifts -> boxscore -> unit-shifts -> connect-events
         foreach (['pbp','summary','shifts','boxscore','shift-units','connect-events'] as $type) {
             $gameIds = DB::table('nhl_import_progress')
-                ->select('game_id')
                 ->where('import_type', $type)
                 ->where('status', 'scheduled')
-                ->when($seasonId, fn ($q) => $q->where('season_id', $seasonId))
-                ->when(!is_null($gameType), fn ($q) => $q->where('game_type', $gameType))
-                ->orderByDesc('game_date')
-                ->limit($perTypeLimit)
+                ->whereDate('game_date', $gameDate)
                 ->pluck('game_id');
 
             foreach ($gameIds as $gameId) {
                 if ($this->readyFor((int)$gameId, $type)) {
-
-                    $this->dispatchJob((int)$gameId, $type); // claims -> running inside
+                    $this->dispatchJob((int)$gameId, $type);
                 }
             }
         }
     }
+
 
     /** Claim a (game_id, type) for work: scheduled → running. */
     public function claim(int $gameId, string $type): bool
@@ -130,13 +125,13 @@ class NhlImportOrchestrator
                 dispatch(new \App\Jobs\ImportPbpNhlJob($gameId))->onQueue('pbp');
                 break;
             case 'summary':
-                dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId));
+                dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId))->onQueue('summary');
                 break;
             case 'shifts':
-                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId));
+                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId))->onQueue('pbp');
                 break;
             case 'boxscore':
-                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId));
+                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId))->onQueue('pbp');
                 break;
             case 'shift-units': 
                 dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId));
@@ -202,7 +197,7 @@ class NhlImportOrchestrator
         $lockKey = "season-sum-dispatch:{$seasonId}";
         if (Cache::lock($lockKey, 600)->get()) { // 10 min lock
             try {
-                dispatch(new \App\Jobs\SeasonSumJob($seasonId));
+                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('summary');
             } finally {
                 Cache::lock($lockKey)->release();
             }

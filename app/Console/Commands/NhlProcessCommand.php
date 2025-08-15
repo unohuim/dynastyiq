@@ -1,24 +1,35 @@
 <?php
-// app/Console/Commands/NhlProcessCommand.php
+
+declare(strict_types=1);
 
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use App\Services\NhlImportOrchestrator;
+use Illuminate\Support\Facades\DB;
+use App\Jobs\NhlOrchestrateDateJob;
 
 class NhlProcessCommand extends Command
 {
-    protected $signature = 'nhl:process {--limit=500} {--season=} {--gameType=}';
-    protected $description = 'Scan tracker and dispatch eligible NHL import jobs.';
+    protected $signature = 'nhl:process {--date=}';
+    protected $description = 'Dispatch one orchestrator job per game_date with scheduled work.';
 
-    public function handle(NhlImportOrchestrator $orchestrator): int
+    public function handle(): int
     {
-        $limit    = (int) $this->option('limit');
-        $seasonId = $this->option('season') ?: null;
-        $gameType = $this->option('gameType') !== null ? (int) $this->option('gameType') : null;
+        $single = $this->option('date');
 
-        $orchestrator->processScheduled($limit, $seasonId, $gameType);
-        $this->info('Processed scheduled imports.');
+        $dates = $single
+            ? collect([$single])
+            : DB::table('nhl_import_progress')
+                ->where('status', 'scheduled')
+                ->distinct()
+                ->orderBy('game_date')
+                ->pluck('game_date');
+
+        foreach ($dates as $date) {
+            dispatch(new NhlOrchestrateDateJob((string)$date))->onQueue('orchestrator');
+        }
+
+        $this->info('Dispatched for '.count($dates).' game_date(s).');
         return self::SUCCESS;
     }
 }

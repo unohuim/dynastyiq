@@ -180,7 +180,7 @@ return [
     */
 
     'defaults' => [
-        'supervisor-1' => [
+        'supervisor-default' => [
             'connection' => 'redis',
             'queue' => ['default'],
             'balance' => 'auto',
@@ -199,8 +199,38 @@ return [
             'queue' => ['pbp'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'minProcesses' => 10,
-            'maxProcesses' => 15,
+            'minProcesses' => 1,
+            'maxProcesses' => 10,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
+
+        'supervisor-orchestrator' => [
+            'connection' => 'redis',
+            'queue' => ['orchestrator'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 1,
+            'maxProcesses' => 3,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
+
+        'supervisor-summary' => [
+            'connection' => 'redis',
+            'queue' => ['summary'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 1,
+            'maxProcesses' => 10,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
@@ -221,7 +251,7 @@ return [
         ],
 
         'local' => [
-            'supervisor-1' => [
+            'supervisor-default' => [
                 'minProcesses' => 10,
                 'maxProcesses' => 15,
             ],
