@@ -197,7 +197,7 @@ class NhlImportOrchestrator
         $lockKey = "season-sum-dispatch:{$seasonId}";
         if (Cache::lock($lockKey, 600)->get()) { // 10 min lock
             try {
-                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('summary');
+                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('boxscore');
             } finally {
                 Cache::lock($lockKey)->release();
             }
