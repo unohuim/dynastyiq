@@ -11,7 +11,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use App\Services\NhlImportOrchestrator;
 
-class NhlOrchestrateDateJob implements ShouldQueue
+class NhlOrchestratorJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
