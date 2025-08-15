@@ -8,8 +8,6 @@ use App\Services\ImportNHLPlayByPlay;
 
 class ImportPbpNhlJob extends BaseNhlJob
 {
-    public $queue = 'pbp';
-    
     
     protected function stageName(): string
     {

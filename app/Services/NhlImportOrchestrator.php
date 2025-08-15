@@ -123,7 +123,7 @@ class NhlImportOrchestrator
 
         switch ($type) {
             case 'pbp':
-                dispatch(new \App\Jobs\ImportPbpNhlJob($gameId));
+                dispatch(new \App\Jobs\ImportPbpNhlJob($gameId))->onQueue('pbp');
                 break;
             case 'summary':
                 dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId));
