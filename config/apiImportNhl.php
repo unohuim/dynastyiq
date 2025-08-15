@@ -25,7 +25,7 @@ return [
     |
     */
 
-    'min_season_id' => env('NHL_MIN_SEASON_ID', '20092010'),
+    'min_season_id' => env('NHL_MIN_SEASON_ID', '20192020'),
     'max_weeks_discovery_job' => env('MAX_WEEKS_DISCOVERY_JOB', 13),
     'max_pbp_seconds'   => env('MAX_PBP_SECONDS', 7200),
     'max_shifts_seconds'   => env('MAX_SHIFTS_SECONDS', 7200),

@@ -25,7 +25,9 @@ class NhlDiscovery
     /** Full backfill: dispatch jobs per season in chunks up to max_weeks_discovery_job (Sep 1 → Aug 31). */
     public function init(): void
     {
-        [$start, $end] = $this->seasonWindowFromLowerBound((string) config('nhlimport.min_season_id', '20092010'));
+        $min_season_id = config('apiImportNhl.min_season_id', '20192020');
+        \Log::warning("min_season_id:  {$min_season_id}");
+        [$start, $end] = $this->seasonWindowFromLowerBound((string) config('apiImportNhl.min_season_id', '20192020'));
         $this->dispatchSeasonChunkJobs($start, $end);
     }
 
