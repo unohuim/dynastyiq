@@ -83,7 +83,7 @@ abstract class BaseNhlJob implements ShouldQueue
     public function tags(): array
     {
         return [
-            'nhl-import' . $this->stageName(),
+            'nhl-import-' . $this->stageName(),
             "game-id:{$this->gameId}",
         ];
     }
