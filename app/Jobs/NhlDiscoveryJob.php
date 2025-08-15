@@ -40,12 +40,9 @@ class NhlDiscoveryJob implements ShouldQueue
      */
     public function handle(NhlDiscovery $discovery): void
     {
-        if (is_int($this->daysBack)) {
-            $discovery->sync($this->daysBack);
-        } else {
-            $discovery->init();
-        }
+        $discovery->sync($this->daysBack);
     }
+
 
     /**
      * Tags for Horizon monitoring.
