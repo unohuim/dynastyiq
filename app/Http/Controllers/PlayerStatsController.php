@@ -10,9 +10,19 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 use Illuminate\Routing\Controller as BaseController;
+use App\Services\PlayerService;
 
 class PlayerStatsController extends BaseController
 {
+
+    protected PlayerService $playerService;
+
+    public function __construct(PlayerService $playerService)
+    {
+        $this->playerService = $playerService;
+    }
+
+    
     /**
      * Show the page with initial payload.
      *

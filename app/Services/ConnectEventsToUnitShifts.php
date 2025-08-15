@@ -15,7 +15,7 @@ class ConnectEventsToUnitShifts
         $this->gameId = $gameId;
     }
 
-    public function connect(): void
+    public function connect(): int
     {
         $unitShifts = NhlUnitShift::where('nhl_game_id', $this->gameId)
             ->orderBy('start_game_seconds')
@@ -28,10 +28,10 @@ class ConnectEventsToUnitShifts
         $criticalStoppage = ['stoppage', 'penalty', 'goal', 'period-end', 'game-end'];
         $criticalStart = ['period-start', 'faceoff'];
 
-        // $coreShifts = [];
-        // $criticalShifts =[];
-        // $startShifts = [];
+        
 
+        $eventsCount = 0;
+        
         foreach ($events as $event) {
             $isCriticalStoppage = in_array($event->type_desc_key, $criticalStoppage);
             $isCriticalStart = in_array($event->type_desc_key, $criticalStart);
@@ -69,7 +69,11 @@ class ConnectEventsToUnitShifts
                     $shift->events()->syncWithoutDetaching($event->id);
                 }
             }
+
+            $eventsCount++;
         }
+
+        return $eventsCount;
     }
 
 

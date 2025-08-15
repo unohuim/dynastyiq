@@ -13,19 +13,20 @@ class ImportNhlBoxscore
      * Import boxscore data for a given NHL game.
      *
      * @param int|string $nhlGameId
-     * @return void
+     * @return int
      */
-    public function import($nhlGameId): void
+    public function import($nhlGameId): int
     {
         $response = $this->getAPIData('nhl', 'boxscore', ['gameId' => $nhlGameId]);
 
         if (empty($response['playerByGameStats'])) {
-            return;
+            return 0;
         }
 
 
         $stats = $response['playerByGameStats'];
 
+        $playerCount = 0;
 
         foreach (['awayTeam', 'homeTeam'] as $teamSide) {
             if (empty($stats[$teamSide])) {
@@ -105,7 +106,11 @@ class ImportNhlBoxscore
                     );
                 }
             }
+
+            $playerCount++;
         }
+
+        return $playerCount;
     }
 
     /**

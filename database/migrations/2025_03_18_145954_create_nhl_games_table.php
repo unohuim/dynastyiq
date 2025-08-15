@@ -12,7 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('nhl_games', function (Blueprint $table) {
-            $table->id('nhl_game_id');
+            $table->unsignedBigInteger('nhl_game_id')->primary();
             $table->string('season_id');
             $table->integer('game_type');
             $table->date('game_date');

@@ -19,9 +19,9 @@ class ImportNhlShifts
      * including calculated fields for shift start/end seconds and duration seconds.
      *
      * @param string $nhlGameId
-     * @return void
+     * @return int
      */
-    public function import(string $nhlGameId): void
+    public function import(string $nhlGameId): int
     {
         // Fetch shifts from the special base URL
         $response = $this->getAPIDataFullUrl(
@@ -29,10 +29,12 @@ class ImportNhlShifts
         );
 
         if (empty($response['data'])) {
-            return;
+            return 0;
         }
 
         $shiftsData = $response['data'];
+
+        $shiftsCount = 0;
 
         foreach ($shiftsData as $shift) {
             $playerId = $shift['playerId'] ?? null;
@@ -75,7 +77,9 @@ class ImportNhlShifts
                     'hex_value' => $shift['hexValue'] ?? null,
                     'unit_id' => null, // to be assigned later
                 ]
-            );            
+            );  
+
+            $shiftsCount++;          
         }
 
 
@@ -112,6 +116,7 @@ class ImportNhlShifts
             );
         }
 
+        return $shiftsCount;
     }
 
 }

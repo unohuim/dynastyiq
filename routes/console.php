@@ -1,10 +1,9 @@
 <?php
 
 use Illuminate\Foundation\Console\ClosureCommand;
-use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
-Artisan::command('inspire', function () {
-    /** @var ClosureCommand $this */
-    $this->comment(Inspiring::quote());
-})->purpose('Display an inspiring quote');
+
+// Schedule::command('nhl:discover --days=7')->dailyAt('03:30');
+// Schedule::command('nhl:process --limit=500')->everyTenMinutes();

@@ -12,20 +12,19 @@ use Illuminate\Support\Collection;
 
 class MakeNhlGameShiftUnits
 {
-    public function make(int $gameId): void
+    public function make(int $gameId): int
     {
         $game = NhlGame::find($gameId);
         if (!$game) {
-            return;
+            return 0;
         }
-
 
         $shifts = NhlShift::where('nhl_game_id', $gameId)
             ->orderBy('shift_start_seconds')
             ->get();
 
         if ($shifts->isEmpty()) {
-            return;
+            return 0;
         }
 
         $playerNhlIds = $shifts->pluck('nhl_player_id')->unique()->filter()->all();
@@ -33,9 +32,13 @@ class MakeNhlGameShiftUnits
 
         $eventsByTeam = $this->buildShiftEventsByTeam($shifts);
 
+        $eventsCount = 0;
         foreach ($eventsByTeam as $teamAbbrev => $events) {
             $this->processEventsForTeam($game, $teamAbbrev, $events, $players, $shifts);
+            $eventsCount++;
         }
+
+        return $eventsCount;
     }
 
     protected function buildShiftEventsByTeam(Collection $shifts): array
@@ -49,13 +52,13 @@ class MakeNhlGameShiftUnits
             }
 
             $eventsByTeam[$team]->push([
-                'time' => $shift->shift_start_seconds,
-                'type' => 'start',
+                'time'  => (int) $shift->shift_start_seconds,
+                'type'  => 'start',
                 'shift' => $shift,
             ]);
             $eventsByTeam[$team]->push([
-                'time' => $shift->shift_end_seconds,
-                'type' => 'end',
+                'time'  => (int) $shift->shift_end_seconds,
+                'type'  => 'end',
                 'shift' => $shift,
             ]);
         }
@@ -67,104 +70,102 @@ class MakeNhlGameShiftUnits
         return $eventsByTeam;
     }
 
-    protected function processEventsForTeam(NhlGame $game, string $teamAbbrev, Collection $events, Collection $players, Collection $shifts): void
-    {
-        $onIce = [
-            'F' => collect(),
-            'D' => collect(),
-            'G' => collect(),
-        ];
-
-        $lastUnits = [
-            'F' => null,
-            'D' => null,
-            'G' => null,
-        ];
-
-        $activeUnitShiftIds = [
-            'F' => null,
-            'D' => null,
-            'G' => null,
-        ];
+    protected function processEventsForTeam(
+        NhlGame $game,
+        string $teamAbbrev,
+        Collection $events,
+        Collection $players,
+        Collection $shifts
+    ): void {
+        $onIce = ['F' => collect(), 'D' => collect(), 'G' => collect()];
+        $lastUnits = ['F' => null, 'D' => null, 'G' => null];
+        $activeUnitShiftIds = ['F' => null, 'D' => null, 'G' => null];
 
         $playerTeamAbbrevs = $shifts->pluck('team_abbrev', 'nhl_player_id')->toArray();
 
-        $lastChangeTime = null;
-
-        foreach ($events as $event) {
-            $time = $event['time'];
-            $shift = $event['shift'];
-            $player = $players->get($shift->nhl_player_id);
-
-
-            if (!$player) {
-                echo("<p>player is null</p>");
-                continue;
-            }
-
-
-            $posType = $player->pos_type ?? null;
-            if (!in_array($posType, ['F', 'D', 'G'])) {
-                continue;
-            }
-
-
-            // Ignore players not on this team (sanity check)
-            $playerTeam = $playerTeamAbbrevs[$player->nhl_id] ?? null;
-            if ($playerTeam !== $teamAbbrev) {
-                echo("<p>teamAbbrev is null</p>");
-                continue;
-            }
-
-            // echo("<p>" . $teamAbbrev . "; time: " . $time . "; player:  "  . $player->nhl_id . "(" . $player->last_name . ", " . $player->first_name 
-
-            //     . ") " . $event['type'] . ""
-
-            //     . "</p>");
-
-
-            if ($lastChangeTime !== null && $lastChangeTime !== $time) {
-                foreach (['F', 'D', 'G'] as $unitType) {
-                    $this->closeUnitShiftIfChanged(
-                        $game,
-                        $unitType,
-                        $onIce[$unitType],
-                        $lastUnits[$unitType],
-                        $lastChangeTime,
-                        $time,
-                        $activeUnitShiftIds,
-                        $playerTeamAbbrevs,
-                        $teamAbbrev
-                    );
+        // Group by timestamp; inject period boundaries (1200, 2400, 3600 if applicable)
+        $grouped = $events->groupBy('time');
+        $lastTime = (int) ($events->last()['time'] ?? 0);
+        foreach ([1200, 2400, 3600] as $boundary) {
+            if ($boundary > 0 && $boundary <= max($lastTime, 3600)) {
+                if (!isset($grouped[$boundary])) {
+                    $grouped[$boundary] = collect();
                 }
+                $grouped[$boundary]->push(['time' => $boundary, 'type' => 'boundary']);
             }
+        }
 
-            if ($event['type'] === 'start') {
-                $onIce[$posType][$player->nhl_id] = $player;
-            } elseif ($event['type'] === 'end') {
+        // Sort timestamps numerically
+        $grouped = collect($grouped)->sortKeys()->map(fn($c) => $c->values());
+
+        foreach ($grouped as $time => $bucket) {
+            $isBoundary = $bucket->contains(fn($e) => ($e['type'] ?? null) === 'boundary');
+
+            // 1) apply ENDs
+            foreach ($bucket as $event) {
+                if (($event['type'] ?? null) !== 'end') {
+                    continue;
+                }
+                $shift  = $event['shift'];
+                $player = $players->get($shift->nhl_player_id);
+                if (!$player) {
+                    continue;
+                }
+                $posType = $player->pos_type ?? null;
+                if (!in_array($posType, ['F', 'D', 'G'], true)) {
+                    continue;
+                }
+                if (($playerTeamAbbrevs[$player->nhl_id] ?? null) !== $teamAbbrev) {
+                    continue;
+                }
                 $onIce[$posType]->forget($player->nhl_id);
             }
 
+            // 2) apply STARTs
+            foreach ($bucket as $event) {
+                if (($event['type'] ?? null) !== 'start') {
+                    continue;
+                }
+                $shift  = $event['shift'];
+                $player = $players->get($shift->nhl_player_id);
+                if (!$player) {
+                    continue;
+                }
+                $posType = $player->pos_type ?? null;
+                if (!in_array($posType, ['F', 'D', 'G'], true)) {
+                    continue;
+                }
+                if (($playerTeamAbbrevs[$player->nhl_id] ?? null) !== $teamAbbrev) {
+                    continue;
+                }
+                $onIce[$posType][$player->nhl_id] = $player;
+            }
 
-            $lastChangeTime = $time;
+            // 3) boundary: force close/open at T to split periods
+            foreach (['F', 'D', 'G'] as $unitType) {
+                $this->closeUnitShiftIfChanged(
+                    $game,
+                    $unitType,
+                    $onIce[$unitType],
+                    $lastUnits[$unitType],
+                    (int) $time,
+                    (int) $time,
+                    $activeUnitShiftIds,
+                    $playerTeamAbbrevs,
+                    $teamAbbrev,
+                    $isBoundary // force split at period boundaries
+                );
+            }
         }
 
-        $endTime = $events->last()['time'] ?? 0;
+        // Finalize any open units at final timestamp
+        $endTime = (int) ($events->last()['time'] ?? 0);
         foreach (['F', 'D', 'G'] as $unitType) {
-            $this->closeUnitShiftIfChanged(
-                $game,
-                $unitType,
-                $onIce[$unitType],
-                $lastUnits[$unitType],
-                $lastChangeTime,
-                $endTime,
-                $activeUnitShiftIds,
-                $playerTeamAbbrevs,
-                $teamAbbrev
-            );
+            if ($activeUnitShiftIds[$unitType]) {
+                $this->closeUnitShift($activeUnitShiftIds[$unitType], $endTime);
+            }
         }
     }
-
 
     protected function closeUnitShiftIfChanged(
         NhlGame $game,
@@ -175,7 +176,8 @@ class MakeNhlGameShiftUnits
         int $endTime,
         array &$activeUnitShiftIds,
         array $playerTeamAbbrevs,
-        string $teamAbbrev
+        string $teamAbbrev,
+        bool $forceBoundary = false
     ): void {
         $currentPlayerIds = $currentPlayers->keys()->sort()->values()->all();
 
@@ -190,35 +192,30 @@ class MakeNhlGameShiftUnits
 
         $lineupChanged = !$lastUnit || $lastUnit['players'] !== $currentPlayerIds;
 
-        if ($lineupChanged) {
+        if ($lineupChanged || $forceBoundary) {
             if ($lastUnit && $activeUnitShiftIds[$unitType]) {
                 $this->closeUnitShift($activeUnitShiftIds[$unitType], $startTime);
                 $activeUnitShiftIds[$unitType] = null;
             }
 
             $unit = $this->findOrCreateUnit($unitType, $currentPlayerIds, $teamAbbrev);
-
             $teamId = $teamAbbrev ? $game->getTeamIdByAbbrev($teamAbbrev) : null;
 
             $unitShift = NhlUnitShift::create([
-                'unit_id' => $unit->id,
-                'nhl_game_id' => $game->nhl_game_id,
-                'period' => $this->periodFromSeconds($startTime),
-                'start_time' => $this->secondsToTimeString($startTime),
-                'end_time' => null,
+                'unit_id'            => $unit->id,
+                'nhl_game_id'        => $game->nhl_game_id,
+                'period'             => $this->periodFromSeconds($startTime),
+                'start_time'         => $this->secondsToTimeString($startTime),
+                'end_time'           => null,
                 'start_game_seconds' => $startTime,
-                'end_game_seconds' => 0,
-                'seconds' => 0,
-                'team_id' => $teamId,
-                'team_abbrev' => $teamAbbrev,
+                'end_game_seconds'   => 0,
+                'seconds'            => 0,
+                'team_id'            => $teamId,
+                'team_abbrev'        => $teamAbbrev,
             ]);
 
             $activeUnitShiftIds[$unitType] = $unitShift->id;
-            $lastUnit = [
-                'unit' => $unit,
-                'players' => $currentPlayerIds,
-            ];
-
+            $lastUnit = ['unit' => $unit, 'players' => $currentPlayerIds];
         }
     }
 
@@ -229,16 +226,20 @@ class MakeNhlGameShiftUnits
             return;
         }
 
-        $unitShift->end_game_seconds = $endTimeSeconds;
-        $unitShift->seconds = max(0, $endTimeSeconds - $unitShift->start_game_seconds);
-        $unitShift->end_time = $this->secondsToTimeString($endTimeSeconds);
+        // Cap to period end (max 1200 seconds span)
+        $periodEnd = $this->periodEndFromSeconds($unitShift->start_game_seconds);
+        $end = min($endTimeSeconds, $periodEnd);
+
+        $unitShift->end_game_seconds = $end;
+        $unitShift->seconds = max(0, $end - $unitShift->start_game_seconds);
+        $unitShift->end_time = $this->secondsToTimeString($end);
         $unitShift->save();
     }
 
     protected function findOrCreateUnit(string $unitType, array $playerNhlIds, ?string $teamAbbrev): NhlUnit
     {
         $units = NhlUnit::where('unit_type', $unitType)
-            ->when($teamAbbrev, fn ($query) => $query->where('team_abbrev', $teamAbbrev))
+            ->when($teamAbbrev, fn($q) => $q->where('team_abbrev', $teamAbbrev))
             ->get();
 
         foreach ($units as $unit) {
@@ -248,28 +249,19 @@ class MakeNhlGameShiftUnits
             }
         }
 
-        $unit = NhlUnit::create([
-            'unit_type' => $unitType,
-            'team_abbrev' => $teamAbbrev,
-        ]);
+        $unit = NhlUnit::create(['unit_type' => $unitType, 'team_abbrev' => $teamAbbrev]);
 
         foreach ($playerNhlIds as $nhlId) {
             $player = Player::where('nhl_id', $nhlId)->first();
-
             if (!$player) {
                 $importer = new ImportNHLPlayer();
                 $importer->import($nhlId);
                 $player = Player::where('nhl_id', $nhlId)->first();
-
                 if (!$player) {
                     continue;
                 }
             }
-
-            NhlUnitPlayer::create([
-                'unit_id' => $unit->id,
-                'player_id' => $player->id,
-            ]);
+            NhlUnitPlayer::create(['unit_id' => $unit->id, 'player_id' => $player->id]);
         }
 
         return $unit;
@@ -277,13 +269,18 @@ class MakeNhlGameShiftUnits
 
     protected function secondsToTimeString(int $seconds): string
     {
-        $m = floor($seconds / 60);
+        $m = intdiv($seconds, 60);
         $s = $seconds % 60;
         return sprintf('%02d:%02d', $m, $s);
     }
 
     protected function periodFromSeconds(int $seconds): int
     {
-        return floor($seconds / 1200) + 1;
+        return intdiv($seconds, 1200) + 1;
+    }
+
+    protected function periodEndFromSeconds(int $seconds): int
+    {
+        return intdiv($seconds, 1200) * 1200 + 1200;
     }
 }

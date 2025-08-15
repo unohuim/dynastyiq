@@ -55,6 +55,21 @@ class ImportNHLPlayer
         $this->importStats($player, $data['seasonTotals'] ?? []);
     }
 
+
+
+    /**
+     * Check if a player already exists by NHL player ID.
+     *
+     * @param int|string $nhlPlayerId
+     * @return bool
+     */
+    public function playerExists(int|string $nhlPlayerId): bool
+    {
+        return Player::where('nhl_id', (string)$nhlPlayerId)->exists();
+    }
+
+    
+
     /**
      * Import and persist all stat lines for a player.
      *

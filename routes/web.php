@@ -40,6 +40,10 @@ Route::middleware([
 
     Route::controller(PlayByPlayController::class)->group(function () {
         Route::get('/admin/pbp-import', 'ImportNHLPlayByPlay');
+        Route::get('/admin/sum/{season_id}', 'sum')
+            ->where('season_id', '^\d{8}$');
+
+
     });
 
 

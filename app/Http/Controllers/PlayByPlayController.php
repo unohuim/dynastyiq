@@ -8,6 +8,7 @@ use Illuminate\Support\Arr;
 use App\Models\Shift;
 use App\Models\PlayByPlay;
 use App\Jobs\ImportPlayByPlaysByDateJob;
+use App\Jobs\NhlDiscoveryJob;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Bus;
 use App\Services\ImportNHLPlayByPlay;
@@ -19,6 +20,10 @@ use App\Services\MakeNhlGameShiftUnits;
 use App\Services\ConnectEventsToUnitShifts;
 use App\Models\NhlUnit;
 // use App\Models\NhlUnitShift;
+use App\Services\NhlDiscovery;
+use App\Services\NhlImportOrchestrator;
+use App\Repositories\NhlImportProgressRepo;
+use App\Services\SumNhlSeasonStats;
 
 
 
@@ -30,9 +35,15 @@ class PlayByPlayController extends Controller
 
 
 
+    public function sum(string $season_id)
+    {
+        $count = (new SumNhlSeasonStats())->sum($season_id);
+    }
+
+
     public function ImportNHLPlayByPlay()
     {
-        $gameId = 2023020204;
+        $gameId = 2024030416;
         $importer = new ImportNHLPlayByPlay;
         $summer = new SumNHLPlayByPlay;
         $shiftsImporter = new ImportNhlShifts;
@@ -41,10 +52,10 @@ class PlayByPlayController extends Controller
         // $compare = new CompareNhlPbPBoxscore;
         $conn = new ConnectEventsToUnitShifts($gameId);
 
-        $pbp = $importer->import($gameId);
-        $sum = $summer->summarize($gameId);
-        $boxe = $boxImporter->import($gameId);
-        $shifts = $shiftsImporter->import($gameId);
+        // $pbp = $importer->import($gameId);
+        // $sum = $summer->summarize($gameId);
+        // $boxe = $boxImporter->import($gameId);
+        // $shifts = $shiftsImporter->import($gameId);
         // $unitsh = $unitShifts->make($gameId);   
         // $conn->connect();
         // $conn->printEventUnitShiftCounts();
@@ -52,34 +63,34 @@ class PlayByPlayController extends Controller
 
 
         //$units = NhlUnit::with('players', 'events')->get();
-        $units = NhlUnit::with('players', 'unitShifts.events')->get();
+        // $units = NhlUnit::with('players', 'unitShifts.events')->get();
 
 
-        echo("<div>");
-        foreach($units as $u) {
-            // dd($u);
+        // echo("<div>");
+        // foreach($units as $u) {
+        //     // dd($u);
 
-            echo('<p>' . $u->team_abbrev . "- unit: " . $u->id . " - ");
+        //     echo('<p>' . $u->team_abbrev . "- unit: " . $u->id . " - ");
             
-                foreach($u->players as $p){
-                    echo($p->first_name . " " . $p->last_name . " |");
-                }
+        //         foreach($u->players as $p){
+        //             echo($p->first_name . " " . $p->last_name . " |");
+        //         }
 
-            echo('</p>');            
+        //     echo('</p>');            
 
-            foreach($u->unitShifts as $shift) {
-                echo('<p> - Shift: ' . $shift->id . " (" . $shift->seconds . "s) period " . $shift->period);
-                foreach($shift->events as $e) {
-                    $zoneCode = $this->zoneFor($e, $shift);
-                    echo("<p>--" . $e->time_in_period . ": " . " zone zone: " . $zoneCode . " | strength: " . $this->strengthFor($e, $shift) . " - " . $e->type_desc_key 
-                        . " " . $this->statFor($e, $shift)
-                         . '</p>');
-                }
-                echo('</p>');
-            }
+        //     foreach($u->unitShifts as $shift) {
+        //         echo('<p> - Shift: ' . $shift->id . " (" . $shift->seconds . "s) period " . $shift->period);
+        //         foreach($shift->events as $e) {
+        //             $zoneCode = $this->zoneFor($e, $shift);
+        //             echo("<p>--" . $e->time_in_period . ": " . " zone zone: " . $zoneCode . " | strength: " . $this->strengthFor($e, $shift) . " - " . $e->type_desc_key 
+        //                 . " " . $this->statFor($e, $shift)
+        //                  . '</p>');
+        //         }
+        //         echo('</p>');
+        //     }
             
-        }
-        echo('</div>');
+        // }
+        // echo('</div>');
 
         
 
