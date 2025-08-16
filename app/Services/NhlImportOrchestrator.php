@@ -75,8 +75,6 @@ class NhlImportOrchestrator
     /** Enforce order: pbp → summary → shifts → boxscore → unit-shifts → connect-events. */
     public function advance(int $gameId, string $completedType): void
     {
-        \Log::warning("completed type:  {$completedType}");
-
         $next = match ($completedType) {
             'pbp'           => 'summary',
             'summary'       => 'shifts',
@@ -86,7 +84,6 @@ class NhlImportOrchestrator
             default    => null,
         };
 
-        \Log::warning("next type:  {$next}");
 
         if ($next && $this->readyFor($gameId, $next)) {
             $this->dispatchJob($gameId, $next);

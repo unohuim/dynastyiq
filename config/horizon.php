@@ -185,6 +185,7 @@ return [
             'queue' => ['default'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
+            'minProcesses' => 1,
             'maxProcesses' => 15,
             'maxTime' => 0,
             'maxJobs' => 0,
