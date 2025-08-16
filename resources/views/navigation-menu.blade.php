@@ -121,7 +121,7 @@
             @guest
                 {{-- Log In --}}
                 <li class="flex-1 text-center">
-                    <a href="{{ route('login') }}"
+                    <a href="{{ route('discord.redirect') }}"
                        class="flex flex-col items-center {{ request()->routeIs('login') ? 'text-indigo-600' : '' }}">
                         <img src="{{ asset('images/Discord-Symbol-White.svg') }}"
                             alt="Discord" class="h-6 w-6">
