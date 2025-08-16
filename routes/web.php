@@ -7,6 +7,7 @@ use App\Http\Controllers\PlayerImportController;
 use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
+use Laravel\Socialite\Facades\Socialite;
 
 
 
@@ -21,6 +22,20 @@ Route::get('/', fn () => view('welcome'))->name('welcome');
 // Public pages: Prospects and Players
 Route::get('/players', [PlayerStatsController::class, 'index'])
     ->name('players.index');
+
+
+
+//socialite auth routes
+Route::get('/auth/discord/redirect', function () {
+    return Socialite::driver('discord')
+        ->scopes(['identify','email'])
+        ->redirect();
+})->name('discord.redirect');
+
+Route::get('/auth/discord/callback', \App\Http\Controllers\Auth\SocialiteCallbackController::class)
+    ->name('discord.callback');
+
+
 
 // Authenticated dashboard/admin routes
 Route::middleware([

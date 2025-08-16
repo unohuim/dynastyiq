@@ -122,22 +122,22 @@ class NhlImportOrchestrator
 
         switch ($type) {
             case 'pbp':
-                dispatch(new \App\Jobs\ImportPbpNhlJob($gameId))->onQueue('pbp');
+                dispatch(new \App\Jobs\ImportPbpNhlJob($gameId));//->onQueue('pbp');
                 break;
             case 'summary':
-                dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId))->onQueue('summary');
+                dispatch(new \App\Jobs\SummarizePbpNhlJob($gameId));//->onQueue('summary');
                 break;
             case 'shifts':
-                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId))->onQueue('shifts');
+                dispatch(new \App\Jobs\ImportShiftsNhlJob($gameId));//->onQueue('shifts');
                 break;
             case 'boxscore':
-                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId))->onQueue('boxscore');
+                dispatch(new \App\Jobs\ImportBoxscoreNhlJob($gameId));//->onQueue('boxscore');
                 break;
             case 'shift-units': 
-                dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId))->onQueue('make-units');
+                dispatch(new \App\Jobs\MakeShiftUnitsNhlJob($gameId));//->onQueue('make-units');
                 break;
             case 'connect-events':
-                dispatch(new \App\Jobs\ConnectEventsShiftUnitsNhlJob($gameId))->onQueue('connect-events');
+                dispatch(new \App\Jobs\ConnectEventsShiftUnitsNhlJob($gameId));//->onQueue('connect-events');
                 break;
             
         }
@@ -197,7 +197,7 @@ class NhlImportOrchestrator
         $lockKey = "season-sum-dispatch:{$seasonId}";
         if (Cache::lock($lockKey, 600)->get()) { // 10 min lock
             try {
-                dispatch(new \App\Jobs\SeasonSumJob($seasonId))->onQueue('summary');
+                dispatch(new \App\Jobs\SeasonSumJob($seasonId));//->onQueue('summary');
             } finally {
                 Cache::lock($lockKey)->release();
             }

@@ -1,4 +1,4 @@
-<div>
+    <div>
     {{-- DESKTOP Top Nav --}}
     <nav class="hidden sm:flex items-center justify-between bg-white border-b shadow px-6 py-4">
         <div class="flex items-center space-x-8">
@@ -8,37 +8,53 @@
             </a>
 
             <a href="{{ route('players.index') }}"
-               class="text-lg font-semibold {{ request()->routeIs('profile.show') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">
+               class="text-lg font-semibold {{ request()->routeIs('players.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">
                 Players
             </a>
 
-            @auth
-                <a href="{{ route('profile.show') }}"
-                   class="text-lg font-semibold {{ request()->routeIs('profile.show') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">
-                    Profile
-                </a>
+
+            @auth 
+                <div>
+                    <form method="POST" action="{{ route('logout') }}"> 
+                        @csrf <button type="submit" class="text-lg font-semibold text-gray-600 hover:text-indigo-500"> Logout </button> 
+                    </form> 
+                </div>  
             @endauth
+
+            
         </div>
 
         <div>
             @auth
-                <form method="POST" action="{{ route('logout') }}">
-                    @csrf
-                    <button type="submit"
-                            class="text-lg font-semibold text-gray-600 hover:text-indigo-500">
-                        Logout
-                    </button>
-                </form>
+                @php
+                    $discordAvatar = auth()->user()
+                        ->socialAccounts()
+                        ->where('provider','discord')
+                        ->value('avatar');
+
+                    $avatarUrl = $discordAvatar ?: 'https://www.gravatar.com/avatar/?d=mp&s=64';
+                @endphp
+
+                <a href="{{ route('profile.show') }}" class="block">
+                    <img src="{{ $avatarUrl }}"
+                         alt="Your avatar"
+                         class="h-9 w-9 rounded-full ring-2 ring-gray-200 object-cover" />
+                </a>
             @endauth
 
             @guest
-                <a href="{{ route('login') }}"
-                   class="text-lg font-semibold text-gray-600 hover:text-indigo-500">
-                    Log In
+                <a href="{{ route('discord.redirect') }}"
+                   class="flex items-center space-x-2 px-3 py-2 bg-[#5865F2] text-white rounded-full hover:bg-[#4752C4]">
+                    <img src="{{ asset('images/Discord-Symbol-White.svg') }}"
+                         alt="Discord"
+                         class="h-6 w-6">
+                    <span class="text-sm font-medium">Sign in</span>
                 </a>
+
             @endguest
         </div>
     </nav>
+
 
     {{-- MOBILE Bottom Nav --}}
     <nav class="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-gray-900 text-gray-100 border-t shadow">
@@ -107,12 +123,9 @@
                 <li class="flex-1 text-center">
                     <a href="{{ route('login') }}"
                        class="flex flex-col items-center {{ request()->routeIs('login') ? 'text-indigo-600' : '' }}">
-                        <svg class="h-6 w-6 mb-0.5" fill="none" stroke="currentColor" stroke-width="2"
-                             viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round"
-                                  d="M15 12H3m6-6l-6 6 6 6"/>
-                        </svg>
-                        Log In
+                        <img src="{{ asset('images/Discord-Symbol-White.svg') }}"
+                            alt="Discord" class="h-6 w-6">
+                        Sign In
                     </a>
                 </li>
             @endguest

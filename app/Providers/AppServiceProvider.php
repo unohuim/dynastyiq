@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\Event;
+
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -20,6 +22,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Socialite: extend with Discord provider
+        Event::listen(function (\SocialiteProviders\Manager\SocialiteWasCalled $event) {
+            $event->extendSocialite('discord', \SocialiteProviders\Discord\Provider::class);
+        });
+
+
+
         Blade::directive('float', function ($expression) {
             // $expression will be whatever you pass into @float(...)
             return "<?php echo number_format($expression, 2, '.', ''); ?>";
