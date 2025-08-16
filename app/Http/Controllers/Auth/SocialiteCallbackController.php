@@ -18,7 +18,7 @@ class SocialiteCallbackController extends Controller
         $oauth = Socialite::driver('discord')->stateless()->user();
 
         $account = DB::transaction(function () use ($oauth) {
-            // Lock any existing social account to avoid races
+            // 0) If this Discord account already exists, update tokens & return it.
             $existing = SocialAccount::where('provider', 'discord')
                 ->where('provider_user_id', (string) $oauth->getId())
                 ->lockForUpdate()
@@ -38,19 +38,18 @@ class SocialiteCallbackController extends Controller
                 return $existing;
             }
 
-            // Find user by email if available
+            // 1) Resolve/create Organization FIRST
+            $org = $this->resolveOrCreateOrganization($oauth);
+
+            // 2) Find or create User (attach tenant_id = org id)
             $user = $oauth->getEmail()
                 ? User::where('email', $oauth->getEmail())->lockForUpdate()->first()
                 : null;
 
-            // Resolve/create Organization FIRST
-            $org = $this->resolveOrCreateOrganization($oauth);
-
-            // Create or attach user with tenant_id = org id
             if (! $user) {
                 $user = User::create([
                     'name'              => $oauth->getName() ?: ($oauth->getNickname() ?: 'User'),
-                    'email'             => $oauth->getEmail() ?: Str::uuid().'@placeholder.local',
+                    'email'             => $oauth->getEmail() ?: (Str::uuid() . '@placeholder.local'),
                     'password'          => bcrypt(Str::random(40)),
                     'tenant_id'         => $org->id,
                     'email_verified_at' => now(),
@@ -59,7 +58,7 @@ class SocialiteCallbackController extends Controller
                 $user->forceFill(['tenant_id' => $org->id])->save();
             }
 
-            // Upsert social account
+            // 3) Upsert SocialAccount (MUST include user_id)
             return SocialAccount::updateOrCreate(
                 [
                     'provider'         => 'discord',
@@ -84,13 +83,18 @@ class SocialiteCallbackController extends Controller
 
     private function resolveOrCreateOrganization($oauth): Organization
     {
-        if (session()->has('tenant_invite_id')) {
-            $org = Organization::lockForUpdate()->find(session('tenant_invite_id'));
-            if ($org) return $org;
+        // Use and clear a tenant invite if present
+        $inviteId = session()->pull('tenant_invite_id');
+
+        if ($inviteId) {
+            $org = Organization::lockForUpdate()->find($inviteId);
+            if ($org) {
+                return $org;
+            }
         }
 
         return Organization::create([
-            'name'       => ($oauth->getNickname() ?: $oauth->getName() ?: 'New User')."'s Organization",
+            'name'       => ($oauth->getNickname() ?: $oauth->getName() ?: 'New User') . "'s Organization",
             'short_name' => $oauth->getNickname() ?: null,
         ]);
     }
