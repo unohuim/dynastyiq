@@ -84,11 +84,6 @@ class RoleSeeder extends Seeder
                 'tenant_id' =>1,
             ],
 
-            [
-                'role_id' => 2,
-                'user_id' => 2,
-                'tenant_id' =>2,
-            ],
         ];
 
 
