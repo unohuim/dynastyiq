@@ -79,10 +79,8 @@
                 <a href="{{ route('players.index') }}"
                    class="flex flex-col items-center {{ request()->routeIs('profile.show') ? 'text-gray-300' : '' }}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
-  <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
-</svg>
-
-
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+                    </svg>
 
                     Players
                 </a>
@@ -91,31 +89,39 @@
             @auth
                 {{-- Profile --}}
                 <li class="flex-1 text-center">
-                    <a href="{{ route('profile.show') }}"
-                       class="flex flex-col items-center {{ request()->routeIs('profile.show') ? 'text-gray-300' : '' }}">
-                        <svg class="h-6 w-6 mb-0.5" fill="none" stroke="currentColor" stroke-width="2"
-                             viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round"
-                                  d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 4 4 4 4zM4 20v-1a4 4 0 014-4h8a4 4 0 014 4v1"/>
-                        </svg>
-                        Profile
+                    @php
+                        $discordAvatar = auth()->user()
+                            ->socialAccounts()
+                            ->where('provider','discord')
+                            ->value('avatar');
+
+                        $avatarUrl = $discordAvatar ?: 'https://www.gravatar.com/avatar/?d=mp&s=64';
+                    @endphp
+
+                    <a href="{{ route('profile.show') }}" 
+                        class="flex flex-col items-center">
+                        <img src="{{ $avatarUrl }}"
+                             alt="Your avatar"
+                             class="h-9 w-9 rounded-full ring-2 ring-gray-200 object-cover" />
                     </a>
                 </li>
 
                 {{-- Logout --}}
-                <li>
-                    <form method="POST" action="{{ route('logout') }}">
+                <li class="flex-1 text-center">
+                    <form x-data method="POST" action="{{ route('logout') }}">
                         @csrf
-                        <button type="submit" class="flex flex-col items-center">
-                            <svg class="h-6 w-6 mb-0.5" fill="none" stroke="currentColor" stroke-width="2"
-                                 viewBox="0 0 24 24">
+                        <a href="#" @click.prevent="$el.closest('form').submit()" class="flex flex-col items-center">
+                            <svg class="h-6 w-6 mb-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round"
                                       d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h6a2 2 0 012 2v1"/>
                             </svg>
                             Logout
-                        </button>
+                        </a>
                     </form>
                 </li>
+
+            
+                    
             @endauth
 
             @guest
