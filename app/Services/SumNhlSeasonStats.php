@@ -182,11 +182,24 @@ class SumNhlSeasonStats
             ];
         });
 
-        DB::table('nhl_season_stats')->upsert(
-            $payload->all(),
-            ['season_id', 'nhl_player_id', 'game_type'],
-            array_diff(array_keys($payload->first()), ['season_id', 'nhl_player_id', 'game_type', 'created_at'])
-        );
+
+        $uniqueBy = ['season_id', 'nhl_player_id', 'game_type'];
+        $allCols  = array_keys($payload->first());
+        $update   = array_diff($allCols, array_merge($uniqueBy, ['created_at']));
+
+        $maxParams = 65000;
+        $colsCount = count($allCols);
+        $chunkSize = max(1, intdiv($maxParams, $colsCount));
+
+        $payload->chunk($chunkSize)->each(function ($chunk) use ($uniqueBy, $update) {
+            DB::table('nhl_season_stats')->upsert($chunk->all(), $uniqueBy, $update);
+        });
+
+        // DB::table('nhl_season_stats')->upsert(
+        //     $payload->all(),
+        //     ['season_id', 'nhl_player_id', 'game_type'],
+        //     array_diff(array_keys($payload->first()), ['season_id', 'nhl_player_id', 'game_type', 'created_at'])
+        // );
 
         return $payload->count();
     }
