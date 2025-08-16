@@ -124,12 +124,12 @@ class NhlDiscoverCommand extends Command
         }
     }
 
-    /** End date fallback from config('apiImportNhl.min_season_id'). */
+    /** Earliest boundary from config('apiImportNhl.min_season_id'). */
     private function minSeasonEndDate(): Carbon
     {
         $minSeasonId = (string) config('apiImportNhl.min_season_id', '20192020');
-        $endYear     = (int) substr($minSeasonId, 4, 4);
-        return Carbon::create($endYear, 8, 31)->startOfDay();
+        $startYear   = (int) substr($minSeasonId, 0, 4); // e.g., 2022 in 20222023
+        return Carbon::create($startYear, 9, 1)->startOfDay(); // 2022-09-01
     }
 
     private function normalizeOrder(Carbon $a, Carbon $b): array
