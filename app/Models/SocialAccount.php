@@ -10,7 +10,7 @@ use App\Models\User;
 class SocialAccount extends Model
 {
     protected $fillable = [
-        'provider','provider_user_id','email','nickname','name','avatar',
+        'provider','provider_user_id', 'user_id','email','nickname','name','avatar',
         'access_token','refresh_token','expires_at',
     ];
 
