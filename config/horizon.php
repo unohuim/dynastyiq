@@ -230,7 +230,7 @@ return [
             'queue' => ['summary'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'minProcesses' => 0,
+            'minProcesses' => 1,
             'maxProcesses' => 8,
             'maxTime' => 0,
             'maxJobs' => 0,
