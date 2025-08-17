@@ -8,6 +8,7 @@ use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
 use Laravel\Socialite\Facades\Socialite;
+use App\Http\Controllers\FantraxUserController;
 
 
 
@@ -77,6 +78,16 @@ Route::middleware([
 
     Route::controller(SeasonStatController::class)->group(function () {
         Route::get('/sumseason/{season_id}', 'Sum');
+    });
+
+
+    // Fantrax integration (temp routes)
+    Route::prefix('integrations/fantrax')
+    ->name('integrations.fantrax.')
+    ->controller(FantraxUserController::class)
+    ->group(function () {
+        Route::post('save', 'save')->name('save');
+        Route::post('disconnect', 'disconnect')->name('disconnect');
     });
 });
 

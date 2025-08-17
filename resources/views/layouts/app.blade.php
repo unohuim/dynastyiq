@@ -23,7 +23,8 @@
     <div class="min-h-screen bg-gray-100 pb-16 sm:pb-0">
     <!-- <div class="flex flex-col h-screen"> -->
     
-        @livewire('navigation-menu')
+        
+        @include('nav.main')
 
         <!-- Page Heading -->
         @isset($header)

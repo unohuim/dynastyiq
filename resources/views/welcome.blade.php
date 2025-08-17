@@ -5,7 +5,7 @@
         DynastyIQ
       </h1>
       <p class="mt-4 text-lg sm:text-xl text-gray-300 max-w-3xl mx-auto">
-        Fantasy Tools for Nerdy Fools
+        Nerdy Tools for Fantasy Fools
       </p>
 
       <div class="mt-16 grid grid-cols-1 md:grid-cols-3 gap-8">

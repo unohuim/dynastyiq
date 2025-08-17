@@ -98,6 +98,25 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
+
+    /**
+     * Integration secrets belonging to the user.
+     */
+    public function integrationSecrets()
+    {
+        return $this->hasMany(IntegrationSecret::class);
+    }
+
+    /**
+     * Get the user's Fantrax secret (if any).
+     */
+    public function fantraxSecret()
+    {
+        return $this->hasOne(IntegrationSecret::class)
+                    ->where('provider', 'fantrax');
+    }
+
+
     /**
      * Check if the user is a commissioner for a given league.
      */
