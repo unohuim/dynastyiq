@@ -195,43 +195,13 @@ return [
             'nice' => 0,
         ],
 
-        // 'supervisor-pbp' => [
-        //     'connection' => 'redis',
-        //     'queue' => ['pbp'],
-        //     'balance' => 'auto',
-        //     'autoScalingStrategy' => 'time',
-        //     'minProcesses' => 0,
-        //     'maxProcesses' => 5,
-        //     'maxTime' => 0,
-        //     'maxJobs' => 0,
-        //     'memory' => 128,
-        //     'tries' => 5,
-        //     'timeout' => 600,
-        //     'nice' => 0,
-        // ],
-
-        // 'supervisor-orchestrator' => [
-        //     'connection' => 'redis',
-        //     'queue' => ['orchestrator'],
-        //     'balance' => 'auto',
-        //     'autoScalingStrategy' => 'time',
-        //     'minProcesses' => 0,
-        //     'maxProcesses' => 2,
-        //     'maxTime' => 0,
-        //     'maxJobs' => 0,
-        //     'memory' => 128,
-        //     'tries' => 5,
-        //     'timeout' => 600,
-        //     'nice' => 0,
-        // ],
-
         'supervisor-summary' => [
             'connection' => 'redis',
             'queue' => ['summary'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
             'minProcesses' => 1,
-            'maxProcesses' => 8,
+            'maxProcesses' => 2,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
@@ -239,21 +209,6 @@ return [
             'timeout' => 600,
             'nice' => 0,
         ],
-
-        // 'supervisor-shifts' => [
-        //     'connection' => 'redis',
-        //     'queue' => ['shifts'],
-        //     'balance' => 'auto',
-        //     'autoScalingStrategy' => 'time',
-        //     'minProcesses' => 1,
-        //     'maxProcesses' => 5,
-        //     'maxTime' => 0,
-        //     'maxJobs' => 0,
-        //     'memory' => 128,
-        //     'tries' => 5,
-        //     'timeout' => 600,
-        //     'nice' => 0,
-        // ],
 
         'supervisor-make-units' => [
             'connection' => 'redis',
@@ -269,53 +224,6 @@ return [
             'timeout' => 600,
             'nice' => 0,
         ],
-
-        // 'supervisor-connect-events' => [
-        //     'connection' => 'redis',
-        //     'queue' => ['connect-events'],
-        //     'balance' => 'auto',
-        //     'autoScalingStrategy' => 'time',
-        //     'minProcesses' => 1,
-        //     'maxProcesses' => 15,
-        //     'maxTime' => 0,
-        //     'maxJobs' => 0,
-        //     'memory' => 128,
-        //     'tries' => 5,
-        //     'timeout' => 600,
-        //     'nice' => 0,
-        // ],
-
-        // 'supervisor-boxscore' => [
-        //     'connection' => 'redis',
-        //     'queue' => ['boxscore'],
-        //     'balance' => 'auto',
-        //     'autoScalingStrategy' => 'time',
-        //     'minProcesses' => 1,
-        //     'maxProcesses' => 3,
-        //     'maxTime' => 0,
-        //     'maxJobs' => 0,
-        //     'memory' => 128,
-        //     'tries' => 5,
-        //     'timeout' => 600,
-        //     'nice' => 0,
-        // ],
     ],
 
-    // 'environments' => [
-    //     'production' => [
-    //         'supervisor-1' => [
-    //             'minProcesses' => 10,
-    //             'maxProcesses' => 15,
-    //             'balanceMaxShift' => 1,
-    //             'balanceCooldown' => 3,
-    //         ],
-    //     ],
-
-    //     'local' => [
-    //         'supervisor-1' => [                
-    //             'minProcesses' => 1,
-    //             'maxProcesses' => 15,
-    //         ],
-    //     ],
-    // ],
 ];
