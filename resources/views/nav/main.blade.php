@@ -6,7 +6,8 @@
     {{-- DESKTOP Top Nav --}}
     <nav class="hidden sm:flex items-center justify-between bg-white border-b shadow px-6 py-2">
         <div 
-            x-data="{ hasFantrax: @js((bool)auth()->user()->fantraxSecret) }"
+            x-data="{ hasFantrax: {{ auth()->check() && auth()->user()->fantraxSecret ? 'true' : 'false' }} }"
+            
             x-init="window.addEventListener('fantrax:connected', () => hasFantrax = true)"
             class="flex items-center space-x-8">
 
