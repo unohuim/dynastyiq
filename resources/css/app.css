@@ -94,7 +94,7 @@
   }
 
   .searchbar-mobile {
-    @apply fixed top-0 inset-x-0 z-50 w-full bg-white border-gray-900;
+    @apply fixed top-0 inset-x-0 z-10 w-full bg-white border-gray-900;
   }
 
 

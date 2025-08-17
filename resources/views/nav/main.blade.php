@@ -82,6 +82,19 @@
                 $avatarUrl = $discordAvatar ?: 'https://www.gravatar.com/avatar/?d=mp&s=64';
               @endphp
 
+
+                <li class="flex-1 text-center">
+                    <a href="{{ route('players.index') }}" class="flex flex-col items-center">
+                        <svg class="h-6 w-6 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                        </svg>
+                        Menu
+                    </a>
+                </li>
+
+
+
+
               <li class="flex-1 text-center">
                 <a href="{{ route('profile.show') }}"
                    @click.prevent="open = true"
@@ -89,7 +102,7 @@
                   <img src="{{ $avatarUrl }}"
                        alt="Your avatar"
                        class="h-9 w-9 rounded-full ring-2 ring-gray-200 object-cover" />
-                  <span class="sr-only">Open settings</span>
+                  <span class="sr-only"></span>
                 </a>
               </li>
             @endauth
