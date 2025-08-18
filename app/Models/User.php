@@ -11,6 +11,8 @@ use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
 use App\Models\RankingProfile;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use App\Models\FantraxLeague;
+
 
 
 class User extends Authenticatable
@@ -67,6 +69,19 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+
+    /**
+     * Get all Fantrax leagues this user belongs to.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
+     */
+    public function fantraxLeagues(): BelongsToMany
+    {
+        return $this->belongsToMany(FantraxLeague::class, 'fantrax_league_user_teams', 'user_id', 'fantrax_league_id', 'id', 'fantrax_league_id')
+                    ->withPivot(['fantrax_team_id', 'is_active'])
+                    ->withTimestamps();
     }
 
 

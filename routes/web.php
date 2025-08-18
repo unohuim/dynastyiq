@@ -9,6 +9,7 @@ use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
 use Laravel\Socialite\Facades\Socialite;
 use App\Http\Controllers\FantraxUserController;
+use App\Http\Controllers\FantraxController;
 
 
 
@@ -79,6 +80,12 @@ Route::middleware([
     Route::controller(SeasonStatController::class)->group(function () {
         Route::get('/sumseason/{season_id}', 'Sum');
     });
+
+
+
+    //fantrax leagues
+    Route::get('/fantrax/leagues', [FantraxController::class, 'index'])
+        ->name('fantrax.leagues.index');
 
 
     // Fantrax integration (temp routes)
