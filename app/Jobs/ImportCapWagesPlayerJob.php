@@ -2,9 +2,6 @@
 
 namespace App\Jobs;
 
-
-
-
 use Illuminate\Bus\Batchable;
 use App\Services\ImportCapWagesPlayer;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -14,51 +11,51 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\PlayerNotFoundException;
-
+use App\Exceptions\CapWagesPlayerNotFoundException;
 
 class ImportCapWagesPlayerJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
     protected string $slug;
+    protected bool $all;
+
     public const TAG_IMPORT = 'import-capwages-player';
 
     /**
-     * Create a new job instance.
+     * @param string $slug
+     * @param bool   $all  When true, preserve original behavior; when false, skip imports if Player missing.
      */
-    public function __construct(string $slug)
+    public function __construct(string $slug, bool $all = true)
     {
         $this->slug = $slug;
+        $this->all  = $all;
     }
 
-    /**
-     * Execute the job.
-     */
     public function handle(): void
     {
         try {
-            (new ImportCapWagesPlayer())->syncBySlug($this->slug);
+            (new ImportCapWagesPlayer())->syncBySlug($this->slug, $this->all);
         } catch (PlayerNotFoundException $e) {
             Log::warning("from job class: Player not found in players DB: {$this->slug}");
 
-            //service class already dispatched an nhl player import job, so just delay release for back on queue.
-             $this->release(10);
-             return;
+            if ($this->all) {
+                // Service already dispatched NHL import; retry later.
+                $this->release(10);
+            }
+            // all=false should not reach here, but if it does, just exit quietly.
+            return;
         } catch (CapWagesPlayerNotFoundException $e) {
-            Log::warning("Player not found on CapWages API: {$slug}");
-            // Optionally delay retry or exit gracefully
-            throw $e; // to trigger retry with backoff
+            Log::warning("Player not found on CapWages API: {$this->slug}");
+            throw $e; // trigger retry/backoff per queue config
         } catch (\Exception $e) {
             Log::error("Unexpected error importing player {$this->slug}: " . $e->getMessage());
-            throw $e; // Fail job to trigger retry or failure
+            throw $e;
         }
     }
 
-
     public function tags(): array
     {
-        return [self::TAG_IMPORT, "player-slug:{$this->slug}"];
+        return [self::TAG_IMPORT, "player-slug:{$this->slug}", "all:" . ($this->all ? 'true' : 'false')];
     }
-
-    
 }

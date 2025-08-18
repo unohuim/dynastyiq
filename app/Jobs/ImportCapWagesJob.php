@@ -23,11 +23,13 @@ class ImportCapWagesJob implements ShouldQueue
 
     private int $page;
     private int $perPage;
+    private bool $all;
 
-    public function __construct(int $page, int $perPage = 100)
+    public function __construct(int $page, int $perPage = 100, bool $all = true)
     {
         $this->page    = max(1, $page);
         $this->perPage = max(1, $perPage);
+        $this->all     = $all;
     }
 
     public function handle(): void
@@ -39,13 +41,14 @@ class ImportCapWagesJob implements ShouldQueue
             foreach ($response['data'] ?? [] as $playerInfo) {
                 $slug = $playerInfo['slug'] ?? null;
                 if ($slug) {
-                    ImportCapWagesPlayerJob::dispatch($slug);
+                    ImportCapWagesPlayerJob::dispatch($slug, $this->all);
                 }
             }
         } catch (\Throwable $e) {
             Log::error('ImportCapWagesJob page fetch failed', [
                 'page'    => $this->page,
                 'perPage' => $this->perPage,
+                'all'     => $this->all,
                 'error'   => $e->getMessage(),
             ]);
             throw $e;
@@ -54,6 +57,6 @@ class ImportCapWagesJob implements ShouldQueue
 
     public function tags(): array
     {
-        return ['import-capwages', "page:{$this->page}", "perPage:{$this->perPage}"];
+        return ['import-capwages', "page:{$this->page}", "perPage:{$this->perPage}", "all:" . ($this->all ? 'true' : 'false')];
     }
 }

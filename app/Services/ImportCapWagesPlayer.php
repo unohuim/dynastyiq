@@ -21,8 +21,12 @@ class ImportCapWagesPlayer
 
     /**
      * Import contract data (including seasons) for a given player slug.
+     *
+     * @param string $slug
+     * @param bool   $all  When true, preserve existing behavior (dispatch ImportNHLPlayerJob and throw if Player missing).
+     *                    When false, skip importing if local Player is missing (no dispatch, no exception).
      */
-    public function syncBySlug(string $slug): void
+    public function syncBySlug(string $slug, bool $all = true): void
     {
         try {
             $response = $this->getAPIData('capwages', 'player_detail', ['slug' => $slug]);
@@ -42,9 +46,15 @@ class ImportCapWagesPlayer
         $player = Player::where('nhl_id', $nhlId)->first();
 
         if (! $player) {
-            Log::warning("No local Player for NHL ID {$nhlId}", ['slug' => $slug]);
-            ImportNHLPlayerJob::dispatch($nhlId);
-            throw new PlayerNotFoundException("from service: Player with NHL ID {$nhlId} not found in DB.");
+            Log::warning("No local Player for NHL ID {$nhlId}", ['slug' => $slug, 'all' => $all]);
+
+            if ($all) {
+                ImportNHLPlayerJob::dispatch($nhlId);
+                throw new PlayerNotFoundException("from service: Player with NHL ID {$nhlId} not found in DB.");
+            }
+
+            // all=false: do not import the contract; just exit quietly.
+            return;
         }
 
         foreach ($data['contracts'] ?? [] as $entry) {
@@ -81,9 +91,7 @@ class ImportCapWagesPlayer
                 $contract->seasons()->updateOrCreate(
                     ['season_key' => $seasonKey],
                     [
-                        // label normalized to "YYYY-YY" (ASCII hyphen; <= 7 chars)
                         'label'               => $label,
-                        // combine API clause with parsed suffix (e.g., "LY")
                         'clause'              => $this->mergeClause($seasonData['clause'] ?? null, $suffix),
                         'cap_hit'             => $seasonData['capHit']              ?? null,
                         'aav'                 => $seasonData['aav']                 ?? null,

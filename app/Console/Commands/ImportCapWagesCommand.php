@@ -12,33 +12,41 @@ use Illuminate\Support\Facades\Log;
 /**
  * Artisan command to kick off CapWages imports.
  *
- * Usage: php artisan cap:import [--per-page=100]
+ * Usage: php artisan cap:import [--per-page=100] [--all=true]
  */
 class ImportCapWagesCommand extends Command
 {
-    protected $signature = 'cap:import {--per-page=100 : Players per page to fetch}';
+    protected $signature = 'cap:import 
+                            {--per-page=100 : Players per page to fetch} 
+                            {--all=true : When true, import missing players by dispatching NHL jobs; when false, skip missing players}';
+
     protected $description = 'Dispatch per-page jobs to import players/contracts from CapWages';
 
     public function handle(): int
     {
         $perPage = max(1, (int) $this->option('per-page'));
+        $allFlag = filter_var($this->option('all'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        // default to true if option not parseable
+        $all = $allFlag ?? true;
 
         try {
             // Initial call only to read pagination meta
-            $service   = new ImportCapWages();
-            $response  = $service->fetchPlayersPage(1, $perPage);
+            $service    = new ImportCapWages();
+            $response   = $service->fetchPlayersPage(1, $perPage);
             $totalPages = (int) ($response['meta']['pagination']['totalPages'] ?? 1);
 
             // Dispatch a page job for each page
             for ($page = 1; $page <= $totalPages; $page++) {
-                ImportCapWagesJob::dispatch($page, $perPage);
+                ImportCapWagesJob::dispatch($page, $perPage, $all);
             }
 
-            $this->info("Queued ImportCapWagesJob for {$totalPages} page(s) at {$perPage} per page.");
+            $this->info("Queued ImportCapWagesJob for {$totalPages} page(s) at {$perPage} per page (all=" . ($all ? 'true' : 'false') . ").");
             return self::SUCCESS;
         } catch (\Throwable $e) {
             Log::error('cap:import failed to initialize pagination', [
                 'perPage' => $perPage,
+                'all'     => $all,
                 'error'   => $e->getMessage(),
             ]);
             $this->error('Failed to initialize CapWages pagination. See logs.');
