@@ -26,7 +26,7 @@ class NhlProcessCommand extends Command
                 ->pluck('game_date');
 
         foreach ($dates as $date) {
-            dispatch(new NhlOrchestratorJob((string)$date))->onQueue('orchestrator');
+            dispatch(new NhlOrchestratorJob((string)$date));//->onQueue('orchestrator');
         }
 
         $this->info('Dispatched for '.count($dates).' game_date(s).');

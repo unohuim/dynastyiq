@@ -184,7 +184,10 @@ class PlayerStatsController extends BaseController
                 : $playerStats->sortByDesc('GP')->first();
 
             $player         = $entry->player;
-            $contract       = $player->contracts->first();
+            
+            $contract = $player->contracts()->exists()
+                ? $player->contracts()->first()
+                : null;
             $contractSeason = $contract?->seasons->last();
             $contractLength = $contract?->seasons->count();
 

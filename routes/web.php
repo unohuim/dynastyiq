@@ -10,7 +10,7 @@ use App\Http\Controllers\LeagueController;
 use Laravel\Socialite\Facades\Socialite;
 use App\Http\Controllers\FantraxUserController;
 use App\Http\Controllers\FantraxController;
-
+use App\Services\ImportUserFantraxLeagues;
 
 
 /*
@@ -80,6 +80,14 @@ Route::middleware([
     Route::controller(SeasonStatController::class)->group(function () {
         Route::get('/sumseason/{season_id}', 'Sum');
     });
+
+
+
+
+    //fantrax testing
+    Route::get('/admin/fantrax', function () {
+        app(ImportUserFantraxLeagues::class)->import(Auth::user());
+    })->name('admin.fantrax.import');
 
 
 
