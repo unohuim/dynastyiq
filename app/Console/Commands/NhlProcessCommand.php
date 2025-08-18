@@ -30,6 +30,6 @@ class NhlProcessCommand extends Command
         }
 
         $this->info('Dispatched for '.count($dates).' game_date(s).');
-        return self::SUCCESS;
+        return self::SUCCESS; //kdkd
     }
 }
