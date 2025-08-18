@@ -186,7 +186,7 @@ return [
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
             'minProcesses' => 1,
-            'maxProcesses' => 15,
+            'maxProcesses' => 16,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
@@ -195,5 +195,18 @@ return [
             'nice' => 0,
         ]
 
+    ],
+
+    'environments' => [
+        'local' => [
+            'supervisor-1' => [
+                'connection' => 'redis',
+                'queue' => ['default'],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => 16,
+            ],
+        ],
     ]
 ];
