@@ -205,7 +205,7 @@ return [
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
                 'minProcesses' => 1,
-                'maxProcesses' => 16,
+                'maxProcesses' => 12,
             ],
         ],
     ]
