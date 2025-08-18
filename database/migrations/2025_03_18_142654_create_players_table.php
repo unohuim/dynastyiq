@@ -17,9 +17,7 @@ return new class extends Migration
             // External IDs (not actual foreign keys)
             $table->unsignedBigInteger('nhl_id')->nullable()->unique()->index();
             $table->unsignedBigInteger('nhl_team_id')->nullable()->index();
-            $table->unsignedBigInteger('yahoo_id')->nullable()->index();
-            $table->string('fantrax_id')->nullable()->index();
-            $table->unsignedBigInteger('ep_id')->nullable()->index();
+            
 
             // Name and personal info
             $table->string('full_name')->nullable();

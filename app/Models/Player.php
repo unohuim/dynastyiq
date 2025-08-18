@@ -99,6 +99,18 @@ class Player extends Model
         return $this->hasMany(Contract::class);
     }
 
+
+    /**
+     * Get the FantraxPlayer record linked to this player.
+     */
+    public function fantraxPlayer(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(\App\Models\FantraxPlayer::class, 'player_id', 'id');
+    }
+
+
+
+
     /**
      * Compute the player's age in whole years.
      *

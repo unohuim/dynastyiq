@@ -186,44 +186,14 @@ return [
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
             'minProcesses' => 1,
-            'maxProcesses' => 2,
+            'maxProcesses' => 15,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
             'tries' => 5,
             'timeout' => 600,
             'nice' => 0,
-        ],
+        ]
 
-        'supervisor-summary' => [
-            'connection' => 'redis',
-            'queue' => ['summary'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'minProcesses' => 1,
-            'maxProcesses' => 2,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 128,
-            'tries' => 5,
-            'timeout' => 600,
-            'nice' => 0,
-        ],
-
-        'supervisor-make-units' => [
-            'connection' => 'redis',
-            'queue' => ['make-units'],
-            'balance' => 'auto',
-            'autoScalingStrategy' => 'time',
-            'minProcesses' => 1,
-            'maxProcesses' => 12,
-            'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 128,
-            'tries' => 5,
-            'timeout' => 600,
-            'nice' => 0,
-        ],
-    ],
-
+    ]
 ];

@@ -87,6 +87,28 @@ Route::middleware([
     Route::get('/fantrax/leagues', [FantraxController::class, 'index'])
         ->name('fantrax.leagues.index');
 
+    Route::get('/fantrax/leagues/create', [FantraxController::class, 'create'])
+        ->name('fantrax.leagues.create');
+
+    Route::put('/fantrax/leagues/{league}', [FantraxController::class, 'update'])
+        ->name('fantrax.leagues.update');
+
+    Route::get('/fantrax/leagues/{league}/edit', [FantraxController::class, 'edit'])
+        ->name('fantrax.leagues.edit');
+
+    Route::get('/fantrax/leagues/{league}', [FantraxController::class, 'show'])
+        ->name('fantrax.leagues.show');
+
+    Route::delete('/fantrax/leagues/{league}', [FantraxController::class, 'destroy'])
+        ->name('fantrax.leagues.destroy');
+
+    Route::post('/fantrax/leagues/{league}/sync', [FantraxController::class, 'sync'])
+        ->name('fantrax.leagues.sync');
+
+
+
+
+
 
     // Fantrax integration (temp routes)
     Route::prefix('integrations/fantrax')

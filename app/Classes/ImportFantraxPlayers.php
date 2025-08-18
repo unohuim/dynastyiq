@@ -44,20 +44,27 @@ class ImportFantraxPlayers
 
         $imported = 0;
         $skipped = 0;
+        
 
         foreach ($entries as $entry) {
             $player = $this->resolvePlayer($entry);
 
             if ($player === null) {
+                $pid = null;
                 Log::warning('[Fantrax] Skipping entry; no Player match', ['entry' => $entry]);
-                $skipped++;
-                continue;
+                // $skipped++;
+                // continue;
+            } 
+            else {
+                $pid = $player->id;
+                $player->fantrax_id = $entry['fantraxId'];
+                $player->save();
             }
 
             FantraxPlayer::updateOrCreate(
                 ['fantrax_id' => $entry['fantraxId'] ?? ''],
                 [
-                    'player_id'       => $player->id,
+                    'player_id'       => $pid,
                     'statsinc_id'     => $entry['statsIncId']     ?? null,
                     'rotowire_id'     => $entry['rotowireId']     ?? null,
                     'sport_radar_id'  => $entry['sportRadarId']   ?? null,
