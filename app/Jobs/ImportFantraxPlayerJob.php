@@ -20,6 +20,9 @@ class ImportFantraxPlayerJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
+    public const TAG_IMPORT = 'import-fantrax-player';
+
+
     /**
      * @var array<string,mixed>
      */

@@ -16,6 +16,8 @@ class ImportFantraxPlayersJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
+    public const TAG_IMPORT = 'import-fantax-players';
+
     /**
      * Create a new job instance.
      */
@@ -31,5 +33,11 @@ class ImportFantraxPlayersJob implements ShouldQueue
     {
         // Delegate to the ImportFantraxPlayers class
         (new ImportFantraxPlayers())->import();
+    }
+
+
+    public function tags(): array
+    {
+        return self::TAG_IMPORT;
     }
 }
