@@ -25,13 +25,14 @@ return [
     |
     */
 
-    'min_season_id' => env('NHL_MIN_SEASON_ID', '20192020'),
-    'max_weeks_discovery_job' => env('MAX_WEEKS_DISCOVERY_JOB', 13),
-    'max_pbp_seconds'   => env('MAX_PBP_SECONDS', 7200),
-    'max_shifts_seconds'   => env('MAX_SHIFTS_SECONDS', 7200),
-    'max_boxscore_seconds'   => env('MAX_BOXSCORE_SECONDS', 7200),
-    'max_game_summaries_seconds'   => env('MAX_GAME_SUMMARIES_SECONDS', 7200),
-    'max_shift_units_seconds'   => env('MAX_SHIFT_UNITS_SECONDS', 7200),
-    'max_connect_events_seconds'   => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
+    'min_season_id'                 => env('NHL_MIN_SEASON_ID', '20192020'),
+    'max_weeks_discovery_job'       => env('MAX_WEEKS_DISCOVERY_JOB', 13),
+    'max_pbp_seconds'               => env('MAX_PBP_SECONDS', 7200),
+    'max_shifts_seconds'            => env('MAX_SHIFTS_SECONDS', 7200),
+    'max_boxscore_seconds'          => env('MAX_BOXSCORE_SECONDS', 7200),
+    'max_game_summaries_seconds'    => env('MAX_GAME_SUMMARIES_SECONDS', 7200),
+    'max_shift_units_seconds'       => env('MAX_SHIFT_UNITS_SECONDS', 7200),
+    'max_connect_events_seconds'    => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
+    'max_sum_game_units_seconds'    => env('MAX_SUM_GAME_UNITS_SECONDS', 7200),
 
 ];

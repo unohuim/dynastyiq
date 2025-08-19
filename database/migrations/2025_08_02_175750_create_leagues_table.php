@@ -14,28 +14,25 @@ return new class extends Migration
         Schema::create('leagues', function (Blueprint $table) {
             $table->id();
 
-            // Platform enum (e.g., fantrax, nhl, yahoo)
-            $table->enum('platform', ['fantrax', 'yahoo', 'espn'])->default('fantrax');
+            // Provider
+            $table->enum('platform', ['fantrax', 'yahoo', 'espn'])->index();
 
-            // League ID on the platform (e.g. "gnga7rnym9mwml4l")
-            $table->string('platform_league_id')->unique();
+            // External league id (unique per platform)
+            $table->string('platform_league_id');
 
-            // League name (e.g. "Champions League of Hockey")
+            // Canonical fields
             $table->string('name');
-
-            // Optional sport (e.g., NHL)
             $table->string('sport')->nullable();
 
-            // Optional Discord server ID for league communication
-            $table->string('discord_server_id')->nullable();
-
-            // Optional JSON columns for league settings
-            $table->json('draft_settings')->nullable();
-            $table->json('scoring_settings')->nullable();
-            $table->json('roster_settings')->nullable();
+            // Sync/audit
+            $table->timestamp('synced_at')->nullable();
 
             $table->timestamps();
+
+            // Ensure uniqueness is scoped by platform
+            $table->unique(['platform', 'platform_league_id'], 'uq_platform_league');
         });
+
     }
 
     /**

@@ -50,6 +50,7 @@ class SumNhlSeasonStats
 
                 SUM(gs.b) as b,         SUM(gs.b_teammate) as b_teammate,
                 SUM(gs.h) as h,         SUM(gs.th) as th,
+                SUM(gs.f) as f,
 
                 SUM(gs.gv) as gv,       SUM(gs.tk) as tk,
                 SUM(gs.tkvgv) as tkvgv,
@@ -92,6 +93,7 @@ class SumNhlSeasonStats
 
             $b=(int)$r->b; $b_teammate=(int)$r->b_teammate;
             $h=(int)$r->h; $th=(int)$r->th;
+            $f = (int) $r->f;
 
             $gv=(int)$r->gv; $tk=(int)$r->tk; $tkvgv=(int)$r->tkvgv;
 
@@ -155,6 +157,7 @@ class SumNhlSeasonStats
 
                 'b'=>$b,'b_teammate'=>$b_teammate,
                 'h'=>$h,'th'=>$th,
+                'f' => $f,
 
                 'gv'=>$gv,'tk'=>$tk,'tkvgv'=>$tkvgv,
 

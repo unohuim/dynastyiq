@@ -11,6 +11,7 @@ use Laravel\Socialite\Facades\Socialite;
 use App\Http\Controllers\FantraxUserController;
 use App\Http\Controllers\FantraxController;
 use App\Services\ImportUserFantraxLeagues;
+use App\Http\Controllers\StatsUnitsController;
 
 
 /*
@@ -81,6 +82,15 @@ Route::middleware([
         Route::get('/sumseason/{season_id}', 'Sum');
     });
 
+
+    //STATS
+    Route::get('/stats/units', [StatsUnitsController::class, 'index'])->name('stats.units.index');
+
+
+
+    //LEAGUES
+    Route::get('/leagues', [LeagueController::class, 'index'])
+        ->name('leagues.index');
 
 
 

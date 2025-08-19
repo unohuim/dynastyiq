@@ -1,45 +1,42 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Models\League;
+use App\Models\Team;
+use App\Models\LeagueUserTeam;
+use App\Models\RankingProfile;
+use App\Models\IntegrationSecret;
+use App\Models\Role;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
-use App\Models\RankingProfile;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use App\Models\FantraxLeague;
-
-
 
 class User extends Authenticatable
 {
     use HasApiTokens;
-
-    /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory;
     use HasProfilePhoto;
     use Notifiable;
     use TwoFactorAuthenticatable;
 
     /**
-     * The attributes that are mass assignable.
-     *
      * @var array<int, string>
      */
     protected $fillable = [
         'name',
         'email',
         'password',
-        'tenant_id'
+        'tenant_id',
     ];
 
     /**
-     * The attributes that should be hidden for serialization.
-     *
      * @var array<int, string>
      */
     protected $hidden = [
@@ -50,19 +47,12 @@ class User extends Authenticatable
     ];
 
     /**
-     * The accessors to append to the model's array form.
-     *
      * @var array<int, string>
      */
     protected $appends = [
         'profile_photo_url',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -71,25 +61,38 @@ class User extends Authenticatable
         ];
     }
 
-
     /**
-     * Get all Fantrax leagues this user belongs to.
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
+     * Leagues the user participates in (via league_user_teams).
      */
-    public function fantraxLeagues(): BelongsToMany
+    public function leagues(): BelongsToMany
     {
-        return $this->belongsToMany(FantraxLeague::class, 'fantrax_league_user_teams', 'user_id', 'fantrax_league_id', 'id', 'fantrax_league_id')
-                    ->withPivot(['fantrax_team_id', 'is_active'])
-                    ->withTimestamps();
+        return $this->belongsToMany(League::class, 'league_user_teams', 'user_id', 'league_id')
+            ->withPivot(['team_id', 'is_active', 'extras', 'synced_at'])
+            ->withTimestamps();
     }
 
+    /**
+     * Teams the user is assigned to (via league_user_teams).
+     */
+    public function teams(): BelongsToMany
+    {
+        return $this->belongsToMany(Team::class, 'league_user_teams', 'user_id', 'team_id')
+            ->withPivot(['league_id', 'is_active', 'extras', 'synced_at'])
+            ->withTimestamps();
+    }
+
+    /**
+     * User↔Team assignment rows.
+     */
+    public function leagueUserTeams()
+    {
+        return $this->hasMany(LeagueUserTeam::class);
+    }
 
     public function socialAccounts()
     {
-        return $this->hasMany(\App\Models\SocialAccount::class);
+        return $this->hasMany(SocialAccount::class);
     }
-
 
     public function rankingProfiles(): BelongsToMany
     {
@@ -99,20 +102,8 @@ class User extends Authenticatable
             'player_id',
             'ranking_profile_id'
         )->withPivot(['score', 'description', 'visibility', 'settings'])
-         ->withTimestamps();
-    }
-
-
-    /**
-     * The leagues that the user belongs to.
-     */
-    public function leagues()
-    {
-        return $this->belongsToMany(League::class, 'league_user')
-            ->withPivot(['is_commish', 'is_admin'])
             ->withTimestamps();
     }
-
 
     /**
      * Integration secrets belonging to the user.
@@ -127,34 +118,34 @@ class User extends Authenticatable
      */
     public function fantraxSecret()
     {
-        return $this->hasOne(IntegrationSecret::class)
-                    ->where('provider', 'fantrax');
+        return $this->hasOne(IntegrationSecret::class)->where('provider', 'fantrax');
     }
-
 
     /**
      * Check if the user is a commissioner for a given league.
+     * Looks for extras.is_commish=true in league_user_teams.
      */
     public function isCommissionerForLeague(int $leagueId): bool
     {
-        return $this->leagues()
+        return LeagueUserTeam::query()
+            ->where('user_id', $this->id)
             ->where('league_id', $leagueId)
-            ->wherePivot('is_commish', true)
+            ->where('extras->is_commish', true)
             ->exists();
     }
 
     /**
      * Check if the user is an admin for a given league.
+     * Looks for extras.is_admin=true in league_user_teams.
      */
     public function isAdminForLeague(int $leagueId): bool
     {
-        return $this->leagues()
+        return LeagueUserTeam::query()
+            ->where('user_id', $this->id)
             ->where('league_id', $leagueId)
-            ->wherePivot('is_admin', true)
+            ->where('extras->is_admin', true)
             ->exists();
     }
-    
-
 
     public function roles()
     {
@@ -170,5 +161,4 @@ class User extends Authenticatable
     {
         return $this->roles()->whereIn('slug', $roleNames)->exists();
     }
-
 }

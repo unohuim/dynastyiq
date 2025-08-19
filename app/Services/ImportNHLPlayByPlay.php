@@ -131,10 +131,8 @@ class ImportNHLPlayByPlay
                     'nhl_game_id' => $gameId,
                     'nhl_event_id' => $event['eventId'] ?? null,
                     
-                    'away_score' => $response['awayTeam']['score'] ?? 0,
-                    'home_score' => $response['homeTeam']['score'] ?? 0,
-                    'away_sog' => $response['awayTeam']['sog'] ?? 0,
-                    'home_sog' => $response['homeTeam']['sog'] ?? 0,
+                    'away_score' => $details['awayScore'] ?? 0,
+                    'home_score' => $details['homeScore'] ?? 0,
 
                     'period' => $period,
                     'period_type' => $event['periodDescriptor']['periodType'] ?? null,

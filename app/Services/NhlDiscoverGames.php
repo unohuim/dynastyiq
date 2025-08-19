@@ -14,7 +14,7 @@ class NhlDiscoverGames
     use HasAPITrait;
 
     /** @var array<string> */
-    private array $importTypes = ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events'];
+    private array $importTypes = ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events', 'sum-game-units'];
 
     public function __construct(private readonly NhlImportProgressRepo $repo)
     {

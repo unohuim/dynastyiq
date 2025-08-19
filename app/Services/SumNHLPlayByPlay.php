@@ -52,6 +52,13 @@ class SumNHLPlayByPlay
 
                 $playerPlays = $P();
 
+                // Fights
+                $f = $playerPlays
+                    ->where('type_desc_key', 'penalty')
+                    ->where('desc_key', 'fighting')
+                    ->where('committed_by_player_id', $playerId)
+                    ->count();
+
                 // Faceoffs
                 $fow = $playerPlays->where('fo_winning_player_id', $playerId)->count();
                 $fol = $playerPlays->where('fo_losing_player_id', $playerId)->count();
@@ -167,9 +174,10 @@ class SumNHLPlayByPlay
                     'toi' => null,
                     'shifts' => 0,
 
-                    // Blocks / Hits
+                    // Blocks / Hits / Fights
                     'b' => $b, 'b_teammate' => $bTeammate,
                     'h' => $h, 'th' => $th,
+                    'f' => $f,
 
                     // Giveaways / Takeaways
                     'gv' => $gv, 'tk' => $tk, 'tkvgv' => ($tk - $gv),

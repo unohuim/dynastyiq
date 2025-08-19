@@ -1,22 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers;
 
+use App\Events\FantraxUserConnected;
+use App\Models\IntegrationSecret;
+use App\Services\FantraxLeagueService;
+use App\Traits\HasAPITrait;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Models\IntegrationSecret;
-use App\Traits\HasAPITrait;
-
 
 class FantraxUserController extends Controller
 {
     use HasAPITrait;
 
-
     /**
      * Store or update the Fantrax secret key for the authenticated user.
      */
-    public function save(Request $request)
+    public function save(Request $request): RedirectResponse|JsonResponse
     {
         $data = $request->validate([
             'fantrax_secret_key' => 'required|string|max:255',
@@ -26,13 +30,13 @@ class FantraxUserController extends Controller
             $resp = $this->getAPIData('fantrax', 'user_leagues', [
                 'userSecretId' => $data['fantrax_secret_key'],
             ]);
-        } catch (\Throwable $e) {
-            return back()->withErrors(['fantrax_secret_key' => 'Unable to reach Fantrax. Try again.']);
+        } catch (\Throwable) {
+            return $this->respondError($request, 'Unable to reach Fantrax. Try again.');
         }
 
         $leagues = $resp['leagues'] ?? [];
         if (count($leagues) === 0) {
-            return back()->withErrors(['fantrax_secret_key' => 'Invalid Fantrax Secret Key.']);
+            return $this->respondError($request, 'Invalid Fantrax Secret Key.');
         }
 
         // 1) Save/confirm integration
@@ -41,12 +45,11 @@ class FantraxUserController extends Controller
             ['secret' => $data['fantrax_secret_key'], 'status' => 'connected']
         );
 
-        // 2) Sync leagues + user pivots (synchronously, via service)
-        app(\App\Services\FantraxLeagueService::class)
-            ->upsertLeaguesForUser(Auth::user(), $leagues);
+        // 2) Sync unified Leagues/Teams and user↔team assignments
+        app(FantraxLeagueService::class)->upsertLeaguesForUser(Auth::user(), $leagues);
 
-        // 3) Fire event AFTER upserts so listeners can access $user->fantraxLeagues
-        \App\Events\FantraxUserConnected::dispatch(Auth::user());
+        // 3) Notify listeners
+        FantraxUserConnected::dispatch(Auth::user());
 
         session()->put('fantrax.connected', true);
 
@@ -58,15 +61,13 @@ class FantraxUserController extends Controller
             ]);
         }
 
-        return back()->with('status', 'Fantrax connected ('.count($leagues).' league(s) found).');
+        return back()->with('status', 'Fantrax connected (' . count($leagues) . ' league(s) found).');
     }
-
-
 
     /**
      * Disconnect the Fantrax integration for the authenticated user.
      */
-    public function disconnect()
+    public function disconnect(): RedirectResponse
     {
         $secret = IntegrationSecret::where('user_id', Auth::id())
             ->where('provider', 'fantrax')
@@ -77,5 +78,14 @@ class FantraxUserController extends Controller
         }
 
         return back()->with('status', 'Fantrax disconnected.');
+    }
+
+    private function respondError(Request $request, string $message): RedirectResponse|JsonResponse
+    {
+        if ($request->ajax() || $request->wantsJson()) {
+            return response()->json(['ok' => false, 'error' => $message], 422);
+        }
+
+        return back()->withErrors(['fantrax_secret_key' => $message]);
     }
 }

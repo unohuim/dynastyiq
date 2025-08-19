@@ -67,8 +67,6 @@ class NhlImportProgressRepo
                 'last_error'  => null,
                 'updated_at'  => now(),
             ]);
-
-        \Log::warning("completed job - game_id:  {$gameId}, type: {$type}");
     }
 
     /** Mark failure (error) with message/code. */

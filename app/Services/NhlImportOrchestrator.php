@@ -13,7 +13,7 @@ use App\Jobs\SeasonSumJob;
 class NhlImportOrchestrator
 {
     /** @var array<string> */
-    private array $importTypes = ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events' ];
+    private array $importTypes = ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events', 'sum-game-units'];
 
     public function __construct(private readonly NhlImportProgressRepo $repo)
     {
@@ -22,7 +22,7 @@ class NhlImportOrchestrator
     /** Daily entry point: scan tracker and dispatch eligible jobs. */
     public function processScheduled(string $gameDate): void
     {
-        foreach (['pbp','summary','shifts','boxscore','shift-units','connect-events'] as $type) {
+        foreach (['pbp','summary','shifts','boxscore','shift-units','connect-events', 'sum-game-units'] as $type) {
             $gameIds = DB::table('nhl_import_progress')
                 ->where('import_type', $type)
                 ->where('status', 'scheduled')
@@ -76,11 +76,12 @@ class NhlImportOrchestrator
     public function advance(int $gameId, string $completedType): void
     {
         $next = match ($completedType) {
-            'pbp'           => 'summary',
-            'summary'       => 'shifts',
-            'shifts'        => 'boxscore',
-            'boxscore'      => 'shift-units',
-            'shift-units'   => 'connect-events',
+            'pbp'               => 'summary',
+            'summary'           => 'shifts',
+            'shifts'            => 'boxscore',
+            'boxscore'          => 'shift-units',
+            'shift-units'       => 'connect-events',
+            'connect-events'    => 'sum-game-units',
             default    => null,
         };
 
@@ -100,6 +101,7 @@ class NhlImportOrchestrator
             'boxscore'          => ['pbp','summary','shifts'],
             'shift-units'       => ['pbp','summary','shifts','boxscore'],
             'connect-events'    => ['pbp','summary','shifts','boxscore','shift-units'],
+            'sum-game-units'    => ['pbp','summary','shifts','boxscore','shift-units', 'connect-events'],
             default    => [],
         };
 
@@ -136,6 +138,9 @@ class NhlImportOrchestrator
             case 'connect-events':
                 dispatch(new \App\Jobs\ConnectEventsShiftUnitsNhlJob($gameId));//->onQueue('connect-events');
                 break;
+            case 'sum-game-units':
+                dispatch(new \App\Jobs\SumNhlGameUnitsJob($gameId));//->onQueue('connect-events');
+                break;
             
         }
     }
@@ -150,6 +155,7 @@ class NhlImportOrchestrator
             'summary'  => (int) config('nhlimport.max_game_summaries_seconds', 7200),
             'shift-units'  => (int) config('nhlimport.max_shift_units_seconds', 7200),
             'connect-events'  => (int) config('nhlimport.max_connect_events_seconds', 7200),
+            'sum-game-units'  => (int) config('nhlimport.max_sum_game_units_seconds', 7200),
         ];
 
         foreach ($thresholds as $type => $secs) {

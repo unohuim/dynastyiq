@@ -24,10 +24,10 @@
                 <a 
                     x-cloak 
                     x-show="hasFantrax"
-                    href="{{ route('fantrax.leagues.index') }}"
-                    class="text-lg font-semibold {{ request()->routeIs('fantrax.leagues.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
+                    href="{{ route('leagues.index') }}"
+                    class="text-lg font-semibold {{ request()->routeIs('leagues.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
                 >
-                    Fantrax
+                    Leagues
                 </a>
             @endauth
         </div>

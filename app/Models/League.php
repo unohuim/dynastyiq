@@ -1,63 +1,85 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
-/**
- * Class League
- *
- * @package App\Models
- *
- * @property int $id
- * @property string $platform
- * @property string $platform_league_id
- * @property string $name
- * @property string|null $sport
- * @property string|null $discord_server_id
- * @property array|null $draft_settings
- * @property array|null $scoring_settings
- * @property array|null $roster_settings
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
- */
 class League extends Model
 {
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var array<int, string>
-     */
     protected $fillable = [
         'platform',
         'platform_league_id',
         'name',
         'sport',
-        'discord_server_id',
-        'draft_settings',
-        'scoring_settings',
-        'roster_settings',
+        'synced_at',
     ];
 
-    /**
-     * The attributes that should be cast.
-     *
-     * @var array<string, string>
-     */
     protected $casts = [
-        'draft_settings' => 'array',
-        'scoring_settings' => 'array',
-        'roster_settings' => 'array',
+        'synced_at' => 'datetime',
     ];
 
+    /**
+     * Teams registered in this league.
+     */
+    public function teams(): HasMany
+    {
+        return $this->hasMany(LeagueTeam::class);
+    }
 
     /**
-     * The users that belong to the league.
+     * User↔Team assignments within this league.
      */
-    public function users()
+    public function userTeams(): HasMany
     {
-        return $this->belongsToMany(User::class, 'league_user')
-            ->withPivot(['is_commish', 'is_admin'])
+        return $this->hasMany(LeagueUserTeam::class);
+    }
+
+    /**
+     * Users participating in this league.
+     */
+    public function users(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'league_user_teams')
+            ->withPivot(['league_team_id', 'is_active', 'extras', 'synced_at'])
             ->withTimestamps();
+    }
+
+    /**
+     * Scope by platform.
+     */
+    public function scopePlatform(Builder $query, string $platform): Builder
+    {
+        return $query->where('platform', $platform);
+    }
+
+    public function scopeFantrax(Builder $query): Builder
+    {
+        return $query->where('platform', 'fantrax');
+    }
+
+    public function scopeYahoo(Builder $query): Builder
+    {
+        return $query->where('platform', 'yahoo');
+    }
+
+    public function scopeEspn(Builder $query): Builder
+    {
+        return $query->where('platform', 'espn');
+    }
+
+    public function scopeProviderPair(Builder $query, string $platform, string $platformLeagueId): Builder
+    {
+        return $query->where('platform', $platform)
+            ->where('platform_league_id', $platformLeagueId);
+    }
+
+    public function getIdentifierAttribute(): string
+    {
+        return "{$this->platform}:{$this->platform_league_id}";
     }
 }

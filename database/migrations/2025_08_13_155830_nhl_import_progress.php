@@ -27,7 +27,7 @@ return new class extends Migration
             $table->unsignedTinyInteger('game_type')->nullable();
 
             // Type of import (pbp, shifts, boxscore, summary)
-            $table->enum('import_type', ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events']);
+            $table->enum('import_type', ['pbp', 'summary', 'shifts', 'boxscore', 'shift-units', 'connect-events', 'sum-game-units']);
 
             // Number of items processed (e.g., events, shifts)
             $table->unsignedInteger('items_count')->default(0);

@@ -41,6 +41,7 @@ return new class extends Migration
 
             $table->smallInteger('plus_minus')->default(0);
 
+            $table->unsignedSmallInteger('f')->default(0);
             $table->unsignedSmallInteger('pim')->default(0);
 
             $table->unsignedInteger('toi')->nullable(); // seconds
