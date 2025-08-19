@@ -35,6 +35,14 @@ class SumNhlSeasonStats
                 SUM(gs.a2) as a2,       SUM(gs.eva2) as eva2,
                 SUM(gs.pts) as pts,     SUM(gs.evpts) as evpts,
 
+                SUM(gs.gwg) as gwg,     SUM(gs.otg) as otg, SUM(gs.ota) as ota,
+                SUM(gs.shog) as shog,   SUM(gs.shogwg) as shogwg,
+                SUM(gs.ps) as ps,       SUM(gs.psg) as psg,
+
+                SUM(gs.ens) as ens,     SUM(gs.eng) as eng,
+
+                SUM(gs.fg) as fg,       SUM(gs.htk) as htk,
+
                 SUM(gs.plus_minus) as plus_minus,
                 SUM(gs.pim) as pim,
 
@@ -64,7 +72,8 @@ class SumNhlSeasonStats
 
                 SUM(gs.sa)  as sa,      SUM(gs.evsa) as evsa,     SUM(gs.ppsa) as ppsa,     SUM(gs.pksa) as pksa,
                 SUM(gs.sv)  as sv,      SUM(gs.evsv) as evsv,     SUM(gs.ppsv) as ppsv,     SUM(gs.pksv) as pksv,
-                SUM(gs.ga)  as ga,      SUM(gs.evga) as evga,     SUM(gs.ppga) as ppga,     SUM(gs.pkga) as pkga
+                SUM(gs.ga)  as ga,      SUM(gs.evga) as evga,     SUM(gs.ppga) as ppga,     SUM(gs.pkga) as pkga,
+                SUM(gs.shosv) as shosv, SUM(gs.so) as so
             ')
             ->groupBy('gs.nhl_player_id', 'g.game_type')
             ->get();
@@ -88,12 +97,20 @@ class SumNhlSeasonStats
 
             $plus_minus=(int)$r->plus_minus; $pim=(int)$r->pim;
 
+            $gwg=(int)$r->gwg; $otg=(int)$r->otg; $ota=(int)$r->ota;
+            $shog=(int)$r->shog; $shogwg=(int)$r->shogwg;
+            $ps=(int)$r->ps; $psg=(int)$r->psg;
+
+            $ens = (int)$r->ens; $eng = (int)$r->eng;
+
             $ppg=(int)$r->ppg; $ppa=(int)$r->ppa; $ppa1=(int)$r->ppa1; $ppa2=(int)$r->ppa2; $ppp=(int)$r->ppp;
             $pkg=(int)$r->pkg; $pka=(int)$r->pka; $pkp=(int)$r->pkp;
 
             $b=(int)$r->b; $b_teammate=(int)$r->b_teammate;
             $h=(int)$r->h; $th=(int)$r->th;
             $f = (int) $r->f;
+
+            $fg=(int)$r->fg; $htk=(int)$r->htk;
 
             $gv=(int)$r->gv; $tk=(int)$r->tk; $tkvgv=(int)$r->tkvgv;
 
@@ -107,6 +124,7 @@ class SumNhlSeasonStats
             $sa=(int)$r->sa; $evsa=(int)$r->evsa; $ppsa=(int)$r->ppsa; $pksa=(int)$r->pksa;
             $sv=(int)$r->sv; $evsv=(int)$r->evsv; $ppsv=(int)$r->ppsv; $pksv=(int)$r->pksv;
             $ga=(int)$r->ga; $evga=(int)$r->evga; $ppga=(int)$r->ppga; $pkga=(int)$r->pkga;
+            $shosv=(int)$r->shosv; $so=(int)$r->so;
 
             $sog_p   = $this->pct($g,   $sog);
             $ppsog_p = $this->pct($ppg, $ppsog);
@@ -131,6 +149,11 @@ class SumNhlSeasonStats
             $sat_p60    = $this->per60($sat, $toi);
             $hits_p60   = $this->per60($h,   $toi);
             $blocks_p60 = $this->per60($b,   $toi);
+
+            $b_pg = $this->perGame($b, $gp);
+            $h_pg = $this->perGame($h, $gp);
+            $th_pg = $this->perGame($th, $gp);
+
 
             return [
                 'season_id'     => $seasonId,
@@ -159,6 +182,13 @@ class SumNhlSeasonStats
                 'h'=>$h,'th'=>$th,
                 'f' => $f,
 
+                'gwg'=>$gwg,'otg'=>$otg,'ota'=>$ota,
+                'shog'=>$shog,'shogwg'=>$shogwg,
+                'ps'=>$ps,'psg'=>$psg,
+
+                'fg'=>$fg,'htk'=>$htk,
+                'ens'=>$ens,'eng'=>$eng,
+
                 'gv'=>$gv,'tk'=>$tk,'tkvgv'=>$tkvgv,
 
                 'fow'=>$fow,'fol'=>$fol,'fot'=>$fot,'fow_percentage'=>$fow_percentage,
@@ -171,6 +201,7 @@ class SumNhlSeasonStats
                 'sa'=>$sa,'evsa'=>$evsa,'ppsa'=>$ppsa,'pksa'=>$pksa,
                 'sv'=>$sv,'evsv'=>$evsv,'ppsv'=>$ppsv,'pksv'=>$pksv,
                 'ga'=>$ga,'evga'=>$evga,'ppga'=>$ppga,'pkga'=>$pkga,
+                'shosv'=>$shosv,'so'=>$so,
 
                 'sog_p'=>$sog_p,'ppsog_p'=>$ppsog_p,'evsog_p'=>$evsog_p,'pksog_p'=>$pksog_p,
                 'sat_p'=>$sat_p,'ppsat_p'=>$ppsat_p,'evsat_p'=>$evsat_p,'pksat_p'=>$pksat_p,
@@ -179,6 +210,8 @@ class SumNhlSeasonStats
                 'g_p60'=>$g_p60,'a_p60'=>$a_p60,'pts_p60'=>$pts_p60,
                 'sog_p60'=>$sog_p60,'sat_p60'=>$sat_p60,
                 'hits_p60'=>$hits_p60,'blocks_p60'=>$blocks_p60,
+
+                'b_pg'=>$b_pg,'h_pg'=>$h_pg,'th_pg'=>$th_pg,
 
                 'created_at'=>$now,
                 'updated_at'=>$now,

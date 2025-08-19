@@ -35,10 +35,27 @@ return new class extends Migration
             $table->unsignedSmallInteger('pts')->default(0);
             $table->unsignedSmallInteger('evpts')->default(0);
 
+            // Game winners / OT / Shootout / Penalty shots
+            $table->unsignedTinyInteger('gwg')->default(0);
+            $table->unsignedTinyInteger('otg')->default(0);
+            $table->unsignedTinyInteger('ota')->default(0);
+            $table->unsignedSmallInteger('shog')->default(0);
+            $table->unsignedTinyInteger('shogwg')->default(0);
+            $table->unsignedSmallInteger('ps')->default(0);
+            $table->unsignedSmallInteger('psg')->default(0);
+
+            // Empty net
+            $table->unsignedSmallInteger('ens')->default(0); // empty-net shots on goal
+            $table->unsignedSmallInteger('eng')->default(0); // empty-net goals
+
+            // Milestones
+            $table->unsignedTinyInteger('fg')->default(0);   // first goal of the game
+            $table->unsignedTinyInteger('htk')->default(0);  // hat trick (>=3 goals in game)
+
             $table->smallInteger('plus_minus')->default(0);
             $table->unsignedSmallInteger('pim')->default(0);
 
-              // Fights
+            // Fights
             $table->unsignedSmallInteger('f')->default(0);
 
             // TOI / shifts
@@ -95,7 +112,7 @@ return new class extends Migration
             $table->unsignedSmallInteger('evsat')->default(0);
             $table->unsignedSmallInteger('pksat')->default(0);
 
-            // Goalie-facing (shots against, saves, goals against) — with EV/PP/PK splits
+            // Goalie-facing
             $table->unsignedSmallInteger('sa')->default(0);
             $table->unsignedSmallInteger('evsa')->default(0);
             $table->unsignedSmallInteger('ppsa')->default(0);
@@ -105,6 +122,9 @@ return new class extends Migration
             $table->unsignedSmallInteger('evsv')->default(0);
             $table->unsignedSmallInteger('ppsv')->default(0);
             $table->unsignedSmallInteger('pksv')->default(0);
+
+            $table->unsignedSmallInteger('shosv')->default(0);          //shootout saves
+            $table->unsignedSmallInteger('so')->default(0);             //shutouts
 
             $table->unsignedSmallInteger('ga')->default(0);
             $table->unsignedSmallInteger('evga')->default(0);
@@ -124,6 +144,8 @@ return new class extends Migration
             $table->unique(['nhl_game_id', 'nhl_player_id']);
             $table->index(['nhl_player_id', 'nhl_team_id']);
         });
+
+
 
     }
 

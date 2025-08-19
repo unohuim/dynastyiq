@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Models\PlayByPlay;
 use App\Models\NhlGameSummary;
 use App\Services\ImportNHLPlayer;
+use App\Models\NhlGame;
+use Illuminate\Support\Collection;
 
 class SumNHLPlayByPlay
 {
@@ -14,6 +16,17 @@ class SumNHLPlayByPlay
     {
         try {
             $plays = PlayByPlay::where('nhl_game_id', $nhlGameId)->get();
+
+            // Home/Away map (needed for empty-net detection via situationCode)
+            $game = NhlGame::where('nhl_game_id', $nhlGameId)->first();
+            $homeTeamId = (int)($game->home_team_id ?? 0);
+            $awayTeamId = (int)($game->away_team_id ?? 0);
+
+            // --- GWG/OTG/SHOG/SHOGWG/PS/PSG pre-computation -------------------
+            [$gwgByPlayer, $otgByPlayer, $otaByPlayer] = $this->computeGwgAndOtg($plays);
+            [$shogByPlayer, $shogwgByPlayer] = $this->computeShogAndWinner($plays);
+            [$psByPlayer, $psgByPlayer] = $this->computePenaltyShots($plays);
+            // -------------------------------------------------------------------
 
             $playerIds = $plays->pluck('nhl_player_id')
                 ->filter()
@@ -94,28 +107,49 @@ class SumNHLPlayByPlay
                 $evsat = $evsog + $evsm + $evsb;
                 $pksat = $pksog + $pksm + $pksb;
 
-                // Goals / Assists / Points
-                $g   = $playerPlays->where('scoring_player_id', $playerId)->count();
+                // Goals / Assists / Points (exclude SO from G/A/PTS)
+                $firstGoalPid = $this->computeFirstGoalScorer($plays);
+                $nonSO = $playerPlays->filter(fn ($p) => ($p->period_type ?? null) !== 'SO');
+
+                $g   = $nonSO->where('scoring_player_id', $playerId)->count();
                 $evg = $ev()->where('scoring_player_id', $playerId)->count();
                 $ppg = $pp()->where('scoring_player_id', $playerId)->count();
                 $pkg = $pk()->where('scoring_player_id', $playerId)->count();
 
-                $a   = $playerPlays->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
+                $a   = $nonSO->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
                 $eva = $ev()->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
                 $ppa = $pp()->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
 
-                $a1   = $playerPlays->where('assist1_player_id', $playerId)->count();
+                $a1   = $nonSO->where('assist1_player_id', $playerId)->count();
                 $eva1 = $ev()->where('assist1_player_id', $playerId)->count();
                 $ppa1 = $pp()->where('assist1_player_id', $playerId)->count();
 
-                $a2   = $playerPlays->where('assist2_player_id', $playerId)->count();
+                $a2   = $nonSO->where('assist2_player_id', $playerId)->count();
                 $eva2 = $ev()->where('assist2_player_id', $playerId)->count();
                 $ppa2 = $pp()->where('assist2_player_id', $playerId)->count();
 
                 $pts   = $g + $a;
                 $evpts = $evg + $eva;
                 $ppp   = $ppg + $ppa;
-                $pkp   = $pkg + $ppa; // PK points = goals + assists
+                $pkp   = $pkg + $ppa;
+
+
+                // Empty-net (ENS/ENG) using situationCode
+                $isENAttempt = fn ($p) => in_array(($p->type_desc_key ?? ''), ['goal','shot-on-goal','missed-shot','blocked-shot'], true);
+
+                $ens = $nonSO->filter(function ($p) use ($playerId, $isENAttempt, $homeTeamId, $awayTeamId) {
+                    $shooterId = (int) ($p->shooting_player_id ?? $p->scoring_player_id ?? 0);
+                    if ($shooterId !== (int) $playerId) return false;
+                    if (!$isENAttempt($p)) return false;
+                    return $this->isEmptyNetAgainst($p, $homeTeamId, $awayTeamId);
+                })->count();
+
+                $eng = $nonSO->filter(function ($p) use ($playerId, $homeTeamId, $awayTeamId) {
+                    return ($p->type_desc_key ?? null) === 'goal'
+                        && (int) ($p->scoring_player_id ?? 0) === (int) $playerId
+                        && $this->isEmptyNetAgainst($p, $homeTeamId, $awayTeamId);
+                })->count();
+
 
                 // Blocks (by this skater)
                 $b         = $playerPlays->where('blocking_player_id', $playerId)->where('reason', 'blocked')->count();
@@ -131,7 +165,11 @@ class SumNHLPlayByPlay
                 $ppsv = $pp()->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
                 $pksv = $pk()->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
 
-                $ga   = $playerPlays->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
+                $ga = $playerPlays
+                    ->where('goalie_in_net_player_id', $playerId)
+                    ->where('type_desc_key', 'goal')
+                    ->where('period_type', '!=', 'SO')
+                    ->count();
                 $evga = $ev()->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
                 $ppga = $pp()->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
                 $pkga = $pk()->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
@@ -141,6 +179,15 @@ class SumNHLPlayByPlay
                 $evsa = $evsv + $evga;
                 $ppsa = $ppsv + $ppga;
                 $pksa = $pksv + $pkga;
+
+
+                //ot saves
+                $shosv = $playerPlays
+                    ->where('goalie_in_net_player_id', $playerId)
+                    ->where('type_desc_key', 'shot-on-goal')
+                    ->where('period_type', 'SO')
+                    ->count();
+
 
                 // Shooting % (goals / SOG)
                 $sog_p   = $this->pct($g, $sog);
@@ -163,6 +210,22 @@ class SumNHLPlayByPlay
                     'a1' => $a1, 'eva1' => $eva1, 'ppa1' => $ppa1,
                     'a2' => $a2, 'eva2' => $eva2, 'ppa2' => $ppa2,
                     'pts' => $pts, 'evpts' => $evpts, 'ppp' => $ppp, 'pkp' => $pkp,
+
+                    // GWG/OTG/SHOG/SHOGWG/PS/PSG
+                    'gwg'    => (int) ($gwgByPlayer[(int)$playerId] ?? 0),
+                    'otg'    => (int) ($otgByPlayer[(int)$playerId] ?? 0),
+                    'ota'    => (int) ($otaByPlayer[(int)$playerId] ?? 0),
+                    'shog'   => (int) ($shogByPlayer[(int)$playerId] ?? 0),
+                    'shogwg' => (int) ($shogwgByPlayer[(int)$playerId] ?? 0),
+                    'ps'     => (int) ($psByPlayer[(int)$playerId] ?? 0),
+                    'psg'    => (int) ($psgByPlayer[(int)$playerId] ?? 0),
+
+                    'fg'  => (int) ((int)$playerId === (int)$firstGoalPid), // first goal of the game
+                    'htk' => (int) ($g >= 3), 
+
+                    // Empty net
+                    'ens' => (int) $ens,
+                    'eng' => (int) $eng,
 
                     // Plus/Minus (placeholder)
                     'plus_minus' => 0,
@@ -196,6 +259,10 @@ class SumNHLPlayByPlay
                     'ga' => $ga, 'evga' => $evga, 'ppga' => $ppga, 'pkga' => $pkga,
                     'sa' => $sa, 'evsa' => $evsa, 'ppsa' => $ppsa, 'pksa' => $pksa,
 
+                    //ot saves
+                    'shosv' => $shosv,
+
+
                     // Shooting percentages
                     'sog_p' => $sog_p, 'ppsog_p' => $ppsog_p, 'evsog_p' => $evsog_p, 'pksog_p' => $pksog_p,
                 ];
@@ -214,6 +281,245 @@ class SumNHLPlayByPlay
             throw $e;
         }
     }
+
+
+
+
+    private function computeGwgAndOtg(Collection $plays): array
+    {
+        // All non-shootout goals in chronological order
+        $goals = $plays->filter(fn ($p) => ($p->type_desc_key ?? null) === 'goal' && ($p->period_type ?? null) !== 'SO')
+                       ->sortBy(fn ($p) => $p->seconds_in_game ?? $p->sort_order ?? $p->id)
+                       ->values();
+
+        // OT goals and OT assists
+        $otgByPlayer = [];
+        $otaByPlayer = [];
+        foreach ($goals as $g) {
+            if (($g->period_type ?? null) === 'OT') {
+                if ($g->scoring_player_id) {
+                    $otgByPlayer[(int)$g->scoring_player_id] = 1; // OTG is binary per player per game
+                }
+                $a1 = (int)($g->assist1_player_id ?? 0);
+                $a2 = (int)($g->assist2_player_id ?? 0);
+                if ($a1) $otaByPlayer[$a1] = ($otaByPlayer[$a1] ?? 0) + 1;
+                if ($a2) $otaByPlayer[$a2] = ($otaByPlayer[$a2] ?? 0) + 1;
+            }
+        }
+
+        // GWG (no GWG if game decided by SO; OTG implies GWG)
+        $hadShootout = $plays->contains(fn ($p) => ($p->period_type ?? null) === 'SO');
+        $gwgByPlayer = [];
+
+        if (!$hadShootout && $goals->isNotEmpty()) {
+            $last = $goals->last();
+            $finalHome = (int)($last->home_score ?? 0);
+            $finalAway = (int)($last->away_score ?? 0);
+
+            if ($finalHome !== $finalAway) {
+                $finalDiff    = abs($finalHome - $finalAway);
+                $winnerIsHome = $finalHome > $finalAway;
+
+                foreach ($goals as $g) {
+                    $leadHome = (int)$g->home_score - (int)$g->away_score;
+                    if ($winnerIsHome && $leadHome === $finalDiff) {
+                        if ($g->scoring_player_id) $gwgByPlayer[(int)$g->scoring_player_id] = 1;
+                        break;
+                    }
+                    $leadAway = (int)$g->away_score - (int)$g->home_score;
+                    if (!$winnerIsHome && $leadAway === $finalDiff) {
+                        if ($g->scoring_player_id) $gwgByPlayer[(int)$g->scoring_player_id] = 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Any OTG is also the GWG in sudden-death OT
+        foreach ($otgByPlayer as $pid => $_) $gwgByPlayer[$pid] = 1;
+
+        return [$gwgByPlayer, $otgByPlayer, $otaByPlayer];
+    }
+
+
+    private function computeShogAndWinner(Collection $plays): array
+    {
+        $so = $plays->filter(fn ($p) => ($p->period_type ?? null) === 'SO')
+                    ->sortBy(fn ($p) => $p->seconds_in_game ?? $p->sort_order ?? $p->id)
+                    ->values();
+
+        $isMade = function ($p): bool {
+            if (($p->type_desc_key ?? null) === 'goal') return true;
+            $meta = $p->metadata ?? null;
+            if (is_array($meta) || $meta instanceof \ArrayAccess) {
+                if (!empty($meta['shootout_scored'])) return true;
+                if (($meta['result'] ?? null) === 'scored') return true;
+            }
+            return false;
+        };
+
+        $shogByPlayer = [];
+        $shogwgByPlayer = [];
+
+        $teams = [];
+        foreach ($so as $p) {
+            $pid = (int) ($p->shooting_player_id ?? $p->scoring_player_id ?? 0);
+            $tid = (int) ($p->event_owner_team_id ?? 0);
+            if (!$pid || !$tid) continue;
+
+            $beforeShooterUsed = $teams[$tid]['used'] ?? 0;
+            $oppTid = null;
+
+            foreach ($teams as $tId => $_) {
+                if ($tId !== $tid) { $oppTid = $tId; break; }
+            }
+            if ($oppTid === null) {
+                $oppTid = (int) ($so->firstWhere(fn ($x) => (int)($x->event_owner_team_id ?? 0) !== $tid)->event_owner_team_id ?? 0);
+            }
+
+            $oppUsed  = $teams[$oppTid]['used']  ?? 0;
+            $oppGoals = $teams[$oppTid]['goals'] ?? 0;
+
+            $made = $isMade($p);
+
+            $teams[$tid]['used']  = ($teams[$tid]['used'] ?? 0) + 1;
+            $teams[$tid]['goals'] = ($teams[$tid]['goals'] ?? 0) + ($made ? 1 : 0);
+
+            if ($made) {
+                $shogByPlayer[$pid] = ($shogByPlayer[$pid] ?? 0) + 1;
+            }
+
+            if (!$made || !$oppTid) continue;
+
+            if ($oppUsed < 3) {
+                $oppRemaining = 3 - $oppUsed;
+            } else {
+                $oppRemaining = ($beforeShooterUsed < $oppUsed) ? 0 : 1;
+            }
+
+            $lead = ($teams[$tid]['goals'] ?? 0) - $oppGoals;
+
+            if ($lead > $oppRemaining) {
+                $shogwgByPlayer[$pid] = 1;
+            }
+        }
+
+        return [$shogByPlayer, $shogwgByPlayer];
+    }
+
+    private function computePenaltyShots(Collection $plays): array
+    {
+        $nonSO = $plays->filter(fn ($p) => ($p->period_type ?? null) !== 'SO');
+
+        $isPsPenalty = function ($p): bool {
+            if (strtolower((string)($p->type_desc_key ?? '')) !== 'penalty') return false;
+
+            if (strtoupper((string)($p->penalty_type_code ?? '')) === 'PS') return true;
+            if (str_starts_with(strtolower((string)($p->desc_key ?? '')), 'ps-')) return true;
+
+            $meta = $p->metadata ?? null;
+            if (is_array($meta) || $meta instanceof \ArrayAccess) {
+                $d = $meta['details'] ?? $meta;
+                if (strtoupper((string)($d['typeCode'] ?? '')) === 'PS') return true;
+            }
+            return false;
+        };
+
+        $psKeys = [];
+        foreach ($nonSO as $e) {
+            if ($isPsPenalty($e)) {
+                $k = $this->psKey($e);
+                if ($k !== null) $psKeys[$k] = true;
+            }
+        }
+
+        $isAttempt = fn ($p) => in_array(($p->type_desc_key ?? ''), ['goal', 'shot-on-goal', 'missed-shot'], true);
+
+        $psByPlayer  = [];
+        $psgByPlayer = [];
+
+        foreach ($nonSO as $e) {
+            if (!$isAttempt($e)) continue;
+            $k = $this->psKey($e);
+            if ($k === null || empty($psKeys[$k])) continue;
+
+            $pid = (int) ($e->shooting_player_id ?? $e->scoring_player_id ?? 0);
+            if (!$pid) continue;
+
+            $psByPlayer[$pid] = ($psByPlayer[$pid] ?? 0) + 1;
+            if (($e->type_desc_key ?? null) === 'goal') {
+                $psgByPlayer[$pid] = ($psgByPlayer[$pid] ?? 0) + 1;
+            }
+        }
+
+        return [$psByPlayer, $psgByPlayer];
+    }
+
+    private function psKey($p): ?string
+    {
+        $period = $p->period ?? null;
+        if ($period === null) return null;
+
+        if (!is_null($p->seconds_in_game)) {
+            return $period . '|' . (int) $p->seconds_in_game;
+        }
+        if (!empty($p->time_in_period)) {
+            return $period . '|' . (string) $p->time_in_period;
+        }
+        return null;
+    }
+
+    /**
+     * Empty net against the shooter’s opponent?
+     * situationCode: first digit = away goalie (0=no goalie, 1=goalie), fourth digit = home goalie.
+     * Decide which digit to read based on whether event_owner_team_id is home or away.
+     */
+    private function isEmptyNetAgainst($p, ?int $homeTeamId, ?int $awayTeamId): bool
+    {
+        if (($p->period_type ?? null) === 'SO') return false;
+
+        $ownerTid = (int) ($p->event_owner_team_id ?? 0);
+        if (!$ownerTid || !$homeTeamId || !$awayTeamId) return false;
+
+        $sc = (string) ($p->situation_code ?? '');
+        if (strlen($sc) < 4) return false;
+
+        // Normalize to string of digits; take only first 4 chars
+        $sc = substr($sc, 0, 4);
+
+        // If owner is home, defender is away -> check first digit; else check fourth
+        if ($ownerTid === $homeTeamId) {
+            $awayGoalieDigit = $sc[0];
+            return $awayGoalieDigit === '0';
+        } elseif ($ownerTid === $awayTeamId) {
+            $homeGoalieDigit = $sc[3];
+            return $homeGoalieDigit === '0';
+        }
+
+        return false;
+    }
+
+
+    private function computeFirstGoalScorer(Collection $plays): ?int
+    {
+        $goals = $plays
+            ->filter(fn ($p) => ($p->type_desc_key ?? null) === 'goal' && ($p->period_type ?? null) !== 'SO')
+            ->sortBy(fn ($p) => $p->seconds_in_game ?? $p->sort_order ?? $p->id)
+            ->values();
+
+        // Prefer the first event where total score becomes 1 (home + away == 1)
+        $withScore = $goals->first(function ($g) {
+            $hs = isset($g->home_score) ? (int)$g->home_score : null;
+            $as = isset($g->away_score) ? (int)$g->away_score : null;
+            return $hs !== null && $as !== null && ($hs + $as) === 1;
+        });
+
+        $first = $withScore ?? $goals->first();
+        return $first && $first->scoring_player_id ? (int)$first->scoring_player_id : null;
+    }
+
+
+
 
     private function pct(int|float $num, int|float $den): float
     {

@@ -7,11 +7,14 @@ namespace App\Console\Commands;
 use App\Jobs\NhlDiscoveryJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 class NhlDiscoverCommand extends Command
 {
     /**
      * Examples:
+     *  php artisan nhl:discover --date=2025-02-15
+     *  php artisan nhl:discover --newdays=7
      *  php artisan nhl:discover --end=2024-12-31
      *  php artisan nhl:discover --start=2025-05-13
      *  php artisan nhl:discover --start=2025-05-13 --days=10
@@ -22,19 +25,34 @@ class NhlDiscoverCommand extends Command
         {--days= : Integer days window}
         {--season= : Season id like 20232024}
         {--start= : Start date (YYYY-MM-DD)}
-        {--end= : End date (YYYY-MM-DD)}';
+        {--end= : End date (YYYY-MM-DD)}
+        {--date= : Single date (YYYY-MM-DD) — overrides all other flags}
+        {--newdays= : Integer; start=oldest progress date, end=oldest+newdays (overrides start/end/days)}';
 
     protected $description = 'Discover NHL games for a date window and dispatch per-day discovery jobs.';
 
     public function handle(): int
     {
-        $season  = (string) ($this->option('season') ?? '');
-        $startOpt = $this->parseDate((string) ($this->option('start') ?? ''));
-        $endOpt   = $this->parseDate((string) ($this->option('end') ?? ''));
-        $daysRaw  = $this->option('days');
-        $days     = ($daysRaw === null || $daysRaw === '') ? null : (int) $daysRaw;
+        $season    = (string) ($this->option('season') ?? '');
+        $startOpt  = $this->parseDate((string) ($this->option('start') ?? ''));
+        $endOpt    = $this->parseDate((string) ($this->option('end') ?? ''));
+        $daysRaw   = $this->option('days');
+        $days      = ($daysRaw === null || $daysRaw === '') ? null : (int) $daysRaw;
 
-        // Season overrides everything else
+        $dateOpt   = $this->parseDate((string) ($this->option('date') ?? ''));
+        $newDaysRaw = $this->option('newdays');
+        $newDays    = ($newDaysRaw === null || $newDaysRaw === '') ? null : (int) $newDaysRaw;
+
+        // 1) --date has absolute precedence
+        if ($dateOpt) {
+            $start = $dateOpt;
+            $end   = $dateOpt;
+            dispatch(new NhlDiscoveryJob($start, $end));
+            $this->info("Queued discovery (single day) {$start->toDateString()}.");
+            return self::SUCCESS;
+        }
+
+        // 2) --season overrides the rest (except --date)
         if ($season !== '') {
             [$seasonStart, $seasonEnd] = $this->seasonBounds($season);
             if (!$seasonStart || !$seasonEnd) {
@@ -46,37 +64,45 @@ class NhlDiscoverCommand extends Command
             return self::SUCCESS;
         }
 
-        // If both start and end given, ignore days
+        // 3) --newdays overrides start/end/days logic
+        if (is_int($newDays)) {
+            $oldest = $this->oldestProgressDate();
+            if (!$oldest) {
+                $this->error('No oldest progress date found (configure apiImportNhl.progress_table/progress_date_column).');
+                return self::INVALID;
+            }
+            $start = $oldest->copy();                      // older
+            $end   = $oldest->copy()->addDays(max(0, $newDays)); // newer
+
+            // Normalize to (start >= end) as in existing pattern
+            if ($start->lt($end)) {
+                [$start, $end] = [$end, $start];
+            }
+
+            dispatch(new NhlDiscoveryJob($start, $end));
+            $this->info("Queued discovery via --newdays from {$oldest->toDateString()} → {$start->toDateString()}.");
+            return self::SUCCESS;
+        }
+
+        // 4) existing logic
         if ($startOpt && $endOpt) {
             [$start, $end] = $this->normalizeOrder($startOpt, $endOpt);
-        }
-        // start + days => end = start - days
-        elseif ($startOpt && is_int($days)) {
+        } elseif ($startOpt && is_int($days)) {
             $start = $startOpt;
             $end   = $startOpt->copy()->subDays(max(0, $days));
-        }
-        // end + days => start = end + days
-        elseif ($endOpt && is_int($days)) {
+        } elseif ($endOpt && is_int($days)) {
             $end   = $endOpt;
             $start = $endOpt->copy()->addDays(max(0, $days));
-        }
-        // start only => end = minSeasonEndDate
-        elseif ($startOpt) {
+        } elseif ($startOpt) {
             $start = $startOpt;
             $end   = $this->minSeasonEndDate();
-        }
-        // end only => start = today
-        elseif ($endOpt) {
+        } elseif ($endOpt) {
             $start = Carbon::today();
             $end   = $endOpt;
-        }
-        // days only => start = today, end = today - days
-        elseif (is_int($days)) {
+        } elseif (is_int($days)) {
             $start = Carbon::today();
             $end   = Carbon::today()->copy()->subDays(max(0, $days));
-        }
-        // default => start = today, end = minSeasonEndDate
-        else {
+        } else {
             $start = Carbon::today();
             $end   = $this->minSeasonEndDate();
         }
@@ -105,7 +131,7 @@ class NhlDiscoverCommand extends Command
         }
     }
 
-    /** For season like 20232024 → [start=2024-08-31, end=2023-09-01]. */
+    /** For season like 20232024 → [start=YYYY-08-31 of endYear, end=YYYY-09-01 of startYear]. */
     private function seasonBounds(string $seasonId): array
     {
         $seasonId = trim($seasonId);
@@ -128,12 +154,27 @@ class NhlDiscoverCommand extends Command
     private function minSeasonEndDate(): Carbon
     {
         $minSeasonId = (string) config('apiImportNhl.min_season_id', '20192020');
-        $startYear   = (int) substr($minSeasonId, 0, 4); // e.g., 2022 in 20222023
-        return Carbon::create($startYear, 9, 1)->startOfDay(); // 2022-09-01
+        $startYear   = (int) substr($minSeasonId, 0, 4);
+        return Carbon::create($startYear, 9, 1)->startOfDay();
     }
 
     private function normalizeOrder(Carbon $a, Carbon $b): array
     {
         return $a->gte($b) ? [$a, $b] : [$b, $a];
     }
+
+    /**
+     * Oldest in-progress date (configurable source).
+     * Expects config keys:
+     *  - apiImportNhl.progress_table (default: nhl_discovery_progress)
+     *  - apiImportNhl.progress_date_column (default: date)
+     */
+    private function oldestProgressDate(): ?Carbon
+    {
+        // Adjust table/column names here if yours differ.
+        $minDate = DB::table('nhl_import_progress')->min('game_date');
+
+        return $minDate ? Carbon::parse($minDate)->startOfDay() : null;
+    }
+
 }

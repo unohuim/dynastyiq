@@ -41,8 +41,25 @@ return new class extends Migration
 
             $table->smallInteger('plus_minus')->default(0);
 
+            // Game winners / OT / Shootout / Penalty shots
+            $table->unsignedTinyInteger('gwg')->default(0);
+            $table->unsignedTinyInteger('otg')->default(0);
+            $table->unsignedTinyInteger('ota')->default(0);
+            $table->unsignedSmallInteger('shog')->default(0);
+            $table->unsignedTinyInteger('shogwg')->default(0);
+            $table->unsignedSmallInteger('ps')->default(0);
+            $table->unsignedSmallInteger('psg')->default(0);
+
             $table->unsignedSmallInteger('f')->default(0);
             $table->unsignedSmallInteger('pim')->default(0);
+
+            // Empty net
+            $table->unsignedSmallInteger('ens')->default(0); // empty-net shots on goal
+            $table->unsignedSmallInteger('eng')->default(0); // empty-net goals
+
+            // Milestones
+            $table->unsignedTinyInteger('fg')->default(0);   // first goal of the game
+            $table->unsignedTinyInteger('htk')->default(0);  // hat trick (>=3 goals in game)
 
             $table->unsignedInteger('toi')->nullable(); // seconds
             $table->unsignedSmallInteger('shifts')->default(0);
@@ -109,6 +126,10 @@ return new class extends Migration
             $table->unsignedSmallInteger('ppga')->default(0);
             $table->unsignedSmallInteger('pkga')->default(0);
 
+            $table->unsignedSmallInteger('shosv')->default(0);          //shootout saves
+            $table->unsignedSmallInteger('so')->default(0);             //shutouts
+
+
             // Shooting % for shots on goal
             $table->decimal('sog_p', 6, 3)->default(0);
             $table->decimal('ppsog_p', 6, 3)->default(0);
@@ -125,6 +146,11 @@ return new class extends Migration
             $table->decimal('g_pg', 6, 3)->default(0);
             $table->decimal('a_pg', 6, 3)->default(0);
             $table->decimal('pts_pg', 6, 3)->default(0);
+            $table->decimal('b_pg', 6, 3)->default(0);
+            $table->decimal('h_pg', 6, 3)->default(0);
+            $table->decimal('th_pg', 6, 3)->default(0);
+
+
             $table->decimal('g_p60', 6, 3)->default(0);
             $table->decimal('a_p60', 6, 3)->default(0);
             $table->decimal('pts_p60', 6, 3)->default(0);

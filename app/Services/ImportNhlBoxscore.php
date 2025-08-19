@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\NhlBoxscore;
+use App\Models\NhlGameSummary;
 use App\Traits\HasAPITrait;
 
 class ImportNhlBoxscore
@@ -26,6 +27,7 @@ class ImportNhlBoxscore
 
         $stats = $response['playerByGameStats'];
 
+
         $playerCount = 0;
 
         foreach (['awayTeam', 'homeTeam'] as $teamSide) {
@@ -34,6 +36,9 @@ class ImportNhlBoxscore
             }
 
             $teamId = $response[$teamSide]['id'] ?? null;
+
+
+            $this->processShutout($nhlGameId, $stats[$teamSide]['goalies']);
             
 
             foreach (['forwards', 'defense', 'goalies'] as $posGroup) {
@@ -112,6 +117,40 @@ class ImportNhlBoxscore
 
         return $playerCount;
     }
+
+
+
+    private function processShutout(int|string $gameId, array $goalies)
+    {
+        if(empty($goalies)) return;       
+
+        foreach ($goalies as $g) {
+            $so = 0; 
+            $gkId = $g['playerId'] ?? null;  
+
+            if(!empty($gkId)) {
+                if ((int)($g['goalsAgainst'] ?? 0) < 1 && $g['starter'] == true) $so = $this->isShutout($goalies);
+                  
+                NhlGameSummary::where('nhl_game_id', (int) $gameId)
+                    ->where('nhl_player_id', $gkId)
+                    ->update(['so' => $so]);
+            }          
+        }
+    }
+
+
+
+    private function isShutout(array $goalies): bool
+    {
+        $shutOut = true;
+        foreach (($goalies ?? []) as $g) {
+            if (!(bool)($g['starter'] ?? false) && (($g['toi'] ?? '00:00') !== '00:00')) { $shutOut = false; break; }
+            if ((bool)($g['starter'] ?? false) && (int)($g['goalsAgainst'] ?? 0) > 0) { $shutOut = false; break; }
+        }
+        return $shutOut;
+    }
+
+
 
     /**
      * Parse "saves/shots" string format to int array.
