@@ -29,6 +29,15 @@
                 >
                     Leagues
                 </a>
+
+                <a 
+                    x-cloak 
+                    
+                    href="{{ route('stats.units.index') }}"
+                    class="text-lg font-semibold {{ request()->routeIs('stats.units.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
+                >
+                    Units
+                </a>
             @endauth
         </div>
 
