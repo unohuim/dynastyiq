@@ -45,7 +45,7 @@
     <div class="px-4 py-6 max-w-7xl mx-auto">
         <header class="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
-                <h1 class="text-2xl font-bold tracking-tight">Units • Game Summaries</h1>
+                <h1 class="text-2xl font-bold tracking-tight">Line Combos</h1>
                 <p class="text-sm text-gray-500">Default sort: GF desc. Filter by position.</p>
             </div>
 
