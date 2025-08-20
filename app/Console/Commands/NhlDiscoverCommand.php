@@ -27,28 +27,26 @@ class NhlDiscoverCommand extends Command
         {--start= : Start date (YYYY-MM-DD)}
         {--end= : End date (YYYY-MM-DD)}
         {--date= : Single date (YYYY-MM-DD) — overrides all other flags}
-        {--newdays= : Integer; start=oldest progress date, end=oldest+newdays (overrides start/end/days)}';
+        {--newdays= : Integer; window = [oldest_progress_date ... oldest_progress_date - NEWDAYS]}';
 
     protected $description = 'Discover NHL games for a date window and dispatch per-day discovery jobs.';
 
     public function handle(): int
     {
-        $season    = (string) ($this->option('season') ?? '');
-        $startOpt  = $this->parseDate((string) ($this->option('start') ?? ''));
-        $endOpt    = $this->parseDate((string) ($this->option('end') ?? ''));
-        $daysRaw   = $this->option('days');
-        $days      = ($daysRaw === null || $daysRaw === '') ? null : (int) $daysRaw;
+        $season      = (string) ($this->option('season') ?? '');
+        $startOpt    = $this->parseDate((string) ($this->option('start') ?? ''));
+        $endOpt      = $this->parseDate((string) ($this->option('end') ?? ''));
+        $daysRaw     = $this->option('days');
+        $days        = ($daysRaw === null || $daysRaw === '') ? null : (int) $daysRaw;
 
-        $dateOpt   = $this->parseDate((string) ($this->option('date') ?? ''));
-        $newDaysRaw = $this->option('newdays');
-        $newDays    = ($newDaysRaw === null || $newDaysRaw === '') ? null : (int) $newDaysRaw;
+        $dateOpt     = $this->parseDate((string) ($this->option('date') ?? ''));
+        $newDaysRaw  = $this->option('newdays');
+        $newDays     = ($newDaysRaw === null || $newDaysRaw === '') ? null : abs((int) $newDaysRaw);
 
         // 1) --date has absolute precedence
         if ($dateOpt) {
-            $start = $dateOpt;
-            $end   = $dateOpt;
-            dispatch(new NhlDiscoveryJob($start, $end));
-            $this->info("Queued discovery (single day) {$start->toDateString()}.");
+            dispatch(new NhlDiscoveryJob($dateOpt, $dateOpt));
+            $this->info("Queued discovery (single day) {$dateOpt->toDateString()}.");
             return self::SUCCESS;
         }
 
@@ -64,23 +62,25 @@ class NhlDiscoverCommand extends Command
             return self::SUCCESS;
         }
 
-        // 3) --newdays overrides start/end/days logic
+        // 3) --newdays extends window further into the past from the current oldest progress date
         if (is_int($newDays)) {
-            $oldest = $this->oldestProgressDate();
+            $oldest = $this->oldestProgressDate(); // from nhl_import_progress.game_date
             if (!$oldest) {
-                $this->error('No oldest progress date found (configure apiImportNhl.progress_table/progress_date_column).');
+                $this->error('No rows in nhl_import_progress; cannot use --newdays.');
                 return self::INVALID;
             }
-            $start = $oldest->copy();                      // older
-            $end   = $oldest->copy()->addDays(max(0, $newDays)); // newer
 
-            // Normalize to (start >= end) as in existing pattern
+            // Window: [oldest (newer), oldest - newDays (older)]
+            $start = $oldest->copy();                       // newer boundary
+            $end   = $oldest->copy()->subDays($newDays);    // older boundary
+
+            // Ensure (start >= end)
             if ($start->lt($end)) {
                 [$start, $end] = [$end, $start];
             }
 
             dispatch(new NhlDiscoveryJob($start, $end));
-            $this->info("Queued discovery via --newdays from {$oldest->toDateString()} → {$start->toDateString()}.");
+            $this->info("Queued discovery via --newdays {$start->toDateString()} → {$end->toDateString()}.");
             return self::SUCCESS;
         }
 
@@ -164,17 +164,11 @@ class NhlDiscoverCommand extends Command
     }
 
     /**
-     * Oldest in-progress date (configurable source).
-     * Expects config keys:
-     *  - apiImportNhl.progress_table (default: nhl_discovery_progress)
-     *  - apiImportNhl.progress_date_column (default: date)
+     * Oldest game_date in nhl_import_progress.
      */
     private function oldestProgressDate(): ?Carbon
     {
-        // Adjust table/column names here if yours differ.
         $minDate = DB::table('nhl_import_progress')->min('game_date');
-
         return $minDate ? Carbon::parse($minDate)->startOfDay() : null;
     }
-
 }
