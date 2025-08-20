@@ -5,41 +5,58 @@
     $abbr    = (string)($chip['abbr'] ?? '');
     $split   = (string)($chip['split'] ?? '');
     $isZones = (bool)($chip['isZones'] ?? false);
-    $reverse = !empty($chip['reverse']);
 
-    $total   = max(0, $for + $ag);
-    $share   = $total > 0
-        ? ($reverse ? ($ag / $total) : ($for / $total))
-        : 0.0;
+    $total = max(0, $for + $ag);
+    $r = 36; $circ = 2 * M_PI * $r;
 
-    $r    = 36;
-    $circ = 2 * M_PI * $r;
+    $reversedMetrics = ['PIM','Penalties'];
 
-    $clamped = max(0, min(100, $share * 100));
-    $arc     = $clamped >= 66 ? '#22c55e' : ($clamped >= 40 ? '#fbbf24' : '#ef4444');
-    $oColor  = ($isZones && $arc !== '#22c55e') ? $arc : '#059669';
-
-    $reversedMetrics = ['PIM', 'Penalties'];
-
-    // Default draw percent
-    $drawPct = $clamped;
+    $drawPct = 0;
+    $arc     = '#e5e7eb';
+    $pctText = '';
 
     if ($total === 0) {
-        // Absolute 0/0 → gray, no arc
-        $arc     = '#e5e7eb';
+        // Absolute 0/0 → gray
         $drawPct = 0;
+        $arc     = '#e5e7eb';
+        $pctText = '0%';
     } elseif (in_array($abbr, $reversedMetrics)) {
-        // Reversed logic: green if "for" is 0
-        $badShare = $total > 0 ? ($for / $total) : 0.0;
-        $clamped  = max(0, min(100, (1 - $badShare) * 100));
-        $arc      = $clamped >= 66 ? '#22c55e' : ($clamped >= 40 ? '#fbbf24' : '#ef4444');
-        $drawPct  = $clamped;
-    } elseif ($for === 0) {
-        // Normal metrics with 0-for → show tiny red arc
-        $arc     = '#ef4444';
-        $drawPct = 6;
+        // Reversed: look at opponent's share
+        $oppShare = $ag / $total;
+        $clamped  = round($oppShare * 100);
+
+        if ($oppShare == 1) {
+            // Opp took all → full green
+            $drawPct = 100;
+            $arc     = '#22c55e';
+        } elseif ($oppShare == 0) {
+            // We took all → full red
+            $drawPct = 100;
+            $arc     = '#ef4444';
+        } else {
+            // Partial split → gradient
+            $drawPct = $clamped;
+            $arc     = $clamped >= 66 ? '#22c55e' : ($clamped >= 40 ? '#fbbf24' : '#ef4444');
+        }
+
+        $pctText = $clamped . '% opp';
+    } else {
+        // Normal metrics
+        $share   = $for / $total;
+        $clamped = round($share * 100);
+
+        if ($for === 0) {
+            $drawPct = 6; // tiny red arc
+            $arc     = '#ef4444';
+        } else {
+            $drawPct = $clamped;
+            $arc     = $clamped >= 66 ? '#22c55e' : ($clamped >= 40 ? '#fbbf24' : '#ef4444');
+        }
+
+        $pctText = $clamped . '%';
     }
 
+    $oColor = ($isZones && $arc !== '#22c55e') ? $arc : '#059669';
     $offset = $circ - ($circ * ($drawPct / 100));
 @endphp
 
@@ -64,9 +81,7 @@
                 <div class="text-xl sm:text-2xl font-semibold tabular-nums text-gray-800">
                     {{ $for }}<span class="text-gray-400">/</span>{{ $ag }}
                 </div>
-                <div class="text-[10px] text-gray-500 tabular-nums">
-                    {{ round($clamped) }}%{{ $reverse ? ' opp' : '' }}
-                </div>
+                <div class="text-[10px] text-gray-500 tabular-nums">{{ $pctText }}</div>
                 @if($split !== '')
                     <div class="text-[10px] text-gray-400">
                         @if($split === 'O/D')
