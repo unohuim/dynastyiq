@@ -1,15 +1,15 @@
-{{-- resources/views/partials/_ring.blade.php --}}
+{{-- resources/views/partials/_ring.blade.php (update: support reverse scoring e.g., Penalties) --}}
 @php
     $for     = (int)($chip['for'] ?? 0);
     $ag      = (int)($chip['ag']  ?? 0);
     $abbr    = (string)($chip['abbr'] ?? '');
     $split   = (string)($chip['split'] ?? '');
     $isZones = (bool)($chip['isZones'] ?? false);
-    $reverse = !empty($chip['reverse']);
+    $reverse = (bool)($chip['reverse'] ?? false); // NEW
 
     $total   = max(0, $for + $ag);
     $share   = $total > 0
-        ? ($reverse ? ($ag / $total) : ($for / $total))
+        ? ($reverse ? ($ag / $total) : ($for / $total))   // NEW: invert when requested
         : 0.0;
 
     $r        = 36;
@@ -36,22 +36,15 @@
 
         <div class="absolute inset-0 grid place-items-center">
             <div class="text-center leading-tight">
-                {{-- Label: slightly larger & stronger --}}
-                <div class="text-xs text-gray-600 font-semibold">{{ $abbr }}</div>
-
-                {{-- Numbers: slightly smaller & less intense --}}
-                <div class="text-xl sm:text-2xl font-semibold tabular-nums text-gray-800">
+                <div class="text-[10px] text-gray-500 font-medium">{{ $abbr }}</div>
+                <div class="text-2xl sm:text-3xl font-bold tabular-nums text-gray-900">
                     {{ $for }}<span class="text-gray-400">/</span>{{ $ag }}
                 </div>
-
-                <div class="text-[10px] text-gray-500 tabular-nums">
-                    {{ round($clamped) }}%{{ $reverse ? ' opp' : '' }}
-                </div>
-
+                <div class="text-[10px] text-gray-500 tabular-nums">{{ round($clamped) }}%</div>
                 @if($split !== '')
                     <div class="text-[10px] text-gray-400">
                         @if($split === 'O/D')
-                            <span style="color: {{ $oColor }}; opacity:.9;">O</span>/<span>D</span>
+                            <span style="color: {{ $oColor }}; opacity:.85;">O</span>/<span>D</span>
                         @else
                             {{ $split }}
                         @endif

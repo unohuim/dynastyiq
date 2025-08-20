@@ -1,3 +1,19 @@
+<!-- <x-app-layout>
+
+
+
+{{-- resources/views/stats-units.blade.php (replace cards grid include block) --}}
+@include('partials._unit-cards', [
+    'units'   => $units,
+    'sortKey' => $sort ?? 'gf',
+])
+
+<div class="mt-6">
+    {{ $units->links() }}
+</div>
+</x-app-layout>  -->
+
+
 {{-- resources/views/stats-units.blade.php --}}
 <x-app-layout>
     @php
