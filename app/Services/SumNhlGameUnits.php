@@ -95,21 +95,21 @@ class SumNhlGameUnits
                 SUM(CASE 
                       WHEN p.type_desc_key = 'faceoff' 
                        AND (
-                            (UPPER(IFNULL(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id = us.team_id) OR
-                            (UPPER(IFNULL(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id <> us.team_id)
+                            (UPPER(COALESCE(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id = us.team_id) OR
+                            (UPPER(COALESCE(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id <> us.team_id)
                        )
                     THEN 1 ELSE 0 END) AS ozs,
 
                 SUM(CASE 
                       WHEN p.type_desc_key = 'faceoff' 
-                       AND UPPER(IFNULL(p.zone_code,'')) IN ('N','NZ')
+                       AND UPPER(COALESCE(p.zone_code,'')) IN ('N','NZ')
                     THEN 1 ELSE 0 END) AS nzs,
 
                 SUM(CASE 
                       WHEN p.type_desc_key = 'faceoff' 
                        AND (
-                            (UPPER(IFNULL(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id = us.team_id) OR
-                            (UPPER(IFNULL(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id <> us.team_id)
+                            (UPPER(COALESCE(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id = us.team_id) OR
+                            (UPPER(COALESCE(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id <> us.team_id)
                        )
                     THEN 1 ELSE 0 END) AS dzs
             SQL);
