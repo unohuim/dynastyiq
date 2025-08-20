@@ -70,11 +70,7 @@
                 {{ $row->away }} <span class="text-gray-400">vs</span> {{ $row->home }}
             </div>
             <div class="flex items-center gap-4">
-                @if($date)<span class="text-gray-500">{{ $date }}</span>@endif
-                <div class="text-right">
-                    <span class="text-gray-500">TOI</span>
-                    <span class="font-semibold tabular-nums">{{ $toiM }}:{{ $toiS }}</span>
-                </div>
+                @if($date)<span class="text-gray-500 text-xxs">{{ $date }}</span>@endif
             </div>
         </header>
 
@@ -141,13 +137,8 @@
         </div>
 
         <footer class="mt-auto px-4 py-3 bg-gray-50 text-sm flex items-center justify-between">
-            <div class="flex flex-wrap gap-x-6 gap-y-2">
-                <span>Shifts <span class="font-semibold tabular-nums">{{ (int)($row->shifts ?? 0) }}</span></span>
-                <span>Hits <span class="font-semibold tabular-nums">{{ $hitsF }}</span>/<span class="tabular-nums">{{ $hitsA }}</span></span>
-                <span>Blocks <span class="font-semibold tabular-nums">{{ $blocksF }}</span>/<span class="tabular-nums">{{ $blocksA }}</span></span>
-                <span>PIM <span class="font-semibold tabular-nums">{{ $pimF }}</span>/<span class="tabular-nums">{{ $pimA }}</span></span>
-            </div>
-            <span class="text-gray-300">•</span>
+            <span>Shifts <span class="font-semibold tabular-nums">{{ (int)($row->shifts ?? 0) }}</span></span>
+            <span><span class="text-gray-500">TOI</span> <span class="font-semibold tabular-nums">{{ $toiM }}:{{ $toiS }}</span></span>
         </footer>
     </article>
 @endforeach
