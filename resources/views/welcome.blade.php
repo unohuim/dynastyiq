@@ -12,19 +12,19 @@
         <!-- Manager -->
         <div class="rounded-xl shadow-xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-6 py-8">
           <h3 class="text-2xl font-semibold text-white">For Managers</h3>
-          <p class="mt-2 text-indigo-100">Gain powerful insights and manage your teams with precision.</p>
+          <p class="mt-2 text-indigo-100">Gain powerful insights, view advanced stats, and use leading indicators for your specific leagues.</p>
         </div>
 
         <!-- Commissioner -->
         <div class="rounded-xl shadow-xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-6 py-8">
           <h3 class="text-2xl font-semibold text-white">For Commissioners</h3>
-          <p class="mt-2 text-indigo-100">Effortlessly run your leagues, ensuring fairness and excitement.</p>
+          <p class="mt-2 text-indigo-100">Try easy mode.  Manage recruitment & onboarding, server communication, and set up key notifications for discord.</p>
         </div>
 
         <!-- Creator -->
         <div class="rounded-xl shadow-xl bg-gradient-to-br from-indigo-600 to-indigo-500 px-6 py-8">
           <h3 class="text-2xl font-semibold text-white">For Creators</h3>
-          <p class="mt-2 text-indigo-100">Produce engaging fantasy content that fans and players love.</p>
+          <p class="mt-2 text-indigo-100">Produce engaging fantasy content for your fans, and manage paywalls for value IP.</p>
         </div>
       </div>
     </div>
