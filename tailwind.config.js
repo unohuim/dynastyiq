@@ -71,6 +71,7 @@ export default {
         'z-50',
         'z-40',
         'z-10',
+        '-gap-y-8',
     ],
 
     theme: {

@@ -31,7 +31,7 @@ class StatsUnitsController extends Controller
         // Filter by unit type(s): F/D/G  (default: F only)
         $pos = collect((array) $request->input('pos', ['F']))
             ->map(fn ($v) => strtoupper((string) $v))
-            ->intersect(['F','D','G'])
+            ->intersect(['F','D'])
             ->values()
             ->all();
         if (empty($pos)) {
@@ -53,6 +53,8 @@ class StatsUnitsController extends Controller
                 'g.game_date',
                 'g.home_team_abbrev as home',
                 'g.away_team_abbrev as away',
+                'g.home_team_score',
+                'g.away_team_score',
             )
             ->selectSub(function ($sub) use ($playerNamesExpr) {
                 $sub->from('nhl_unit_players as up')

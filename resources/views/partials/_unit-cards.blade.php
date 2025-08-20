@@ -66,13 +66,29 @@
         class="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col w-full"
     >
         <header class="flex items-center justify-between bg-emerald-50/70 px-4 py-2 text-sm min-h-[42px]">
-            <div class="font-semibold">
-                {{ $row->away }} <span class="text-gray-400">vs</span> {{ $row->home }}
+            @php        
+                $awayScore = $row->away_team_score ?? null;
+                $homeScore = $row->home_team_score ?? null;
+                $periodType = strtoupper((string)($row->period_type ?? '')); // e.g., OT, SO, REG
+                $showPeriod = $periodType !== '' && !in_array($periodType, ['REG', 'R']);
+            @endphp
+
+            <div class="font-semibold flex items-center gap-2">
+                <span class="text-gray-400">{{ $row->away }}</span>
+                @isset($awayScore)<span class="text-gray-900 font-bold">{{ $awayScore }}</span>@endisset
+                <span class="text-gray-300">vs</span>
+                <span class="text-gray-400">{{ $row->home }}</span>
+                @isset($homeScore)<span class="text-gray-900 font-bold">{{ $homeScore }}</span>@endisset
+                @if($showPeriod)
+                    <span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-200 text-gray-700">{{ $periodType }}</span>
+                @endif
             </div>
+
             <div class="flex items-center gap-4">
-                @if($date)<span class="text-gray-500 text-xxs">{{ $date }}</span>@endif
+                @if($date)<span class="text-gray-700 text-xs">{{ $date }}</span>@endif
             </div>
         </header>
+
 
         <div class="px-4 pt-2">
             <div class="flex items-center gap-2 min-h-[28px]">
@@ -82,9 +98,9 @@
         </div>
 
         <div class="px-4 py-3">
-            <div class="flex flex-wrap justify-between w-full gap-y-2">
+            <div class="flex flex-wrap justify-between w-full gap-y-2 min-h-[40px]">
                 @forelse($players as $p)
-                    <span class="px-2.5 py-1 rounded-lg text-sm bg-blue-50 border border-blue-100 whitespace-nowrap">{{ $p }}</span>
+                    <span class="px-4 pt-2 rounded-lg text-sm bg-gray-50 border border-blue-100 whitespace-nowrap">{{ $p }}</span>
                 @empty
                     <span class="px-3 py-1 rounded-lg text-sm bg-gray-50 border">No players</span>
                 @endforelse
@@ -103,15 +119,15 @@
             </div>
         </div>
 
-        {{-- Swipe zone (mobile) --}}
+        {{-- Swipe zone (fixed panel height for consistency across pages & cards) --}}
         <div
-            class="px-4 pb-2 select-none touch-pan-y"
+            class="px-4 pb-2 select-none touch-pan-y min-h-[360px] sm:min-h-[380px] lg:min-h-[360px]"
             @touchstart.passive="onStart($event)"
             @touchmove.passive="onMove($event)"
             @touchend="onEnd()"
         >
             {{-- Page 1 --}}
-            <div x-show="activeSet===0" x-cloak>
+            <div x-show="activeSet===0" x-cloak class="min-h-[inherit]">
                 @include('partials._ring-set-page1', [
                     'satFor'=>$satFor,'satAg'=>$satAg,
                     'shotsFor'=>$shotsFor,'shotsAg'=>$shotsAg,
@@ -123,12 +139,12 @@
             </div>
 
             {{-- Page 2 (Zones triangle) --}}
-            <div x-show="activeSet===1" x-cloak>
+            <div x-show="activeSet===1" x-cloak class="min-h-[inherit] grid place-items-center">
                 @include('partials._triangle-zones', ['oz'=>$ozs,'dz'=>$dzs,'nz'=>$nzs])
             </div>
 
             {{-- Page 3 --}}
-            <div x-show="activeSet===2" x-cloak>
+            <div x-show="activeSet===2" x-cloak class="min-h-[inherit]">
                 @include('partials._ring-set-page3', [
                     'pimF'=>$pimF,'pimA'=>$pimA,
                     'pensF'=>$pensF,'pensA'=>$pensA,
@@ -136,7 +152,7 @@
             </div>
         </div>
 
-        <footer class="mt-auto px-4 py-3 bg-gray-50 text-sm flex items-center justify-between">
+        <footer class="mt-auto px-4 bg-gray-50 text-sm flex items-center justify-between h-12">
             <span>Shifts <span class="font-semibold tabular-nums">{{ (int)($row->shifts ?? 0) }}</span></span>
             <span><span class="text-gray-500">TOI</span> <span class="font-semibold tabular-nums">{{ $toiM }}:{{ $toiS }}</span></span>
         </footer>
