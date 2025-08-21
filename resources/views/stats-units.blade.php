@@ -38,12 +38,11 @@
                 {{-- Controls --}}
                 <form method="GET" action="{{ url()->current() }}"
                       x-data="{
-                        posSel: @js($currentPos),
-                        sort:   @js($currentSort),
+                        pos:  @js($currentPos[0] ?? 'F'),   // single-select
+                        sort: @js($currentSort),
                         open:false,
-                        togglePos(p){
-                          const i = this.posSel.indexOf(p);
-                          i>-1 ? this.posSel.splice(i,1) : this.posSel.push(p);
+                        selectPos(p){
+                          this.pos = p;
                           this.$nextTick(()=> $refs.submit.click());
                         },
                         chooseSort(k){
@@ -54,15 +53,14 @@
                       class="relative flex items-center gap-2"
                 >
                     <input type="hidden" name="dir" value="desc">
-                    <template x-for="p in posSel" :key="p">
-                        <input type="hidden" name="pos[]" :value="p">
-                    </template>
+                    <input type="hidden" name="pos[]" :value="pos">
                     <input type="hidden" name="sort" :value="sort">
 
                     @foreach ($posOptions as $p)
                         <button type="button"
-                                @click="togglePos('{{ $p }}')"
-                                :class="posSel.includes('{{ $p }}')
+                                @click="selectPos('{{ $p }}')"
+                                :aria-pressed="pos==='{{ $p }}'"
+                                :class="pos==='{{ $p }}'
                                         ? 'bg-indigo-600 text-white'
                                         : 'bg-white text-gray-700 hover:bg-gray-50'"
                                 class="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 shadow-sm">
@@ -101,6 +99,7 @@
                 </form>
             </div>
         </header>
+
 
         <div class="py-6">
             @include('partials._unit-cards', [
