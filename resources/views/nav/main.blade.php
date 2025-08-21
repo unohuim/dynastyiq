@@ -1,10 +1,14 @@
-{{-- resources/views/livewire/navigation-menu.blade.php (replace content) --}}
+{{-- resources/views/livewire/navigation-menu.blade.php (full replace) --}}
 <div x-data="{
         accountOpen:false,
         leftOpen:false,
         hasFantrax: {{ auth()->check() && auth()->user()->fantraxSecret ? 'true' : 'false' }},
+        hasDiscord: {{ auth()->check() && auth()->user()->socialAccounts()->where('provider','discord')->exists() ? 'true' : 'false' }},
     }"
-    x-init="window.addEventListener('fantrax:connected', () => hasFantrax = true)"
+    x-init="
+        window.addEventListener('fantrax:connected', () => hasFantrax = true);
+        window.addEventListener('discord:connected', () => hasDiscord = true);
+    "
     class="relative"
     x-cloak
 >
@@ -19,8 +23,7 @@
                class="text-lg font-semibold {{ request()->routeIs('players.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">Players</a>
 
             @auth
-                <a 
-                   class="text-lg font-semibold {{ request()->routeIs('players.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}">Perspectives</a>
+                <a class="text-lg font-semibold text-gray-600 hover:text-indigo-500">Perspectives</a>
 
                 <a x-show="hasFantrax"
                    href="{{ route('leagues.index') }}"
@@ -124,10 +127,8 @@
         class="fixed inset-0 z-50 flex sm:hidden"
         aria-modal="true" role="dialog" aria-labelledby="mobile-left-drawer-title"
     >
-        {{-- Overlay --}}
         <div class="absolute inset-0 bg-black/40"></div>
 
-        {{-- Panel --}}
         <section
             x-show="leftOpen"
             x-transition:enter="transform transition ease-in-out duration-300"
@@ -138,7 +139,6 @@
             x-transition:leave-end="-translate-x-full"
             class="relative h-full w-[88%] max-w-sm overflow-hidden bg-[#0B1220] text-gray-200 shadow-2xl ring-1 ring-white/10 rounded-r-2xl"
         >
-            {{-- Header --}}
             <div class="flex items-center justify-between px-4 py-4 border-b border-white/10">
                 <div class="flex items-center gap-3">
                     <div class="h-9 w-9 rounded-xl bg-indigo-500/20 flex items-center justify-center ring-1 ring-white/10">
@@ -158,7 +158,6 @@
                 </button>
             </div>
 
-            {{-- Content --}}
             <div class="h-full overflow-y-auto py-3">
                 @php
                     $item = fn($href, $label, $icon, $active=false) => '
@@ -173,7 +172,6 @@
                 @endphp
 
                 <div class="px-2 space-y-2">
-                    {{-- Mirror desktop nav, excluding Home + Players --}}
                     {!! $item(route('players.index'),'Perspectives',
                         $ico('M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5'),
                         request()->routeIs('players.index')) !!}
@@ -189,12 +187,10 @@
                         request()->routeIs('stats.units.index')) !!}
                 </div>
 
-                {{-- Divider --}}
                 <div class="mt-4 mb-2 px-4">
                     <div class="h-px bg-white/10"></div>
                 </div>
 
-                {{-- Secondary --}}
                 <div class="px-2 space-y-2">
                     {!! $item(route('profile.show'),'Profile',
                         $ico('M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a8.25 8.25 0 0115 0')) !!}
@@ -211,7 +207,6 @@
                     </form>
                 </div>
 
-                {{-- Footer --}}
                 <div class="mt-6 px-4 pb-6 text-[10px] text-gray-500">
                     <span>&copy; {{ date('Y') }} DynastyIQ</span>
                 </div>
@@ -229,10 +224,8 @@
         class="fixed inset-0 z-50 flex"
         aria-modal="true" role="dialog" aria-labelledby="user-drawer-title">
 
-        {{-- Overlay --}}
         <div class="absolute inset-0 bg-black/40"></div>
 
-        {{-- Panel --}}
         <section
             x-show="accountOpen"
             x-transition:enter="transform transition ease-in-out duration-300"
@@ -240,10 +233,9 @@
             x-transition:enter-end="translate-x-0"
             x-transition:leave="transform transition ease-in-out duration-300"
             x-transition:leave-start="translate-x-0"
-            x-transition:leave-end="translate-x-full"
-            class="ml-auto relative h-full w-full max-w-md overflow-hidden bg-[#0B1220] text-gray-200 shadow-2xl ring-1 ring-white/10">
-
-            {{-- Header --}}
+            x-transition:leave-end="-translate-x-full"
+            class="ml-auto relative h-full w-full max-w-md overflow-hidden bg-[#0B1220] text-gray-200 shadow-2xl ring-1 ring-white/10"
+        >
             <div class="flex items-center justify-between px-5 py-4 border-b border-white/10">
                 <div class="flex items-center gap-3">
                     @php
@@ -263,7 +255,6 @@
                 </button>
             </div>
 
-            {{-- Content --}}
             <div class="h-full overflow-y-auto px-3 py-4">
                 @php
                     $item = fn($href, $label, $icon, $active=false) => '
@@ -278,10 +269,30 @@
                 <div class="mb-6">
                     <h3 class="px-3 mb-2 text-[10px] font-semibold tracking-wider text-gray-400 uppercase">Integrations</h3>
                     <div class="space-y-1">
-                        {!! $item(route('discord.redirect'),'Discord',
-                            $ico('M20 7.5c-1.125-.5-2.25-.875-3.5-1 0 0-.5.875-.75 1.25a9.5 9.5 0 00-3.5 0C11 7.375 10.5 6.5 10.5 6.5c-1.25.125-2.375.5-3.5 1a11.5 11.5 0 00-2.5 13.5s1.125-.5 2.75-1.25l.5-.25.375-.25c.75.5 1.75.875 2.875 1 1.875.25 3.75 0 5.5-.5.5-.125 1.125-.375 1.75-.75l.375.25.5.25c1.625.75 2.75 1.25 2.75 1.25A11.5 11.5 0 0020 7.5z') ) !!}
-
                         @include('nav.partials._fantrax')
+
+                        <a href="{{ config('services.discord.invite') }}" target="_blank" rel="noopener"
+                           class="group flex items-center justify-between px-3 py-2 rounded-xl hover:bg-white/5">
+                            <div class="flex items-center gap-3">
+                                <img src="{{ asset('images/logo.png') }}" alt="DynastyIQ" class="h-5 w-5 object-contain">
+                                <span class="text-sm">Our Discord</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <template x-if="!hasDiscord">
+                                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/20">
+                                        Connected
+                                    </span>
+                                </template>
+                                <template x-if="hasDiscord">
+                                    <span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/20">
+                                        Join
+                                    </span>
+                                </template>
+                                <svg class="h-4 w-4 text-gray-400 group-hover:text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </div>
+                        </a>
                     </div>
                 </div>
 
@@ -289,12 +300,9 @@
                 <div class="mb-6">
                     <h3 class="px-3 mb-2 text-[10px] font-semibold tracking-wider text-gray-400 uppercase">User Settings</h3>
                     <div class="space-y-1">
-                        {!! $item('#','Theme',
-                            $ico('M12 3v18M3 12h18')) !!}
-                        {!! $item('#','Notifications',
-                            $ico('M14.25 18.75a2.25 2.25 0 11-4.5 0m9-5.25V11a6.75 6.75 0 10-13.5 0v2.5L4.5 16.5h15l-1.5-3z')) !!}
-                        {!! $item('#','Timezone',
-                            $ico('M12 6v6l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0')) !!}
+                        {!! $item('#','Theme', $ico('M12 3v18M3 12h18')) !!}
+                        {!! $item('#','Notifications', $ico('M14.25 18.75a2.25 2.25 0 11-4.5 0m9-5.25V11a6.75 6.75 0 10-13.5 0v2.5L4.5 16.5h15l-1.5-3z')) !!}
+                        {!! $item('#','Timezone', $ico('M12 6v6l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0')) !!}
                     </div>
                 </div>
 
@@ -302,12 +310,9 @@
                 <div class="mb-6">
                     <h3 class="px-3 mb-2 text-[10px] font-semibold tracking-wider text-gray-400 uppercase">Configuration</h3>
                     <div class="space-y-1">
-                        {!! $item('#','Default Perspective',
-                            $ico('M4.5 6.75h15m-15 4.5h15m-15 4.5h15')) !!}
-                        {!! $item('#','Table Density',
-                            $ico('M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5')) !!}
-                        {!! $item('#','Data Refresh',
-                            $ico('M4.5 4.5v6h6M19.5 19.5v-6h-6')) !!}
+                        {!! $item('#','Default Perspective', $ico('M4.5 6.75h15m-15 4.5h15m-15 4.5h15')) !!}
+                        {!! $item('#','Table Density', $ico('M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5')) !!}
+                        {!! $item('#','Data Refresh', $ico('M4.5 4.5v6h6M19.5 19.5v-6h-6')) !!}
                     </div>
                 </div>
 
