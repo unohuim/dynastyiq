@@ -20,20 +20,20 @@ class SumNhlGameUnits
     {
         $now = Carbon::now();
 
-        // 1) Aggregate shifts only (no zone counts here)
+        // 1) Aggregate shift time & count per unit (independent of unit_type).
         $shiftAgg = DB::table('nhl_unit_shifts as us')
             ->where('us.nhl_game_id', $this->gameId)
             ->groupBy('us.unit_id')
             ->selectRaw(<<<'SQL'
                 us.unit_id,
                 ? as nhl_game_id,
-                MAX(us.team_id)       as team_id,
-                MAX(us.team_abbrev)   as team_abbrev,
-                SUM(us.seconds)       as toi,
-                COUNT(*)              as shifts
+                MAX(us.team_id)     as team_id,
+                MAX(us.team_abbrev) as team_abbrev,
+                SUM(us.seconds)     as toi,
+                COUNT(*)            as shifts
             SQL, [$this->gameId]);
 
-        // 2) Aggregate events per unit (includes zone starts from faceoffs)
+        // 2) Aggregate events that occurred while each unit was on-ice.
         $eventAgg = DB::table('event_unit_shifts as eus')
             ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
             ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
@@ -42,7 +42,7 @@ class SumNhlGameUnits
             ->selectRaw(<<<'SQL'
                 us.unit_id,
 
-                -- Goals for/against (and strength splits)
+                -- Goals for/against + strength splits
                 SUM(CASE WHEN p.type_desc_key = 'goal' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as gf,
                 SUM(CASE WHEN p.type_desc_key = 'goal' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ga,
 
@@ -54,7 +54,7 @@ class SumNhlGameUnits
                 SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PP' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pp_ga,
                 SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PK' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pk_ga,
 
-                -- Shots on goal (goal counts as SOG)
+                -- Shots on goal (goal counts as SOG) + strength splits
                 SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as sf,
                 SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as sa,
 
@@ -91,9 +91,9 @@ class SumNhlGameUnits
                 SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as penalties_f,
                 SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as penalties_a,
 
-                -- Zone starts from faceoffs while this unit is on-ice
+                -- Zone starts (by faceoff location, from unit's team perspective)
                 SUM(CASE 
-                      WHEN p.type_desc_key = 'faceoff' 
+                      WHEN p.type_desc_key = 'faceoff'
                        AND (
                             (UPPER(COALESCE(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id = us.team_id) OR
                             (UPPER(COALESCE(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id <> us.team_id)
@@ -101,12 +101,12 @@ class SumNhlGameUnits
                     THEN 1 ELSE 0 END) AS ozs,
 
                 SUM(CASE 
-                      WHEN p.type_desc_key = 'faceoff' 
+                      WHEN p.type_desc_key = 'faceoff'
                        AND UPPER(COALESCE(p.zone_code,'')) IN ('N','NZ')
                     THEN 1 ELSE 0 END) AS nzs,
 
                 SUM(CASE 
-                      WHEN p.type_desc_key = 'faceoff' 
+                      WHEN p.type_desc_key = 'faceoff'
                        AND (
                             (UPPER(COALESCE(p.zone_code,'')) IN ('D','DZ') AND p.event_owner_team_id = us.team_id) OR
                             (UPPER(COALESCE(p.zone_code,'')) IN ('O','OZ') AND p.event_owner_team_id <> us.team_id)
@@ -114,7 +114,7 @@ class SumNhlGameUnits
                     THEN 1 ELSE 0 END) AS dzs
             SQL);
 
-        // 3) Join aggregates and fetch
+        // 3) Join aggregates, coalesce, and load.
         $rows = DB::query()
             ->fromSub($shiftAgg, 's')
             ->leftJoinSub($eventAgg, 'e', 'e.unit_id', '=', 's.unit_id')
@@ -146,49 +146,58 @@ class SumNhlGameUnits
             $fol = (int) ($r->fol ?? 0);
 
             return [
-                'nhl_game_id'  => (int) $r->nhl_game_id,
-                'unit_id'      => (int) $r->unit_id,
-                'team_id'      => $r->team_id ? (int) $r->team_id : null,
-                'team_abbrev'  => $r->team_abbrev ?: null,
-                'toi'          => (int) ($r->toi ?? 0),
-                'shifts'       => (int) ($r->shifts ?? 0),
-                'ozs'          => (int) ($r->ozs ?? 0),
-                'nzs'          => (int) ($r->nzs ?? 0),
-                'dzs'          => (int) ($r->dzs ?? 0),
-                'gf'           => (int) ($r->gf ?? 0),
-                'ga'           => (int) ($r->ga ?? 0),
-                'ev_gf'        => (int) ($r->ev_gf ?? 0),
-                'pp_gf'        => (int) ($r->pp_gf ?? 0),
-                'pk_gf'        => (int) ($r->pk_gf ?? 0),
-                'ev_ga'        => (int) ($r->ev_ga ?? 0),
-                'pp_ga'        => (int) ($r->pp_ga ?? 0),
-                'pk_ga'        => (int) ($r->pk_ga ?? 0),
-                'sf'           => (int) ($r->sf ?? 0),
-                'sa'           => (int) ($r->sa ?? 0),
-                'ev_sf'        => (int) ($r->ev_sf ?? 0),
-                'pp_sf'        => (int) ($r->pp_sf ?? 0),
-                'pk_sf'        => (int) ($r->pk_sf ?? 0),
-                'ev_sa'        => (int) ($r->ev_sa ?? 0),
-                'pp_sa'        => (int) ($r->pp_sa ?? 0),
-                'pk_sa'        => (int) ($r->pk_sa ?? 0),
-                'satf'         => (int) ($r->satf ?? 0),
-                'sata'         => (int) ($r->sata ?? 0),
-                'ff'           => (int) ($r->ff ?? 0),
-                'fa'           => (int) ($r->fa ?? 0),
-                'bf'           => (int) ($r->bf ?? 0),
-                'ba'           => (int) ($r->ba ?? 0),
-                'hf'           => (int) ($r->hf ?? 0),
-                'ha'           => (int) ($r->ha ?? 0),
-                'fow'          => $fow,
-                'fol'          => $fol,
-                'fot'          => $fow + $fol,
-                'f'            => (int) ($r->f ?? 0),
-                'pim_f'        => (int) ($r->pim_f ?? 0),
-                'pim_a'        => (int) ($r->pim_a ?? 0),
-                'penalties_f'  => (int) ($r->penalties_f ?? 0),
-                'penalties_a'  => (int) ($r->penalties_a ?? 0),
-                'created_at'   => $now,
-                'updated_at'   => $now,
+                'nhl_game_id' => (int) $r->nhl_game_id,
+                'unit_id'     => (int) $r->unit_id,
+                'team_id'     => $r->team_id ? (int) $r->team_id : null,
+                'team_abbrev' => $r->team_abbrev ?: null,
+                'toi'         => (int) ($r->toi ?? 0),
+                'shifts'      => (int) ($r->shifts ?? 0),
+
+                'ozs' => (int) ($r->ozs ?? 0),
+                'nzs' => (int) ($r->nzs ?? 0),
+                'dzs' => (int) ($r->dzs ?? 0),
+
+                'gf'    => (int) ($r->gf ?? 0),
+                'ga'    => (int) ($r->ga ?? 0),
+                'ev_gf' => (int) ($r->ev_gf ?? 0),
+                'pp_gf' => (int) ($r->pp_gf ?? 0),
+                'pk_gf' => (int) ($r->pk_gf ?? 0),
+                'ev_ga' => (int) ($r->ev_ga ?? 0),
+                'pp_ga' => (int) ($r->pp_ga ?? 0),
+                'pk_ga' => (int) ($r->pk_ga ?? 0),
+
+                'sf'    => (int) ($r->sf ?? 0),
+                'sa'    => (int) ($r->sa ?? 0),
+                'ev_sf' => (int) ($r->ev_sf ?? 0),
+                'pp_sf' => (int) ($r->pp_sf ?? 0),
+                'pk_sf' => (int) ($r->pk_sf ?? 0),
+                'ev_sa' => (int) ($r->ev_sa ?? 0),
+                'pp_sa' => (int) ($r->pp_sa ?? 0),
+                'pk_sa' => (int) ($r->pk_sa ?? 0),
+
+                'satf' => (int) ($r->satf ?? 0),
+                'sata' => (int) ($r->sata ?? 0),
+                'ff'   => (int) ($r->ff ?? 0),
+                'fa'   => (int) ($r->fa ?? 0),
+
+                'bf' => (int) ($r->bf ?? 0),
+                'ba' => (int) ($r->ba ?? 0),
+
+                'hf' => (int) ($r->hf ?? 0),
+                'ha' => (int) ($r->ha ?? 0),
+
+                'fow' => $fow,
+                'fol' => $fol,
+                'fot' => $fow + $fol,
+
+                'f'       => (int) ($r->f ?? 0),
+                'pim_f'   => (int) ($r->pim_f ?? 0),
+                'pim_a'   => (int) ($r->pim_a ?? 0),
+                'penalties_f' => (int) ($r->penalties_f ?? 0),
+                'penalties_a' => (int) ($r->penalties_a ?? 0),
+
+                'created_at' => $now,
+                'updated_at' => $now,
             ];
         });
 

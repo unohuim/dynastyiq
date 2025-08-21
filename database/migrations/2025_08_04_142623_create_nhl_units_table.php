@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('nhl_units', function (Blueprint $table) {
             $table->id();
             $table->string('team_abbrev', 10)->nullable()->index();
-            $table->enum('unit_type', ['F', 'D', 'G']); // enforce allowed values
+            $table->enum('unit_type', ['F', 'D', 'G', 'PP', 'PK']); // enforce allowed values
             
             $table->timestamps();
 

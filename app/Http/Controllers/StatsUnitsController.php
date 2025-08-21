@@ -28,10 +28,10 @@ class StatsUnitsController extends Controller
             $sort = 'gf';
         }
 
-        // Filter by unit type(s): F/D/G  (default: F only)
+        // Filter by unit type(s): F/D/PP/PK[/G] (default: F only)
         $pos = collect((array) $request->input('pos', ['F']))
             ->map(fn ($v) => strtoupper((string) $v))
-            ->intersect(['F','D'])
+            ->intersect(['F','D','PP','PK','G'])
             ->values()
             ->all();
         if (empty($pos)) {

@@ -24,6 +24,7 @@
         ];
         $currentSort = $sort ?? request('sort','gf');
         $currentPos  = collect(request('pos', $pos ?? ['F']))->values()->all();
+        $posOptions  = ['F','D','PP','PK']; // include special teams
     @endphp
 
     <div class="px-4 safe-bottom max-w-7xl mx-auto">
@@ -58,7 +59,7 @@
                     </template>
                     <input type="hidden" name="sort" :value="sort">
 
-                    @foreach (['F','D'] as $p)
+                    @foreach ($posOptions as $p)
                         <button type="button"
                                 @click="togglePos('{{ $p }}')"
                                 :class="posSel.includes('{{ $p }}')
@@ -100,7 +101,6 @@
                 </form>
             </div>
         </header>
-
 
         <div class="py-6">
             @include('partials._unit-cards', [
