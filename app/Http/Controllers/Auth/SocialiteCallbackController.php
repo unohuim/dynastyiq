@@ -10,15 +10,17 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
+use App\Traits\HasAPITrait;
 
 class SocialiteCallbackController extends Controller
 {
+    use HasAPITrait;
+
     public function __invoke()
     {
         $oauth = Socialite::driver('discord')->stateless()->user();
 
         $account = DB::transaction(function () use ($oauth) {
-            // 0) If this Discord account already exists, update tokens & return it.
             $existing = SocialAccount::where('provider', 'discord')
                 ->where('provider_user_id', (string) $oauth->getId())
                 ->lockForUpdate()
@@ -38,10 +40,8 @@ class SocialiteCallbackController extends Controller
                 return $existing;
             }
 
-            // 1) Resolve/create Organization FIRST
             $org = $this->resolveOrCreateOrganization($oauth);
 
-            // 2) Find or create User (attach tenant_id = org id)
             $user = $oauth->getEmail()
                 ? User::where('email', $oauth->getEmail())->lockForUpdate()->first()
                 : null;
@@ -58,7 +58,6 @@ class SocialiteCallbackController extends Controller
                 $user->forceFill(['tenant_id' => $org->id])->save();
             }
 
-            // 3) Upsert SocialAccount (MUST include user_id)
             return SocialAccount::updateOrCreate(
                 [
                     'provider'         => 'discord',
@@ -78,12 +77,49 @@ class SocialiteCallbackController extends Controller
         });
 
         Auth::login($account->user, remember: true);
+
+        // Gracefully handle “not a member yet” (404) during OAuth
+        session(['diq-user.connected' => false]);
+
+        $guildId       = (string) config('services.discord.diq_guild_id');
+        $discordUserId = (string) $account->provider_user_id;
+
+        
+
+        try {
+            if ($this->isDiscordMember($guildId, $discordUserId)) {                
+                session(['diq-user.connected' => true]);                
+            }
+            
+        } catch (\Throwable $e) {
+            
+            // Any non-404 error: ignore for login flow; optionally log
+            // report($e);
+        }
+
         return redirect()->intended('/');
+    }
+
+    public function isDiscordMember(string $guildId, string $discordUserId): bool
+    {
+        try {
+            $this->getAPIData(
+                'discord-bot',
+                'guild_member',
+                ['guildId' => $guildId, 'discordUserId' => $discordUserId]
+            );
+        
+            return true; // 200
+        } catch (\Illuminate\Http\Client\RequestException $e) {            
+            if (optional($e->response)->status() === 404) {
+                return false; // not in server yet
+            }
+            throw $e; // other errors bubble to caller (caught above)
+        }
     }
 
     private function resolveOrCreateOrganization($oauth): Organization
     {
-        // Use and clear a tenant invite if present
         $inviteId = session()->pull('tenant_invite_id');
 
         if ($inviteId) {

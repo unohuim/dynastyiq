@@ -3,7 +3,7 @@
         accountOpen:false,
         leftOpen:false,
         hasFantrax: {{ auth()->check() && auth()->user()->fantraxSecret ? 'true' : 'false' }},
-        hasDiscord: {{ auth()->check() && auth()->user()->socialAccounts()->where('provider','discord')->exists() ? 'true' : 'false' }},
+        hasDiscord: {{ session('diq-user.connected', false) ? 'true' : 'false' }},
     }"
     x-init="
         window.addEventListener('fantrax:connected', () => hasFantrax = true);
@@ -271,19 +271,19 @@
                     <div class="space-y-1">
                         @include('nav.partials._fantrax')
 
-                        <a href="{{ config('services.discord.invite') }}" target="_blank" rel="noopener"
+                        <a href="{{ route('discord.join') }}" target="_blank" rel="noopener"
                            class="group flex items-center justify-between px-3 py-2 rounded-xl hover:bg-white/5">
                             <div class="flex items-center gap-3">
                                 <img src="{{ asset('images/logo.png') }}" alt="DynastyIQ" class="h-5 w-5 object-contain">
                                 <span class="text-sm">Our Discord</span>
                             </div>
                             <div class="flex items-center gap-2">
-                                <template x-if="!hasDiscord">
+                                <template x-if="hasDiscord">
                                     <span class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/20">
                                         Connected
                                     </span>
                                 </template>
-                                <template x-if="hasDiscord">
+                                <template x-if="!hasDiscord">
                                     <span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/20">
                                         Join
                                     </span>

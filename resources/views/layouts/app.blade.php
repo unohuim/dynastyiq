@@ -14,6 +14,9 @@
         <!-- Scripts -->
         @vite(['resources/css/app.css', 'resources/js/app.js'])
 
+        <!-- Expose user id for Echo -->
+        <script>window.DIQ = { userId: {{ auth()->id() ?? 'null' }} };</script>
+
         <!-- Styles -->
         @livewireStyles
     </head>

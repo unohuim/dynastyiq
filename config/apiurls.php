@@ -78,4 +78,28 @@ return [
         ],
     ],
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | Discord API Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Discord requires an API key sent as a Bearer token in the
+    | Authorization header.
+    |
+    */
+    'discord-bot' => [
+        'base'      => env('DISCORD_BASE_URL', 'https://discord.com/api/v10'),
+        'key'       => env('DISCORD_BOT_TOKEN'),
+        'auth'      => [
+            'in'   => 'header',
+            'name' => 'Authorization',
+            'type' => 'Bot',
+        ],
+        'endpoints' => [
+            'guild_members'       => '/guilds/{guildId}/members',
+            'guild_member'       => '/guilds/{guildId}/members/{discordUserId}',
+        ],
+    ],
+
 ];

@@ -38,6 +38,14 @@ Route::get('/auth/discord/redirect', function () {
 Route::get('/auth/discord/callback', \App\Http\Controllers\Auth\SocialiteCallbackController::class)
     ->name('discord.callback');
 
+Route::get('/auth/discord-server/callback', \App\Http\Controllers\Auth\DiscordServerCallbackController::class)
+    ->name('discord-server.callback');
+
+Route::get('/discord/join', function () {
+    // optional: you could log the click or ensure user is authenticated here
+    return Redirect::away(config('services.discord.invite'));
+})->name('discord.join');
+
 
 
 // Authenticated dashboard/admin routes

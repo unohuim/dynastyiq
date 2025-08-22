@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
+use App\Http\Controllers\Api\DiscordWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -22,3 +23,6 @@ Route::middleware('auth:sanctum')
 // Public Player‑Stats JSON endpoint
 Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
     ->name('api.player-stats');
+
+// Discord
+Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined']);
