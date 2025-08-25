@@ -1,4 +1,17 @@
-require('dotenv').config();
+// diq-bot/bot.js
+const path = require('path');
+const fs = require('fs');
+
+// Prefer ../.env (Laravel root). Fallback to CWD/.env if you ever run it elsewhere.
+const envCandidates = [
+  path.resolve(__dirname, '../.env'),
+  path.resolve(process.cwd(), '.env'),
+];
+const envFile = envCandidates.find(p => fs.existsSync(p));
+
+require('dotenv').config(envFile ? { path: envFile } : {});
+
+
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const axios = require('axios');
 
