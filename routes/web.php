@@ -12,6 +12,7 @@ use App\Http\Controllers\FantraxUserController;
 use App\Http\Controllers\FantraxController;
 use App\Services\ImportUserFantraxLeagues;
 use App\Http\Controllers\StatsUnitsController;
+use App\Http\Controllers\DiscordWebhookController;
 
 
 /*
@@ -35,16 +36,21 @@ Route::get('/auth/discord/redirect', function () {
         ->redirect();
 })->name('discord.redirect');
 
+
 Route::get('/auth/discord/callback', \App\Http\Controllers\Auth\SocialiteCallbackController::class)
     ->name('discord.callback');
 
 Route::get('/auth/discord-server/callback', \App\Http\Controllers\Auth\DiscordServerCallbackController::class)
     ->name('discord-server.callback');
 
+
 Route::get('/discord/join', function () {
     // optional: you could log the click or ensure user is authenticated here
     return Redirect::away(config('services.discord.invite'));
 })->name('discord.join');
+
+Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
+    ->name('discord.webhooks.memberJoined');
 
 
 

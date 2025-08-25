@@ -31,7 +31,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
   console.log(`👤 New member joined: ${member.user.tag} (${member.id})`);
 
   try {
-    await axios.post(process.env.APP_CALLBACK_URL, {
+    await axios.post(process.env.DISCORD_MEMBER_JOINED_URL, {
       discord_user_id: member.id,
       guild_id: member.guild.id,
       email: member.user.email ?? null  // note: discord API doesn't always send email
