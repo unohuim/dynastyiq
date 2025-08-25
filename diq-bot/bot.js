@@ -12,6 +12,24 @@ const envFile = envCandidates.find(p => fs.existsSync(p));
 require('dotenv').config(envFile ? { path: envFile } : {});
 
 
+// --- sanity checks (add right after dotenv) ---
+const CALLBACK_URL = process.env.DISCORD_MEMBER_JOINED_URL;
+const BOT_TOKEN    = process.env.DISCORD_BOT_TOKEN;
+
+console.log('Callback URL:', CALLBACK_URL || '(missing)');
+if (!CALLBACK_URL || !/^https?:\/\//i.test(CALLBACK_URL)) {
+  console.error('DISCORD_MEMBER_JOINED_URL is missing or not a full http(s) URL.');
+  process.exit(1);
+}
+
+if (!BOT_TOKEN || typeof BOT_TOKEN !== 'string') {
+  console.error('DISCORD_BOT_TOKEN is missing/invalid.');
+  process.exit(1);
+}
+
+
+
+
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const axios = require('axios');
 

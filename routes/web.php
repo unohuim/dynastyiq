@@ -12,7 +12,6 @@ use App\Http\Controllers\FantraxUserController;
 use App\Http\Controllers\FantraxController;
 use App\Services\ImportUserFantraxLeagues;
 use App\Http\Controllers\StatsUnitsController;
-use App\Http\Controllers\DiscordWebhookController;
 
 
 /*
