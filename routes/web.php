@@ -49,8 +49,6 @@ Route::get('/discord/join', function () {
     return Redirect::away(config('services.discord.invite'));
 })->name('discord.join');
 
-Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
-    ->name('discord.webhooks.memberJoined');
 
 
 

@@ -25,4 +25,5 @@ Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
     ->name('api.player-stats');
 
 // Discord
-Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined']);
+Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
+    ->name('discord.webhooks.memberJoined');
