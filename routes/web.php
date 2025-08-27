@@ -12,6 +12,7 @@ use App\Http\Controllers\FantraxUserController;
 use App\Http\Controllers\FantraxController;
 use App\Services\ImportUserFantraxLeagues;
 use App\Http\Controllers\StatsUnitsController;
+use App\Http\Controllers\StatsController;
 
 
 /*
@@ -48,6 +49,10 @@ Route::get('/discord/join', function () {
     return Redirect::away(config('services.discord.invite'));
 })->name('discord.join');
 
+
+//ensures that all logins are done through discord oauth
+Route::match(['get','post'], '/login', fn () => redirect()->route('discord.redirect'))
+    ->name('login');
 
 
 
@@ -96,6 +101,7 @@ Route::middleware([
 
     //STATS
     Route::get('/stats/units', [StatsUnitsController::class, 'index'])->name('stats.units.index');
+    Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
 
 
 

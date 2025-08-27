@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\Api\DiscordWebhookController;
+use App\Http\Controllers\StatsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -27,3 +28,6 @@ Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
 // Discord
 Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
     ->name('discord.webhooks.memberJoined');
+
+// Stats
+Route::get('/stats', [StatsController::class, 'payload'])->name('api.stats');

@@ -13,7 +13,12 @@ return new class extends Migration
     {
         Schema::create('perspectives', function (Blueprint $table) {
             $table->id();
+
+            // Human-readable title (app-level unique; no DB index as requested)
             $table->string('name');
+
+            // URL-safe identifier; must be unique
+            $table->string('slug')->unique();
 
             $table->foreignId('author_id')
                   ->nullable()
@@ -27,10 +32,15 @@ return new class extends Migration
 
             $table->enum('visibility', ['private', 'public_authenticated', 'public_guest'])->default('private');
             $table->enum('sport', ['hockey', 'football', 'basketball'])->default('hockey');
+
+            // When true: show global slice control and derive rates; when false: hide slice and allow explicit rate columns
+            $table->boolean('is_slicable')->default(true);
+
             $table->json('settings')->nullable();
 
             $table->timestamps();
         });
+
     }
 
     /**

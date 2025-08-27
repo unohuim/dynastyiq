@@ -7,6 +7,8 @@ use App\Models\User;
 use Illuminate\Database\Seeder;
 use Database\Seeders\UserSeeder;
 use Database\Seeders\PerspectiveSeeder;
+use Database\Seeders\DiscordCommandsSeeder;
+
 
 class DatabaseSeeder extends Seeder
 {
@@ -20,6 +22,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,            
             RoleSeeder::class,
             PerspectiveSeeder::class,
+            //DiscordCommandsSeeder::class,
         ]);
 
     }

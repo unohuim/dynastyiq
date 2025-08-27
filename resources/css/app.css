@@ -22,7 +22,7 @@
   }
 
   .players-list-mobile {
-    @apply relative space-y-px will-change-transform contain-layout overflow-y-auto;;
+    @apply relative space-y-px;
   }
 
   .player-stats-card-mobile {
@@ -94,7 +94,8 @@
   }
 
   .searchbar-mobile {
-    @apply fixed top-0 inset-x-0 z-10 w-full bg-white border-gray-900;
+    @apply sticky inset-x-0 z-30 w-full bg-white border-gray-900;
+    top: var(--controls-h, 0px);
   }
 
 

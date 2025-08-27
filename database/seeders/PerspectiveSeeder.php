@@ -17,6 +17,7 @@ class PerspectiveSeeder extends Seeder
             [
                 'id' => 1,
                 'name' => 'nhl.com',
+                'slug' => 'nhl',
                 'author_id' => 1,
                 'tenant_id' => 1,
                 'visibility' => 'public_guest',
@@ -53,6 +54,7 @@ class PerspectiveSeeder extends Seeder
             [
                 'id' => 2,
                 'name' => 'Standard Yahoo',
+                'slug' => 'yahoo-standard',
                 'author_id' => 1,
                 'tenant_id' => 1,
                 'visibility' => 'public_guest',
@@ -64,6 +66,7 @@ class PerspectiveSeeder extends Seeder
                         ['key' => 'plus_minus', 'label' => '+/-', 'type' => 'int'],
                         ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
                         ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
+                        ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
                     ],
                     'sort' => [
                         'sortKey' => 'ppp',
@@ -86,6 +89,7 @@ class PerspectiveSeeder extends Seeder
             [
                 'id' => 3,
                 'name' => 'Prospects',
+                'slug' => 'prospects',
                 'author_id' => 1,
                 'tenant_id' => 1,
                 'visibility' => 'public_guest',

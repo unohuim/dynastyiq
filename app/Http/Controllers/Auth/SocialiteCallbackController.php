@@ -37,6 +37,30 @@ class SocialiteCallbackController extends Controller
                     'expires_at'    => isset($oauth->expiresIn) ? now()->addSeconds($oauth->expiresIn) : null,
                 ])->save();
 
+
+                //update user record
+                $user = $existing->user()->lockForUpdate()->first();
+                $newName  = $oauth->getName() ?: ($oauth->getNickname() ?: $user->name);
+                $newEmail = $oauth->getEmail();
+
+                $dirty = false;
+                if ($newName && $user->name !== $newName) {
+                    $user->name = $newName;
+                    $dirty = true;
+                }
+
+                // Use whatever Discord provides each login; update if changed
+                if ($newEmail && $user->email !== $newEmail) {
+                    $user->email = $newEmail;
+                    $user->email_verified_at = now();
+                    $dirty = true;
+                }
+
+                if ($dirty) {
+                    $user->save();
+                }                
+
+
                 return $existing;
             }
 
