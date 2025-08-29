@@ -28,6 +28,8 @@ Route::get('/players', [PlayerStatsController::class, 'index'])
     ->name('players.index');
 
 
+Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
+
 
 //socialite auth routes
 Route::get('/auth/discord/redirect', function () {
@@ -101,7 +103,7 @@ Route::middleware([
 
     //STATS
     Route::get('/stats/units', [StatsUnitsController::class, 'index'])->name('stats.units.index');
-    Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
+    
 
 
 

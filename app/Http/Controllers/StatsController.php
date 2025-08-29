@@ -7,9 +7,14 @@ namespace App\Http\Controllers;
 use App\Models\Perspective;
 use App\Models\Stat;              // Prospects (non-NHL, season totals)
 use App\Models\NhlSeasonStat;     // NHL season view (supports game_type)
+use App\Models\NhlGameSummary;    // Date ranges & partial periods
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\View\View;
 
 class StatsController extends BaseController
@@ -43,7 +48,8 @@ class StatsController extends BaseController
                 $selectedPerspectiveId,
                 null,        // season (choose latest if not locked)
                 'total',     // slice
-                2            // game_type: Regular Season
+                2,           // game_type: Regular Season
+                null         // request (n/a on first paint)
             );
         } else {
             $payload = [
@@ -62,6 +68,11 @@ class StatsController extends BaseController
                     'season'             => null,
                     'game_type'          => 2,
                     'canSlice'           => true,
+                    // drawer meta (empty on first paint)
+                    'filterSchema'       => [],
+                    'appliedFilters'     => [],
+                    'pos'                => [],
+                    'pos_type'           => [],
                 ],
             ];
         }
@@ -79,11 +90,15 @@ class StatsController extends BaseController
      * Return JSON payload for AJAX/Alpine calls.
      *
      * Accepts (players focused):
-     * - perspectiveId: int
+     * - perspectiveId: int   (optional; slug is preferred)
      * - perspective: slug (or legacy name)
      * - season / season_id: string
      * - slice: total|pgp|p60   (applied only when is_slicable=true)
      * - game_type: 1|2|3       (ignored for Prospects)
+     * - period: season|range|lastWeek|thisWeek|past30days
+     * - from,to (YYYY-MM-DD) for period=range
+     * - pos[]=L|C|R|D|G, pos_type[]=F|D|G
+     * - dynamic numeric filters: e.g., g_min/g_max, pts_min/pts_max, etc.
      */
     public function payload(Request $request)
     {
@@ -94,19 +109,21 @@ class StatsController extends BaseController
             'season_id'     => 'nullable|string',
             'slice'         => 'nullable|in:total,pgp,p60',
             'resource'      => 'nullable|in:players,units',
-            'period'        => 'nullable|in:season,range',
+            'period'        => 'nullable|in:season,range,lastWeek,thisWeek,past30days',
             'game_type'     => 'nullable|in:1,2,3',
+            'from'          => 'nullable|date',
+            'to'            => 'nullable|date',
         ]);
 
         $user = $request->user();
 
-        // Resolve perspective under visibility scope
+        // Resolve perspective under visibility scope (prefer slug)
         if ($request->filled('perspectiveId')) {
             $perspective = Perspective::forUser($user)
                 ->whereKey($request->integer('perspectiveId'))
                 ->firstOrFail();
         } else {
-            $slug = $request->string('perspective')->toString();
+            $slug = (string) $request->query('perspective', '');
             $perspective = Perspective::forUser($user)
                 ->where('slug', $slug)
                 ->orWhere('name', $slug) // legacy fallback
@@ -116,205 +133,243 @@ class StatsController extends BaseController
         $season       = $request->input('season_id', $request->input('season'));
         $sliceParam   = $request->input('slice', 'total');
         $gameType     = (int) $request->input('game_type', 2);
+        $period       = (string) $request->input('period', 'season');
         $canSlice     = (bool)($perspective->is_slicable ?? true);
         $effectiveSlice = $canSlice ? $sliceParam : 'total';
 
-        [$payload] = $this->buildAndFormatPlayersPayload(
+        if ($period === 'season') {
+            [$payload] = $this->buildAndFormatPlayersPayload(
+                $user,
+                $perspective->id,
+                $season,
+                $effectiveSlice,
+                $gameType,
+                $request
+            );
+
+            return response()->json($payload);
+        }
+
+        // Range-like (range, lastWeek, thisWeek, past30days)
+        [$fromDate, $toDate] = $this->resolveDates($period, $request->query('from'), $request->query('to'));
+
+        [$payload] = $this->buildAndFormatPlayersPayloadRange(
             $user,
             $perspective->id,
-            $season,
             $effectiveSlice,
-            $gameType
+            $gameType,
+            $fromDate,
+            $toDate,
+            $request
         );
 
         return response()->json($payload);
     }
 
     /**
-     * Build + format the PLAYERS payload.
+     * Build + format the PLAYERS payload (SEASON mode).
      *
-     * @param  mixed        $user
-     * @param  int          $perspectiveId
-     * @param  string|null  $seasonFilter
-     * @param  string       $slice       'total'|'pgp'|'p60' (applied only if is_slicable=true)
-     * @param  int|null     $gameType    1=pre,2=reg,3=playoffs (ignored for Prospects)
      * @return array{0: array<string,mixed>,1: array<int,string>,2: string|null}
      */
-    private function buildAndFormatPlayersPayload($user, int $perspectiveId, ?string $seasonFilter, string $slice = 'total', ?int $gameType = 2): array
-    {
-        // Perspective + settings
+    private function buildAndFormatPlayersPayload(
+        $user,
+        int $perspectiveId,
+        ?string $seasonFilter,
+        string $slice = 'total',
+        ?int $gameType = 2,
+        ?Request $request = null
+        ): array {
+            $perspective = Perspective::findOrFail($perspectiveId);
+            $settings    = is_array($perspective->settings) ? $perspective->settings : (json_decode($perspective->settings ?? '[]', true) ?: []);
+            $canSlice    = (bool)($perspective->is_slicable ?? true);
+
+            $filters = $settings['filters'] ?? [];
+            $columns = $settings['columns'] ?? [];
+            $sort    = $settings['sort']    ?? ['sortKey' => 'pts', 'sortDirection' => 'desc'];
+
+            $isProspects   = $this->isProspectsPerspective($perspective, $filters);
+            $lockedSeason  = $filters['season_id']['value'] ?? null;
+            $season        = $lockedSeason ?: $seasonFilter;
+
+            $identityCols = [
+                ['key' => 'name',               'label' => 'Player'],
+                ['key' => 'age',                'label' => 'Age'],
+                ['key' => 'team',               'label' => 'Team'],
+                ['key' => 'pos_type',           'label' => 'Type'],
+                ['key' => 'contract_value_num', 'label' => 'AAV'],
+                ['key' => 'contract_last_year', 'label' => 'Term End'],
+                ['key' => 'gp',                 'label' => 'GP'],
+            ];
+
+            $rows = collect();
+            $availableSeasons   = [];
+            $availableGameTypes = $isProspects ? [2] : [1, 2, 3];
+            $effectiveGameType  = 2;
+
+            if ($isProspects) {
+                $base = Stat::query()
+                    ->with(['player.contracts.seasons'])
+                    ->regularSeason()
+                    ->where('league_abbrev', '!=', 'NHL');
+
+                if ($season) $base->where('season_id', $season);
+
+                [$schema, $applied] = $this->buildSchemaAndApplyFilters($base, $columns, $request);
+
+                $stats = $base->get();
+                $availableSeasons = $stats->pluck('season_id')->unique()->sortDesc()->values()->all();
+                if (!$season) $season = $availableSeasons[0] ?? null;
+
+                $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'prospects');
+                $effectiveGameType = 2;
+            } else {
+                if (!$season) $season = (string) NhlSeasonStat::query()->max('season_id');
+
+                $effectiveGameType = (int)($gameType ?? 2);
+                if (isset($filters['game_type']['value'])) $effectiveGameType = (int)$filters['game_type']['value'];
+
+                $base = NhlSeasonStat::query()
+                    ->with(['player.contracts.seasons'])
+                    ->where('season_id', $season)
+                    ->where('game_type', $effectiveGameType);
+
+                $base->select($base->getModel()->getTable() . '.*');
+
+                [$schema, $applied] = $this->buildSchemaAndApplyFilters($base, $columns, $request);
+
+                $stats = $base->get();
+
+                $availableSeasons = NhlSeasonStat::query()
+                    ->select('season_id')->distinct()->pluck('season_id')->sortDesc()->values()->all();
+
+                $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'season');
+            }
+
+            // Apply post-assembly filters (gp, contract AAV, contract last year) + collect virtual schema.
+            [$rows, $appliedExtra, $virtualSchema] = $this->applyPostFilters($request, $rows);
+
+            // Sort
+            $sortKey = $sort['sortKey'] ?? 'pts';
+            $sortDir = strtolower($sort['sortDirection'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
+            $sorted  = $rows->sortBy([[$sortKey, $sortDir]])->values();
+
+            // Headings
+            $headings = $this->mergeHeadings($identityCols, $columns);
+
+            // Merge schema (avoid duplicates by key)
+            $seen = [];
+            $mergedSchema = [];
+            foreach (array_merge($schema ?? [], $virtualSchema ?? []) as $def) {
+                $k = $def['key'] ?? null;
+                if (!$k || isset($seen[$k])) continue;
+                $seen[$k] = true;
+                $mergedSchema[] = $def;
+            }
+
+            // Merge applied filters echo
+            $applied['filters'] = array_merge($applied['filters'] ?? [], $appliedExtra['filters'] ?? []);
+
+            $formatted = [
+                'headings' => $headings,
+                'data'     => $sorted,
+                'settings' => [
+                    'sortable'             => collect($headings)->pluck('key')->values()->all(),
+                    'defaultSort'          => $sortKey,
+                    'defaultSortDirection' => $sortDir,
+                    'resource'             => 'players',
+                    'slice'                => $canSlice ? $slice : 'total',
+                ],
+                'meta' => [
+                    'availableSeasons'   => $availableSeasons,
+                    'availableGameTypes' => $availableGameTypes,
+                    'season'             => $season,
+                    'game_type'          => $effectiveGameType,
+                    'canSlice'           => $canSlice,
+                    'filterSchema'       => $mergedSchema,
+                    'appliedFilters'     => $applied['filters'] ?? [],
+                    'pos'                => $applied['pos'] ?? [],
+                    'pos_type'           => $applied['pos_type'] ?? [],
+                ],
+            ];
+
+        return [$formatted, $availableSeasons, $season];
+    }
+
+
+
+
+
+    /**
+     * Build + format the PLAYERS payload (RANGE / partial periods).
+     */
+    private function buildAndFormatPlayersPayloadRange(
+        $user,
+        int $perspectiveId,
+        string $slice,
+        ?int $gameType,
+        ?Carbon $from,
+        ?Carbon $to,
+        Request $request
+    ): array {
         $perspective = Perspective::findOrFail($perspectiveId);
         $settings    = is_array($perspective->settings) ? $perspective->settings : (json_decode($perspective->settings ?? '[]', true) ?: []);
         $canSlice    = (bool)($perspective->is_slicable ?? true);
 
-        $filters = $settings['filters'] ?? [];
         $columns = $settings['columns'] ?? [];
         $sort    = $settings['sort']    ?? ['sortKey' => 'pts', 'sortDirection' => 'desc'];
 
-        // Is this a prospects view? (non-NHL league)
-        $leagueFilter = $filters['league_abbrev'] ?? null;
-        $isProspects  = false;
-        if ($leagueFilter) {
-            $op  = $leagueFilter['operator'] ?? '=';
-            $val = $leagueFilter['value'] ?? null;
-            $isProspects = ($op === '!=' && $val === 'NHL') || ($val && strtoupper($val) !== 'NHL');
-        }
-
-        // Season resolve (respect locked)
-        $lockedSeason = $filters['season_id']['value'] ?? null;
-        $season       = $lockedSeason ?: $seasonFilter;
-
-        // Identity headings (always first)
         $identityCols = [
             ['key' => 'name',               'label' => 'Player'],
             ['key' => 'age',                'label' => 'Age'],
             ['key' => 'team',               'label' => 'Team'],
             ['key' => 'pos_type',           'label' => 'Type'],
-            ['key' => 'contract_value',     'label' => 'Contract'],
-            ['key' => 'contract_last_year', 'label' => 'Last Yr'],
-            // GP must always appear here (pre-columns) and remain a TOTAL (never sliced)
+            ['key' => 'contract_value_num', 'label' => 'AAV'],
+            ['key' => 'contract_last_year', 'label' => 'Term End'],
             ['key' => 'gp',                 'label' => 'GP'],
         ];
 
-        $rows                = collect();
-        $availableSeasons    = [];
-        $availableGameTypes  = $isProspects ? [2] : [1, 2, 3];
-        $effectiveGameType   = 2;
+        $base = NhlGameSummary::query()
+            ->with(['player.contracts.seasons'])
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id');
 
-        if ($isProspects) {
-            // Prospects: ignore game_type; apply slice only if canSlice
-            $query = Stat::with(['player.contracts.seasons'])
-                ->regularSeason()
-                ->where('league_abbrev', '!=', 'NHL');
+        if ($from) $base->whereDate('g.game_date', '>=', $from->toDateString());
+        if ($to)   $base->whereDate('g.game_date', '<=', $to->toDateString());
 
-            if ($season) {
-                $query->where('season_id', $season);
-            }
-
-            $stats = $query->get();
-
-            $availableSeasons = $stats->pluck('season_id')->unique()->sortDesc()->values()->all();
-            if (!$season) {
-                $season = $availableSeasons[0] ?? null;
-            }
-
-            $groups = $stats->groupBy('player_id');
-
-            foreach ($groups as $playerStats) {
-                $entry  = $playerStats->first();
-                $player = $entry->player;
-
-                // Precompute totals for slice math
-                $totals = [];
-                foreach ($columns as $c) {
-                    $k = $c['key'] ?? null;
-                    if ($k) $totals[$k] = $playerStats->sum($k) ?? 0;
-                }
-                // GP is always total for prospects
-                $gpSum  = max(0, (int)$playerStats->sum('gp'));
-                // If Stat stores total TOI in minutes, adapt as needed; if not, Per60 falls back to totals.
-                $toiMin = (float)($playerStats->sum('toi_minutes') ?? 0);
-                $toiSec = $toiMin > 0 ? ($toiMin * 60.0) : 0.0;
-
-                // Contract
-                $contract        = $player?->contracts()->exists() ? $player->contracts()->first() : null;
-                $contractSeason  = $contract?->seasons->last();
-                $contractLastLbl = $contractSeason?->label ?? '';
-                $contractAav = is_numeric($contractSeason?->aav)
-                    ? '$' . number_format($contractSeason->aav / 1_000_000, 3) . 'm'
-                    : '$0.0m';
-
-                $row = [
-                    'name'               => $player?->full_name ?? trim(($player?->first_name ?? '') . ' ' . ($player?->last_name ?? '')),
-                    'age'                => $player?->age() ?? 0,
-                    'team'               => $entry->nhl_team_abbrev,
-                    'pos_type'           => $player?->pos_type,
-                    'contract_value'     => $contractAav,
-                    'contract_last_year' => $contractLastLbl,
-                    'gp'                 => $gpSum, // <- ALWAYS total, never sliced
-                ];
-
-                foreach ($columns as $col) {
-                    $key = $col['key'] ?? null;
-                    if (!$key || $key === 'gp') continue; // never override identity GP
-
-                    if ($canSlice && $slice !== 'total') {
-                        $row[$key] = $this->deriveFromTotals($key, $totals[$key] ?? 0, $slice, $gpSum, $toiSec);
-                    } else {
-                        $row[$key] = $totals[$key] ?? 0;
-                    }
-                }
-
-                $rows->push($row);
-            }
-
-            $effectiveGameType = 2; // fixed for prospects
-        } else {
-            // NHL: apply slice only if canSlice
-            if (!$season) {
-                $season = (string) NhlSeasonStat::query()->max('season_id');
-            }
-
-            // Determine effective game_type: request -> locked -> default(2)
-            $effectiveGameType = (int)($gameType ?? 2);
-            if (isset($filters['game_type']['value'])) {
-                $effectiveGameType = (int)$filters['game_type']['value'];
-            }
-
-            $stats = NhlSeasonStat::query()
-                ->with(['player.contracts.seasons'])
-                ->where('season_id', $season)
-                ->where('game_type', $effectiveGameType)
-                ->get();
-
-            $availableSeasons = NhlSeasonStat::query()
-                ->select('season_id')->distinct()->pluck('season_id')->sortDesc()->values()->all();
-
-            foreach ($stats as $st) {
-                $p = $st->player;
-
-                // Contract
-                $contract        = $p?->contracts()->exists() ? $p->contracts()->first() : null;
-                $contractSeason  = $contract?->seasons->last();
-                $contractLastLbl = $contractSeason?->label ?? '';
-                $contractAav = is_numeric($contractSeason?->aav)
-                    ? '$' . str_pad(number_format($contractSeason->aav / 1_000_000, 3, '.', ''), 6, ' ', STR_PAD_LEFT)
-                    : '$ 0.000';
-
-                $row = [
-                    'name'               => $p?->full_name ?? trim(($p->first_name ?? '') . ' ' . ($p->last_name ?? '')),
-                    'age'                => $p?->age() ?? 0,
-                    'team'               => $p?->team_abbrev,
-                    'pos_type'           => $p?->pos_type,
-                    'contract_value'     => $contractAav,
-                    'contract_last_year' => $contractLastLbl,
-                    'gp'                 => (int)($st->gp ?? 0), // <- ALWAYS total, never sliced
-                ];
-
-                foreach ($columns as $col) {
-                    $key = $col['key'] ?? null;
-                    if (!$key || $key === 'gp') continue; // never override identity GP
-
-                    if ($canSlice && $slice !== 'total') {
-                        $row[$key] = $this->getStatValue($st, $key, $slice);
-                    } else {
-                        $row[$key] = $st->{$key} ?? 0;
-                    }
-                }
-
-                $rows->push($row);
-            }
+        if (in_array((string)$gameType, ['1','2','3'], true)) {
+            $base->where('g.game_type', (int)$gameType);
         }
+
+        $base->select('nhl_game_summaries.*');
+
+        [$schema, $applied] = $this->buildSchemaAndApplyFilters($base, $columns, $request);
+
+        $results = $base->get();
+        $rows    = $this->assembleRowsFromCollection($results, $columns, $slice, $canSlice, 'range');
+
+        // Apply post-assembly filters (gp, contract AAV, last year) + collect virtual schema.
+        [$rows, $appliedExtra, $virtualSchema] = $this->applyPostFilters($request, $rows);
 
         // Sort
         $sortKey = $sort['sortKey'] ?? 'pts';
         $sortDir = strtolower($sort['sortDirection'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
         $sorted  = $rows->sortBy([[$sortKey, $sortDir]])->values();
 
-        // Headings (identity first; dedup ensures identity GP wins)
+        // Headings
         $headings = $this->mergeHeadings($identityCols, $columns);
 
-        // Final payload
+        // Merge schema with virtual fields (dedupe by key)
+        $seen = [];
+        $mergedSchema = [];
+        foreach (array_merge($schema ?? [], $virtualSchema ?? []) as $def) {
+            $k = $def['key'] ?? null;
+            if (!$k || isset($seen[$k])) continue;
+            $seen[$k] = true;
+            $mergedSchema[] = $def;
+        }
+
+        // Merge applied filters echo
+        $applied['filters'] = array_merge($applied['filters'] ?? [], $appliedExtra['filters'] ?? []);
+
         $formatted = [
             'headings' => $headings,
             'data'     => $sorted,
@@ -326,15 +381,515 @@ class StatsController extends BaseController
                 'slice'                => $canSlice ? $slice : 'total',
             ],
             'meta' => [
-                'availableSeasons'   => $availableSeasons,
-                'availableGameTypes' => $availableGameTypes,
-                'season'             => $season,
-                'game_type'          => $effectiveGameType,
+                'availableSeasons'   => [],
+                'availableGameTypes' => [1,2,3],
+                'season'             => null,
+                'game_type'          => (int) ($gameType ?? 2),
                 'canSlice'           => $canSlice,
+                'filterSchema'       => $mergedSchema,
+                'appliedFilters'     => $applied['filters'] ?? [],
+                'pos'                => $applied['pos'] ?? [],
+                'pos_type'           => $applied['pos_type'] ?? [],
             ],
         ];
 
-        return [$formatted, $availableSeasons, $season];
+        return [$formatted, [], null];
+    }
+
+
+
+
+
+    /**
+     * Assemble rows grouped by player, summing totals.
+     */
+    private function assembleRowsFromCollection(Collection $collection, array $columns, string $slice, bool $canSlice, string $mode): Collection
+    {
+        $rows = collect();
+
+        $grouped = $collection->groupBy(function ($row) {
+            return $row->player_id ?? $row->nhl_player_id;
+        });
+
+        foreach ($grouped as $playerStats) {
+            $entry  = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
+            $player = $entry->player;
+
+            $contract        = $player?->contracts()->exists() ? $player->contracts()->first() : null;
+            $contractSeason  = $contract?->seasons->last();
+            $contractLastLbl = $contractSeason?->label ?? '';
+            $contractAavRaw  = is_numeric($contractSeason?->aav) ? (float) $contractSeason->aav : 0.0;   // dollars
+            $contractAavM    = $contractAavRaw > 0 ? $contractAavRaw / 1_000_000 : 0.0;                  // millions
+
+            $contractAav     = $contractAavRaw > 0 ? '$' . number_format($contractAavM, 3) . 'm' : '$0.000m';
+            $lastYearNum     = $this->parseContractLastYear($contractLastLbl);
+
+            $gpSum = ($mode === 'range')
+                ? $playerStats->pluck('nhl_game_id')->unique()->count()
+                : (int) $playerStats->sum('gp');
+
+            $toiMin = 0.0;
+            if ($playerStats->sum('toi_minutes') > 0) {
+                $toiMin = (float) $playerStats->sum('toi_minutes');
+            } elseif ($playerStats->sum('toi') > 0) {
+                $toi = (float) $playerStats->sum('toi');
+                $toiMin = $toi > 4000 ? $toi / 60.0 : $toi;
+            }
+
+            $row = [
+                'name'                    => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
+                'age'                     => $this->playerAge($player),
+                'team'                    => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
+                'pos_type'                => $player?->pos_type,
+                'contract_value'          => $contractAav,      // formatted e.g. $6.250m
+                'contract_value_num'      => round($contractAavM, 3),     // numeric, in millions
+                'contract_last_year'      => $contractLastLbl,  // label e.g. "2027-28"
+                'contract_last_year_num'  => $lastYearNum,      // numeric, e.g. 2028
+                'gp'                      => max(0, $gpSum),
+            ];
+
+            foreach ($columns as $col) {
+                $key = $col['key'] ?? null;
+                if (!$key || $key === 'gp') continue;
+
+                $total = (float) $playerStats->sum($key);
+
+                if ($canSlice && $slice !== 'total') {
+                    if ($slice === 'pgp') {
+                        $row[$key] = $gpSum > 0 ? round($total / $gpSum, 2) : 0.0;
+                    } elseif ($slice === 'p60') {
+                        $row[$key] = $toiMin > 0 ? round($total / ($toiMin / 60.0), 2) : 0.0;
+                    }
+                } else {
+                    $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
+                }
+            }
+
+            $rows->push($row);
+        }
+
+        return $rows;
+    }
+
+
+
+    private function applyPostFilters(?Request $request, Collection $rows): array
+    {
+        // Compute bounds from the assembled rows (for virtual fields / range mode).
+        $bounds = [
+            'gp' => [
+                'min' => (int) ($rows->min('gp') ?? 0),
+                'max' => (int) ($rows->max('gp') ?? 0),
+            ],
+            'contract_value_num' => [
+                'min' => (float) ($rows->min('contract_value_num') ?? 0.0),
+                'max' => (float) ($rows->max('contract_value_num') ?? 0.0),
+            ],
+            'contract_last_year_num' => [
+                'min' => (int) ($rows->min('contract_last_year_num') ?? 0),
+                'max' => (int) ($rows->max('contract_last_year_num') ?? 0),
+            ],
+        ];
+
+        // Build schema entries for the UI (only if bounds look sane).
+        $virtualSchema = [];
+        if ($bounds['gp']['max'] > 0) {
+            $virtualSchema[] = ['key' => 'gp', 'label' => 'GP', 'type' => 'number', 'bounds' => $bounds['gp'], 'step' => 1];
+        }
+        if ($bounds['contract_value_num']['max'] > 0) {
+            $virtualSchema[] = ['key' => 'contract_value_num', 'label' => 'Contract AAV (M$)', 'type' => 'number', 'bounds' => [
+                'min' => (float) floor($bounds['contract_value_num']['min']),
+                'max' => (float) ceil($bounds['contract_value_num']['max']),
+            ], 'step' => 0.1];
+        }
+        if ($bounds['contract_last_year_num']['max'] > 0) {
+            $virtualSchema[] = ['key' => 'contract_last_year_num', 'label' => 'Last Contract Year', 'type' => 'number', 'bounds' => $bounds['contract_last_year_num'], 'step' => 1];
+        }
+
+        if (!$request) {
+            return [$rows, ['filters' => []], $virtualSchema];
+        }
+
+        // Apply filters coming from query string to the in-memory rows.
+        $gpMin  = $request->query('gp_min');  $gpMax  = $request->query('gp_max');
+        $cvMin  = $request->query('contract_value_num_min');  $cvMax  = $request->query('contract_value_num_max');
+        $lyMin  = $request->query('contract_last_year_num_min');  $lyMax  = $request->query('contract_last_year_num_max');
+
+        $filtered = $rows->filter(function ($r) use ($gpMin, $gpMax, $cvMin, $cvMax, $lyMin, $lyMax) {
+            if ($gpMin !== null && $r['gp'] < (int)$gpMin) return false;
+            if ($gpMax !== null && $r['gp'] > (int)$gpMax) return false;
+
+            if ($cvMin !== null && (float)$r['contract_value_num'] < (float)$cvMin) return false;
+            if ($cvMax !== null && (float)$r['contract_value_num'] > (float)$cvMax) return false;
+
+            if ($lyMin !== null && (int)$r['contract_last_year_num'] < (int)$lyMin) return false;
+            if ($lyMax !== null && (int)$r['contract_last_year_num'] > (int)$lyMax) return false;
+
+            return true;
+        })->values();
+
+        $applied = ['filters' => []];
+        if ($gpMin !== null || $gpMax !== null) {
+            $applied['filters']['gp'] = ['min' => $gpMin !== null ? (int)$gpMin : null, 'max' => $gpMax !== null ? (int)$gpMax : null];
+        }
+        if ($cvMin !== null || $cvMax !== null) {
+            $applied['filters']['contract_value_num'] = ['min' => $cvMin !== null ? (float)$cvMin : null, 'max' => $cvMax !== null ? (float)$cvMax : null];
+        }
+        if ($lyMin !== null || $lyMax !== null) {
+            $applied['filters']['contract_last_year_num'] = ['min' => $lyMin !== null ? (int)$lyMin : null, 'max' => $lyMax !== null ? (int)$lyMax : null];
+        }
+
+        return [$filtered, $applied, $virtualSchema];
+    }
+
+
+
+    private function parseContractLastYear(?string $label): ?int
+    {
+        if (!$label) return null;
+
+        // Examples: "2027-28", "2028", "2024-25 (UFA)"
+        $label = trim($label);
+
+        // Full year first
+        if (preg_match('/\b(20\d{2})\b/', $label, $m)) {
+            $year = (int) $m[1];
+
+            // If it looks like "2027-28", snap to the second year (2028).
+            if (preg_match('/20(\d{2})\D+(\d{2})\b/', $label, $mm)) {
+                $first = (int) ('20' . $mm[1]);
+                $end2  = (int) $mm[2];
+                $second = $first >= 2000 ? ($first - 2000) : 0;
+                $second = $second <= 99 ? (int) ('20' . str_pad((string)$end2, 2, '0', STR_PAD_LEFT)) : $year;
+                return $second;
+            }
+
+            return $year;
+        }
+
+        return null;
+    }
+
+
+
+
+
+    private function resolveDates(string $period, $from, $to): array
+    {
+        $today = Carbon::today();
+
+        return match ($period) {
+            'lastWeek'   => [$today->copy()->subWeek()->startOfWeek(), $today->copy()->subWeek()->endOfWeek()],
+            'thisWeek'   => [$today->copy()->startOfWeek(), $today->copy()->endOfWeek()],
+            'past30days' => [$today->copy()->subDays(30), $today],
+            'range'      => [$from ? Carbon::parse($from) : null, $to ? Carbon::parse($to) : null],
+            default      => [null, null],
+        };
+    }
+
+    private function isProspectsPerspective(Perspective $p, array $filters): bool
+    {
+        $name = Str::lower($p->name ?? '');
+        $slug = Str::lower($p->slug ?? '');
+        if (Str::contains($name, 'prospect') || Str::contains($slug, 'prospect')) {
+            return true;
+        }
+
+        $leagueFilter = $filters['league_abbrev'] ?? null;
+        if ($leagueFilter) {
+            $op  = $leagueFilter['operator'] ?? '=';
+            $val = $leagueFilter['value'] ?? null;
+            return ($op === '!=' && $val === 'NHL') || ($val && strtoupper($val) !== 'NHL');
+        }
+
+        return false;
+    }
+
+    /**
+     * Build filter schema from perspective columns + identity fields,
+     * then apply filters from query string onto $base.
+     *
+     * @return array{0: array<int,mixed>, 1: array{filters:array,pos:array,pos_type:array}}
+     */
+    private function buildSchemaAndApplyFilters($base, array $columns, ?Request $request): array
+    {
+        $table = $base->getModel()->getTable();
+
+        $joinedPlayers = false;
+        $needPlayerJoin = $table !== 'stats';
+
+        if ($needPlayerJoin) {
+            $base->leftJoin('players as pf', 'pf.nhl_id', '=', $table . '.nhl_player_id');
+            $joinedPlayers = true;
+        } else {
+            $base->leftJoin('players as pf', 'pf.id', '=', $table . '.player_id');
+            $joinedPlayers = true;
+        }
+
+        $schema = [
+            ['key' => 'age',  'label' => 'Age',  'type' => 'int',  'bounds' => $this->ageBoundsForBase($base)],
+            ['key' => 'team', 'label' => 'Team', 'type' => 'enum', 'options' => $this->teamOptionsForBase($base)],
+            ['key' => 'pos',  'label' => 'Position', 'type' => 'enum', 'options' => $this->positionOptionsForBase($base)],
+        ];
+
+        foreach ($columns as $col) {
+            $key = $col['key'] ?? null;
+            if (!$key || in_array($key, ['name','age','team','contract_value','gp'], true)) continue;
+
+            $bounds = $this->bounds($base, $key);
+            if ($bounds) {
+                $schema[] = [
+                    'key'    => $key,
+                    'label'  => $col['label'] ?? \Illuminate\Support\Str::title(str_replace('_',' ', $key)),
+                    'type'   => 'number',
+                    'bounds' => $bounds,
+                    'step'   => 1,
+                ];
+            }
+        }
+
+        // If the active table has a physical GP column, offer GP filter too.
+        if (\Illuminate\Support\Facades\Schema::hasColumn($table, 'gp')) {
+            $has = collect($schema)->firstWhere('key', 'gp');
+            if (!$has) {
+                $schema[] = [
+                    'key'    => 'gp',
+                    'label'  => 'GP',
+                    'type'   => 'number',
+                    'bounds' => $this->bounds($base, 'gp'),
+                    'step'   => 1,
+                ];
+            }
+        }
+
+        $applied = [
+            'filters'  => [],
+            'pos'      => array_values(array_filter((array)($request?->query('pos', []) ?? []), 'strlen')),
+            'pos_type' => array_values(array_filter((array)($request?->query('pos_type', []) ?? []), 'strlen')),
+        ];
+
+        // pos_type / pos filters (on pf.*)
+        if (!empty($applied['pos_type'])) {
+            $base->whereIn('pf.pos_type', $applied['pos_type']);
+            if (in_array('G', array_map('strtoupper', $applied['pos_type']), true)) {
+                $base->where('pf.position', 'G');
+            }
+        }
+
+        $pos = $applied['pos'];
+        if (!empty($pos)) {
+            $posU = array_map('strtoupper', $pos);
+            if (array_diff($posU, ['G'])) $posU = array_values(array_diff($posU, ['G']));
+            $base->whereIn('pf.position', $posU);
+        }
+
+        // Teams
+        $teams = array_values(array_filter((array)($request?->query('team', []) ?? []), 'strlen'));
+        if (!empty($teams)) {
+            if ($table === 'stats') $base->whereIn('nhl_team_abbrev', $teams);
+            else $base->whereIn('pf.team_abbrev', $teams);
+            $applied['filters']['team'] = $teams;
+        }
+
+        // Age min/max
+        $ageMin = $request?->query('age_min');
+        $ageMax = $request?->query('age_max');
+        if ($ageMin !== null || $ageMax !== null) {
+            if ($ageMin !== null) $base->whereRaw('TIMESTAMPDIFF(YEAR, pf.dob, CURDATE()) >= ?', [(int)$ageMin]);
+            if ($ageMax !== null) $base->whereRaw('TIMESTAMPDIFF(YEAR, pf.dob, CURDATE()) <= ?', [(int)$ageMax]);
+            $applied['filters']['age'] = [
+                'min' => $ageMin !== null ? (int)$ageMin : null,
+                'max' => $ageMax !== null ? (int)$ageMax : null,
+            ];
+        }
+
+        // Dynamic numeric filters via *_min / *_max for physical columns.
+        $all = $request?->query() ?? [];
+        foreach ($all as $k => $v) {
+            if (!is_scalar($v)) continue;
+            if (str_ends_with($k, '_min') || str_ends_with($k, '_max')) {
+                $baseKey = substr($k, 0, -4);
+                $col = $this->mapFilterColumn($base, $baseKey);
+                if (!$col) continue;
+
+                $pair = $applied['filters'][$baseKey] ?? ['min' => null, 'max' => null];
+                if (str_ends_with($k, '_min')) {
+                    $pair['min'] = is_numeric($v) ? (float)$v : null;
+                    if ($pair['min'] !== null) $base->where($col, '>=', $pair['min']);
+                } else {
+                    $pair['max'] = is_numeric($v) ? (float)$v : null;
+                    if ($pair['max'] !== null) $base->where($col, '<=', $pair['max']);
+                }
+                $applied['filters'][$baseKey] = $pair;
+            }
+        }
+
+        return [$schema, $applied];
+    }
+
+
+
+
+
+    private function teamOptionsForBase($base): array
+    {
+        $table = $base->getModel()->getTable();
+
+        if ($table === 'stats') {
+            return (clone $base)
+                ->reorder()
+                ->select('nhl_team_abbrev')
+                ->whereNotNull('nhl_team_abbrev')
+                ->distinct()
+                ->pluck('nhl_team_abbrev')
+                ->filter()->values()->all();
+        }
+
+        return (clone $base)
+            ->reorder()
+            ->select('pf.team_abbrev')
+            ->whereNotNull('pf.team_abbrev')
+            ->distinct()
+            ->pluck('pf.team_abbrev')
+            ->filter()->values()->all();
+    }
+
+    private function positionOptionsForBase($base): array
+    {
+        $table = $base->getModel()->getTable();
+
+        if ($table === 'stats') {
+            return (clone $base)
+                ->reorder()
+                ->join('players as ppos', 'ppos.id', '=', 'stats.player_id')
+                ->select('ppos.position')
+                ->whereNotNull('ppos.position')
+                ->distinct()
+                ->pluck('ppos.position')
+                ->filter()->values()->all();
+        }
+
+        return (clone $base)
+            ->reorder()
+            ->select('pf.position')
+            ->whereNotNull('pf.position')
+            ->distinct()
+            ->pluck('pf.position')
+            ->filter()->values()->all();
+    }
+
+    /**
+     * Return min/max for a numeric column on the active base query.
+     * Vendor-neutral (MySQL/Postgres) and GROUP BY safe.
+     */
+    private function bounds($base, string $key): array
+    {
+        $col = $this->mapFilterColumn($base, $key);
+        if (!$col) {
+            return ['min' => 0, 'max' => 0];
+        }
+
+        // Remove ORDER BY / SELECT list / JOINs so aggregates are clean & portable
+        $qb = $base->cloneWithout(['orders', 'columns', 'joins']);
+
+        // Use Builder's aggregate helpers instead of SELECT RAW
+        $minVal = $qb->clone()->min($col);
+        $maxVal = $qb->clone()->max($col);
+
+        $min = (float) ($minVal ?? 0);
+        $max = (float) ($maxVal ?? 0);
+        if ($min > $max) { [$min, $max] = [$max, $min]; }
+
+        return ['min' => (int) floor($min), 'max' => (int) ceil($max)];
+    }
+
+
+    
+
+    /**
+     * Compute age bounds for the active dataset without DB-specific functions.
+     * Works on MySQL (incl. ONLY_FULL_GROUP_BY) and Postgres.
+     */
+    private function ageBoundsForBase($base): array
+    {
+        $table = $base->getModel()->getTable();
+
+        // Start clean, then join players as `page` so we measure the same population
+        $qb = $base->cloneWithout(['orders', 'columns', 'joins'])
+            ->join('players as page', function ($j) use ($table) {
+                if (in_array($table, ['nhl_season_stats', 'nhl_game_summaries'], true)) {
+                    $j->on('page.nhl_id', '=', "{$table}.nhl_player_id");
+                } else { // stats/prospects
+                    $j->on('page.id', '=', "{$table}.player_id");
+                }
+            })
+            ->whereNotNull('page.dob');
+
+        // DB-agnostic aggregates (no SELECT * + aggregate mix, no vendor funcs)
+        $earliestDob = $qb->clone()->min('page.dob'); // oldest player (min date)
+        $latestDob   = $qb->clone()->max('page.dob'); // youngest player (max date)
+
+        if (!$earliestDob && !$latestDob) {
+            return ['min' => 16, 'max' => 45];
+        }
+
+        // Convert to ages in PHP for portability
+        $minAge = $latestDob
+            ? \Illuminate\Support\Carbon::parse($latestDob)->age
+            : null; // youngest => minimum age
+
+        $maxAge = $earliestDob
+            ? \Illuminate\Support\Carbon::parse($earliestDob)->age
+            : null; // oldest => maximum age
+
+        // Fallbacks and ordering
+        if ($minAge === null && $maxAge !== null) $minAge = $maxAge;
+        if ($maxAge === null && $minAge !== null) $maxAge = $minAge;
+        if ($minAge === null || $maxAge === null) return ['min' => 16, 'max' => 45];
+        if ($minAge > $maxAge) [$minAge, $maxAge] = [$maxAge, $minAge];
+
+        return ['min' => (int) $minAge, 'max' => (int) $maxAge];
+    }
+
+
+
+
+    private function mapFilterColumn($base, string $key): ?string
+    {
+        $table = $base->getModel()->getTable();
+
+        $map = [
+            'nhl_season_stats' => [
+                'g_per_gp'   => 'g_pg',
+                'a_per_gp'   => 'a_pg',
+                'pts_per_gp' => 'pts_pg',
+                'b_per_gp'   => 'b_pg',
+                'h_per_gp'   => 'h_pg',
+                'th_per_gp'  => 'th_pg',
+
+                'g_per_60'      => 'g_p60',
+                'a_per_60'      => 'a_p60',
+                'pts_per_60'    => 'pts_p60',
+                'sog_per_60'    => 'sog_p60',
+                'sat_per_60'    => 'sat_p60',
+                'hits_per_60'   => 'hits_p60',
+                'blocks_per_60' => 'blocks_p60',
+            ],
+            'stats' => [],
+            'nhl_game_summaries' => [], // no rate columns on that table
+        ];
+
+        $col = $map[$table][$key] ?? $key;
+
+        return Schema::hasColumn($table, $col) ? $table . '.' . $col : null;
+    }
+
+    private function playerAge($player): ?int
+    {
+        if (!$player) return null;
+        if (method_exists($player, 'age')) return $player->age();
+        if (!empty($player->dob)) return Carbon::parse($player->dob)->age;
+        return null;
     }
 
     /**
@@ -346,17 +901,15 @@ class StatsController extends BaseController
      */
     private function getStatValue(object $st, string $key, string $slice)
     {
-        // helper to safely pull a total
         $total = fn() => (float) ($st->{$key} ?? 0);
 
         if ($slice === 'pgp') {
             $mapped = $this->rateMaps()['pg'][$key] ?? null;
 
             if ($mapped && isset($st->{$mapped}) && is_numeric($st->{$mapped})) {
-                return round((float) $st->{$mapped}, 1); // <- round mapped field
+                return round((float) $st->{$mapped}, 1);
             }
 
-            // compute P/GP from totals when no mapped field
             $gp = (int) ($st->gp ?? 0);
             if ($gp > 0) {
                 return round($total() / $gp, 1);
@@ -369,16 +922,13 @@ class StatsController extends BaseController
             $mapped = $this->rateMaps()['p60'][$key] ?? null;
 
             if ($mapped && isset($st->{$mapped}) && is_numeric($st->{$mapped})) {
-                return round((float) $st->{$mapped}, 1); // <- round mapped field
+                return round((float) $st->{$mapped}, 1);
             }
 
-            // compute per 60 from totals when no mapped field
-            // normalize TOI to minutes: prefer explicit minutes field if present
             $toiMin = null;
             if (isset($st->toi_minutes) && is_numeric($st->toi_minutes)) {
                 $toiMin = (float) $st->toi_minutes;
             } elseif (isset($st->toi) && is_numeric($st->toi)) {
-                // Heuristic: if very large, treat as seconds; else minutes
                 $toi = (float) $st->toi;
                 $toiMin = $toi > 4000 ? $toi / 60.0 : $toi;
             } else {
@@ -386,14 +936,12 @@ class StatsController extends BaseController
             }
 
             if ($toiMin > 0) {
-                // value per 60 = totals / (TOI in minutes / 60)
                 return round($total() / ($toiMin / 60.0), 1);
             }
 
             return 0.0;
         }
 
-        // totals (leave raw so integer cols remain integers)
         return $st->{$key} ?? 0;
     }
 
@@ -406,8 +954,11 @@ class StatsController extends BaseController
             return $gpSum > 0 ? round($total / $gpSum, 3) : 0;
         }
         if ($slice === 'p60') {
-            return $toiSec > 0 ? round($total / ($toiSec / 60), 3) : 0;
+            // seconds → hours: divide by 3600
+            return $toiSec > 0 ? round($total / ($toiSec / 3600), 3) : 0;
+            // or: round(($total * 3600) / $toiSec, 3)
         }
+
         return $total;
     }
 

@@ -12,6 +12,11 @@ export default {
     ],
 
     safelist: [
+        'border-indigo-100',
+        'hover:border-indigo-200',
+        'hover:bg-indigo-100',
+        'bg-indigo-900',
+        'bg-indigo-100',
         'bg-gradient-to-b',
         'from-orange-600', 'to-black',
         'from-red-700', 'to-yellow-500',
@@ -72,6 +77,14 @@ export default {
         'z-40',
         'z-10',
         '-gap-y-8',
+
+        // overlay
+        'fixed','inset-0','bg-black/40','opacity-0','opacity-100',
+        'pointer-events-none','pointer-events-auto','transition-opacity','duration-200','z-[60]',
+        // sheet
+        'inset-x-0','bottom-0','transform','translate-y-full','translate-y-0',
+        'transition-transform','duration-300','ease-out','bg-white',
+        'rounded-t-2xl','shadow-2xl','z-[70]','backdrop-blur','will-change-[transform]'
     ],
 
     theme: {

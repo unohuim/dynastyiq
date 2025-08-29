@@ -30,27 +30,27 @@ export class UI {
     input.setAttribute('autocomplete', 'off');
 
 
-    const svgButton = document.createElement('button');
-    svgButton.type = "button";
-    svgButton.className = "searchbar-button-mobile";
+    // const svgButton = document.createElement('button');
+    // svgButton.type = "button";
+    // svgButton.className = "searchbar-button-mobile";
 
     // const caption = document.createTextNode('Sort');
     // svgButton.appendChild(caption);
     
 
-    const svgIconFilter = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgIconFilter.setAttribute('viewBox', '0 0 16 16');
-    svgIconFilter.setAttribute('fill', 'none');
-    svgIconFilter.setAttribute('stroke', 'currentColor');
-    svgIconFilter.setAttribute('data-slot', 'icon');
-    svgIconFilter.setAttribute('aria-hidden', true);
-    svgIconFilter.setAttribute('class', 'searchbar-svg-mobile');
+    // const svgIconFilter = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    // svgIconFilter.setAttribute('viewBox', '0 0 16 16');
+    // svgIconFilter.setAttribute('fill', 'none');
+    // svgIconFilter.setAttribute('stroke', 'currentColor');
+    // svgIconFilter.setAttribute('data-slot', 'icon');
+    // svgIconFilter.setAttribute('aria-hidden', true);
+    // svgIconFilter.setAttribute('class', 'searchbar-svg-mobile');
     
 
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75");
-    path.setAttribute("clip-rule", "evenodd");
-    path.setAttribute("fill-rule", "evenodd");
+    // const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    // path.setAttribute("d", "M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75");
+    // path.setAttribute("clip-rule", "evenodd");
+    // path.setAttribute("fill-rule", "evenodd");
     
 
     const svgButtonSort = document.createElement('button');
@@ -73,16 +73,25 @@ export class UI {
     pathSort.setAttribute("fill-rule", "evenodd");
 
 
-    svgIconFilter.appendChild(path);
+    // svgIconFilter.appendChild(path);
     svgIconSort.appendChild(pathSort);
 
-    svgButton.appendChild(svgIconFilter);
+    // svgButton.appendChild(svgIconFilter);
     svgButtonSort.appendChild(svgIconSort);
+
+    // fire a custom event that bubbles up to the container
+    svgButtonSort.addEventListener('click', (e) => {
+      e.preventDefault();
+      parentContainer.dispatchEvent(
+        new CustomEvent('ui:open-sort-sheet', { bubbles: true })
+      );
+    });
+
 
     gridWrapper.appendChild(input);
 
     innerWrapper.appendChild(gridWrapper);
-    innerWrapper.appendChild(svgButton);
+    // innerWrapper.appendChild(svgButton);
     innerWrapper.appendChild(svgButtonSort);
 
     searchBar.appendChild(innerWrapper);

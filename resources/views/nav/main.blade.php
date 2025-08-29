@@ -97,12 +97,12 @@
                 </li>
 
                 <li class="flex-1 text-center">
-                    <button type="button" @click="accountOpen = true" class="flex flex-col items-center">
+                    <a  @click="accountOpen = true" class="flex flex-col items-center">
                         <img src="{{ $avatarUrl }}"
                              alt="Your avatar"
                              class="h-9 w-9 rounded-full ring-2 ring-gray-200 object-cover" />
                         <span class="sr-only">Account</span>
-                    </button>
+                    </a>
                 </li>
             @endauth
 
