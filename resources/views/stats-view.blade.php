@@ -182,7 +182,7 @@
             :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
             class="fixed inset-y-0 right-0 w-[92vw] max-w-[480px] bg-white border-l shadow-xl z-[60]
                    transform transition-transform duration-300 ease-out will-change-transform
-                   flex flex-col"
+                   flex flex-col px-6"
             x-trap.noscroll="isFilterOpen"
             @click.stop
             aria-modal="true" role="dialog">
