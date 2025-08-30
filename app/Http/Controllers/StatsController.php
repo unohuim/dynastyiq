@@ -497,13 +497,13 @@ class StatsController extends BaseController
             $virtualSchema[] = ['key' => 'gp', 'label' => 'GP', 'type' => 'number', 'bounds' => $bounds['gp'], 'step' => 1];
         }
         if ($bounds['contract_value_num']['max'] > 0) {
-            $virtualSchema[] = ['key' => 'contract_value_num', 'label' => 'Contract AAV (M$)', 'type' => 'number', 'bounds' => [
+            $virtualSchema[] = ['key' => 'contract_value_num', 'label' => 'AAV', 'type' => 'number', 'bounds' => [
                 'min' => (float) floor($bounds['contract_value_num']['min']),
                 'max' => (float) ceil($bounds['contract_value_num']['max']),
             ], 'step' => 0.1];
         }
         if ($bounds['contract_last_year_num']['max'] > 0) {
-            $virtualSchema[] = ['key' => 'contract_last_year_num', 'label' => 'Last Contract Year', 'type' => 'number', 'bounds' => $bounds['contract_last_year_num'], 'step' => 1];
+            $virtualSchema[] = ['key' => 'contract_last_year_num', 'label' => 'Term End', 'type' => 'number', 'bounds' => $bounds['contract_last_year_num'], 'step' => 1];
         }
 
         if (!$request) {

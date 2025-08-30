@@ -41,33 +41,6 @@
 
 
 
-      // // Keys that should never be in the footer strip
-      //   const IDENTITY_KEYS = new Set([
-      //     'name','age','team','pos','pos_type','gp',
-      //     'contract_value','contract_last_year',
-      //     'contract_value_num','contract_last_year_num',
-      //     'head_shot_url','id'
-      //   ]);
-
-      //   // If a key is promoted, also hide these “alias/duplicate” keys in the footer
-      //   const FOOTER_ALIASES = {
-      //     contract_value_num: ['contract_value','contract_value_num'],
-      //     contract_last_year_num: ['contract_last_year','contract_last_year_num'],
-      //   };
-
-      //   function footerKeysFor(json){
-      //     const sortKey = String(json?.settings?.defaultSort || '');
-      //     const drop = new Set([sortKey, ...(FOOTER_ALIASES[sortKey] || [])]);
-
-      //     return (json?.headings || [])
-      //       .map(h => h && h.key)
-      //       .filter(Boolean)
-      //       .filter(k => !IDENTITY_KEYS.has(k) && !drop.has(k));
-      //   }
-
-
-
-
       // ensure every row has row.stats{}
       function normalizeStatsPayload(payload){
         if(!payload || !Array.isArray(payload.data) || !Array.isArray(payload.headings)) return payload;
@@ -116,52 +89,145 @@
         </div>
       </template>
 
-      {{-- ================= DESKTOP BAR ================= --}}
-      <div class="hidden sm:flex items-center justify-between px-4 py-3">
-        <div class="flex items-center gap-2 w-full sm:w-auto">
-          <div>
-            <select x-model="perspective" @change="fetchPayload()"
-                    class="block w-48 bg-white py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500">
-              <template x-for="p in availablePerspectives" :key="p.slug">
-                <option :value="p.slug" x-text="p.name"></option>
+      
+
+      {{-- =============== DESKTOP BAR (revamped, modern) =============== --}}
+        <div class="hidden sm:block px-4">
+          <div class="rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2">
+            <div class="flex flex-wrap items-center gap-3 p-3">
+
+              <!-- Perspective -->
+              <div class="relative">
+                <select x-model="perspective" @change="fetchPayload()"
+                        class="h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500">
+                  <template x-for="p in availablePerspectives" :key="p.slug">
+                    <option :value="p.slug" x-text="p.name"></option>
+                  </template>
+                </select>
+                <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z"/></svg>
+              </div>
+
+              <!-- Period (segmented) -->
+              <div class="inline-flex rounded-full ring-1 ring-gray-200 overflow-hidden">
+                <button type="button"
+                        @click="period='season'; fetchPayload()"
+                        :class="period==='season' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        class="px-4 h-10 text-sm">Season</button>
+                <button type="button"
+                        @click="period='range'; fetchPayload()"
+                        :class="period==='range' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        class="px-4 h-10 text-sm">Range</button>
+              </div>
+
+              <!-- Season (when period = season) -->
+              <template x-if="period==='season'">
+                <div class="relative">
+                  <select x-model="season_id" @change="fetchPayload()"
+                          class="h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500">
+                    <template x-for="sid in availableSeasons" :key="sid">
+                      <option :value="sid" x-text="sid"></option>
+                    </template>
+                  </select>
+                  <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z"/></svg>
+                </div>
               </template>
-            </select>
-          </div>
-          <div>
-            <select x-model="period" @change="fetchPayload()"
-                    class="block w-36 bg-white py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500">
-              <option value="season">Season</option>
-              <option value="range">Range</option>
-            </select>
-          </div>
-          <div x-show="period==='season'">
-            <select x-model="season_id" @change="fetchPayload()"
-                    class="block w-40 bg-white py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500">
-              <template x-for="sid in availableSeasons" :key="sid">
-                <option :value="sid" x-text="sid"></option>
+
+              <!-- Range dates (when period = range) -->
+              <template x-if="period==='range'">
+                <div class="flex items-center gap-2">
+                  <input type="date" x-model="from" @change="fetchPayload()"
+                         class="h-10 px-4 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500">
+                  <span class="text-xs text-gray-500">to</span>
+                  <input type="date" x-model="to" @change="fetchPayload()"
+                         class="h-10 px-4 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500">
+                </div>
               </template>
-            </select>
-          </div>
-          <div x-show="canSlice">
-            <select x-model="slice" @change="fetchPayload()"
-                    class="block w-36 bg-white py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500">
-              <option value="total">Total</option>
-              <option value="pgp">P/GP</option>
-              <option value="p60">Per 60</option>
-            </select>
-          </div>
-          <div>
-            <select x-model="game_type" @change="fetchPayload()"
-                    class="block w-44 bg-white py-2 pl-3 pr-8 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500">
-              <template x-for="gt in availableGameTypes" :key="gt">
-                <option :value="String(gt)"
-                        :selected="String(gt)===String(game_type)"
-                        x-text="({1:'Preseason',2:'Regular Season',3:'Playoffs'})[String(gt)]"></option>
+
+              <!-- Slice (segmented) -->
+              <template x-if="canSlice">
+                <div class="inline-flex rounded-full ring-1 ring-gray-200 overflow-hidden">
+                  <button type="button"
+                          @click="slice='total'; fetchPayload()"
+                          :class="slice==='total' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                          class="px-4 h-10 text-sm">Total</button>
+                  <button type="button"
+                          @click="slice='pgp'; fetchPayload()"
+                          :class="slice==='pgp' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                          class="px-4 h-10 text-sm">P/GP</button>
+                  <button type="button"
+                          @click="slice='p60'; fetchPayload()"
+                          :class="slice==='p60' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                          class="px-4 h-10 text-sm">Per 60</button>
+                </div>
               </template>
-            </select>
+
+              <!-- Game Type -->
+              <div class="relative">
+                <select x-model="game_type" @change="fetchPayload()"
+                        class="h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500">
+                  <template x-for="gt in availableGameTypes" :key="gt">
+                    <option :value="String(gt)"
+                            :selected="String(gt)===String(game_type)"
+                            x-text="({1:'Preseason',2:'Regular Season',3:'Playoffs'})[String(gt)]"></option>
+                  </template>
+                </select>
+                <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z"/></svg>
+              </div>
+
+
+
+
+              <!-- Actions -->
+              <div class="ml-auto flex items-center gap-2">
+                <button type="button"
+                        @click="resetFilters()"
+                        class="h-10 px-4 rounded-full text-sm ring-1 ring-gray-200 bg-white hover:bg-gray-50">
+                  Reset
+                </button>
+                <button type="button"
+                        @click="isFilterOpen = true"
+                        class="h-10 px-4 rounded-full bg-indigo-600 text-white text-sm shadow hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  Filters
+                </button>
+              </div>
+
+            </div>
+
+
+            
+
+
+            <!-- Positions (desktop bar) -->
+            <div class="flex-1 items-center gap-2 pl-3 pb-3">
+              <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
+                <button type="button"
+                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                        :class="filters.pos.includes(p)
+                          ? 'bg-indigo-600 text-white ring-indigo-600/30'
+                          : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        @click="togglePos(p); fetchPayload()"
+                        x-text="p"></button>
+              </template>
+
+              <button type="button"
+                      class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                      :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                      @click="togglePosType('F'); fetchPayload()">F</button>
+
+              <button type="button"
+                      class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                      :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                      @click="togglePosType('D'); fetchPayload()">D</button>
+
+              <button type="button"
+                      class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                      :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                      @click="togglePosType('G'); fetchPayload()">G</button>
+            </div>
           </div>
         </div>
-      </div>
+
+
 
       {{-- Mount point for the list/table --}}
       <div id="stats-page" class="sm:px-4"></div>
@@ -309,111 +375,7 @@
             <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
 
               <!-- ===== Contract & GP (synthetic sliders) ===== -->
-              <!-- GP -->
-              <div x-data="{spec:{key:'gp', bounds:{min:0, max:82}, step:1}}"
-                 x-init="ensureNum(spec.key, spec.bounds)">
-              <div class="flex items-center justify-between mb-1.5">
-                <span class="text-sm font-medium">Games Played</span>
-                <span class="text-xs text-gray-500"
-                      x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
-              </div>
-              <div class="dual-slider">
-                <div class="rail"></div>
-                <div class="active"
-                     :style="(() => { const v=filters.num[spec.key]||{};
-                       const a=pct(v.min ?? spec.bounds.min, spec);
-                       const b=pct(v.max ?? spec.bounds.max, spec);
-                       return `left:${a}%; width:${Math.max(0,b-a)}%;`; })()"></div>
-
-                <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                       :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                       :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
-                       @pointerdown.stop="activeThumb=spec.key+'-max'"
-                       @pointerup.window="activeThumb=null"
-                       @input="setMax(spec, +$event.target.value)">
-                <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                       :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                       :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
-                       @pointerdown.stop="activeThumb=spec.key+'-min'"
-                       @pointerup.window="activeThumb=null"
-                       @input="setMin(spec, +$event.target.value)">
-              </div>
-            </div>
-
-
-              <!-- AAV ($M) -->
-              <div x-data="{spec:{key:'contract_value_num', bounds:{min:0, max:16}, step:0.1}}"
-                 x-init="ensureNum(spec.key, spec.bounds)">
-              <div class="flex items-center justify-between mb-1.5">
-                <span class="text-sm font-medium">Contract AAV ($M)</span>
-                <span class="text-xs text-gray-500"
-                  x-text="`$${Number(filters.num[spec.key]?.min ?? spec.bounds.min).toFixed(1)}M – $${Number(filters.num[spec.key]?.max ?? spec.bounds.max).toFixed(1)}M`"></span>
-              </div>
-                <div class="dual-slider">
-                  <div class="rail"></div>
-                  <div class="active"
-                       :style="(() => {
-                         const v = filters.num[spec.key];
-                         const a = pct(v.min, spec);
-                         const b = pct(v.max, spec);
-                         return `left:${a}%; width:${Math.max(0, b-a)}%;`;
-                       })()"></div>
-
-                  <!-- MAX -->
-                  <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                         :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                         :value="filters.num[spec.key].max"
-                         @pointerdown.stop="activeThumb=spec.key+'-max'"
-                         @pointerup.window="activeThumb=null"
-                         @input="setMax(spec, +$event.target.value)">
-
-                  <!-- MIN -->
-                  <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                         :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                         :value="filters.num[spec.key].min"
-                         @pointerdown.stop="activeThumb=spec.key+'-min'"
-                         @pointerup.window="activeThumb=null"
-                         @input="setMin(spec, +$event.target.value)">
-                </div>
-              </div>
-
-              <!-- Contract Last Year -->
-              <div x-data="{now:(new Date()).getFullYear(),
-                  spec:{key:'contract_last_year_num', bounds:{min:(new Date()).getFullYear(), max:(new Date()).getFullYear()+8}, step:1}}"
-                 x-init="ensureNum(spec.key, spec.bounds)">
-              <div class="flex items-center justify-between mb-1.5">
-                <span class="text-sm font-medium">Contract Last Year</span>
-                <span class="text-xs text-gray-500"
-                      x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
-              </div>
-                <div class="dual-slider">
-                  <div class="rail"></div>
-                  <div class="active"
-                       :style="(() => {
-                         const v = filters.num[spec.key];
-                         const a = pct(v.min, spec);
-                         const b = pct(v.max, spec);
-                         return `left:${a}%; width:${Math.max(0, b-a)}%;`;
-                       })()"></div>
-
-                  <!-- MAX -->
-                  <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                         :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                         :value="filters.num[spec.key].max"
-                         @pointerdown.stop="activeThumb=spec.key+'-max'"
-                         @pointerup.window="activeThumb=null"
-                         @input="setMax(spec, +$event.target.value)">
-
-                  <!-- MIN -->
-                  <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                         :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step"
-                         :value="filters.num[spec.key].min"
-                         @pointerdown.stop="activeThumb=spec.key+'-min'"
-                         @pointerup.window="activeThumb=null"
-                         @input="setMin(spec, +$event.target.value)">
-                </div>
-              </div>
-              <!-- ===== /Contract & GP ===== -->
+              
 
               <!-- Dynamic numeric sliders from schema -->
                 <template
@@ -471,6 +433,140 @@
           </aside>
         </div>
         <!-- ===================== /DRAWER ===================== -->
+
+
+
+
+
+        {{-- ================= DESKTOP FILTERS DRAWER (SLIDERS ONLY) ================= --}}
+        <div x-cloak class="hidden sm:block">
+          <!-- Backdrop -->
+          <div
+            x-show="isFilterOpen"
+            x-transition.opacity
+            class="fixed inset-0 bg-black/40 z-40"
+            @click="isFilterOpen=false">
+          </div>
+
+          <!-- Panel -->
+          <aside
+            x-show="true"
+            :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
+            class="fixed inset-y-0 right-0 w-[40vw] max-w-[560px] bg-white border-l shadow-xl z-[60]
+                   transform transition-transform duration-300 ease-out will-change-transform
+                   flex flex-col px-6"
+            x-trap.noscroll="isFilterOpen"
+            @click.stop
+            aria-modal="true" role="dialog">
+
+            <!-- Header -->
+            <header class="px-4 py-3 border-b flex items-center justify-between">
+              <h2 class="text-base font-semibold">Filters</h2>
+              <div class="flex items-center gap-2">
+                <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+                <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
+                <button class="p-2 rounded-full hover:bg-gray-100" @click="isFilterOpen=false" aria-label="Close">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
+                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd"/>
+                  </svg>
+                </button>
+              </div>
+            </header>
+
+            <!-- Scroll body: numeric sliders only -->
+            <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+
+              <!-- Important first (if present) -->
+              <template x-for="key in ['gp','contract_value_num','contract_last_year_num']" :key="'imp-'+key">
+                <div x-show="schemaArr.find(s => s.key===key)"
+                     x-data="{ spec: schemaArr.find(s => s.key===key) }"
+                     x-init="ensureNum(spec.key, spec.bounds)">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
+                    <span class="text-xs text-gray-500"
+                          x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
+                  </div>
+                  <div class="dual-slider">
+                    <div class="rail"></div>
+                    <div class="active"
+                         :style="(() => {
+                           const v = filters.num[spec.key] || {};
+                           const a = pct(v.min ?? spec.bounds.min, spec);
+                           const b = pct(v.max ?? spec.bounds.max, spec);
+                           return `left:${a}%; width:${Math.max(0, b-a)}%;`;
+                         })()"></div>
+
+                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
+                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                           :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
+                           @pointerdown.stop="activeThumb=spec.key+'-max'"
+                           @pointerup.window="activeThumb=null"
+                           @input="setMax(spec, +$event.target.value)">
+
+                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
+                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                           :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
+                           @pointerdown.stop="activeThumb=spec.key+'-min'"
+                           @pointerup.window="activeThumb=null"
+                           @input="setMin(spec, +$event.target.value)">
+                  </div>
+                </div>
+              </template>
+
+              <!-- The rest (excluding the three above) -->
+              <template
+                x-for="f in schemaArr.filter(s =>
+                  ['number','int','float'].includes((s?.type||'').toLowerCase())
+                  && s?.bounds && s?.key
+                  && !['gp','contract_value_num','contract_last_year_num'].includes(s.key)
+                )"
+                :key="'rng-'+f.key"
+              >
+                <div x-data="{ spec: f }" x-init="ensureNum(spec.key, spec.bounds)">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
+                    <span class="text-xs text-gray-500"
+                          x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
+                  </div>
+
+                  <div class="dual-slider">
+                    <div class="rail"></div>
+                    <div class="active"
+                         :style="(() => {
+                           const v = filters.num[spec.key] || {};
+                           const a = pct(v.min ?? spec.bounds.min, spec);
+                           const b = pct(v.max ?? spec.bounds.max, spec);
+                           return `left:${a}%; width:${Math.max(0, b-a)}%;`;
+                         })()"></div>
+
+                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
+                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                           :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
+                           @pointerdown.stop="activeThumb=spec.key+'-max'"
+                           @pointerup.window="activeThumb=null"
+                           @input="setMax(spec, +$event.target.value)">
+
+                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
+                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                           :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
+                           @pointerdown.stop="activeThumb=spec.key+'-min'"
+                           @pointerup.window="activeThumb=null"
+                           @input="setMin(spec, +$event.target.value)">
+                  </div>
+                </div>
+              </template>
+
+            </div>
+
+            <!-- Footer -->
+            <footer class="px-4 py-3 border-t flex items-center gap-2">
+              <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+              <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
+              <span class="ml-auto text-xs text-gray-500" x-show="isLoading">Updating…</span>
+            </footer>
+          </aside>
+        </div>
+
 
 
 
@@ -757,6 +853,8 @@
 
         fetchPayload(pushUrl=true){
           if(this.isLoading) return; this.isLoading=true;
+          document.body.style.cursor = 'progress';   // 👈 set cursor
+
           const params=this.buildParams();
           const url=`${window.api.stats}?${params.toString()}`;
           if(pushUrl) history.replaceState(null,'',`/stats?${params.toString()}`);
@@ -764,7 +862,11 @@
             .then(r=>{ if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
             .then(json=>window.dispatchEvent(new CustomEvent('statsUpdated',{detail:{json:normalizeStatsPayload(json)}})))
             .catch(e=>console.error('[stats] fetch failed',e))
-            .finally(()=>this.isLoading=false);
+            .finally(() => {
+              this.isLoading = false;
+              document.body.style.cursor = 'default';  // 👈 reset cursor
+              window.dispatchEvent(new CustomEvent('api:in'));
+            });
         },
         applyFilters(){ this.fetchPayload(true); },
       }

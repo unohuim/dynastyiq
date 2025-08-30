@@ -12,6 +12,7 @@ export default {
     ],
 
     safelist: [
+        'ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100',
         'border-indigo-100',
         'hover:border-indigo-200',
         'hover:bg-indigo-100',
