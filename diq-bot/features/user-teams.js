@@ -10,10 +10,14 @@ const axios = require('axios');
 
 const COMMAND_NAME = 'DIQ: User Teams';
 
-const API_BASE =
-  process.env.API_BASE_URL ||
-  process.env.DIQ_API_BASE_URL ||
-  process.env.APP_URL; // fallback
+// Lazy read so dotenv in bot.js can load ../.env first
+function getApiBase() {
+  return (
+    process.env.API_BASE_URL ||
+    process.env.DIQ_API_BASE_URL ||
+    process.env.APP_URL || ''
+  );
+}
 const OAUTH_URL = process.env.DISCORD_OAUTH_URL || process.env.DIQ_SIGNIN_URL || '';
 
 /**
@@ -27,7 +31,7 @@ async function register({ token, clientId, guildId }) {
   const cmd = new ContextMenuCommandBuilder()
     .setName(COMMAND_NAME)
     .setType(ApplicationCommandType.User)
-    .setDMPermission(false) // server-only
+    .setDMPermission(false)
     .toJSON();
 
   if (guildId) {
@@ -38,7 +42,9 @@ async function register({ token, clientId, guildId }) {
 }
 
 async function fetchDiscordUser(discordId) {
-  if (!API_BASE) throw new Error('Missing API_BASE_URL/DIQ_API_BASE_URL/APP_URL');
+  const API_BASE = getApiBase();
+  if (!API_BASE) throw new Error('Missing APP_URL (or API_BASE_URL/DIQ_API_BASE_URL)');
+
   const url = new URL(`/api/discord/users/${discordId}`, API_BASE).toString();
   const resp = await axios.get(url, {
     timeout: 8000,
