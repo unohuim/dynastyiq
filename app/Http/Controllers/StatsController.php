@@ -330,14 +330,19 @@ class StatsController extends BaseController
 
         $base = NhlGameSummary::query()
             ->with(['player.contracts.seasons'])
-            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id');
+            ->join('nhl_games as g', function ($join) use ($from, $to, $gameType) {
+                $join->on('g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id');
 
-        if ($from) $base->whereDate('g.game_date', '>=', $from->toDateString());
-        if ($to)   $base->whereDate('g.game_date', '<=', $to->toDateString());
-
-        if (in_array((string)$gameType, ['1','2','3'], true)) {
-            $base->where('g.game_type', (int)$gameType);
-        }
+                if ($from) {
+                    $join->whereDate('g.game_date', '>=', $from->toDateString());
+                }
+                if ($to) {
+                    $join->whereDate('g.game_date', '<=', $to->toDateString());
+                }
+                if (in_array((string) $gameType, ['1','2','3'], true)) {
+                    $join->where('g.game_type', (int) $gameType);
+                }
+            });
 
         $base->select('nhl_game_summaries.*');
 
