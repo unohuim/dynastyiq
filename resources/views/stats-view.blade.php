@@ -65,7 +65,7 @@
       window.__stats = normalizeStatsPayload(window.__stats);
     </script>
 
-    <div x-data="statsPage()" x-init="init()" class="max-w-7xl mx-auto">
+    <div x-data="statsPage()" x-init="init()" @keydown.escape.window="isFilterOpen=false" class="max-w-7xl mx-auto">
       {{-- ================= MOBILE BAR ================= --}}
       <template x-if="isMobile">
         <div id="perspectivesBar" class="top-0 z-40">
@@ -232,341 +232,353 @@
       {{-- Mount point for the list/table --}}
       <div id="stats-page" class="sm:px-4"></div>
 
-      <!-- ======================= DRAWER ======================= -->
-        <div x-cloak>
-          <!-- Backdrop -->
-          <div
-            x-show="isFilterOpen"
-            x-transition.opacity
-            class="fixed inset-0 bg-black/40 z-40"
-            @click="isFilterOpen=false">
-          </div>
-
-          <!-- Panel -->
-          <aside
-            x-show="true"
-            :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
-            class="fixed inset-y-0 right-0 w-[92vw] max-w-[480px] bg-white border-l shadow-xl z-[60]
-                   transform transition-transform duration-300 ease-out will-change-transform
-                   flex flex-col px-6"
-            x-trap.noscroll="isFilterOpen"
-            @click.stop
-            aria-modal="true" role="dialog">
-
-            <!-- Header -->
-            <header class="px-4 py-3 border-b flex items-center justify-between">
-              <h2 class="text-base font-semibold">Filters</h2>
-              <div class="flex items-center gap-2">
-                <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
-                <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
-                <button class="p-2 rounded-full hover:bg-gray-100" @click="isFilterOpen=false" aria-label="Close">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
-                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd"/>
-                  </svg>
-                </button>
+      <!-- ======================= MOBILE DRAWER ======================= -->
+        <template x-if="isMobile">
+            <div x-cloak class="sm:hidden">
+              <!-- Backdrop -->
+              <div
+                x-show="isFilterOpen"
+                x-transition.opacity
+                class="fixed inset-0 bg-black/40 z-40"
+                @click="isFilterOpen=false">
               </div>
-            </header>
 
-            <!-- Sticky controls (positions + basic selects) -->
-            <div class="sticky top-0 z-[65] bg-white/95 backdrop-blur border-b">
-              <div class="px-4 pt-3 pb-1 border-b">
-                <label class="block text-[11px] text-gray-500 mb-1">Positions</label>
+              <!-- Panel -->
+              <aside
+                  x-show="true"
+                  :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
+                  class="fixed inset-y-0 right-0 w-[92vw] max-w-[480px] bg-white border-l shadow-xl z-50
+                     transform transition-transform duration-300 ease-out will-change-transform
+                     flex flex-col"
+                  x-trap.noscroll="isMobile && isFilterOpen"
+                  @click.stop
+                  aria-modal="true" role="dialog">
 
-                <div class="gap-2 pb-2">
-                  <!-- LW, C, RW use pos[] -->
-                  <div class="flex space-x-4">
-                    <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
-                      <span class="flex-row">
-                        <button type="button"
-                                class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                                :class="filters.pos.includes(p) ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                                @click="togglePos(p)"
-                                x-text="p"></button>
-                      </span>
+                <!-- Header -->
+                <header class="px-4 py-3 border-b flex items-center justify-between">
+                  <h2 class="text-base font-semibold">Filters</h2>
+                  <div class="flex items-center gap-2">
+                    <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+                    <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white"
+                            :disabled="isLoading"
+                            @click="applyFilters(); isFilterOpen = false">
+                      Apply
+                    </button>
+                    <button class="p-2 rounded-full hover:bg-gray-100" @click="isFilterOpen=false" aria-label="Close">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd"/>
+                      </svg>
+                    </button>
+                  </div>
+                </header>
+
+                <!-- Sticky controls (positions + basic selects) -->
+                <div class="sticky top-0 z-10 bg-white border-b">
+                  <div class="px-4 pt-3 pb-1 border-b">
+                    <label class="block text-[11px] text-gray-500 mb-1">Positions</label>
+
+                    <div class="gap-2 pb-2">
+                      <!-- LW, C, RW use pos[] -->
+                      <div class="flex space-x-4">
+                        <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
+                          <span class="flex-row">
+                            <button type="button"
+                                    class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
+                                    :class="filters.pos.includes(p) ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                    @click="togglePos(p)"
+                                    x-text="p"></button>
+                          </span>
+                        </template>
+
+                        <!-- F, D, G use pos_type[] -->
+                        <span class="flex">
+                          <button type="button"
+                                  class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
+                                  :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                  @click="togglePosType('F')">F</button>
+                        </span>
+                        <span class="flex">
+                          <button type="button"
+                                  class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
+                                  :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                  @click="togglePosType('D')">D</button>
+                        </span>
+                        <span class="flex">
+                          <button type="button"
+                                  class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
+                                  :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                  @click="togglePosType('G')">G</button>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="px-4 pt-2 pb-3">
+                    <div class="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2">
+                      <!-- Period -->
+                      <div>
+                        <label class="block text-[11px] text-gray-500 mb-1">Period</label>
+                        <select x-model="period" @change="fetchPayload()"
+                                class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                          <option value="season">Season</option>
+                          <option value="range">Range</option>
+                        </select>
+                      </div>
+
+                      <!-- Season (period = season) -->
+                      <div x-show="period==='season'" x-cloak>
+                        <label class="block text-[11px] text-gray-500 mb-1">Season</label>
+                        <select x-model="season_id" @change="fetchPayload()"
+                                class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                          <template x-for="sid in availableSeasons" :key="sid">
+                            <option :value="sid" x-text="sid"></option>
+                          </template>
+                        </select>
+                      </div>
+
+                      <!-- Start / End (period = range) -->
+                      <div x-show="period==='range'" x-cloak>
+                        <label class="block text-[11px] text-gray-500 mb-1">Start</label>
+                        <input type="date" x-model="from" @change="fetchPayload()"
+                               class="h-9 w-full px-3 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                      </div>
+                      <div x-show="period==='range'" x-cloak>
+                        <label class="block text-[11px] text-gray-500 mb-1">End</label>
+                        <input type="date" x-model="to" @change="fetchPayload()"
+                               class="h-9 w-full px-3 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                      </div>
+
+                      <!-- Slice -->
+                      <div x-show="canSlice" x-cloak>
+                        <label class="block text-[11px] text-gray-500 mb-1">Slice</label>
+                        <select x-model="slice" @change="fetchPayload()"
+                                class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                          <option value="total">Total</option>
+                          <option value="pgp">P/GP</option>
+                          <option value="p60">Per 60</option>
+                        </select>
+                      </div>
+
+                      <!-- Game Type -->
+                      <div>
+                        <label class="block text-[11px] text-gray-500 mb-1">Game Type</label>
+                        <select x-model="game_type" @change="fetchPayload()"
+                                class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
+                          <template x-for="gt in availableGameTypes" :key="gt">
+                            <option :value="String(gt)"
+                                    :selected="String(gt) === String(game_type)"
+                                    x-text="({'1':'Preseason','2':'Regular','3':'Playoffs'})[String(gt)]">
+                            </option>
+                          </template>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+
+                <!-- Scroll body -->
+                <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+
+                  <!-- ===== Contract & GP (synthetic sliders) ===== -->
+                  
+
+                  <!-- Dynamic numeric sliders from schema -->
+                    <template
+                      x-for="f in schemaArr.filter(s => ['number','int','float'].includes((s?.type||'').toLowerCase()) && s?.bounds && s?.key)"
+                      :key="'rng-'+f.key"
+                    >
+                      <div x-data="{ spec: f }" x-init="ensureNum(spec.key, spec.bounds)">
+                        <div class="flex items-center justify-between mb-1.5">
+                          <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
+                          <span class="text-xs text-gray-500"
+                                x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`">
+                          </span>
+                        </div>
+
+                        <div class="dual-slider">
+                          <div class="rail"></div>
+                          <div class="active"
+                               :style="(() => {
+                                 const v = filters.num[spec.key] || {};
+                                 const a = pct(v.min ?? spec.bounds.min, spec);
+                                 const b = pct(v.max ?? spec.bounds.max, spec);
+                                 return `left:${a}%; width:${Math.max(0, b-a)}%;`;
+                               })()"></div>
+
+                          <!-- MAX -->
+                          <input type="range"
+                                 class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
+                                 :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                                 :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
+                                 @pointerdown.stop="activeThumb=spec.key+'-max'"
+                                 @pointerup.window="activeThumb=null"
+                                 @input="setMax(spec, +$event.target.value)">
+
+                          <!-- MIN -->
+                          <input type="range"
+                                 class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
+                                 :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                                 :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
+                                 @pointerdown.stop="activeThumb=spec.key+'-min'"
+                                 @pointerup.window="activeThumb=null"
+                                 @input="setMin(spec, +$event.target.value)">
+                        </div>
+                      </div>
                     </template>
 
-                    <!-- F, D, G use pos_type[] -->
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('F')">F</button>
-                    </span>
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('D')">D</button>
-                    </span>
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('G')">G</button>
-                    </span>
-                  </div>
+
                 </div>
-              </div>
 
-              <div class="px-4 pt-2 pb-3">
-                <div class="grid grid-cols-1 min-[380px]:grid-cols-2 gap-2">
-                  <!-- Period -->
-                  <div>
-                    <label class="block text-[11px] text-gray-500 mb-1">Period</label>
-                    <select x-model="period" @change="fetchPayload()"
-                            class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                      <option value="season">Season</option>
-                      <option value="range">Range</option>
-                    </select>
-                  </div>
-
-                  <!-- Season (period = season) -->
-                  <div x-show="period==='season'" x-cloak>
-                    <label class="block text-[11px] text-gray-500 mb-1">Season</label>
-                    <select x-model="season_id" @change="fetchPayload()"
-                            class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                      <template x-for="sid in availableSeasons" :key="sid">
-                        <option :value="sid" x-text="sid"></option>
-                      </template>
-                    </select>
-                  </div>
-
-                  <!-- Start / End (period = range) -->
-                  <div x-show="period==='range'" x-cloak>
-                    <label class="block text-[11px] text-gray-500 mb-1">Start</label>
-                    <input type="date" x-model="from" @change="fetchPayload()"
-                           class="h-9 w-full px-3 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                  </div>
-                  <div x-show="period==='range'" x-cloak>
-                    <label class="block text-[11px] text-gray-500 mb-1">End</label>
-                    <input type="date" x-model="to" @change="fetchPayload()"
-                           class="h-9 w-full px-3 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                  </div>
-
-                  <!-- Slice -->
-                  <div x-show="canSlice" x-cloak>
-                    <label class="block text-[11px] text-gray-500 mb-1">Slice</label>
-                    <select x-model="slice" @change="fetchPayload()"
-                            class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                      <option value="total">Total</option>
-                      <option value="pgp">P/GP</option>
-                      <option value="p60">Per 60</option>
-                    </select>
-                  </div>
-
-                  <!-- Game Type -->
-                  <div>
-                    <label class="block text-[11px] text-gray-500 mb-1">Game Type</label>
-                    <select x-model="game_type" @change="fetchPayload()"
-                            class="h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500">
-                      <template x-for="gt in availableGameTypes" :key="gt">
-                        <option :value="String(gt)"
-                                :selected="String(gt) === String(game_type)"
-                                x-text="({'1':'Preseason','2':'Regular','3':'Playoffs'})[String(gt)]">
-                        </option>
-                      </template>
-                    </select>
-                  </div>
-                </div>
-              </div>
+                <!-- Footer -->
+                <footer class="px-4 py-3 border-t flex items-center gap-2">
+                  <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+                  <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white"
+                        :disabled="isLoading"
+                        @click="applyFilters(); isFilterOpen = false">
+                  Apply
+                </button>
+                  <span class="ml-auto text-xs text-gray-500" x-show="isLoading">Updating…</span>
+                </footer>
+              </aside>
             </div>
-
-            <!-- Scroll body -->
-            <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
-
-              <!-- ===== Contract & GP (synthetic sliders) ===== -->
-              
-
-              <!-- Dynamic numeric sliders from schema -->
-                <template
-                  x-for="f in schemaArr.filter(s => ['number','int','float'].includes((s?.type||'').toLowerCase()) && s?.bounds && s?.key)"
-                  :key="'rng-'+f.key"
-                >
-                  <div x-data="{ spec: f }" x-init="ensureNum(spec.key, spec.bounds)">
-                    <div class="flex items-center justify-between mb-1.5">
-                      <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
-                      <span class="text-xs text-gray-500"
-                            x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`">
-                      </span>
-                    </div>
-
-                    <div class="dual-slider">
-                      <div class="rail"></div>
-                      <div class="active"
-                           :style="(() => {
-                             const v = filters.num[spec.key] || {};
-                             const a = pct(v.min ?? spec.bounds.min, spec);
-                             const b = pct(v.max ?? spec.bounds.max, spec);
-                             return `left:${a}%; width:${Math.max(0, b-a)}%;`;
-                           })()"></div>
-
-                      <!-- MAX -->
-                      <input type="range"
-                             class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                             :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                             :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
-                             @pointerdown.stop="activeThumb=spec.key+'-max'"
-                             @pointerup.window="activeThumb=null"
-                             @input="setMax(spec, +$event.target.value)">
-
-                      <!-- MIN -->
-                      <input type="range"
-                             class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                             :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                             :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
-                             @pointerdown.stop="activeThumb=spec.key+'-min'"
-                             @pointerup.window="activeThumb=null"
-                             @input="setMin(spec, +$event.target.value)">
-                    </div>
-                  </div>
-                </template>
-
-
-            </div>
-
-            <!-- Footer -->
-            <footer class="px-4 py-3 border-t flex items-center gap-2">
-              <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
-              <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
-              <span class="ml-auto text-xs text-gray-500" x-show="isLoading">Updating…</span>
-            </footer>
-          </aside>
-        </div>
-        <!-- ===================== /DRAWER ===================== -->
+            <!-- ===================== /DRAWER ===================== -->
+        </template>
 
 
 
 
 
         {{-- ================= DESKTOP FILTERS DRAWER (SLIDERS ONLY) ================= --}}
-        <div x-cloak class="hidden sm:block">
-          <!-- Backdrop -->
-          <div
-            x-show="isFilterOpen"
-            x-transition.opacity
-            class="fixed inset-0 bg-black/40 z-40"
-            @click="isFilterOpen=false">
-          </div>
-
-          <!-- Panel -->
-          <aside
-            x-show="true"
-            :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
-            class="fixed inset-y-0 right-0 w-[40vw] max-w-[560px] bg-white border-l shadow-xl z-[60]
-                   transform transition-transform duration-300 ease-out will-change-transform
-                   flex flex-col px-6"
-            x-trap.noscroll="isFilterOpen"
-            @click.stop
-            aria-modal="true" role="dialog">
-
-            <!-- Header -->
-            <header class="px-4 py-3 border-b flex items-center justify-between">
-              <h2 class="text-base font-semibold">Filters</h2>
-              <div class="flex items-center gap-2">
-                <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
-                <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
-                <button class="p-2 rounded-full hover:bg-gray-100" @click="isFilterOpen=false" aria-label="Close">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
-                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd"/>
-                  </svg>
-                </button>
+        <template x-if="!isMobile">
+            <div x-cloak class="hidden sm:block">
+              <!-- Backdrop -->
+              <div
+                x-show="isFilterOpen"
+                x-transition.opacity
+                class="fixed inset-0 bg-black/40 z-40"
+                @click="isFilterOpen=false">
               </div>
-            </header>
 
-            <!-- Scroll body: numeric sliders only -->
-            <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+              <!-- Panel -->
+              <aside
+                  x-show="true"
+                  :class="isFilterOpen ? 'translate-x-0' : 'translate-x-full'"
+                  class="fixed inset-y-0 right-0 w-[40vw] max-w-[560px] bg-white border-l shadow-xl z-50
+                     transform transition-transform duration-300 ease-out will-change-transform
+                     flex flex-col"
+                  x-trap.noscroll="!isMobile && isFilterOpen"
+                  @click.stop
+                  aria-modal="true" role="dialog">
 
-              <!-- Important first (if present) -->
-              <template x-for="key in ['gp','contract_value_num','contract_last_year_num']" :key="'imp-'+key">
-                <div x-show="schemaArr.find(s => s.key===key)"
-                     x-data="{ spec: schemaArr.find(s => s.key===key) }"
-                     x-init="ensureNum(spec.key, spec.bounds)">
-                  <div class="flex items-center justify-between mb-1.5">
-                    <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
-                    <span class="text-xs text-gray-500"
-                          x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
+                <!-- Header -->
+                <header class="px-4 py-3 border-b flex items-center justify-between">
+                  <h2 class="text-base font-semibold">Filters</h2>
+                  <div class="flex items-center gap-2">
+                    <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+                    <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
+                    <button class="p-2 rounded-full hover:bg-gray-100" @click="isFilterOpen=false" aria-label="Close">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd"/>
+                      </svg>
+                    </button>
                   </div>
-                  <div class="dual-slider">
-                    <div class="rail"></div>
-                    <div class="active"
-                         :style="(() => {
-                           const v = filters.num[spec.key] || {};
-                           const a = pct(v.min ?? spec.bounds.min, spec);
-                           const b = pct(v.max ?? spec.bounds.max, spec);
-                           return `left:${a}%; width:${Math.max(0, b-a)}%;`;
-                         })()"></div>
+                </header>
 
-                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                           :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
-                           @pointerdown.stop="activeThumb=spec.key+'-max'"
-                           @pointerup.window="activeThumb=null"
-                           @input="setMax(spec, +$event.target.value)">
+                <!-- Scroll body: numeric sliders only -->
+                <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
 
-                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                           :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
-                           @pointerdown.stop="activeThumb=spec.key+'-min'"
-                           @pointerup.window="activeThumb=null"
-                           @input="setMin(spec, +$event.target.value)">
-                  </div>
+                  <!-- Important first (if present) -->
+                  <template x-for="key in ['gp','contract_value_num','contract_last_year_num']" :key="'imp-'+key">
+                    <div x-show="schemaArr.find(s => s.key===key)"
+                         x-data="{ spec: schemaArr.find(s => s.key===key) }"
+                         x-init="ensureNum(spec.key, spec.bounds)">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
+                        <span class="text-xs text-gray-500"
+                              x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
+                      </div>
+                      <div class="dual-slider">
+                        <div class="rail"></div>
+                        <div class="active"
+                             :style="(() => {
+                               const v = filters.num[spec.key] || {};
+                               const a = pct(v.min ?? spec.bounds.min, spec);
+                               const b = pct(v.max ?? spec.bounds.max, spec);
+                               return `left:${a}%; width:${Math.max(0, b-a)}%;`;
+                             })()"></div>
+
+                        <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
+                               :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                               :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
+                               @pointerdown.stop="activeThumb=spec.key+'-max'"
+                               @pointerup.window="activeThumb=null"
+                               @input="setMax(spec, +$event.target.value)">
+
+                        <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
+                               :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                               :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
+                               @pointerdown.stop="activeThumb=spec.key+'-min'"
+                               @pointerup.window="activeThumb=null"
+                               @input="setMin(spec, +$event.target.value)">
+                      </div>
+                    </div>
+                  </template>
+
+                  <!-- The rest (excluding the three above) -->
+                  <template
+                    x-for="f in schemaArr.filter(s =>
+                      ['number','int','float'].includes((s?.type||'').toLowerCase())
+                      && s?.bounds && s?.key
+                      && !['gp','contract_value_num','contract_last_year_num'].includes(s.key)
+                    )"
+                    :key="'rng-'+f.key"
+                  >
+                    <div x-data="{ spec: f }" x-init="ensureNum(spec.key, spec.bounds)">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
+                        <span class="text-xs text-gray-500"
+                              x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
+                      </div>
+
+                      <div class="dual-slider">
+                        <div class="rail"></div>
+                        <div class="active"
+                             :style="(() => {
+                               const v = filters.num[spec.key] || {};
+                               const a = pct(v.min ?? spec.bounds.min, spec);
+                               const b = pct(v.max ?? spec.bounds.max, spec);
+                               return `left:${a}%; width:${Math.max(0, b-a)}%;`;
+                             })()"></div>
+
+                        <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
+                               :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                               :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
+                               @pointerdown.stop="activeThumb=spec.key+'-max'"
+                               @pointerup.window="activeThumb=null"
+                               @input="setMax(spec, +$event.target.value)">
+
+                        <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
+                               :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
+                               :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
+                               @pointerdown.stop="activeThumb=spec.key+'-min'"
+                               @pointerup.window="activeThumb=null"
+                               @input="setMin(spec, +$event.target.value)">
+                      </div>
+                    </div>
+                  </template>
+
                 </div>
-              </template>
 
-              <!-- The rest (excluding the three above) -->
-              <template
-                x-for="f in schemaArr.filter(s =>
-                  ['number','int','float'].includes((s?.type||'').toLowerCase())
-                  && s?.bounds && s?.key
-                  && !['gp','contract_value_num','contract_last_year_num'].includes(s.key)
-                )"
-                :key="'rng-'+f.key"
-              >
-                <div x-data="{ spec: f }" x-init="ensureNum(spec.key, spec.bounds)">
-                  <div class="flex items-center justify-between mb-1.5">
-                    <span class="text-sm font-medium" x-text="spec.label || spec.key"></span>
-                    <span class="text-xs text-gray-500"
-                          x-text="`${(filters.num[spec.key]?.min ?? spec.bounds.min)} – ${(filters.num[spec.key]?.max ?? spec.bounds.max)}`"></span>
-                  </div>
-
-                  <div class="dual-slider">
-                    <div class="rail"></div>
-                    <div class="active"
-                         :style="(() => {
-                           const v = filters.num[spec.key] || {};
-                           const a = pct(v.min ?? spec.bounds.min, spec);
-                           const b = pct(v.max ?? spec.bounds.max, spec);
-                           return `left:${a}%; width:${Math.max(0, b-a)}%;`;
-                         })()"></div>
-
-                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-30"
-                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                           :value="(filters.num[spec.key]?.max ?? spec.bounds.max)"
-                           @pointerdown.stop="activeThumb=spec.key+'-max'"
-                           @pointerup.window="activeThumb=null"
-                           @input="setMax(spec, +$event.target.value)">
-
-                    <input type="range" class="absolute inset-0 w-full h-8 bg-transparent appearance-none touch-none z-20"
-                           :min="spec.bounds.min" :max="spec.bounds.max" :step="spec.step ?? 1"
-                           :value="(filters.num[spec.key]?.min ?? spec.bounds.min)"
-                           @pointerdown.stop="activeThumb=spec.key+'-min'"
-                           @pointerup.window="activeThumb=null"
-                           @input="setMin(spec, +$event.target.value)">
-                  </div>
-                </div>
-              </template>
-
+                <!-- Footer -->
+                <footer class="px-4 py-3 border-t flex items-center gap-2">
+                  <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
+                  <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
+                  <span class="ml-auto text-xs text-gray-500" x-show="isLoading">Updating…</span>
+                </footer>
+              </aside>
             </div>
-
-            <!-- Footer -->
-            <footer class="px-4 py-3 border-t flex items-center gap-2">
-              <button class="px-3 py-1.5 text-sm rounded border" @click="resetFilters()">Reset</button>
-              <button class="px-3 py-1.5 text-sm rounded bg-indigo-600 text-white" @click="applyFilters()">Apply</button>
-              <span class="ml-auto text-xs text-gray-500" x-show="isLoading">Updating…</span>
-            </footer>
-          </aside>
-        </div>
-
+        </template>
 
 
 
@@ -689,6 +701,16 @@
             max: age?.bounds?.max ?? null
           };
 
+
+            const ageSpec = this.schemaArr.find(s => s.key === 'age');
+            const ageMin  = ageSpec?.bounds?.min ?? null;
+            const ageMax  = ageSpec?.bounds?.max ?? null;
+
+            this.filters.age = { min: ageMin, max: ageMax };
+            (this.filters.num ||= {});
+            this.filters.num.age = { min: ageMin, max: ageMax };
+
+
           // all numeric sliders (includes virtuals like gp/contract_* if in schema)
           this.filters.num = {};
           for (const f of this.numericFields) {
@@ -756,7 +778,17 @@
           window.addEventListener('resize', ()=>{ this.isMobile = window.innerWidth < {{ $mobileBreakpoint }}; });
 
           window.addEventListener('statsUpdated', (e) => {
+
             const meta = e.detail?.json?.meta || {};
+
+            // ✅ define first
+              const appliedFilters =
+                (meta.appliedFilters && typeof meta.appliedFilters === 'object')
+                  ? meta.appliedFilters
+                  : {};
+              
+
+            //meta -> local state
             if (Array.isArray(meta.availableSeasons))   this.availableSeasons   = meta.availableSeasons.map(String);
             if (Array.isArray(meta.availableGameTypes)) this.availableGameTypes = meta.availableGameTypes.map(String);
             if (meta.season    != null) this.season_id = String(meta.season);
@@ -771,7 +803,24 @@
               max: new Date().getFullYear() + 8
             });
 
-            const applied = (meta.appliedFilters && typeof meta.appliedFilters==='object') ? meta.appliedFilters : {};
+
+            // Seed age from appliedFilters/bounds into BOTH places
+            {
+              const ageSpec = this.schemaArr.find(s => s.key === 'age');
+              if (ageSpec?.bounds) {
+                const minB = +ageSpec.bounds.min, maxB = +ageSpec.bounds.max;
+                const cur  = (appliedFilters?.age && typeof appliedFilters.age === 'object') ? appliedFilters.age : {};
+                const range = {
+                  min: (cur.min != null ? +cur.min : minB),
+                  max: (cur.max != null ? +cur.max : maxB),
+                };
+                this.filters.age = { ...range };
+                (this.filters.num ||= {});
+                this.filters.num.age = { ...range };
+              }
+            }
+
+            // const appliedFilters = (meta.appliedFilters && typeof meta.appliedFilters==='object') ? meta.appliedFilters : {};
 
             this.filters.pos      = Array.isArray(meta.pos) ? meta.pos.slice() : [];
             this.filters.pos_type = Array.isArray(meta.pos_type) ? meta.pos_type.slice() : [];
@@ -779,7 +828,7 @@
             this.filters.num = this.filters.num || {};
             for (const f of this.numericFields) {
               const k=f.key, minB=+f.bounds.min, maxB=+f.bounds.max;
-              const cur=(applied?.[k] && typeof applied[k]==='object') ? applied[k] : {};
+              const cur=(appliedFilters?.[k] && typeof appliedFilters[k]==='object') ? appliedFilters[k] : {};
               this.filters.num[k] = { min: (cur.min!=null?+cur.min:minB), max: (cur.max!=null?+cur.max:maxB) };
             }
 
@@ -788,6 +837,15 @@
 
           // first paint
           window.dispatchEvent(new CustomEvent('statsUpdated',{detail:{json:window.__stats}}));
+        },
+
+        unlockPage(){
+          // clear any stale body locks or inert attributes (belt-and-suspenders)
+          requestAnimationFrame(() => {
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+            document.querySelectorAll('[inert]').forEach(el => el.removeAttribute('inert'));
+          });
         },
 
         /* networking */
@@ -811,9 +869,20 @@
           for (const v of this.filters.pos_type) p.append('pos_type[]', v);
           for (const v of (this.filters.team || [])) p.append('team[]', v);
 
-          // age
-          if (this.filters.age?.min != null) p.append('age_min', this.filters.age.min);
-          if (this.filters.age?.max != null) p.append('age_max', this.filters.age.max);
+
+            // age — use numeric bucket (what the slider updates) first; fallback to top-level
+            {
+              const numAge = this.filters?.num?.age;
+              if (numAge && (numAge.min != null || numAge.max != null)) {
+                if (numAge.min != null) p.append('age_min', numAge.min);
+                if (numAge.max != null) p.append('age_max', numAge.max);
+              } else if (this.filters?.age && (this.filters.age.min != null || this.filters.age.max != null)) {
+                if (this.filters.age.min != null) p.append('age_min', this.filters.age.min);
+                if (this.filters.age.max != null) p.append('age_max', this.filters.age.max);
+              }
+            }
+          
+
 
           // numeric from schema
           for (const f of this.numericFields) {
@@ -864,7 +933,9 @@
             .catch(e=>console.error('[stats] fetch failed',e))
             .finally(() => {
               this.isLoading = false;
+              this.isFilterOpen = false;
               document.body.style.cursor = 'default';  // 👈 reset cursor
+              this.unlockPage();
               window.dispatchEvent(new CustomEvent('api:in'));
             });
         },
