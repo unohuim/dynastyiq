@@ -4,6 +4,7 @@ const {
   Routes,
   ContextMenuCommandBuilder,
   ApplicationCommandType,
+  MessageFlags,
 } = require('discord.js');
 const axios = require('axios');
 
@@ -11,9 +12,8 @@ const COMMAND_NAME = 'DIQ: User Teams';
 
 const API_BASE =
   process.env.API_BASE_URL ||
-  process.env.DIQ_API_BASE_URL || // fallback if you use this name
-  process.env.APP_URL;            // last-resort fallback
-const API_KEY   = process.env.API_INTERNAL_KEY;
+  process.env.DIQ_API_BASE_URL ||
+  process.env.APP_URL; // fallback
 const OAUTH_URL = process.env.DISCORD_OAUTH_URL || process.env.DIQ_SIGNIN_URL || '';
 
 /**
@@ -38,12 +38,11 @@ async function register({ token, clientId, guildId }) {
 }
 
 async function fetchDiscordUser(discordId) {
-  if (!API_BASE || !API_KEY) throw new Error('Missing API_BASE_URL/DIQ_API_BASE_URL/APP_URL or API_INTERNAL_KEY');
+  if (!API_BASE) throw new Error('Missing API_BASE_URL/DIQ_API_BASE_URL/APP_URL');
   const url = new URL(`/api/discord/users/${discordId}`, API_BASE).toString();
   const resp = await axios.get(url, {
-    headers: { 'X-Internal-Key': API_KEY },
     timeout: 8000,
-    validateStatus: (s) => s >= 200 && s < 500, // treat 4xx as handled (return body)
+    validateStatus: (s) => s >= 200 && s < 500,
   });
   return resp.data || {};
 }
@@ -57,7 +56,7 @@ async function handle(interaction) {
   if (!interaction.isUserContextMenuCommand()) return false;
   if (interaction.commandName !== COMMAND_NAME) return false;
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const target = interaction.targetUser;
 
