@@ -32,7 +32,7 @@ Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJ
     ->name('discord.webhooks.memberJoined');
 
 
-Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserEmail']);
+Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserTeams']);
 
 
 

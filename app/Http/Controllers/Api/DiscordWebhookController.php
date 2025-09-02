@@ -15,6 +15,75 @@ use Illuminate\Support\Str;
 class DiscordWebhookController extends Controller
 {
 
+
+    /**
+     * GET /api/discord/users/{discord_id}
+     * Returns the leagues you share with the target Discord user and the target's team in each.
+     * Optional query: viewer_discord_id=<discord_id> (defaults to target → returns all target leagues)
+     */
+    public function getUserTeams(Request $request, string $discordId): \Illuminate\Http\JsonResponse
+    {
+        // target (right–clicked) user
+        $targetSocial = SocialAccount::query()
+            ->where('provider', 'discord')
+            ->where('provider_user_id', (string) $discordId)
+            ->first();
+
+        $targetUserId = $targetSocial?->user_id;
+
+        // viewer (invoker) user — optional; if absent, treat as self
+        $viewerDiscordId = (string) $request->query('viewer_discord_id', '');
+        $viewerUserId = $targetUserId;
+        if ($viewerDiscordId !== '') {
+            $viewerSocial = SocialAccount::query()
+                ->where('provider', 'discord')
+                ->where('provider_user_id', $viewerDiscordId)
+                ->first();
+            $viewerUserId = $viewerSocial?->user_id ?? null;
+        }
+
+        if (!$targetUserId || !$viewerUserId) {
+            return response()->json([
+                'target_discord_user_id' => (string) $discordId,
+                'target_user_id'         => $targetUserId,
+                'viewer_user_id'         => $viewerUserId,
+                'shared_count'           => 0,
+                'teams'                  => [],
+            ]);
+        }
+
+        // leagues the viewer is in
+        $viewerLeagueIds = DB::table('league_user_teams')
+            ->where('user_id', $viewerUserId)
+            ->pluck('league_id');
+
+        // target's teams limited to mutual leagues
+        $rows = DB::table('league_user_teams as lut')
+            ->join('leagues as l', 'l.id', '=', 'lut.league_id')
+            ->join('teams as t', 't.id', '=', 'lut.team_id')
+            ->where('lut.user_id', $targetUserId)
+            ->whereIn('lut.league_id', $viewerLeagueIds)
+            ->select([
+                'l.id as league_id',
+                'l.name as league_name',
+                't.id as team_id',
+                't.name as team_name',
+            ])
+            ->orderBy('l.name')
+            ->get();
+
+        return response()->json([
+            'target_discord_user_id' => (string) $discordId,
+            'target_user_id'         => $targetUserId,
+            'viewer_user_id'         => $viewerUserId,
+            'shared_count'           => $rows->count(),
+            'teams'                  => $rows,
+        ]);
+    }
+
+
+
+
     /**
      * GET /api/discord/users/{discord_id}
      *

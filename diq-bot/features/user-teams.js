@@ -18,7 +18,6 @@ function getApiBase() {
     process.env.APP_URL || ''
   );
 }
-const OAUTH_URL = process.env.DISCORD_OAUTH_URL || process.env.DIQ_SIGNIN_URL || '';
 
 /**
  * Register the User Context Command (right-click → Apps → DIQ: User Teams)
@@ -41,12 +40,14 @@ async function register({ token, clientId, guildId }) {
   }
 }
 
-async function fetchDiscordUser(discordId) {
+async function fetchUserTeams(targetDiscordId, viewerDiscordId) {
   const API_BASE = getApiBase();
   if (!API_BASE) throw new Error('Missing APP_URL (or API_BASE_URL/DIQ_API_BASE_URL)');
 
-  const url = new URL(`/api/discord/users/${discordId}`, API_BASE).toString();
-  const resp = await axios.get(url, {
+  const url = new URL(`/api/discord/users/${targetDiscordId}`, API_BASE);
+  if (viewerDiscordId) url.searchParams.set('viewer_discord_id', String(viewerDiscordId));
+
+  const resp = await axios.get(url.toString(), {
     timeout: 8000,
     validateStatus: (s) => s >= 200 && s < 500,
   });
@@ -55,7 +56,7 @@ async function fetchDiscordUser(discordId) {
 
 /**
  * Handle the context menu interaction.
- * DMs the invoker with "user teams" and the target's email (or missing).
+ * DMs the invoker with shared leagues and the target's team name(s).
  * @param {import('discord.js').Interaction} interaction
  */
 async function handle(interaction) {
@@ -66,25 +67,28 @@ async function handle(interaction) {
 
   const target = interaction.targetUser;
 
-  let emailMsg = '';
+  let body = 'user teams';
   try {
-    const record = await fetchDiscordUser(target.id);
-    if (record && record.email) {
-      emailMsg = `\nemail: ${record.email}`;
+    const data = await fetchUserTeams(target.id, interaction.user.id);
+    const teams = Array.isArray(data.teams) ? data.teams : [];
+
+    if (teams.length === 0) {
+      body += `\n(no shared leagues)`;
     } else {
-      emailMsg = `\nemail: missing${OAUTH_URL ? ` — connect here: ${OAUTH_URL}` : ''}`;
+      const lines = teams.map(r => `• ${r.league_name} — ${r.team_name}`);
+      body += `\n` + lines.join('\n');
     }
   } catch (_) {
-    emailMsg = `\nemail: (couldn't fetch right now)`;
+    body += `\n(couldn't fetch right now)`;
   }
 
   try {
     await interaction.user.send({
-      content: `user teams${emailMsg}`,
+      content: body,
       allowedMentions: { parse: [] },
     });
     await interaction.editReply('Sent you a DM.');
-  } catch (err) {
+  } catch {
     await interaction.editReply('Could not DM you (are DMs disabled?).');
   }
 
