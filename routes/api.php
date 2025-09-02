@@ -25,9 +25,18 @@ Route::middleware('auth:sanctum')
 Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
     ->name('api.player-stats');
 
+
+
 // Discord
 Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
     ->name('discord.webhooks.memberJoined');
+
+
+Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserEmail']);
+
+
+
+
 
 // Stats
 Route::get('/stats', [StatsController::class, 'payload'])->name('api.stats');

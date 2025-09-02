@@ -14,6 +14,35 @@ use Illuminate\Support\Str;
 
 class DiscordWebhookController extends Controller
 {
+
+    /**
+     * GET /api/discord/users/{discord_id}
+     *
+     * Return the email (if any) linked to a Discord user.
+     *
+     * @param  string  $discordId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getUserEmail(string $discordId): \Illuminate\Http\JsonResponse
+    {
+        $social = SocialAccount::query()
+            ->with(['user:id,email'])
+            ->where('provider', 'discord')
+            ->where('provider_user_id', (string) $discordId)
+            ->first();
+
+        $email = $social?->user?->email ?? $social?->email ?? null;
+
+        return response()->json([
+            'discord_user_id' => (string) $discordId,
+            'diq_user_id'     => $social?->user_id ?? null,
+            'email'           => $email,
+        ]);
+    }
+
+
+
+
     public function memberJoined(Request $request)
     {
         // Optional: simple shared-secret header
