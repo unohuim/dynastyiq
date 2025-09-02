@@ -1,4 +1,10 @@
 // diq-bot/bot.js
+
+const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
+
+
+
+
 const path = require('path');
 const fs = require('fs');
 
@@ -20,9 +26,24 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-client.once(Events.ClientReady, (c) => {
+
+
+client.once(Events.ClientReady, async (c) => {
   console.log(`🤖 DIQ Bot logged in as ${c.user.tag}`);
+
+  try {
+    await registerUserTeams({
+      token: process.env.DISCORD_BOT_TOKEN,
+      clientId: process.env.CLIENT_ID || process.env.DISCORD_CLIENT_ID,
+      guildId: process.env.GUILD_ID || process.env.DISCORD_GUILD_ID,
+    });
+    console.log('✅ Registered DIQ: User Teams');
+  } catch (e) {
+    console.error('❌ Failed to register DIQ: User Teams:', e?.message || e);
+  }
 });
+
+
 
 // NEW: load markdown DM body from local filesystem
 async function loadWelcomeMarkdown() {
@@ -42,6 +63,8 @@ async function loadWelcomeMarkdown() {
   }
   return null;
 }
+
+
 
 // Listen for new member join
 client.on(Events.GuildMemberAdd, async (member) => {
@@ -89,5 +112,13 @@ client.on(Events.GuildMemberAdd, async (member) => {
     console.error("❌ Failed to send join event", err.message);
   }
 });
+
+
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (await handleUserTeams(interaction)) return;
+  // other handlers...
+});
+
 
 client.login(process.env.DISCORD_BOT_TOKEN);
