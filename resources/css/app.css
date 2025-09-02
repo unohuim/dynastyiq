@@ -51,15 +51,15 @@
   }
 
   .player-stats-pos-tag-mobile {
-    @apply inline-block bg-gray-100 text-gray-800 text-xs px-1 py-0.5 rounded;
+    @apply inline-block bg-gray-100 text-gray-800 text-xxs px-1 py-0.5 rounded;
   }
 
   .player-stats-name-mobile {
-    @apply text-sm leading-tight;
+    @apply text-xxs leading-tight;
   }
 
   .player-stats-aav-mobile{
-    @apply flex bg-gray-100 text-gray-800 text-xxs ml-4 px-1 py-0.5 rounded;
+    @apply flex bg-gray-100 text-gray-800 text-xxs ml-2 px-1 py-0.5 rounded;
   }
   .player-stats-right-mobile {
     @apply flex min-w-40 items-center justify-between text-sm text-gray-600;
