@@ -328,21 +328,21 @@ class StatsController extends BaseController
             ['key' => 'gp',                 'label' => 'GP'],
         ];
 
+        // CHANGE: plain join + WHEREs (portable across MySQL/PG)
         $base = NhlGameSummary::query()
             ->with(['player.contracts.seasons'])
-            ->join('nhl_games as g', function ($join) use ($from, $to, $gameType) {
-                $join->on('g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id');
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id')
+            ->select('nhl_game_summaries.*');
 
-                if ($from) {
-                    $join->whereDate('g.game_date', '>=', $from->toDateString());
-                }
-                if ($to) {
-                    $join->whereDate('g.game_date', '<=', $to->toDateString());
-                }
-                if (in_array((string) $gameType, ['1','2','3'], true)) {
-                    $join->where('g.game_type', (int) $gameType);
-                }
-            });
+        if ($from) {
+            $base->whereDate('g.game_date', '>=', $from->toDateString());
+        }
+        if ($to) {
+            $base->whereDate('g.game_date', '<=', $to->toDateString());
+        }
+        if (in_array((string)$gameType, ['1','2','3'], true)) {
+            $base->where('g.game_type', (int)$gameType);
+        }
 
         $base->select('nhl_game_summaries.*');
 
@@ -699,14 +699,30 @@ class StatsController extends BaseController
         // Age min/max
         $ageMin = $request?->query('age_min');
         $ageMax = $request?->query('age_max');
+
         if ($ageMin !== null || $ageMax !== null) {
-            if ($ageMin !== null) $base->whereRaw('TIMESTAMPDIFF(YEAR, pf.dob, CURDATE()) >= ?', [(int)$ageMin]);
-            if ($ageMax !== null) $base->whereRaw('TIMESTAMPDIFF(YEAR, pf.dob, CURDATE()) <= ?', [(int)$ageMax]);
+            $today = \Illuminate\Support\Carbon::today();
+
+            // Ages -> DOB range (inclusive)
+            // Example: age 19–24  =>  DOB between (today-24y-1d)+1d and (today-19y)
+            $youngestDob = $ageMin !== null ? $today->copy()->subYears((int)$ageMin)->toDateString() : null; // newest DOB
+            $oldestDob   = $ageMax !== null ? $today->copy()->subYears((int)$ageMax + 1)->addDay()->toDateString() : null; // oldest DOB
+
+            if ($oldestDob && $youngestDob) {
+                $base->whereBetween('pf.dob', [$oldestDob, $youngestDob]);
+            } elseif ($oldestDob) {
+                $base->where('pf.dob', '>=', $oldestDob);
+            } elseif ($youngestDob) {
+                $base->where('pf.dob', '<=', $youngestDob);
+            }
+
             $applied['filters']['age'] = [
                 'min' => $ageMin !== null ? (int)$ageMin : null,
                 'max' => $ageMax !== null ? (int)$ageMax : null,
             ];
         }
+
+
 
         // Dynamic numeric filters via *_min / *_max for physical columns.
         $all = $request?->query() ?? [];
