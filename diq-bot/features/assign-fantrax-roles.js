@@ -30,13 +30,15 @@ function makeLimiter(opsPerSec = 10) {
 async function ensureRole(guild) {
   const existing = guild.roles.cache.find(r => r.name === ROLE_NAME);
   if (existing) return existing;
+  console.log(`ℹ️ Creating role "${ROLE_NAME}" in ${guild.name} (${guild.id})`);
   return guild.roles.create({ name: ROLE_NAME, color: TEAL, reason: 'DIQ: ensure Fantrax role exists' });
 }
 
 /** Fetch all members for a guild. */
 async function fetchAllMembers(guild) {
   try {
-    return await guild.members.fetch(); // requires GUILD_MEMBERS intent
+    const coll = await guild.members.fetch(); // requires GUILD_MEMBERS intent
+    return coll;
   } catch (e) {
     console.warn(`⚠️ Could not fetch members for guild ${guild.id}: ${e?.message}`);
     return guild.members.cache;
@@ -49,6 +51,7 @@ async function fetchConnectedIds(discordIds) {
   if (!API_BASE) throw new Error('Missing API_BASE_URL/APP_URL');
 
   const url = new URL('/api/diq/is-fantrax', API_BASE).toString();
+  console.log(`🌐 POST ${url} (ids: ${discordIds.size})`);
   const resp = await axios.post(
     url,
     { discord_user_ids: Array.from(discordIds) },
@@ -62,9 +65,20 @@ async function fetchConnectedIds(discordIds) {
     }
   );
 
-  if (resp.status !== 200) return new Set();
+  console.log(`🌐 is-fantrax status: ${resp.status}`);
+  if (resp.status !== 200) {
+    console.log('🌐 is-fantrax body:', typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data));
+    return new Set();
+  }
+
   const list = Array.isArray(resp.data?.connected_ids) ? resp.data.connected_ids : [];
-  return new Set(list.map(String));
+  const set = new Set(list.map(String));
+  console.log(`🌐 is-fantrax connected_ids count: ${set.size}`);
+  if (set.size) {
+    const sample = [...set].slice(0, 5).join(', ');
+    console.log(`🌐 sample connected_ids: [${sample}${set.size > 5 ? ', …' : ''}]`);
+  }
+  return set;
 }
 
 /** Assign/remove the Fantrax role per user per guild, based on Laravel's isFantrax(). */
@@ -76,17 +90,22 @@ async function assignFantraxRole(client) {
   const guilds = [];
   const allMemberIds = new Set();
 
+  console.log(`🤝 Bot in ${guildsMeta.size} guild(s). Collecting members…`);
   for (const [, meta] of guildsMeta) {
     try {
       const guild = await client.guilds.fetch(meta.id);
       guilds.push(guild);
       const members = await fetchAllMembers(guild);
       members.forEach(m => allMemberIds.add(String(m.id)));
+      console.log(
+        `📋 ${guild.name} (${guild.id}) → guild.memberCount=${guild.memberCount ?? 'n/a'}, fetched=${members.size}`
+      );
     } catch (e) {
       console.warn(`⚠️ Skipping guild ${meta.id}: ${e?.message}`);
     }
   }
 
+  console.log(`📦 Unique member IDs across all guilds: ${allMemberIds.size}`);
   if (allMemberIds.size === 0) {
     console.log('ℹ️ No members found across guilds.');
     return;
@@ -117,18 +136,28 @@ async function assignFantraxRole(client) {
     const toAdd = [...desired].filter(id => !currentHolders.has(id));
     const toRemove = [...currentHolders].filter(id => !desired.has(id));
 
-    console.log(`🔧 Guild ${guild.name} (${guild.id}): add ${toAdd.length}, remove ${toRemove.length}`);
+    console.log(
+      `🔧 ${guild.name} (${guild.id}) — members=${members.size}, desired=${desired.size}, holders=${currentHolders.size}, add=${toAdd.length}, remove=${toRemove.length}`
+    );
 
     for (const id of toAdd) {
       const member = members.get(id);
       if (!member) continue;
-      await limiter(() => member.roles.add(role, 'DIQ Fantrax sync (add)').catch(() => {}));
+      await limiter(() =>
+        member.roles.add(role, 'DIQ Fantrax sync (add)').catch(e =>
+          console.warn(`⚠️ add failed ${guild.id}/${id}: ${e?.message}`)
+        )
+      );
     }
 
     for (const id of toRemove) {
       const member = members.get(id);
       if (!member) continue;
-      await limiter(() => member.roles.remove(role, 'DIQ Fantrax sync (remove)').catch(() => {}));
+      await limiter(() =>
+        member.roles.remove(role, 'DIQ Fantrax sync (remove)').catch(e =>
+          console.warn(`⚠️ remove failed ${guild.id}/${id}: ${e?.message}`)
+        )
+      );
     }
   }
 
