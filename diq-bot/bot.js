@@ -14,7 +14,7 @@ const axios = require('axios');
 
 // ---------- Env (prefer Laravel root .env) ----------
 const envCandidates = [
-  path.resolve(__dirname, '../../.env'),
+  path.resolve(__dirname, '../../.env'), // <- laravel root
   path.resolve(process.cwd(), '.env'),
 ];
 const envFile = envCandidates.find(p => fs.existsSync(p));
@@ -30,7 +30,9 @@ const client = new Client({
 
 // ---------- On boot ----------
 async function onBoot({ client }) {
+  console.log('🛠 onBoot: starting Fantrax bulk sync…');
   await assignFantraxRole(client);
+  console.log('🛠 onBoot: bulk sync finished.');
 }
 
 // ---------- Reverb (Pusher protocol) wiring ----------
@@ -41,7 +43,7 @@ function wireRealtime({ client }) {
     process.env.PUSHER_KEY; // last-resort fallback
 
   if (!KEY) {
-    console.warn('Realtime not configured (no REVERB_APP_KEY / VITE_REVERB_APP_KEY); skipping realtime.');
+    console.warn('📡 Realtime not configured (no REVERB_APP_KEY / VITE_REVERB_APP_KEY); skipping realtime.');
     return;
   }
 
@@ -52,39 +54,65 @@ function wireRealtime({ client }) {
   const useTLS = scheme === 'https' || scheme === 'wss';
 
   const opts = {
-    // pusher-js requires a cluster value even when unused by Reverb
-    cluster: 'mt1',
+    cluster: 'mt1', // required by pusher-js even for Reverb
     wsHost: host,
     enabledTransports: ['ws', 'wss'],
     forceTLS: useTLS,
     authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
   };
-  if (useTLS) {
-    opts.wssPort = port;
-  } else {
-    opts.wsPort = port;
-  }
+  if (useTLS) opts.wssPort = port; else opts.wsPort = port;
+
+  console.log(`📡 Realtime config → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
 
   const pusher = new Pusher(KEY, opts);
+
+  // connection lifecycle logs
+  pusher.connection.bind('state_change', s =>
+    console.log(`📡 Pusher state: ${s.previous} → ${s.current}`)
+  );
+  pusher.connection.bind('error', err =>
+    console.error('📡 Pusher connection error:', err?.error || err)
+  );
+
   const ch = pusher.subscribe('private-diq-bot');
+  ch.bind('pusher:subscription_succeeded', () =>
+    console.log('📡 Subscribed to channel: private-diq-bot')
+  );
+  ch.bind('pusher:subscription_error', err =>
+    console.error('📡 Subscription error (private-diq-bot):', err)
+  );
 
-  ch.bind('pusher:subscription_error', err => console.error('Pusher subscription error:', err));
-
-  ch.bind('fantrax-linked', async ({ discord_user_id }) => {
+  // ---- EVENT: fantrax-linked ----
+  ch.bind('fantrax-linked', async (payload) => {
+    console.log('📨 fantrax-linked RECEIVED:', JSON.stringify(payload));
     try {
-      await assignFantraxRoleForUser(client, String(discord_user_id), true);
-      console.log(`✅ fantrax-linked handled for ${discord_user_id}`);
+      const discordId = String(payload?.discord_user_id || '');
+      if (!discordId) {
+        console.warn('fantrax-linked: missing discord_user_id in payload');
+        return;
+      }
+      console.log(`➡️  About to assign Fantrax role in Discord for user ${discordId} (all mutual guilds)…`);
+      await assignFantraxRoleForUser(client, discordId, true);
+      console.log(`✅ fantrax-linked DONE for ${discordId}`);
     } catch (e) {
-      console.error('fantrax-linked handler error:', e?.message || e);
+      console.error('💥 fantrax-linked handler error:', e?.message || e);
     }
   });
 
-  ch.bind('fantrax-unlinked', async ({ discord_user_id }) => {
+  // ---- EVENT: fantrax-unlinked ----
+  ch.bind('fantrax-unlinked', async (payload) => {
+    console.log('📨 fantrax-unlinked RECEIVED:', JSON.stringify(payload));
     try {
-      await assignFantraxRoleForUser(client, String(discord_user_id), false);
-      console.log(`✅ fantrax-unlinked handled for ${discord_user_id}`);
+      const discordId = String(payload?.discord_user_id || '');
+      if (!discordId) {
+        console.warn('fantrax-unlinked: missing discord_user_id in payload');
+        return;
+      }
+      console.log(`➡️  About to REMOVE Fantrax role in Discord for user ${discordId} (all mutual guilds)…`);
+      await assignFantraxRoleForUser(client, discordId, false);
+      console.log(`✅ fantrax-unlinked DONE for ${discordId}`);
     } catch (e) {
-      console.error('fantrax-unlinked handler error:', e?.message || e);
+      console.error('💥 fantrax-unlinked handler error:', e?.message || e);
     }
   });
 }
@@ -94,6 +122,7 @@ client.once(Events.ClientReady, async (c) => {
   console.log(`🤖 DIQ Bot logged in as ${c.user.tag}`);
 
   try {
+    console.log('🧾 Registering context menu command DIQ: User Teams…');
     await registerUserTeams({
       token: process.env.DISCORD_BOT_TOKEN,
       clientId: process.env.CLIENT_ID || process.env.DISCORD_CLIENT_ID,
@@ -179,4 +208,5 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 // ---------- Start ----------
+console.log('🚀 Logging in to Discord…');
 client.login(process.env.DISCORD_BOT_TOKEN);
