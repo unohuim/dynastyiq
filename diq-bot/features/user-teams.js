@@ -15,20 +15,46 @@ function getApiBase() {
 
 async function register({ token, clientId, guildId }) {
   if (!token || !clientId) throw new Error('register: token and clientId are required');
+
   const rest = new REST({ version: '10' }).setToken(token);
-  const cmd = new ContextMenuCommandBuilder()
-    .setName(COMMAND_NAME).setType(ApplicationCommandType.User).setDMPermission(false).toJSON();
-  if (guildId) await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [cmd] });
-  else await rest.put(Routes.applicationCommands(clientId), { body: [cmd] });
+
+  // Register for EVERYONE; gate at runtime.
+  const builder = new ContextMenuCommandBuilder()
+    .setName(COMMAND_NAME)
+    .setType(ApplicationCommandType.User)
+    .setDMPermission(false)
+    .setDefaultMemberPermissions(null);
+
+  // Inject contexts/integration_types so it always appears in guild user menus.
+  const cmdJson = {
+    ...builder.toJSON(),
+    integration_types: [0],      // 0 = Guild Install
+    contexts: [0],               // 0 = Guild context (user right-click)
+  };
+
+  if (guildId) {
+    await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: [cmdJson] });
+  } else {
+    await rest.put(Routes.applicationCommands(clientId), { body: [cmdJson] });
+  }
 }
 
 async function fetchUserTeams(targetDiscordId, viewerDiscordId) {
   const API_BASE = getApiBase();
   if (!API_BASE) throw new Error('Missing APP_URL/API_BASE_URL');
+
   const url = new URL(`/api/discord/users/${targetDiscordId}`, API_BASE);
   if (viewerDiscordId) url.searchParams.set('viewer_discord_id', String(viewerDiscordId));
-  const resp = await axios.get(url.toString(), { timeout: 8000, validateStatus: s => s >= 200 && s < 500 });
-  return resp.data || {};
+
+  const resp = await axios.get(url.toString(), {
+    timeout: 8000,
+    headers: { 'User-Agent': 'diq-bot' },
+    validateStatus: s => s >= 200 && s < 500,
+  });
+
+  // Treat 404/409/etc. as "not linked" with empty teams so command never fails.
+  if (resp.status >= 400) return { teams: [], not_linked: true };
+  return resp.data || { teams: [] };
 }
 
 async function loadTemplate() {
@@ -38,13 +64,15 @@ async function loadTemplate() {
     path.resolve(__dirname, '../markdown/discord-user-teams.md'),
     path.resolve(process.cwd(), 'resources/markdown/discord-user-teams.md'),
   ].filter(Boolean);
+
   for (const p of candidates) {
     try {
       const txt = await fs.promises.readFile(p, 'utf8');
       if (txt && txt.trim()) return txt;
-    } catch { /* try next */ }
+    } catch {}
   }
-  // fallback template
+
+  // Fallback template (shows gracefully for non-Fantrax users)
   return `{{display}} Teams
 {{#if teams.length}}
 {{#each teams}}
@@ -62,8 +90,8 @@ async function handle(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const target = interaction.targetUser;
-  const display =
-    interaction.targetMember?.displayName ?? target.globalName ?? target.username ?? 'User';
+  const display = interaction.targetMember?.displayName
+    ?? target.globalName ?? target.username ?? 'User';
 
   let content;
   try {
@@ -71,9 +99,17 @@ async function handle(interaction) {
       loadTemplate(),
       fetchUserTeams(target.id, interaction.user.id),
     ]);
+
     const tpl = Handlebars.compile(tplSrc);
     const teams = Array.isArray(data.teams) ? data.teams : [];
     content = tpl({ display, teams });
+
+    // If not linked, include a gentle footer for the invoker only.
+    if (data.not_linked) {
+      content += `
+
+(Not linked to Fantrax yet. Use /link fantrax to connect.)`;
+    }
   } catch {
     content = `${display} Teams\n(couldn't fetch right now)`;
   }
