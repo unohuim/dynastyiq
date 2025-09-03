@@ -16,6 +16,52 @@ class DiscordWebhookController extends Controller
 {
 
 
+// app/Http/Controllers/Api/DiscordWebhookController.php
+
+    /**
+     * Return Discord IDs that belong to users with Fantrax linkage.
+     * Request: { "discord_user_ids": ["123", "456", ...] }
+     * Response: { "connected_ids": ["123", ...] }
+     */
+    public function isFantrax(Request $request)
+    {
+        $ids = collect((array) $request->input('discord_user_ids', []))
+            ->filter()->map(strval(...))->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return response()->json(['connected_ids' => []]);
+        }
+
+        // Map discord_id -> user_id via SocialAccount (provider='discord')
+        $map = \App\Models\SocialAccount::query()
+            ->where('provider', 'discord')
+            ->whereIn('provider_user_id', $ids)
+            ->get(['provider_user_id', 'user_id'])
+            ->pluck('user_id', 'provider_user_id'); // [discord_id => user_id]
+
+        if ($map->isEmpty()) {
+            return response()->json(['connected_ids' => []]);
+        }
+
+        // Users with any Fantrax linkage (exists in league_user_teams)
+        $linkedUserIds = \DB::table('league_user_teams')
+            ->whereIn('user_id', $map->values()->unique())
+            ->distinct()
+            ->pluck('user_id');
+
+        // Discord IDs whose mapped user_id is linked
+        $connectedDiscordIds = $map
+            ->filter(fn ($userId) => $linkedUserIds->contains($userId))
+            ->keys()
+            ->values()
+            ->all();
+
+        return response()->json(['connected_ids' => $connectedDiscordIds]);
+    }
+
+
+
+
     /**
      * GET /api/discord/users/{discord_id}
      * Returns the leagues you share with the target Discord user and the target's team in each.
@@ -80,7 +126,6 @@ class DiscordWebhookController extends Controller
             'teams'                  => $rows,
         ]);
     }
-
 
 
 
@@ -172,7 +217,7 @@ class DiscordWebhookController extends Controller
         if ($social && empty($social->nickname)) {
             $social->update(['nickname' => $handle]);
         }
-        
+
 
 
 

@@ -31,8 +31,9 @@ Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
 Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
     ->name('discord.webhooks.memberJoined');
 
-
 Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserTeams']);
+
+Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax']);
 
 
 

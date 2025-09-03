@@ -1,6 +1,7 @@
 // diq-bot/bot.js
 
 const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
+const { assignFantraxRole } = require('./features/assign-fantrax-roles');
 
 
 
@@ -28,6 +29,14 @@ const client = new Client({
 
 
 
+//everytime on restart
+async function onBoot({ client }) {
+
+    await assignFantraxRole(client);
+}
+
+
+
 client.once(Events.ClientReady, async (c) => {
   console.log(`🤖 DIQ Bot logged in as ${c.user.tag}`);
 
@@ -41,6 +50,10 @@ client.once(Events.ClientReady, async (c) => {
   } catch (e) {
     console.error('❌ Failed to register DIQ: User Teams:', e?.message || e);
   }
+
+
+  // 🔸 run-on-restart code goes here
+  await onBoot({ client: c });
 });
 
 
