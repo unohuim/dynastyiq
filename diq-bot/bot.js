@@ -5,9 +5,6 @@ const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assi
 const Pusher = require('pusher-js');
 global.WebSocket = require('ws'); // needed for pusher-js in Node
 
-
-
-
 const path = require('path');
 const fs = require('fs');
 
@@ -29,18 +26,10 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-
-
-//everytime on restart
+// everytime on restart
 async function onBoot({ client }) {
-
-    await assignFantraxRole(client);
-
-
-
+  await assignFantraxRole(client);
 }
-
-
 
 client.once(Events.ClientReady, async (c) => {
   console.log(`🤖 DIQ Bot logged in as ${c.user.tag}`);
@@ -56,31 +45,72 @@ client.once(Events.ClientReady, async (c) => {
     console.error('❌ Failed to register DIQ: User Teams:', e?.message || e);
   }
 
-
   // 🔸 run-on-restart code goes here
   await onBoot({ client: c });
 
+  // ----- Realtime from Laravel (Pusher) -----
+  const PUSHER_KEY =
+    process.env.PUSHER_KEY ||
+    process.env.PUSHER_APP_KEY ||
+    process.env.VITE_PUSHER_APP_KEY;
 
-  const pusher = new Pusher(process.env.PUSHER_KEY, {
-    cluster: process.env.PUSHER_CLUSTER,
-    forceTLS: true,
-    authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
-    });
+  const PUSHER_CLUSTER =
+    process.env.PUSHER_CLUSTER ||
+    process.env.PUSHER_APP_CLUSTER ||
+    process.env.VITE_PUSHER_APP_CLUSTER ||
+    'mt1'; // default cluster to avoid "must provide a cluster"
 
-    const ch = pusher.subscribe('private-diq-bot');
-    ch.bind('pusher:subscription_error', err => console.error('Pusher sub error:', err));
-    ch.bind('fantrax-linked', async (data) => {
+  if (PUSHER_KEY) {
     try {
-        const discordId = String(data.discord_user_id);
-        await assignFantraxRoleForUser(client, discordId, true);
-        console.log(`✅ Fantrax linked event handled for ${discordId}`);
+      const opts = {
+        cluster: PUSHER_CLUSTER,
+        forceTLS: true,
+        authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
+      };
+
+      // Optional self-hosted / websockets overrides
+      if (process.env.PUSHER_HOST) {
+        opts.wsHost = process.env.PUSHER_HOST;
+        if (process.env.PUSHER_PORT) {
+          const port = Number(process.env.PUSHER_PORT);
+          opts.wsPort = port;
+          opts.wssPort = port;
+        }
+        opts.forceTLS = String(process.env.PUSHER_USE_TLS || 'true') === 'true';
+        opts.enabledTransports = ['ws', 'wss'];
+      }
+
+      const pusher = new Pusher(PUSHER_KEY, opts);
+      const ch = pusher.subscribe('private-diq-bot');
+
+      ch.bind('pusher:subscription_error', err =>
+        console.error('Pusher subscription error:', err)
+      );
+
+      ch.bind('fantrax-linked', async ({ discord_user_id }) => {
+        try {
+          await assignFantraxRoleForUser(client, String(discord_user_id), true);
+          console.log(`✅ fantrax-linked handled for ${discord_user_id}`);
+        } catch (e) {
+          console.error('fantrax-linked handler error:', e?.message || e);
+        }
+      });
+
+      ch.bind('fantrax-unlinked', async ({ discord_user_id }) => {
+        try {
+          await assignFantraxRoleForUser(client, String(discord_user_id), false);
+          console.log(`✅ fantrax-unlinked handled for ${discord_user_id}`);
+        } catch (e) {
+          console.error('fantrax-unlinked handler error:', e?.message || e);
+        }
+      });
     } catch (e) {
-        console.error('fantrax-linked handler error:', e.message);
+      console.error('Pusher init failed:', e?.message || e);
     }
-    });
+  } else {
+    console.warn('Pusher not configured (no PUSHER_KEY); skipping realtime.');
+  }
 });
-
-
 
 // NEW: load markdown DM body from local filesystem
 async function loadWelcomeMarkdown() {
@@ -100,8 +130,6 @@ async function loadWelcomeMarkdown() {
   }
   return null;
 }
-
-
 
 // Listen for new member join
 client.on(Events.GuildMemberAdd, async (member) => {
@@ -150,12 +178,9 @@ client.on(Events.GuildMemberAdd, async (member) => {
   }
 });
 
-
-
 client.on(Events.InteractionCreate, async (interaction) => {
   if (await handleUserTeams(interaction)) return;
   // other handlers...
 });
-
 
 client.login(process.env.DISCORD_BOT_TOKEN);
