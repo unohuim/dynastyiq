@@ -34,7 +34,7 @@ async function fetchUserTeams(targetDiscordId, viewerDiscordId) {
 async function loadTemplate() {
   const candidates = [
     process.env.DISCORD_USER_TEAMS_MD_PATH,
-    path.resolve(__dirname, '../resources/markdown/discord-user-teams.md'),
+    path.resolve(__dirname, '../../resources/markdown/discord-user-teams.md'),
     path.resolve(__dirname, '../markdown/discord-user-teams.md'),
     path.resolve(process.cwd(), 'resources/markdown/discord-user-teams.md'),
   ].filter(Boolean);

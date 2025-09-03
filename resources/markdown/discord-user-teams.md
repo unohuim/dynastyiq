@@ -1,4 +1,4 @@
-# {{display}} Teams
+# Teams of {{display}}x
 
 {{#if teams.length}}
 {{#each teams}}
