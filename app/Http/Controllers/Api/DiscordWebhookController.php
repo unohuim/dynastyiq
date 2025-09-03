@@ -50,13 +50,16 @@ class DiscordWebhookController extends Controller
             ->pluck('user_id');
 
         // Discord IDs whose mapped user_id is linked
-        $connectedDiscordIds = $map
-            ->filter(fn ($userId) => $linkedUserIds->contains($userId))
-            ->keys()
-            ->values()
-            ->all();
+        $connectedDiscordIds = \App\Models\SocialAccount::query()
+            ->where('provider', 'discord')
+            ->whereIn('provider_user_id', $ids)            // incoming Discord IDs (strings)
+            ->whereIn('user_id', $linkedUserIds)           // users present in league_user_teams
+            ->pluck('provider_user_id')
+            ->map(fn ($v) => (string) $v)                  // <<< force strings to avoid JS precision loss
+            ->values();
 
         return response()->json(['connected_ids' => $connectedDiscordIds]);
+
     }
 
 
