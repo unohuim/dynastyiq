@@ -18,18 +18,15 @@ async function register({ token, clientId, guildId }) {
 
   const rest = new REST({ version: '10' }).setToken(token);
 
-  // Register for EVERYONE; gate at runtime.
   const builder = new ContextMenuCommandBuilder()
     .setName(COMMAND_NAME)
     .setType(ApplicationCommandType.User)
-    .setDMPermission(false)
     .setDefaultMemberPermissions(null);
 
-  // Inject contexts/integration_types so it always appears in guild user menus.
   const cmdJson = {
     ...builder.toJSON(),
-    integration_types: [0],      // 0 = Guild Install
-    contexts: [0],               // 0 = Guild context (user right-click)
+    integration_types: [0], // Guild Install
+    contexts: [0],          // Guild context (user right-click)
   };
 
   if (guildId) {
@@ -52,7 +49,6 @@ async function fetchUserTeams(targetDiscordId, viewerDiscordId) {
     validateStatus: s => s >= 200 && s < 500,
   });
 
-  // Treat 404/409/etc. as "not linked" with empty teams so command never fails.
   if (resp.status >= 400) return { teams: [], not_linked: true };
   return resp.data || { teams: [] };
 }
@@ -72,7 +68,6 @@ async function loadTemplate() {
     } catch {}
   }
 
-  // Fallback template (shows gracefully for non-Fantrax users)
   return `{{display}} Teams
 {{#if teams.length}}
 {{#each teams}}
@@ -93,33 +88,31 @@ async function handle(interaction) {
   const display = interaction.targetMember?.displayName
     ?? target.globalName ?? target.username ?? 'User';
 
-  let content;
   try {
     const [tplSrc, data] = await Promise.all([
       loadTemplate(),
       fetchUserTeams(target.id, interaction.user.id),
     ]);
 
+    if (data.not_linked) {
+      await interaction.editReply(`${display} not yet linked to Fantrax`);
+      return true;
+    }
+
     const tpl = Handlebars.compile(tplSrc);
     const teams = Array.isArray(data.teams) ? data.teams : [];
-    content = tpl({ display, teams });
+    const content = tpl({ display, teams });
 
-    // If not linked, include a gentle footer for the invoker only.
-    if (data.not_linked) {
-      content += `
-
-(Not linked to Fantrax yet. Use /link fantrax to connect.)`;
+    try {
+      await interaction.user.send({ content, allowedMentions: { parse: [] } });
+      await interaction.editReply('Sent you a DM.');
+    } catch {
+      await interaction.editReply('Could not DM you (are DMs disabled?).');
     }
   } catch {
-    content = `${display} Teams\n(couldn't fetch right now)`;
+    await interaction.editReply(`${display} Teams\n(couldn't fetch right now)`);
   }
 
-  try {
-    await interaction.user.send({ content, allowedMentions: { parse: [] } });
-    await interaction.editReply('Sent you a DM.');
-  } catch {
-    await interaction.editReply('Could not DM you (are DMs disabled?).');
-  }
   return true;
 }
 
