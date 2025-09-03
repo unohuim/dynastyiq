@@ -64,9 +64,9 @@ class DiscordWebhookController extends Controller
             ->where('lut.user_id', $targetUserId)
             ->whereIn('lut.league_id', $viewerLeagueIds)
             ->select([
-                'l.id as league_id',
+                'l.platform_league_id as league_id',
                 'l.name as league_name',
-                't.id as team_id',
+                't.platform_team_id as team_id',
                 't.name as team_name',
             ])
             ->orderBy('l.name')
