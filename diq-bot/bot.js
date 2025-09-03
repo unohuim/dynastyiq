@@ -1,9 +1,6 @@
 // diq-bot/bot.js
 
 const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
-const { assignFantraxRole } = require('./features/assign-fantrax-roles');
-
-
 const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assign-fantrax-roles');
 const Pusher = require('pusher-js');
 global.WebSocket = require('ws'); // needed for pusher-js in Node
