@@ -14,7 +14,7 @@ const axios = require('axios');
 
 // ---------- Env (prefer Laravel root .env) ----------
 const envCandidates = [
-  path.resolve(__dirname, '../.env'),
+  path.resolve(__dirname, '../../.env'),
   path.resolve(process.cwd(), '.env'),
 ];
 const envFile = envCandidates.find(p => fs.existsSync(p));
