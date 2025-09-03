@@ -8,6 +8,8 @@ use App\Events\FantraxUserConnected;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Support\Facades\Log;
+use App\Events\BotFantraxLinked;
+
 
 /**
  * Listener that runs after a user connects Fantrax.
@@ -36,9 +38,15 @@ class HandleFantraxUserConnected implements ShouldQueue
                 : [],
         ]);
 
-        // If/when you add follow-up jobs, dispatch them here, e.g.:
-        // SyncFantraxRostersJob::dispatch($user);
-        // SyncFantraxMatchupsJob::dispatch($user);
+        // Find the user's Discord ID, then notify the bot via websocket
+        $discordId = (string) SocialAccount::query()
+            ->where('provider', 'discord')
+            ->where('user_id', $user->id)
+            ->value('provider_user_id');
+
+        if ($discordId !== '') {
+            broadcast(new BotFantraxLinked($discordId));
+        }
     }
 
     /**

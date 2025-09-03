@@ -4,6 +4,11 @@ const { register: registerUserTeams, handle: handleUserTeams } = require('./feat
 const { assignFantraxRole } = require('./features/assign-fantrax-roles');
 
 
+const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assign-fantrax-roles');
+const Pusher = require('pusher-js');
+global.WebSocket = require('ws'); // needed for pusher-js in Node
+
+
 
 
 const path = require('path');
@@ -33,6 +38,9 @@ const client = new Client({
 async function onBoot({ client }) {
 
     await assignFantraxRole(client);
+
+
+
 }
 
 
@@ -54,6 +62,25 @@ client.once(Events.ClientReady, async (c) => {
 
   // 🔸 run-on-restart code goes here
   await onBoot({ client: c });
+
+
+  const pusher = new Pusher(process.env.PUSHER_KEY, {
+    cluster: process.env.PUSHER_CLUSTER,
+    forceTLS: true,
+    authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
+    });
+
+    const ch = pusher.subscribe('private-diq-bot');
+    ch.bind('pusher:subscription_error', err => console.error('Pusher sub error:', err));
+    ch.bind('fantrax-linked', async (data) => {
+    try {
+        const discordId = String(data.discord_user_id);
+        await assignFantraxRoleForUser(client, discordId, true);
+        console.log(`✅ Fantrax linked event handled for ${discordId}`);
+    } catch (e) {
+        console.error('fantrax-linked handler error:', e.message);
+    }
+    });
 });
 
 

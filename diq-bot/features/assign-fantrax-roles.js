@@ -1,7 +1,7 @@
 // features/assign-fantrax-role.js
 const axios = require('axios');
 
-const TEAL = '#14B8A6';
+const TEAL = '#1b4885';
 const ROLE_NAME = 'Fantrax';
 
 function getApiBase() {
