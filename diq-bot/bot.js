@@ -149,7 +149,7 @@ function wireRealtime({ client }) {
     const opts = {
         cluster: "mt1",
         wsHost: host,
-        enabledTransports: useTLS ? ["wss"] : ["ws"],
+        enabledTransports: ["ws"],
         forceTLS: useTLS,
         ...(useTLS ? { wssPort: port } : { wsPort: port }),
 
