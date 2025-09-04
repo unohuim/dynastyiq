@@ -12,51 +12,62 @@ const envCandidates = [
 const envFile = envCandidates.find((p) => fs.existsSync(p));
 require("dotenv").config(envFile ? { path: envFile } : {});
 
-// Now that env is loaded:
+// ---------- Constants ----------
 const SIGNIN_URL = process.env.DIQ_SIGNIN_URL || "https://dynastyiq.com";
 const PUBLIC_ORIGIN =
     process.env.BOT_REVERB_ORIGIN ||
     process.env.REVERB_ORIGIN ||
     "https://dynastyiq.com";
 
-const crypto = require("crypto"); // for local Pusher authorizer HMAC
+const crypto = require("crypto");
 const axios = require("axios");
 const { Client, GatewayIntentBits, Events } = require("discord.js");
 
-// ---------- Force Origin header for ws (used by pusher-js/node) ----------
+// ---------- Force Origin header for all ws connections ----------
 const wsModulePath = require.resolve("ws");
 const WS = require("ws");
 
-// Replace the exported ws constructor so every connection carries our Origin.
 function WSWithOrigin(address, protocols, options = {}) {
-    const opts = { ...options };
+    const opts = { ...(options || {}) };
     opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
     opts.origin = opts.origin || PUBLIC_ORIGIN;
 
-    // inside WSWithOrigin, just before `return new WS(...)`:
-    console.log("[ws-open]", {
-        address: String(address),
-        origin: opts.origin,
-        headers: opts.headers,
-    });
+    console.log("[ws] open →", String(address), { origin: opts.origin });
 
-    return new WS(address, protocols, opts);
+    const sock = new WS(address, protocols, opts);
+
+    // Deep diagnostics
+    sock.on("unexpectedResponse", (req, res) => {
+        console.log("[ws] unexpectedResponse", {
+            status: res.statusCode,
+            message: res.statusMessage,
+            headers: res.headers,
+        });
+    });
+    sock.on("upgrade", (res) => {
+        console.log("[ws] upgrade ok", {
+            accept: res?.headers?.["sec-websocket-accept"],
+            server: res?.headers?.server,
+            xPoweredBy: res?.headers?.["x-powered-by"],
+        });
+    });
+    sock.on("open", () => console.log("[ws] open OK"));
+    sock.on("close", (code, reason) =>
+        console.log("[ws] close", { code, reason: reason?.toString?.() })
+    );
+    sock.on("error", (e) => console.log("[ws] error", e?.message || e));
+
+    return sock;
 }
-// copy static props so it looks like ws to consumers
 Object.keys(WS).forEach((k) => (WSWithOrigin[k] = WS[k]));
 WSWithOrigin.prototype = WS.prototype;
-
-// Monkey-patch the module cache so later require('ws') (inside pusher-js/node)
-// gets our constructor.
 require.cache[wsModulePath].exports = WSWithOrigin;
 
 // Use the Node build (it requires 'ws' internally — now patched)
 const Pusher = require("pusher-js/node");
+Pusher.logToConsole = true; // enable internal pusher diagnostics
 
-// after the Pusher require:
-Pusher.log = (msg) => console.log("[pusher]", msg);
-
-// ---------- Features ----------
+// ---------- Feature modules ----------
 const {
     register: registerUserTeams,
     handle: handleUserTeams,
@@ -73,7 +84,7 @@ const client = new Client({
 
 // ---------- Utilities ----------
 function makeLocalAuthorizer({ appKey, appSecret }) {
-    // Returns a Pusher-compatible authorizer object that signs private channel auth locally.
+    // Returns a Pusher-compatible authorizer that signs private channel auth locally.
     return function (channel /* Pusher.Channel */, _options) {
         return {
             authorize(socketId, callback) {
@@ -125,20 +136,20 @@ function wireRealtime({ client }) {
         return;
     }
 
-    // Use your INTERNAL Reverb endpoint (server-side)
-    const scheme = (process.env.REVERB_SCHEME || "http").toLowerCase(); // e.g. http
-    const host = process.env.REVERB_HOST || "127.0.0.1"; // e.g. 127.0.0.1
+    // INTERNAL Reverb endpoint (server-side)
+    const scheme = (process.env.REVERB_SCHEME || "http").toLowerCase(); // http/https
+    const host = process.env.REVERB_HOST || "127.0.0.1";
     const port = Number(
         process.env.REVERB_PORT || (scheme === "https" ? 443 : 80)
-    ); // e.g. 8080
+    );
     const useTLS = scheme === "https" || scheme === "wss";
 
-    // Build/override Origin header — must be allowed by Reverb allowed_origins
+    // Origin header — must be allowed by Reverb allowed_origins
     const defaultOrigin = buildOrigin({ scheme, host, port });
     const ORIGIN = PUBLIC_ORIGIN || defaultOrigin;
 
     const opts = {
-        cluster: "mt1", // required by pusher-js even for Reverb
+        cluster: "mt1",
         wsHost: host,
         enabledTransports: ["ws", "wss"],
         forceTLS: useTLS,
@@ -157,7 +168,7 @@ function wireRealtime({ client }) {
                       `${SIGNIN_URL}/broadcasting/auth`,
               }),
 
-        // These are also passed through, but the monkey-patch guarantees Origin.
+        // Still pass these; the ws monkey-patch guarantees Origin anyway.
         wsOptions: {
             origin: ORIGIN,
             headers: { Origin: ORIGIN },
@@ -167,39 +178,45 @@ function wireRealtime({ client }) {
     if (useTLS) opts.wssPort = port;
     else opts.wsPort = port;
 
-    console.log(
-        `📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`
-    );
-    console.log(`📡 Using Origin header: ${ORIGIN}`);
-    console.log(
-        process.env.REVERB_APP_SECRET
-            ? "🔐 Using local HMAC authorizer (no /broadcasting/auth)."
-            : "🔓 Using remote auth endpoint (Laravel /broadcasting/auth)."
-    );
+    console.log("[pusher] config", {
+        scheme,
+        host,
+        port,
+        useTLS,
+        ORIGIN,
+        wsPort: opts.wsPort,
+        wssPort: opts.wssPort,
+        hasLocalAuth: !!process.env.REVERB_APP_SECRET,
+    });
 
     const pusher = new Pusher(KEY, opts);
 
     // Connection lifecycle logs
-    pusher.connection.bind("state_change", function (s) {
-        console.log(`📡 Pusher state: ${s.previous} → ${s.current}`);
-    });
-    pusher.connection.bind("connected", function () {
-        console.log(
-            `📡 Pusher connected (socket_id=${pusher.connection.socket_id})`
-        );
-    });
-    pusher.connection.bind("error", function (err) {
-        const msg = (err && (err.error || err.message)) || err;
-        console.error("📡 Pusher connection error:", msg);
-    });
+    pusher.connection.bind("state_change", (s) =>
+        console.log("[pusher] state", `${s.previous} -> ${s.current}`)
+    );
+    pusher.connection.bind("connected", () =>
+        console.log("[pusher] connected", {
+            socket_id: pusher.connection.socket_id,
+        })
+    );
+    pusher.connection.bind("error", (err) =>
+        console.error("[pusher] connection error:", err?.error || err)
+    );
+
+    // Extra: log WebSocket error payloads surfaced by pusher-js
+    pusher.connection.bind("failed", () => console.error("[pusher] failed"));
+    pusher.connection.bind("unavailable", () =>
+        console.warn("[pusher] unavailable")
+    );
 
     const ch = pusher.subscribe("private-diq-bot");
-    ch.bind("pusher:subscription_succeeded", function () {
-        console.log("📡 Subscribed to channel: private-diq-bot");
-    });
-    ch.bind("pusher:subscription_error", function (err) {
-        console.error("📡 Subscription error (private-diq-bot):", err);
-    });
+    ch.bind("pusher:subscription_succeeded", () =>
+        console.log("[pusher] subscribed: private-diq-bot")
+    );
+    ch.bind("pusher:subscription_error", (err) =>
+        console.error("[pusher] subscription error (private-diq-bot):", err)
+    );
 
     // ---- Events from Laravel ----
     ch.bind("fantrax-linked", async function (payload) {
@@ -220,10 +237,7 @@ function wireRealtime({ client }) {
             await assignFantraxRoleForUser(client, discordId, true);
             console.log(`✅ fantrax-linked DONE for ${discordId}`);
         } catch (e) {
-            console.error(
-                "💥 fantrax-linked handler error:",
-                (e && e.message) || e
-            );
+            console.error("💥 fantrax-linked handler error:", e?.message || e);
         }
     });
 
@@ -247,7 +261,7 @@ function wireRealtime({ client }) {
         } catch (e) {
             console.error(
                 "💥 fantrax-unlinked handler error:",
-                (e && e.message) || e
+                e?.message || e
             );
         }
     });
@@ -268,7 +282,7 @@ client.once(Events.ClientReady, async function (c) {
     } catch (e) {
         console.error(
             "❌ Failed to register DIQ: User Teams:",
-            (e && e.message) || e
+            e?.message || e
         );
     }
 
@@ -293,8 +307,8 @@ async function loadWelcomeMarkdown() {
             const data = await fs.promises.readFile(p, "utf8");
             const text = (data || "").trim();
             if (text) return text;
-        } catch (_e) {
-            // next candidate
+        } catch {
+            /* next */
         }
     }
     return null;
@@ -329,9 +343,7 @@ client.on(Events.GuildMemberAdd, async function (member) {
             );
             console.log(`✅ Owner notified about ${member.user.tag}`);
         } catch (e2) {
-            console.warn(
-                `⚠️ Also failed to DM owner: ${(e2 && e2.message) || e2}`
-            );
+            console.warn(`⚠️ Also failed to DM owner: ${e2?.message}`);
         }
     }
 
@@ -347,10 +359,7 @@ client.on(Events.GuildMemberAdd, async function (member) {
         });
         console.log("✅ Sent join event to web app");
     } catch (err) {
-        console.error(
-            "❌ Failed to send join event",
-            (err && err.message) || err
-        );
+        console.error("❌ Failed to send join event", err?.message || err);
     }
 });
 
