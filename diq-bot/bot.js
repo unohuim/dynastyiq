@@ -26,8 +26,11 @@ const WS = require("ws");
 
 function WSWithOrigin(address, protocols, options = {}) {
     const opts = { ...(options || {}) };
-    opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
-    opts.origin = opts.origin || PUBLIC_ORIGIN;
+    // opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
+    // opts.origin = opts.origin || PUBLIC_ORIGIN;
+    opts.headers = { ...(opts.headers || {}) };
+    if (!opts.headers.Origin) opts.headers.Origin = PUBLIC_ORIGIN; // fallback only
+    opts.origin = opts.origin || opts.headers.Origin;
 
     console.log("[ws] open →", String(address), { origin: opts.origin });
 
@@ -120,7 +123,6 @@ async function onBoot({ client }) {
 }
 
 // ---------- Reverb (Pusher protocol) wiring ----------
-// ---------- Reverb (Pusher protocol) wiring ----------
 function wireRealtime({ client }) {
     const KEY =
         process.env.REVERB_APP_KEY ||
@@ -162,7 +164,8 @@ function wireRealtime({ client }) {
     }
 
     const useTLS = scheme === "https";
-    const ORIGIN = PUBLIC_ORIGIN;
+    const defaultOrigin = buildOrigin({ scheme, host, port });
+    const defaultOrigin = buildOrigin({ scheme, host, port });
 
     const opts = {
         cluster: "mt1",
