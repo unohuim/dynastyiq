@@ -26,18 +26,15 @@ const WS = require("ws");
 
 function WSWithOrigin(address, protocols, options = {}) {
     const opts = { ...(options || {}) };
-    // opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
-    // opts.origin = opts.origin || PUBLIC_ORIGIN;
-    opts.headers = { ...(opts.headers || {}) };
-    if (!opts.headers.Origin) opts.headers.Origin = PUBLIC_ORIGIN; // fallback only
-    opts.origin = opts.origin || opts.headers.Origin;
+    // Unconditional override
+    opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
+    opts.origin = PUBLIC_ORIGIN;
 
-    console.log("[ws] open →", String(address), { origin: opts.origin });
+    console.log("[ws] open →", String(address), { origin: PUBLIC_ORIGIN });
 
     const sock = new WS(address, protocols, opts);
 
-    // Deep diagnostics
-    sock.on("unexpectedResponse", (req, res) => {
+    sock.on("unexpectedResponse", (_req, res) => {
         console.log("[ws] unexpectedResponse", {
             status: res.statusCode,
             message: res.statusMessage,
@@ -59,6 +56,7 @@ function WSWithOrigin(address, protocols, options = {}) {
 
     return sock;
 }
+
 Object.keys(WS).forEach((k) => (WSWithOrigin[k] = WS[k]));
 WSWithOrigin.prototype = WS.prototype;
 require.cache[wsModulePath].exports = WSWithOrigin;
@@ -131,47 +129,29 @@ function wireRealtime({ client }) {
 
     if (!KEY) {
         console.warn(
-            "📡 Realtime not configured (no REVERB_APP_KEY / VITE_REVERB_APP_KEY); skipping realtime."
+            "📡 Realtime not configured (no REVERB_APP_KEY / VITE_REVERB_APP_KEY / PUSHER_KEY); skipping realtime."
         );
         return;
     }
 
-    // Default: INTERNAL
-    let scheme = (process.env.REVERB_SCHEME || "http").toLowerCase();
-    let host = process.env.REVERB_HOST || "127.0.0.1";
-    let port = Number(
-        process.env.REVERB_PORT || (scheme === "https" ? 443 : 80)
-    );
-
-    // If BOT_REVERB_USE_PUBLIC is set (1/true/yes) => use PUBLIC origin/host
-    const usePublic = /^(1|true|yes)$/i.test(
-        process.env.BOT_REVERB_USE_PUBLIC || ""
-    );
-    if (usePublic) {
-        try {
-            const u = new URL(PUBLIC_ORIGIN); // e.g. https://dynastyiq.com
-            scheme = (u.protocol || "https:").replace(":", "");
-            host = u.hostname;
-            port = u.port ? Number(u.port) : scheme === "https" ? 443 : 80;
-        } catch {
-            scheme = "https";
-            host =
-                process.env.VITE_REVERB_HOST ||
-                process.env.REVERB_PUBLIC_HOST ||
-                "dynastyiq.com";
-            port = 443;
-        }
+    // Pin to PUBLIC_ORIGIN host over WSS and always send that Origin
+    let pub;
+    try {
+        pub = new URL(PUBLIC_ORIGIN);
+    } catch {
+        pub = new URL("https://dynastyiq.com");
     }
-
-    const useTLS = scheme === "https";
-    const defaultOrigin = buildOrigin({ scheme, host, port });
-    const ORIGIN = usePublic ? PUBLIC_ORIGIN : defaultOrigin;
+    const useTLS = pub.protocol === "https:";
+    const host = pub.hostname;
+    const port = pub.port ? Number(pub.port) : useTLS ? 443 : 80;
+    const ORIGIN = PUBLIC_ORIGIN;
 
     const opts = {
         cluster: "mt1",
         wsHost: host,
-        enabledTransports: ["ws", "wss"],
+        enabledTransports: useTLS ? ["wss"] : ["ws"],
         forceTLS: useTLS,
+        ...(useTLS ? { wssPort: port } : { wsPort: port }),
 
         ...(process.env.REVERB_APP_SECRET
             ? {
@@ -189,11 +169,7 @@ function wireRealtime({ client }) {
         wsOptions: { origin: ORIGIN, headers: { Origin: ORIGIN } },
     };
 
-    if (useTLS) opts.wssPort = port;
-    else opts.wsPort = port;
-
     console.log("[pusher] config", {
-        scheme,
         host,
         port,
         useTLS,
@@ -201,11 +177,11 @@ function wireRealtime({ client }) {
         wsPort: opts.wsPort,
         wssPort: opts.wssPort,
         hasLocalAuth: !!process.env.REVERB_APP_SECRET,
-        usingPublic: usePublic,
     });
 
     const pusher = new Pusher(KEY, opts);
 
+    // Connection lifecycle logs
     pusher.connection.bind("state_change", (s) =>
         console.log("[pusher] state", `${s.previous} -> ${s.current}`)
     );
@@ -230,6 +206,7 @@ function wireRealtime({ client }) {
         console.error("[pusher] subscription error (private-diq-bot):", err)
     );
 
+    // ---- Events from Laravel ----
     ch.bind("fantrax-linked", async (payload) => {
         console.log("📨 fantrax-linked RECEIVED:", JSON.stringify(payload));
         try {
