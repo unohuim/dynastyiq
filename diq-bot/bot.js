@@ -1,47 +1,8 @@
 // diq-bot/bot.js
 // NOTE: This file lives in <laravel-app>/diq-bot and loads env from the Laravel root.
 
-const crypto = require("crypto"); // for local Pusher authorizer HMAC
-// const Pusher = require("pusher-js");
-// global.WebSocket = require("ws"); // pusher-js in Node
-// const Pusher = require("pusher-js/node"); // Node build; honors wsOptions.headers
-
-const ORIGIN = process.env.BOT_REVERB_ORIGIN || "https://dynastyiq.com";
-
-const WS = require("ws");
-class WSWithOrigin extends WS {
-    constructor(address, protocols, options = {}) {
-        options = options || {};
-        options.headers = { ...(options.headers || {}), Origin: ORIGIN };
-        options.origin = options.origin || ORIGIN;
-
-        console.log(
-            "[WSWithOrigin] opening",
-            String(address),
-            "with Origin",
-            ORIGIN
-        );
-
-        super(address, protocols, options);
-    }
-}
-global.WebSocket = WSWithOrigin; // pusher-js (browser build) will use this
-// const Pusher = require("pusher-js/dist/web/pusher");
-const Pusher = require("pusher-js/node");
-
 const path = require("path");
 const fs = require("fs");
-const axios = require("axios");
-const { Client, GatewayIntentBits, Events } = require("discord.js");
-
-const {
-    register: registerUserTeams,
-    handle: handleUserTeams,
-} = require("./features/user-teams");
-const {
-    assignFantraxRole,
-    assignFantraxRoleForUser,
-} = require("./features/assign-fantrax-roles");
 
 // ---------- Env (prefer Laravel root .env) ----------
 const envCandidates = [
@@ -51,7 +12,48 @@ const envCandidates = [
 const envFile = envCandidates.find((p) => fs.existsSync(p));
 require("dotenv").config(envFile ? { path: envFile } : {});
 
+// Now that env is loaded:
 const SIGNIN_URL = process.env.DIQ_SIGNIN_URL || "https://dynastyiq.com";
+const PUBLIC_ORIGIN =
+    process.env.BOT_REVERB_ORIGIN ||
+    process.env.REVERB_ORIGIN ||
+    "https://dynastyiq.com";
+
+const crypto = require("crypto"); // for local Pusher authorizer HMAC
+const axios = require("axios");
+const { Client, GatewayIntentBits, Events } = require("discord.js");
+
+// ---------- Force Origin header for ws (used by pusher-js/node) ----------
+const wsModulePath = require.resolve("ws");
+const WS = require("ws");
+
+// Replace the exported ws constructor so every connection carries our Origin.
+function WSWithOrigin(address, protocols, options = {}) {
+    const opts = { ...options };
+    opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
+    opts.origin = opts.origin || PUBLIC_ORIGIN;
+    return new WS(address, protocols, opts);
+}
+// copy static props so it looks like ws to consumers
+Object.keys(WS).forEach((k) => (WSWithOrigin[k] = WS[k]));
+WSWithOrigin.prototype = WS.prototype;
+
+// Monkey-patch the module cache so later require('ws') (inside pusher-js/node)
+// gets our constructor.
+require.cache[wsModulePath].exports = WSWithOrigin;
+
+// Use the Node build (it requires 'ws' internally — now patched)
+const Pusher = require("pusher-js/node");
+
+// ---------- Features ----------
+const {
+    register: registerUserTeams,
+    handle: handleUserTeams,
+} = require("./features/user-teams");
+const {
+    assignFantraxRole,
+    assignFantraxRoleForUser,
+} = require("./features/assign-fantrax-roles");
 
 // ---------- Discord client ----------
 const client = new Client({
@@ -122,10 +124,7 @@ function wireRealtime({ client }) {
 
     // Build/override Origin header — must be allowed by Reverb allowed_origins
     const defaultOrigin = buildOrigin({ scheme, host, port });
-    const ORIGIN =
-        process.env.BOT_REVERB_ORIGIN || // recommended: https://dynastyiq.com
-        process.env.REVERB_ORIGIN || // optional fallback
-        defaultOrigin;
+    const ORIGIN = PUBLIC_ORIGIN || defaultOrigin;
 
     const opts = {
         cluster: "mt1", // required by pusher-js even for Reverb
@@ -147,7 +146,7 @@ function wireRealtime({ client }) {
                       `${SIGNIN_URL}/broadcasting/auth`,
               }),
 
-        // Send Origin in both forms to satisfy different ws stacks
+        // These are also passed through, but the monkey-patch guarantees Origin.
         wsOptions: {
             origin: ORIGIN,
             headers: { Origin: ORIGIN },
