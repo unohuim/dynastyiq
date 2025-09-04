@@ -1,5 +1,5 @@
 // diq-bot/bot.js
-// NOTE: This file lives in <laravel-app>/diq-bot, and reads env from the Laravel root.
+// NOTE: This file lives in <laravel-app>/diq-bot and loads env from the Laravel root.
 
 const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
 const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assign-fantrax-roles');
@@ -14,7 +14,7 @@ const axios = require('axios');
 
 // ---------- Env (prefer Laravel root .env) ----------
 const envCandidates = [
-  path.resolve(__dirname, '../.env'), // <- laravel root
+  path.resolve(__dirname, '../.env'), // Laravel root
   path.resolve(process.cwd(), '.env'),
 ];
 const envFile = envCandidates.find(p => fs.existsSync(p));
@@ -36,58 +36,73 @@ async function onBoot({ client }) {
 
 // ---------- Reverb (Pusher protocol) wiring ----------
 function wireRealtime({ client }) {
-  // Always use the *server-side* REVERB_* values for the bot (internal endpoint).
-  const KEY = process.env.REVERB_APP_KEY || process.env.VITE_REVERB_APP_KEY || process.env.PUSHER_KEY;
+  const KEY =
+    process.env.REVERB_APP_KEY ||
+    process.env.VITE_REVERB_APP_KEY ||
+    process.env.PUSHER_KEY;
+
   if (!KEY) {
-    console.warn('📡 Realtime not configured (no REVERB_APP_KEY); skipping realtime.');
+    console.warn('📡 Realtime not configured (no REVERB_APP_KEY / VITE_REVERB_APP_KEY); skipping realtime.');
     return;
   }
 
-  const scheme = (process.env.REVERB_SCHEME || 'http').toLowerCase();     // your env: http
-  const host   = process.env.REVERB_HOST || '127.0.0.1';                  // your env: 127.0.0.1
-  const port   = Number(process.env.REVERB_PORT || (scheme === 'https' ? 443 : 80)); // your env: 8080
+  // Use server-side REVERB_* endpoint (your internal Reverb)
+  const scheme = (process.env.REVERB_SCHEME || 'http').toLowerCase();     // e.g. http
+  const host   = process.env.REVERB_HOST || '127.0.0.1';                  // e.g. 127.0.0.1
+  const port   = Number(process.env.REVERB_PORT || (scheme === 'https' ? 443 : 80)); // e.g. 8080
   const useTLS = scheme === 'https' || scheme === 'wss';
 
+  // Explicit Origin header (must be allowed in Reverb’s allowed_origins)
+  // Prefer explicit override, else build from REVERB_*.
+  const defaultOrigin =
+    (scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)
+      ? `${scheme}://${host}`
+      : `${scheme}://${host}:${port}`;
+  const ORIGIN =
+    process.env.BOT_REVERB_ORIGIN ||
+    process.env.REVERB_ORIGIN ||
+    defaultOrigin;
+
   const opts = {
-    cluster: 'mt1',                   // required by pusher-js even for Reverb
+    cluster: 'mt1',
     wsHost: host,
     enabledTransports: ['ws', 'wss'],
     forceTLS: useTLS,
     authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
+    wsOptions: {
+      headers: { Origin: ORIGIN },
+    },
   };
-  if (useTLS) opts['wssPort'] = port; else opts['wsPort'] = port;
+  if (useTLS) opts.wssPort = port; else opts.wsPort = port;
 
   console.log(`📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
+  console.log(`📡 Using Origin header: ${ORIGIN}`);
 
   const pusher = new Pusher(KEY, opts);
 
-  // connection lifecycle logs
-  pusher.connection.bind('state_change', s => {
-    console.log(`📡 Pusher state: ${s.previous} → ${s.current}`);
-  });
-  pusher.connection.bind('error', err => {
-    console.error('📡 Pusher connection error:', err?.error || err);
-  });
+  // Connection lifecycle logs
+  pusher.connection.bind('state_change', s =>
+    console.log(`📡 Pusher state: ${s.previous} → ${s.current}`)
+  );
+  pusher.connection.bind('error', err =>
+    console.error('📡 Pusher connection error:', err?.error || err)
+  );
 
   const ch = pusher.subscribe('private-diq-bot');
+  ch.bind('pusher:subscription_succeeded', () =>
+    console.log('📡 Subscribed to channel: private-diq-bot')
+  );
+  ch.bind('pusher:subscription_error', err =>
+    console.error('📡 Subscription error (private-diq-bot):', err)
+  );
 
-  ch.bind('pusher:subscription_succeeded', () => {
-    console.log('📡 Subscribed to channel: private-diq-bot');
-  });
-  ch.bind('pusher:subscription_error', err => {
-    console.error('📡 Subscription error (private-diq-bot):', err);
-  });
-
-  // ---- EVENT: fantrax-linked ----
+  // Events
   ch.bind('fantrax-linked', async (payload) => {
     console.log('📨 fantrax-linked RECEIVED:', JSON.stringify(payload));
     try {
       const discordId = String(payload?.discord_user_id || '');
-      if (!discordId) {
-        console.warn('fantrax-linked: missing discord_user_id in payload');
-        return;
-      }
-      console.log(`➡️  About to assign Fantrax role in Discord for user ${discordId} (all mutual guilds)…`);
+      if (!discordId) return console.warn('fantrax-linked: missing discord_user_id');
+      console.log(`➡️  Assign Fantrax role for ${discordId} in all mutual guilds…`);
       await assignFantraxRoleForUser(client, discordId, true);
       console.log(`✅ fantrax-linked DONE for ${discordId}`);
     } catch (e) {
@@ -95,16 +110,12 @@ function wireRealtime({ client }) {
     }
   });
 
-  // ---- EVENT: fantrax-unlinked ----
   ch.bind('fantrax-unlinked', async (payload) => {
     console.log('📨 fantrax-unlinked RECEIVED:', JSON.stringify(payload));
     try {
       const discordId = String(payload?.discord_user_id || '');
-      if (!discordId) {
-        console.warn('fantrax-unlinked: missing discord_user_id in payload');
-        return;
-      }
-      console.log(`➡️  About to REMOVE Fantrax role in Discord for user ${discordId} (all mutual guilds)…`);
+      if (!discordId) return console.warn('fantrax-unlinked: missing discord_user_id');
+      console.log(`➡️  REMOVE Fantrax role for ${discordId} in all mutual guilds…`);
       await assignFantraxRoleForUser(client, discordId, false);
       console.log(`✅ fantrax-unlinked DONE for ${discordId}`);
     } catch (e) {
@@ -147,7 +158,7 @@ async function loadWelcomeMarkdown() {
       const data = await fs.promises.readFile(p, 'utf8');
       const text = (data || '').trim();
       if (text) return text;
-    } catch { /* next */ }
+    } catch {}
   }
   return null;
 }
@@ -200,7 +211,6 @@ client.on(Events.GuildMemberAdd, async (member) => {
 // ---------- Interactions ----------
 client.on(Events.InteractionCreate, async (interaction) => {
   if (await handleUserTeams(interaction)) return;
-  // other handlers...
 });
 
 // ---------- Start ----------
