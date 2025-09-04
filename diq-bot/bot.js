@@ -41,8 +41,6 @@ const client = new Client({
 });
 
 // ---------- Utilities ----------
-const crypto = require('crypto'); // ensure this exists once near the top of the file
-
 function makeLocalAuthorizer({
     appKey,
     appSecret
