@@ -32,6 +32,14 @@ function WSWithOrigin(address, protocols, options = {}) {
     const opts = { ...options };
     opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
     opts.origin = opts.origin || PUBLIC_ORIGIN;
+
+    // inside WSWithOrigin, just before `return new WS(...)`:
+    console.log("[ws-open]", {
+        address: String(address),
+        origin: opts.origin,
+        headers: opts.headers,
+    });
+
     return new WS(address, protocols, opts);
 }
 // copy static props so it looks like ws to consumers
@@ -44,6 +52,9 @@ require.cache[wsModulePath].exports = WSWithOrigin;
 
 // Use the Node build (it requires 'ws' internally — now patched)
 const Pusher = require("pusher-js/node");
+
+// after the Pusher require:
+Pusher.log = (msg) => console.log("[pusher]", msg);
 
 // ---------- Features ----------
 const {
