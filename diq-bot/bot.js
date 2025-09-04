@@ -2,8 +2,9 @@
 // NOTE: This file lives in <laravel-app>/diq-bot and loads env from the Laravel root.
 
 const crypto = require("crypto"); // for local Pusher authorizer HMAC
-const Pusher = require("pusher-js");
-global.WebSocket = require("ws"); // pusher-js in Node
+// const Pusher = require("pusher-js");
+// global.WebSocket = require("ws"); // pusher-js in Node
+const Pusher = require("pusher-js/node"); // Node build; honors wsOptions.headers
 
 const path = require("path");
 const fs = require("fs");
