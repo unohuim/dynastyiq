@@ -2,9 +2,8 @@
 // NOTE: This file lives in <laravel-app>/diq-bot and loads env from the Laravel root.
 
 const crypto = require('crypto'); // for local Pusher authorizer HMAC
-// const Pusher = require('pusher-js');
-// global.WebSocket = require('ws'); // pusher-js in Node
-const Pusher = require('pusher-js/node'); // Node build; sends Origin for you
+const Pusher = require('pusher-js');
+global.WebSocket = require('ws'); // pusher-js in Node
 
 const path = require('path');
 const fs = require('fs');
@@ -33,6 +32,7 @@ const envFile = envCandidates.find(p => fs.existsSync(p));
 require('dotenv').config(envFile ? {
     path: envFile
 } : {});
+
 const SIGNIN_URL = process.env.DIQ_SIGNIN_URL || 'https://dynastyiq.com';
 
 // ---------- Discord client ----------
@@ -51,11 +51,7 @@ function makeLocalAuthorizer({
             try {
                 const channelName = channel.name;
                 const stringToSign = `${socketId}:${channelName}`;
-                const signature = crypto
-                    .createHmac('sha256', appSecret)
-                    .update(stringToSign)
-                    .digest('hex');
-
+                const signature = crypto.createHmac('sha256', appSecret).update(stringToSign).digest('hex');
                 callback(false, {
                     auth: `${appKey}:${signature}`
                 });
@@ -66,7 +62,6 @@ function makeLocalAuthorizer({
         },
     }));
 }
-
 
 function buildOrigin({
     scheme,
@@ -124,14 +119,16 @@ function wireRealtime({
         forceTLS: useTLS,
 
         // Prefer local HMAC auth if we have the secret; otherwise fall back to Laravel auth endpoint.
-        ...(process.env.REVERB_APP_SECRET ? {
-            authorizer: makeLocalAuthorizer({
-                appKey: KEY,
-                appSecret: process.env.REVERB_APP_SECRET
-            })
-        } : {
-            authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`
-        }),
+        ...(process.env.REVERB_APP_SECRET ?
+            {
+                authorizer: makeLocalAuthorizer({
+                    appKey: KEY,
+                    appSecret: process.env.REVERB_APP_SECRET
+                })
+            } :
+            {
+                authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`
+            }),
 
         // Send Origin in both forms to satisfy different ws stacks
         wsOptions: {
@@ -239,8 +236,7 @@ async function loadWelcomeMarkdown() {
             const text = (data || '').trim();
             if (text) return text;
         } catch {
-            /* next */
-        }
+            /* next */ }
     }
     return null;
 }
