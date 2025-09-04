@@ -14,6 +14,14 @@ class WSWithOrigin extends WS {
         options = options || {};
         options.headers = { ...(options.headers || {}), Origin: ORIGIN };
         options.origin = options.origin || ORIGIN;
+
+        console.log(
+            "[WSWithOrigin] opening",
+            String(address),
+            "with Origin",
+            ORIGIN
+        );
+
         super(address, protocols, options);
     }
 }
