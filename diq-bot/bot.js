@@ -123,6 +123,7 @@ async function onBoot({ client }) {
 }
 
 // ---------- Reverb (Pusher protocol) wiring ----------
+// ---------- Reverb (Pusher protocol) wiring ----------
 function wireRealtime({ client }) {
     const KEY =
         process.env.REVERB_APP_KEY ||
@@ -136,17 +137,35 @@ function wireRealtime({ client }) {
         return;
     }
 
-    // INTERNAL Reverb endpoint (server-side)
-    const scheme = (process.env.REVERB_SCHEME || "http").toLowerCase(); // http/https
-    const host = process.env.REVERB_HOST || "127.0.0.1";
-    const port = Number(
+    // Default: INTERNAL
+    let scheme = (process.env.REVERB_SCHEME || "http").toLowerCase();
+    let host = process.env.REVERB_HOST || "127.0.0.1";
+    let port = Number(
         process.env.REVERB_PORT || (scheme === "https" ? 443 : 80)
     );
-    const useTLS = scheme === "https" || scheme === "wss";
 
-    // Origin header — must be allowed by Reverb allowed_origins
-    const defaultOrigin = buildOrigin({ scheme, host, port });
-    const ORIGIN = PUBLIC_ORIGIN || defaultOrigin;
+    // If BOT_REVERB_USE_PUBLIC is set (1/true/yes) => use PUBLIC origin/host
+    const usePublic = /^(1|true|yes)$/i.test(
+        process.env.BOT_REVERB_USE_PUBLIC || ""
+    );
+    if (usePublic) {
+        try {
+            const u = new URL(PUBLIC_ORIGIN); // e.g. https://dynastyiq.com
+            scheme = (u.protocol || "https:").replace(":", "");
+            host = u.hostname;
+            port = u.port ? Number(u.port) : scheme === "https" ? 443 : 80;
+        } catch {
+            scheme = "https";
+            host =
+                process.env.VITE_REVERB_HOST ||
+                process.env.REVERB_PUBLIC_HOST ||
+                "dynastyiq.com";
+            port = 443;
+        }
+    }
+
+    const useTLS = scheme === "https";
+    const ORIGIN = PUBLIC_ORIGIN;
 
     const opts = {
         cluster: "mt1",
@@ -154,7 +173,6 @@ function wireRealtime({ client }) {
         enabledTransports: ["ws", "wss"],
         forceTLS: useTLS,
 
-        // Prefer local HMAC auth if we have the secret; otherwise fall back to Laravel auth endpoint.
         ...(process.env.REVERB_APP_SECRET
             ? {
                   authorizer: makeLocalAuthorizer({
@@ -168,11 +186,7 @@ function wireRealtime({ client }) {
                       `${SIGNIN_URL}/broadcasting/auth`,
               }),
 
-        // Still pass these; the ws monkey-patch guarantees Origin anyway.
-        wsOptions: {
-            origin: ORIGIN,
-            headers: { Origin: ORIGIN },
-        },
+        wsOptions: { origin: ORIGIN, headers: { Origin: ORIGIN } },
     };
 
     if (useTLS) opts.wssPort = port;
@@ -187,11 +201,11 @@ function wireRealtime({ client }) {
         wsPort: opts.wsPort,
         wssPort: opts.wssPort,
         hasLocalAuth: !!process.env.REVERB_APP_SECRET,
+        usingPublic: usePublic,
     });
 
     const pusher = new Pusher(KEY, opts);
 
-    // Connection lifecycle logs
     pusher.connection.bind("state_change", (s) =>
         console.log("[pusher] state", `${s.previous} -> ${s.current}`)
     );
@@ -203,8 +217,6 @@ function wireRealtime({ client }) {
     pusher.connection.bind("error", (err) =>
         console.error("[pusher] connection error:", err?.error || err)
     );
-
-    // Extra: log WebSocket error payloads surfaced by pusher-js
     pusher.connection.bind("failed", () => console.error("[pusher] failed"));
     pusher.connection.bind("unavailable", () =>
         console.warn("[pusher] unavailable")
@@ -218,22 +230,12 @@ function wireRealtime({ client }) {
         console.error("[pusher] subscription error (private-diq-bot):", err)
     );
 
-    // ---- Events from Laravel ----
-    ch.bind("fantrax-linked", async function (payload) {
+    ch.bind("fantrax-linked", async (payload) => {
         console.log("📨 fantrax-linked RECEIVED:", JSON.stringify(payload));
         try {
-            const discordId = String(
-                payload && payload.discord_user_id
-                    ? payload.discord_user_id
-                    : ""
-            );
-            if (!discordId) {
-                console.warn("fantrax-linked: missing discord_user_id");
-                return;
-            }
-            console.log(
-                `➡️  Assign Fantrax role for ${discordId} in all mutual guilds…`
-            );
+            const discordId = String(payload?.discord_user_id || "");
+            if (!discordId)
+                return console.warn("fantrax-linked: missing discord_user_id");
             await assignFantraxRoleForUser(client, discordId, true);
             console.log(`✅ fantrax-linked DONE for ${discordId}`);
         } catch (e) {
@@ -241,21 +243,14 @@ function wireRealtime({ client }) {
         }
     });
 
-    ch.bind("fantrax-unlinked", async function (payload) {
+    ch.bind("fantrax-unlinked", async (payload) => {
         console.log("📨 fantrax-unlinked RECEIVED:", JSON.stringify(payload));
         try {
-            const discordId = String(
-                payload && payload.discord_user_id
-                    ? payload.discord_user_id
-                    : ""
-            );
-            if (!discordId) {
-                console.warn("fantrax-unlinked: missing discord_user_id");
-                return;
-            }
-            console.log(
-                `➡️  REMOVE Fantrax role for ${discordId} in all mutual guilds…`
-            );
+            const discordId = String(payload?.discord_user_id || "");
+            if (!discordId)
+                return console.warn(
+                    "fantrax-unlinked: missing discord_user_id"
+                );
             await assignFantraxRoleForUser(client, discordId, false);
             console.log(`✅ fantrax-unlinked DONE for ${discordId}`);
         } catch (e) {
