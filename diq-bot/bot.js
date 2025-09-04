@@ -165,7 +165,7 @@ function wireRealtime({ client }) {
 
     const useTLS = scheme === "https";
     const defaultOrigin = buildOrigin({ scheme, host, port });
-    const defaultOrigin = buildOrigin({ scheme, host, port });
+    const ORIGIN = usePublic ? PUBLIC_ORIGIN : defaultOrigin;
 
     const opts = {
         cluster: "mt1",
