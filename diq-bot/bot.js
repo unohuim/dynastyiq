@@ -57,7 +57,8 @@ function makeLocalAuthorizer({
                 });
             } catch (err) {
                 callback(true, {
-                    console.error('error:', err ? .message || String(err));
+                    console.error('error:', (err && err.message) || String(err));
+
                 });
             }
         },
