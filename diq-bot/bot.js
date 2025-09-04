@@ -4,7 +4,21 @@
 const crypto = require("crypto"); // for local Pusher authorizer HMAC
 // const Pusher = require("pusher-js");
 // global.WebSocket = require("ws"); // pusher-js in Node
-const Pusher = require("pusher-js/node"); // Node build; honors wsOptions.headers
+// const Pusher = require("pusher-js/node"); // Node build; honors wsOptions.headers
+
+const ORIGIN = process.env.BOT_REVERB_ORIGIN || "https://dynastyiq.com";
+
+const WS = require("ws");
+class WSWithOrigin extends WS {
+    constructor(address, protocols, options = {}) {
+        options = options || {};
+        options.headers = { ...(options.headers || {}), Origin: ORIGIN };
+        options.origin = options.origin || ORIGIN;
+        super(address, protocols, options);
+    }
+}
+global.WebSocket = WSWithOrigin; // pusher-js (browser build) will use this
+const Pusher = require("pusher-js"); // <-- switch from 'pusher-js/node'
 
 const path = require("path");
 const fs = require("fs");
