@@ -56,29 +56,31 @@ function wireRealtime({ client }) {
   // Prefer explicit override, else build from REVERB_*.
   const defaultOrigin =
     (scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)
-      ? `${scheme}://${host}`
-      : `${scheme}://${host}:${port}`;
-  const ORIGIN =
+        ? `${scheme}://${host}`
+        : `${scheme}://${host}:${port}`;
+
+    const ORIGIN =
     process.env.BOT_REVERB_ORIGIN ||
     process.env.REVERB_ORIGIN ||
     defaultOrigin;
 
-  const opts = {
-    cluster: 'mt1',
-    wsHost: host,
-    enabledTransports: ['ws', 'wss'],
-    forceTLS: useTLS,
-    authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
-    wsOptions: {
-      headers: { Origin: ORIGIN },
-    },
-  };
-  if (useTLS) opts.wssPort = port; else opts.wsPort = port;
+    const opts = {
+        cluster: 'mt1',
+        wsHost: host,
+        enabledTransports: ['ws', 'wss'],
+        forceTLS: useTLS,
+        authEndpoint:
+            process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
+        wsOptions: {
+            origin: ORIGIN, // <-- key change
+        },
+    };
+    if (useTLS) opts.wssPort = port; else opts.wsPort = port;
 
-  console.log(`📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
-  console.log(`📡 Using Origin header: ${ORIGIN}`);
+    console.log(`📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
+    console.log(`📡 Using Origin header: ${ORIGIN}`);
 
-  const pusher = new Pusher(KEY, opts);
+    const pusher = new Pusher(KEY, opts);
 
   // Connection lifecycle logs
   pusher.connection.bind('state_change', s =>
