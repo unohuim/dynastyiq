@@ -1,31 +1,53 @@
 // diq-bot/bot.js
 // NOTE: This file lives in <laravel-app>/diq-bot and loads env from the Laravel root.
 
-const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
-const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assign-fantrax-roles');
-
+const crypto = require('crypto'); // for local Pusher authorizer HMAC
 const Pusher = require('pusher-js');
 global.WebSocket = require('ws'); // pusher-js in Node
 
 const path = require('path');
 const fs = require('fs');
-const { Client, GatewayIntentBits, Events } = require('discord.js');
 const axios = require('axios');
+const { Client, GatewayIntentBits, Events } = require('discord.js');
+
+const { register: registerUserTeams, handle: handleUserTeams } = require('./features/user-teams');
+const { assignFantraxRole, assignFantraxRoleForUser } = require('./features/assign-fantrax-roles');
 
 // ---------- Env (prefer Laravel root .env) ----------
 const envCandidates = [
-  path.resolve(__dirname, '../.env'), // Laravel root
-  path.resolve(process.cwd(), '.env'),
+  path.resolve(__dirname, '../.env'),     // Laravel root
+  path.resolve(process.cwd(), '.env'),    // fallback
 ];
 const envFile = envCandidates.find(p => fs.existsSync(p));
 require('dotenv').config(envFile ? { path: envFile } : {});
-
 const SIGNIN_URL = process.env.DIQ_SIGNIN_URL || 'https://dynastyiq.com';
 
 // ---------- Discord client ----------
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
+
+// ---------- Utilities ----------
+function makeLocalAuthorizer({ appKey, appSecret }) {
+  // Returns a Pusher-compatible authorizer object that signs private channel auth locally.
+  return (_channel /* Pusher.Channel */, _options) => ({
+    authorize(socketId, callback) {
+      try {
+        const channelName = _channel.name;
+        const stringToSign = `${socketId}:${channelName}`;
+        const signature = crypto.createHmac('sha256', appSecret).update(stringToSign).digest('hex');
+        callback(false, { auth: `${appKey}:${signature}` });
+      } catch (err) {
+        callback(true, { error: err?.message || String(err) });
+      }
+    },
+  });
+}
+
+function buildOrigin({ scheme, host, port }) {
+  const standard = (scheme === 'https' && port === 443) || (scheme === 'http' && port === 80);
+  return standard ? `${scheme}://${host}` : `${scheme}://${host}:${port}`;
+}
 
 // ---------- On boot ----------
 async function onBoot({ client }) {
@@ -46,45 +68,53 @@ function wireRealtime({ client }) {
     return;
   }
 
-  // Use server-side REVERB_* endpoint (your internal Reverb)
+  // Use your INTERNAL Reverb endpoint (server-side)
   const scheme = (process.env.REVERB_SCHEME || 'http').toLowerCase();     // e.g. http
   const host   = process.env.REVERB_HOST || '127.0.0.1';                  // e.g. 127.0.0.1
   const port   = Number(process.env.REVERB_PORT || (scheme === 'https' ? 443 : 80)); // e.g. 8080
   const useTLS = scheme === 'https' || scheme === 'wss';
 
-  // Explicit Origin header (must be allowed in Reverb’s allowed_origins)
-  // Prefer explicit override, else build from REVERB_*.
-  const defaultOrigin =
-    (scheme === 'https' && port === 443) || (scheme === 'http' && port === 80)
-        ? `${scheme}://${host}`
-        : `${scheme}://${host}:${port}`;
-
-    const ORIGIN =
-    process.env.BOT_REVERB_ORIGIN ||
-    process.env.REVERB_ORIGIN ||
+  // Build/override Origin header — must be allowed by Reverb allowed_origins
+  const defaultOrigin = buildOrigin({ scheme, host, port });
+  const ORIGIN =
+    process.env.BOT_REVERB_ORIGIN ||     // recommended: https://dynastyiq.com
+    process.env.REVERB_ORIGIN ||         // optional fallback
     defaultOrigin;
 
-    const opts = {
-        cluster: 'mt1',
-        wsHost: host,
-        enabledTransports: ['ws', 'wss'],
-        forceTLS: useTLS,
-        authEndpoint:
-            process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth`,
-        wsOptions: {
-            origin: ORIGIN, // <-- key change
-        },
-    };
-    if (useTLS) opts.wssPort = port; else opts.wsPort = port;
+  const opts = {
+    cluster: 'mt1',                   // required by pusher-js even for Reverb
+    wsHost: host,
+    enabledTransports: ['ws', 'wss'],
+    forceTLS: useTLS,
 
-    console.log(`📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
-    console.log(`📡 Using Origin header: ${ORIGIN}`);
+    // Prefer local HMAC auth if we have the secret; otherwise fall back to Laravel auth endpoint.
+    ...(process.env.REVERB_APP_SECRET
+      ? { authorizer: makeLocalAuthorizer({ appKey: KEY, appSecret: process.env.REVERB_APP_SECRET }) }
+      : { authEndpoint: process.env.PUSHER_AUTH_ENDPOINT || `${SIGNIN_URL}/broadcasting/auth` }),
 
-    const pusher = new Pusher(KEY, opts);
+    // Send Origin in both forms to satisfy different ws stacks
+    wsOptions: {
+      origin: ORIGIN,
+      headers: { Origin: ORIGIN },
+    },
+  };
+
+  if (useTLS) opts.wssPort = port; else opts.wsPort = port;
+
+  console.log(`📡 Realtime (internal) → host=${host} scheme=${scheme} port=${port} tls=${useTLS}`);
+  console.log(`📡 Using Origin header: ${ORIGIN}`);
+  console.log(process.env.REVERB_APP_SECRET
+    ? '🔐 Using local HMAC authorizer (no /broadcasting/auth).'
+    : '🔓 Using remote auth endpoint (Laravel /broadcasting/auth).');
+
+  const pusher = new Pusher(KEY, opts);
 
   // Connection lifecycle logs
   pusher.connection.bind('state_change', s =>
     console.log(`📡 Pusher state: ${s.previous} → ${s.current}`)
+  );
+  pusher.connection.bind('connected', () =>
+    console.log(`📡 Pusher connected (socket_id=${pusher.connection.socket_id})`)
   );
   pusher.connection.bind('error', err =>
     console.error('📡 Pusher connection error:', err?.error || err)
@@ -98,7 +128,7 @@ function wireRealtime({ client }) {
     console.error('📡 Subscription error (private-diq-bot):', err)
   );
 
-  // Events
+  // ---- Events from Laravel ----
   ch.bind('fantrax-linked', async (payload) => {
     console.log('📨 fantrax-linked RECEIVED:', JSON.stringify(payload));
     try {
@@ -160,7 +190,7 @@ async function loadWelcomeMarkdown() {
       const data = await fs.promises.readFile(p, 'utf8');
       const text = (data || '').trim();
       if (text) return text;
-    } catch {}
+    } catch { /* next */ }
   }
   return null;
 }
@@ -213,6 +243,7 @@ client.on(Events.GuildMemberAdd, async (member) => {
 // ---------- Interactions ----------
 client.on(Events.InteractionCreate, async (interaction) => {
   if (await handleUserTeams(interaction)) return;
+  // other handlers…
 });
 
 // ---------- Start ----------
