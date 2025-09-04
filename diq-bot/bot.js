@@ -4,13 +4,10 @@
 const path = require("path");
 const fs = require("fs");
 
-// ---------- Env (prefer Laravel root .env) ----------
-const envCandidates = [
-    path.resolve(__dirname, "../.env"), // Laravel root
-    path.resolve(process.cwd(), ".env"), // fallback
-];
-const envFile = envCandidates.find((p) => fs.existsSync(p));
-require("dotenv").config(envFile ? { path: envFile } : {});
+// ---------- Env (root first, then bot overrides) ----------
+const dotenv = require("dotenv");
+dotenv.config({ path: path.resolve(__dirname, "../.env") }); // Laravel root
+dotenv.config({ path: path.resolve(__dirname, ".env") }); // diq-bot/.env (wins)
 
 // ---------- Constants ----------
 const SIGNIN_URL = process.env.DIQ_SIGNIN_URL || "https://dynastyiq.com";
