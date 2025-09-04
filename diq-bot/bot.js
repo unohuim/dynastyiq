@@ -26,7 +26,7 @@ class WSWithOrigin extends WS {
     }
 }
 global.WebSocket = WSWithOrigin; // pusher-js (browser build) will use this
-const Pusher = require("pusher-js"); // <-- switch from 'pusher-js/node'
+const Pusher = require("pusher-js/dist/web/pusher");
 
 const path = require("path");
 const fs = require("fs");
