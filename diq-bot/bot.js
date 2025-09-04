@@ -41,29 +41,34 @@ const client = new Client({
 });
 
 // ---------- Utilities ----------
+const crypto = require('crypto'); // ensure this exists once near the top of the file
+
 function makeLocalAuthorizer({
     appKey,
     appSecret
 }) {
     // Returns a Pusher-compatible authorizer object that signs private channel auth locally.
-    return (_channel /* Pusher.Channel */ , _options) => ({
+    return (channel /* Pusher.Channel */ , _options) => ({
         authorize(socketId, callback) {
             try {
-                const channelName = _channel.name;
+                const channelName = channel.name;
                 const stringToSign = `${socketId}:${channelName}`;
-                const signature = crypto.createHmac('sha256', appSecret).update(stringToSign).digest('hex');
+                const signature = crypto
+                    .createHmac('sha256', appSecret)
+                    .update(stringToSign)
+                    .digest('hex');
+
                 callback(false, {
                     auth: `${appKey}:${signature}`
                 });
             } catch (err) {
-                callback(true, {
-                    console.error('error:', (err && err.message) || String(err));
-
-                });
+                console.error('authorizer error:', (err && err.message) || String(err));
+                callback(true, err);
             }
         },
-    });
+    }));
 }
+
 
 function buildOrigin({
     scheme,
