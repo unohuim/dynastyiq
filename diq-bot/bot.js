@@ -27,8 +27,13 @@ const WS = require("ws");
 function WSWithOrigin(address, protocols, options = {}) {
     const opts = { ...(options || {}) };
     // Unconditional override
-    opts.headers = { ...(opts.headers || {}), Origin: PUBLIC_ORIGIN };
-    opts.origin = PUBLIC_ORIGIN;
+    const effectiveOrigin =
+        (options &&
+            (options.origin || (options.headers && options.headers.Origin))) ||
+        PUBLIC_ORIGIN;
+    opts.headers = { ...(opts.headers || {}) };
+    if (!opts.headers.Origin) opts.headers.Origin = effectiveOrigin;
+    if (!opts.origin) opts.origin = effectiveOrigin;
 
     console.log("[ws] open →", String(address), { origin: PUBLIC_ORIGIN });
 
