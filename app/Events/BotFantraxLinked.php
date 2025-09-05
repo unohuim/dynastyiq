@@ -12,7 +12,7 @@ final class BotFantraxLinked implements ShouldBroadcastNow
     public function broadcastOn(): PrivateChannel
     {
         // Match what the bot subscribes to
-        return new PrivateChannel('private-diq-bot');
+        return new PrivateChannel('diq-bot');
     }
 
     public function broadcastAs(): string
