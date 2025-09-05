@@ -27,25 +27,33 @@ class HandleFantraxUserConnected implements ShouldQueue
      */
     public function handle(FantraxUserConnected $event): void
     {
-        $user = $event->user;
+        try {
+            $user = $event->user;
 
-        // Example: log + place for any follow-up jobs (rosters, matchups, etc.)
-        Log::info('Fantrax connected for user.', [
-            'user_id' => $user->id,
-            'email'   => $user->email,
-            'leagues' => method_exists($user, 'fantraxLeagues')
-                ? $user->fantraxLeagues()->pluck('name', 'platform_league_id')->toArray()
-                : [],
-        ]);
+            // Example: log + place for any follow-up jobs (rosters, matchups, etc.)
+            Log::info('Fantrax connected for user.', [
+                'user_id' => $user->id,
+                'email'   => $user->email,
+                'leagues' => method_exists($user, 'fantraxLeagues')
+                    ? $user->fantraxLeagues()->pluck('name', 'platform_league_id')->toArray()
+                    : [],
+            ]);
 
-        // Find the user's Discord ID, then notify the bot via websocket
-        $discordId = (string) SocialAccount::query()
-            ->where('provider', 'discord')
-            ->where('user_id', $user->id)
-            ->value('provider_user_id');
+            // Find the user's Discord ID, then notify the bot via websocket
+            $discordId = (string) SocialAccount::query()
+                ->where('provider', 'discord')
+                ->where('user_id', $user->id)
+                ->value('provider_user_id');
 
-        if ($discordId !== '') {
-            broadcast(new BotFantraxLinked($discordId));
+            if ($discordId !== '') {
+                broadcast(new BotFantraxLinked($discordId));
+            }
+        } catch (\Throwable $e) {
+            Log::error('HandleFantraxUserConnected failed', [
+                'user_id' => optional($event->user)->id,
+                'error'   => $e->getMessage(),
+            ]);
+            $this->fail($e); // mark failed once; don’t churn 8 times
         }
     }
 

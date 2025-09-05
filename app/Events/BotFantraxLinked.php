@@ -1,9 +1,4 @@
-
 <?php
-
-declare(strict_types=1);
-
-namespace App\Events;
 
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -14,7 +9,8 @@ final class BotFantraxLinked implements ShouldBroadcastNow
 
     public function broadcastOn(): PrivateChannel
     {
-        return new PrivateChannel('diq-bot');
+        // Match what the bot subscribes to
+        return new PrivateChannel('private-diq-bot');
     }
 
     public function broadcastAs(): string
