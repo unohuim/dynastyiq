@@ -14,7 +14,7 @@ final class BotFantraxLinked implements ShouldBroadcast
 
     public function broadcastOn(): PrivateChannel
     {
-        return new PrivateChannel('diq-bot');
+        return new PrivateChannel('private-diq-bot');
     }
 
     public function broadcastAs(): string
