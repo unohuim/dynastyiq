@@ -6,9 +6,9 @@ declare(strict_types=1);
 namespace App\Events;
 
 use Illuminate\Broadcasting\PrivateChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 
-final class BotFantraxLinked implements ShouldBroadcast
+final class BotFantraxLinked implements ShouldBroadcastNow
 {
     public function __construct(public string $discordUserId) {}
 
