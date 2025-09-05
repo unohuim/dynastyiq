@@ -117,6 +117,45 @@ async function fetchConnectedIds(discordIds) {
     return set;
 }
 
+async function assignFantraxRoleForUser(client, discordId, shouldHaveRole) {
+    const limiter = makeLimiter(5); // reuse your limiter helper
+    const guildsMeta = await client.guilds.fetch();
+
+    for (const [, meta] of guildsMeta) {
+        let guild;
+        try {
+            guild = await client.guilds.fetch(meta.id);
+        } catch {
+            continue;
+        }
+
+        // Ensure the role exists in this guild
+        let role;
+        try {
+            role = await ensureRole(guild);
+        } catch {
+            continue;
+        }
+
+        // Fetch the member; skip if not in this guild
+        let member;
+        try {
+            member = await guild.members.fetch(discordId);
+        } catch {
+            continue;
+        }
+
+        const has = member.roles.cache.has(role.id);
+        if (shouldHaveRole && !has) {
+            await limiter(() => member.roles.add(role, "DIQ Fantrax link"));
+        } else if (!shouldHaveRole && has) {
+            await limiter(() =>
+                member.roles.remove(role, "DIQ Fantrax unlink")
+            );
+        }
+    }
+}
+
 /** Assign/remove the Fantrax role per user per guild, based on Laravel's isFantrax(). */
 async function assignFantraxRole(client) {
     const limiter = makeLimiter(10);
@@ -218,4 +257,5 @@ async function assignFantraxRole(client) {
 
 module.exports = {
     assignFantraxRole,
+    assignFantraxRoleForUser,
 };
