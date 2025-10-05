@@ -4,9 +4,7 @@
     $active = (string) ($activeId ?? '');
 @endphp
 
-@once
-  @vite('resources/js/leagues-hub.js')
-@endonce
+
 
 <x-app-layout>
     <div class="py-6 px-4 sm:px-6 lg:px-8" data-component="leagues-hub-layout">
