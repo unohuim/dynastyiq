@@ -38,6 +38,6 @@ class ImportFantraxPlayersJob implements ShouldQueue
 
     public function tags(): array
     {
-        return self::TAG_IMPORT;
+        return [self::TAG_IMPORT];
     }
 }

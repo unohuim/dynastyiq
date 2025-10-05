@@ -23,3 +23,4 @@ yarn-error.log
 /.zed
 app/Providers/HorizonServiceProvider.php
 
+diq-bot/node_modules/
