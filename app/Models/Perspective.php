@@ -44,14 +44,13 @@ class Perspective extends Model
             if ($user) {
                 $q->orWhere(function (Builder $q2) use ($user) {
                     $q2->where('visibility', 'public_authenticated')
-                       ->orWhere(function (Builder $q3) use ($user) {
-                           $q3->where('author_id', $user->id)
-                              ->orWhere('tenant_id', $user->tenant_id);
-                       });
+                    ->orWhere('author_id', $user->id)
+                    ->orWhereIn('organization_id', $user->organizations()->select('organizations.id'));
                 });
             }
         });
     }
+
 
     /**
      * Generate a unique slug from the given name.

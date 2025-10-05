@@ -26,8 +26,8 @@ return [
             'prospects'      => '/prospects/{teamAbbrev}',
             'standings_now'  => '/standings/now',
             'pbp'            => '/gamecenter/{gameId}/play-by-play',
-            'boxscore'       => 'gamecenter/{gameId}/boxscore',
-            'dailyscores'    => 'score/{date}',
+            'boxscore'       => '/gamecenter/{gameId}/boxscore',
+            'dailyscores'    => '/score/{date}',
         ],
     ],
 
@@ -46,12 +46,12 @@ return [
             'in'   => 'none',
         ],
         'endpoints' => [
-            'players'     => '/general/getPlayerIds?sport=NHL',
-            'player_data' => '/general/getPlayerProfile?leagueId={leagueId}&playerId={playerId}',
-            'user_leagues' => '/general/getLeagues?userSecretId={userSecretId}',
-            'league_info' => '/general/getLeagueInfo?leagueId={leagueId}',
+            'players'           => '/general/getPlayerIds?sport=NHL',
+            'player_data'       => '/general/getPlayerProfile?leagueId={leagueId}&playerId={playerId}',
+            'user_leagues'      => '/general/getLeagues?userSecretId={userSecretId}',
+            'league_info'       => '/general/getLeagueInfo?leagueId={leagueId}',
+            'team_rosters'      => '/general/getTeamRosters?leagueId={leagueId}'
 
-            
         ],
     ],
 

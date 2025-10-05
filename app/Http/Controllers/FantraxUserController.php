@@ -12,6 +12,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Client\RequestException;
 
 class FantraxUserController extends Controller
 {
@@ -22,22 +24,27 @@ class FantraxUserController extends Controller
      */
     public function save(Request $request): RedirectResponse|JsonResponse
     {
+
         $data = $request->validate([
             'fantrax_secret_key' => 'required|string|max:255',
         ]);
 
+
         try {
             $resp = $this->getAPIData('fantrax', 'user_leagues', [
-                'userSecretId' => $data['fantrax_secret_key'],
+                'userSecretId' => $data['fantrax_secret_key']
             ]);
-        } catch (\Throwable) {
+        } catch (RequestException $e) {
+
             return $this->respondError($request, 'Unable to reach Fantrax. Try again.');
         }
+
 
         $leagues = $resp['leagues'] ?? [];
         if (count($leagues) === 0) {
             return $this->respondError($request, 'Invalid Fantrax Secret Key.');
         }
+
 
         // 1) Save/confirm integration
         IntegrationSecret::updateOrCreate(

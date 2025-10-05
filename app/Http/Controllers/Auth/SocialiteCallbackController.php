@@ -1,16 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\SocialAccount;
 use App\Models\User;
+use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
-use App\Traits\HasAPITrait;
 
 class SocialiteCallbackController extends Controller
 {
@@ -37,9 +39,8 @@ class SocialiteCallbackController extends Controller
                     'expires_at'    => isset($oauth->expiresIn) ? now()->addSeconds($oauth->expiresIn) : null,
                 ])->save();
 
-
-                //update user record
                 $user = $existing->user()->lockForUpdate()->first();
+
                 $newName  = $oauth->getName() ?: ($oauth->getNickname() ?: $user->name);
                 $newEmail = $oauth->getEmail();
 
@@ -48,40 +49,50 @@ class SocialiteCallbackController extends Controller
                     $user->name = $newName;
                     $dirty = true;
                 }
-
-                // Use whatever Discord provides each login; update if changed
                 if ($newEmail && $user->email !== $newEmail) {
                     $user->email = $newEmail;
                     $user->email_verified_at = now();
                     $dirty = true;
                 }
-
                 if ($dirty) {
                     $user->save();
-                }                
+                }
 
+                // Attach invite org (no duplicate ownership)
+                if ($inviteOrg = $this->consumeOrganizationInvite()) {
+                    $user->organizations()->syncWithoutDetaching([$inviteOrg->id => ['settings' => null]]);
+                    if (
+                        empty($inviteOrg->owner_user_id)
+                        && !Organization::where('owner_user_id', $user->id)->lockForUpdate()->exists()
+                    ) {
+                        $inviteOrg->owner_user_id = $user->id;
+                        $inviteOrg->save();
+                    }
+                }
 
                 return $existing;
             }
 
-            $org = $this->resolveOrCreateOrganization($oauth);
+            // ---- New linkage -------------------------------------------------
+            // 1) Upsert user by email (or create placeholder email once).
+            $email = $oauth->getEmail() ?: (Str::uuid() . '@placeholder.local');
 
-            $user = $oauth->getEmail()
-                ? User::where('email', $oauth->getEmail())->lockForUpdate()->first()
-                : null;
-
-            if (! $user) {
-                $user = User::create([
+            $user = User::updateOrCreate(
+                ['email' => $email],
+                [
                     'name'              => $oauth->getName() ?: ($oauth->getNickname() ?: 'User'),
-                    'email'             => $oauth->getEmail() ?: (Str::uuid() . '@placeholder.local'),
                     'password'          => bcrypt(Str::random(40)),
-                    'tenant_id'         => $org->id,
-                    'email_verified_at' => now(),
-                ]);
-            } elseif (empty($user->tenant_id)) {
-                $user->forceFill(['tenant_id' => $org->id])->save();
-            }
+                    'email_verified_at' => $oauth->getEmail() ? now() : null,
+                ]
+            );
 
+            // 2) Resolve an organization without violating one-owner-per-user.
+            $org = $this->resolveOrganizationFor($user, $oauth);
+
+            // Ensure membership on organization_user pivot.
+            $user->organizations()->syncWithoutDetaching([$org->id => ['settings' => null]]);
+
+            // 3) Upsert social account.
             return SocialAccount::updateOrCreate(
                 [
                     'provider'         => 'discord',
@@ -102,23 +113,17 @@ class SocialiteCallbackController extends Controller
 
         Auth::login($account->user, remember: true);
 
-        // Gracefully handle “not a member yet” (404) during OAuth
         session(['diq-user.connected' => false]);
 
-        $guildId       = (string) config('services.discord.diq_guild_id');
+        $guildId = (string) config('services.discord.diq_guild_id');
         $discordUserId = (string) $account->provider_user_id;
 
-        
-
         try {
-            if ($this->isDiscordMember($guildId, $discordUserId)) {                
-                session(['diq-user.connected' => true]);                
+            if ($this->isDiscordMember($guildId, $discordUserId)) {
+                session(['diq-user.connected' => true]);
             }
-            
         } catch (\Throwable $e) {
-            
-            // Any non-404 error: ignore for login flow; optionally log
-            // report($e);
+            // Optional: report($e);
         }
 
         return redirect()->intended('/');
@@ -132,30 +137,94 @@ class SocialiteCallbackController extends Controller
                 'guild_member',
                 ['guildId' => $guildId, 'discordUserId' => $discordUserId]
             );
-        
-            return true; // 200
-        } catch (\Illuminate\Http\Client\RequestException $e) {            
+
+            return true;
+        } catch (\Illuminate\Http\Client\RequestException $e) {
             if (optional($e->response)->status() === 404) {
-                return false; // not in server yet
+                return false;
             }
-            throw $e; // other errors bubble to caller (caught above)
+
+            throw $e;
         }
     }
 
-    private function resolveOrCreateOrganization($oauth): Organization
+    /**
+     * Choose an org in this order:
+     * 1) Session invite org (attach; set owner only if user owns none).
+     * 2) Already-owned org by this user.
+     * 3) First membership org.
+     * 4) Create a new org (assign this user as owner).
+     */
+    private function resolveOrganizationFor(User $user, $oauth): Organization
     {
-        $inviteId = session()->pull('tenant_invite_id');
+        if ($invite = $this->consumeOrganizationInvite()) {
+            $this->maybeAssignOwnership($invite, $user);
 
-        if ($inviteId) {
-            $org = Organization::lockForUpdate()->find($inviteId);
-            if ($org) {
-                return $org;
-            }
+            return $invite->lockForUpdate()->first() ?? $invite;
         }
 
-        return Organization::create([
-            'name'       => ($oauth->getNickname() ?: $oauth->getName() ?: 'New User') . "'s Organization",
-            'short_name' => $oauth->getNickname() ?: null,
-        ]);
+        if ($owned = Organization::where('owner_user_id', $user->id)->lockForUpdate()->first()) {
+            return $owned;
+        }
+
+        if ($member = $user->organizations()->lockForUpdate()->first()) {
+            return $member;
+        }
+
+        $name = ($oauth->getNickname() ?: $oauth->getName() ?: 'New User') . "'s Organization";
+        $short = $oauth->getNickname() ?: null;
+
+        $baseSlug = Str::slug($short ?: $name);
+        $slug = $this->ensureUniqueSlug($baseSlug);
+
+        $org = Organization::firstOrCreate(
+            ['slug' => $slug],
+            [
+                'name'       => $name,
+                'short_name' => $short,
+                'settings'   => ['commissioner_tools' => false, 'creator_tools' => false],
+            ]
+        );
+
+        // Assign owner only if user owns none right now.
+        $this->maybeAssignOwnership($org, $user);
+
+        return $org;
+    }
+
+    private function maybeAssignOwnership(Organization $org, User $user): void
+    {
+        if (
+            empty($org->owner_user_id)
+            && !Organization::where('owner_user_id', $user->id)->lockForUpdate()->exists()
+        ) {
+            $org->owner_user_id = $user->id;
+            $org->save();
+        }
+    }
+
+    private function consumeOrganizationInvite(): ?Organization
+    {
+        $inviteId = session()->pull('organization_invite_id')
+            ?? session()->pull('tenant_invite_id');
+
+        if (! $inviteId) {
+            return null;
+        }
+
+        return Organization::lockForUpdate()->find($inviteId);
+    }
+
+    private function ensureUniqueSlug(string $baseSlug): string
+    {
+        $slug = $baseSlug;
+        $i = 1;
+
+        while (Organization::where('slug', $slug)->exists()) {
+            $slug = $baseSlug . '-' . $i;
+            $i++;
+        }
+
+        return $slug;
     }
 }

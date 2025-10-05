@@ -11,11 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('teams', function (Blueprint $table) {
+        Schema::create('platform_teams', function (Blueprint $table) {
             $table->id();
 
             // Parent league
-            $table->foreignId('league_id')->constrained('leagues')->cascadeOnDelete();
+            $table->foreignId('platform_league_id')->constrained('platform_leagues')->cascadeOnDelete();
 
             // External team id within the provider/league
             $table->string('platform_team_id');
@@ -33,10 +33,10 @@ return new class extends Migration
             $table->timestamps();
 
             // Uniqueness scoped to league
-            $table->unique(['league_id', 'platform_team_id'], 'uq_league_platform_team');
+            $table->unique(['platform_league_id', 'platform_team_id'], 'uq_league_platform_team');
 
             // Lookup index
-            $table->index('league_id', 'idx_team_league');
+            $table->index('platform_league_id', 'idx_team_league');
         });
 
     }
@@ -46,6 +46,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('teams');
+        Schema::dropIfExists('platform_teams');
     }
 };

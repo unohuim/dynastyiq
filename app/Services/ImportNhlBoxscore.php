@@ -39,7 +39,7 @@ class ImportNhlBoxscore
 
 
             $this->processShutout($nhlGameId, $stats[$teamSide]['goalies']);
-            
+
 
             foreach (['forwards', 'defense', 'goalies'] as $posGroup) {
                 if (empty($stats[$teamSide][$posGroup])) {
@@ -120,35 +120,110 @@ class ImportNhlBoxscore
 
 
 
-    private function processShutout(int|string $gameId, array $goalies)
+    private function processShutout(int|string $gameId, array $goalies): void
     {
-        if(empty($goalies)) return;       
+        if (empty($goalies)) {
+            return;
+        }
+
+        $hasStarterFlag = array_reduce($goalies, static function ($carry, $g) {
+            return $carry || array_key_exists('starter', $g);
+        }, false);
+
+        // If no starter flag present: detect a solo goalie with TOI > 0 and GA = 0
+        $soloGoalieId = null;
+        if (!$hasStarterFlag) {
+            $activeWithToi = array_values(array_filter($goalies, function ($g) {
+                $toi = $g['toi'] ?? '00:00';
+                return $this->toiToSeconds($toi) > 0;
+            }));
+
+            if (count($activeWithToi) === 1 && (int)($activeWithToi[0]['goalsAgainst'] ?? 0) === 0) {
+                $soloGoalieId = $activeWithToi[0]['playerId'] ?? null;
+            }
+        }
 
         foreach ($goalies as $g) {
-            $so = 0; 
-            $gkId = $g['playerId'] ?? null;  
+            $so = 0;
+            $gkId = $g['playerId'] ?? null;
 
-            if(!empty($gkId)) {
-                if ((int)($g['goalsAgainst'] ?? 0) < 1 && $g['starter'] == true) $so = $this->isShutout($goalies);
-                  
-                NhlGameSummary::where('nhl_game_id', (int) $gameId)
-                    ->where('nhl_player_id', $gkId)
-                    ->update(['so' => $so]);
-            }          
+            if ($gkId === null) {
+                continue;
+            }
+
+            $ga = (int)($g['goalsAgainst'] ?? 0);
+            $isStarterTrue = (bool)($g['starter'] ?? false);
+
+            if ($hasStarterFlag) {
+                if ($ga === 0 && $isStarterTrue && $this->isShutout($goalies)) {
+                    $so = 1;
+                }
+            } else {
+                // No starter flag: only award SO if this is the lone goalie with TOI > 0 and GA = 0
+                if ($soloGoalieId !== null && $gkId === $soloGoalieId && $this->isShutout($goalies)) {
+                    $so = 1;
+                }
+            }
+
+            NhlGameSummary::where('nhl_game_id', (int)$gameId)
+                ->where('nhl_player_id', $gkId)
+                ->update(['so' => $so]);
         }
     }
-
-
 
     private function isShutout(array $goalies): bool
     {
-        $shutOut = true;
-        foreach (($goalies ?? []) as $g) {
-            if (!(bool)($g['starter'] ?? false) && (($g['toi'] ?? '00:00') !== '00:00')) { $shutOut = false; break; }
-            if ((bool)($g['starter'] ?? false) && (int)($g['goalsAgainst'] ?? 0) > 0) { $shutOut = false; break; }
+        // Team-level check:
+        // 1) No goalie who actually played (TOI > 0) allowed any goals.
+        // 2) If no 'starter' flags exist, ensure only ONE goalie has TOI > 0 (no split shutout credit).
+
+        $hasStarterFlag = array_reduce($goalies, static function ($carry, $g) {
+            return $carry || array_key_exists('starter', $g);
+        }, false);
+
+        $activeGoalies = 0;
+
+        foreach ($goalies as $g) {
+            $toi = $g['toi'] ?? '00:00';
+            $played = $this->toiToSeconds($toi) > 0;
+            $ga = (int)($g['goalsAgainst'] ?? 0);
+
+            if ($played) {
+                $activeGoalies++;
+                if ($ga > 0) {
+                    return false;
+                }
+            }
+
+            if ($hasStarterFlag) {
+                // If starter exists and he allowed a goal, no shutout.
+                if ((bool)($g['starter'] ?? false) && $ga > 0) {
+                    return false;
+                }
+                // If a non-starter logged TOI, that's fine as long as GA == 0 (e.g., relief with no goals).
+            }
         }
-        return $shutOut;
+
+        if (!$hasStarterFlag) {
+            // Without starter flags, require exactly one goalie to have TOI > 0 (no split shutout credit).
+            if ($activeGoalies !== 1) {
+                return false;
+            }
+        }
+
+        return true;
     }
+
+    private function toiToSeconds(?string $toi): int
+    {
+        if (empty($toi) || strpos($toi, ':') === false) {
+            return 0;
+        }
+
+        [$m, $s] = array_map('intval', explode(':', $toi, 2));
+        return ($m * 60) + $s;
+    }
+
 
 
 

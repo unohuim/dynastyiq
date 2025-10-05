@@ -10,10 +10,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
-class Team extends Model
+
+class PlatformTeam extends Model
 {
     protected $fillable = [
-        'league_id',
+        'platform_league_id',
         'platform_team_id',
         'name',
         'short_name',
@@ -31,23 +32,25 @@ class Team extends Model
      */
     public function league(): BelongsTo
     {
-        return $this->belongsTo(League::class);
+        return $this->belongsTo(PlatformLeague::class);
     }
 
-    /**
-     * User↔Team assignments for this team.
-     */
-    public function userTeams(): HasMany
+
+
+    public function roster(): BelongsToMany
     {
-        return $this->hasMany(LeagueUserTeam::class);
+        return $this->belongsToMany(Player::class, 'platform_roster_memberships', 'platform_team_id', 'player_id')
+            ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at'])
+            ->wherePivotNull('ends_at');
     }
+
 
     /**
      * Users assigned to this team.
      */
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(User::class, 'league_user_teams', 'league_team_id', 'user_id')
+        return $this->belongsToMany(User::class, 'league_user_teams', 'team_id', 'user_id')
             ->withPivot(['is_active', 'extras', 'synced_at'])
             ->withTimestamps();
     }
@@ -55,9 +58,9 @@ class Team extends Model
     /**
      * Limit to a specific league.
      */
-    public function scopeInLeague(Builder $query, League|int $league): Builder
+    public function scopeInLeague(Builder $query, PlatformLeague|int $league): Builder
     {
-        $leagueId = $league instanceof League ? $league->id : $league;
+        $leagueId = $league instanceof PlatformLeague ? $league->id : $league;
 
         return $query->where('league_id', $leagueId);
     }

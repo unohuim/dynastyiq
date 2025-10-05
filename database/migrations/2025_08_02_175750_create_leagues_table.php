@@ -11,26 +11,15 @@ return new class extends Migration
      */
     public function up(): void
     {
+
         Schema::create('leagues', function (Blueprint $table) {
             $table->id();
-
-            // Provider
-            $table->enum('platform', ['fantrax', 'yahoo', 'espn'])->index();
-
-            // External league id (unique per platform)
-            $table->string('platform_league_id');
-
-            // Canonical fields
-            $table->string('name');
+            $table->string('name');           // no global UNIQUE (see note below)
             $table->string('sport')->nullable();
-
-            // Sync/audit
             $table->timestamp('synced_at')->nullable();
-
             $table->timestamps();
 
-            // Ensure uniqueness is scoped by platform
-            $table->unique(['platform', 'platform_league_id'], 'uq_platform_league');
+            $table->index('name');            // fast lookups; avoid global uniqueness
         });
 
     }

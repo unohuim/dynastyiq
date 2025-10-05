@@ -11,12 +11,14 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('roles', function (Blueprint $table) {
+
+        Schema::create('roles', function (Blueprint $table): void {
             $table->id();
             $table->string('name')->unique();
             $table->string('slug')->unique();
-            $table->integer('level');
-            $table->boolean('is_active')->default(1);
+            $table->unsignedInteger('level');
+            $table->enum('scope', ['global', 'organization'])->default('organization');
+            $table->boolean('is_active')->default(true);
             $table->timestamps();
         });
     }

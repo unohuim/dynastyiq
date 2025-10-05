@@ -4,16 +4,13 @@ declare(strict_types=1);
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 
 class League extends Model
 {
     protected $fillable = [
-        'platform',
-        'platform_league_id',
         'name',
         'sport',
         'synced_at',
@@ -23,63 +20,66 @@ class League extends Model
         'synced_at' => 'datetime',
     ];
 
-    /**
-     * Teams registered in this league.
-     */
-    public function teams(): HasMany
+    public function organization(): HasOneThrough
     {
-        return $this->hasMany(LeagueTeam::class);
+        return $this->hasOneThrough(
+            Organization::class,
+            OrganizationLeague::class,
+            'league_id',
+            'id',
+            'id',
+            'organization_id'
+        );
     }
 
-    /**
-     * User↔Team assignments within this league.
-     */
-    public function userTeams(): HasMany
+    public function platformLeagues(): BelongsToMany
     {
-        return $this->hasMany(LeagueUserTeam::class);
+        return $this->belongsToMany(
+            PlatformLeague::class,
+            'league_platform_league',
+            'league_id',
+            'platform_league_id'
+        )->withPivot(['linked_at', 'status', 'meta', 'created_at', 'updated_at'])
+         ->withTimestamps();
     }
 
-    /**
-     * Users participating in this league.
-     */
-    public function users(): BelongsToMany
+    public function activePlatformLeague(): ?PlatformLeague
     {
-        return $this->belongsToMany(User::class, 'league_user_teams')
-            ->withPivot(['league_team_id', 'is_active', 'extras', 'synced_at'])
-            ->withTimestamps();
+        return $this->platformLeagues()
+            ->wherePivot('status', 'active')
+            ->orderByPivot('linked_at', 'desc')
+            ->first();
     }
 
-    /**
-     * Scope by platform.
-     */
-    public function scopePlatform(Builder $query, string $platform): Builder
+    public function primaryPlatformLeague(): ?PlatformLeague
     {
-        return $query->where('platform', $platform);
+        $active = $this->activePlatformLeague();
+        if ($active) {
+            return $active;
+        }
+
+        $recent = $this->platformLeagues()
+            ->orderByPivot('linked_at', 'desc')
+            ->first();
+
+        return $recent ?? $this->platformLeagues()->first();
     }
 
-    public function scopeFantrax(Builder $query): Builder
+    public function getPlatformAttribute(): ?string
     {
-        return $query->where('platform', 'fantrax');
+        return $this->primaryPlatformLeague()?->platform;
     }
 
-    public function scopeYahoo(Builder $query): Builder
+    public function getPlatformLeagueIdAttribute(): ?string
     {
-        return $query->where('platform', 'yahoo');
-    }
-
-    public function scopeEspn(Builder $query): Builder
-    {
-        return $query->where('platform', 'espn');
-    }
-
-    public function scopeProviderPair(Builder $query, string $platform, string $platformLeagueId): Builder
-    {
-        return $query->where('platform', $platform)
-            ->where('platform_league_id', $platformLeagueId);
+        return $this->primaryPlatformLeague()?->platform_league_id;
     }
 
     public function getIdentifierAttribute(): string
     {
-        return "{$this->platform}:{$this->platform_league_id}";
+        $platform = $this->platform;
+        $id = $this->platform_league_id;
+
+        return ($platform && $id) ? "{$platform}:{$id}" : '';
     }
 }

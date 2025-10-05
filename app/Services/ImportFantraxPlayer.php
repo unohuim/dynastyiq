@@ -46,8 +46,8 @@ class ImportFantraxPlayer
             ]
         );
 
-        if ($player === null) {
-            Log::info('[Fantrax] Upserted FantraxPlayer without link', ['fantraxId' => $entry['fantraxId']]);
+        if ($player === null && $entry['team'] != "(N/A)") {
+            Log::info('[Fantrax] Upserted FantraxPlayer without link', ['name'=> $entry['name']]);
         }
     }
 
@@ -83,8 +83,10 @@ class ImportFantraxPlayer
             ->where('last_name', $last);
 
         if (!empty($entry['position'])) {
-            $query->where('position', $entry['position']);
+            $first = mb_substr((string)$entry['position'], 0, 1, 'UTF-8');
+            $query->whereRaw('substr(position, 1, 1) = ?', [$first]);
         }
+
         if (!empty($entry['team'])) {
             $query->where('team_abbrev', $entry['team']);
         }

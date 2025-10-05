@@ -14,51 +14,82 @@ class PerspectiveSeeder extends Seeder
     {
         $perspectives = [
 
-            [                
-                'name' => 'General',
-                'slug' => 'general',
+            [
+                'name' => 'Skaters',
+                'slug' => 'skaters',
                 'author_id' => 1,
-                'tenant_id' => 1,
+                'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
                 'settings' => json_encode([
-                    'columns' => [                        
+                    'columns' => [
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
                         ['key' => 'toi', 'label' => 'TOI', 'type' => 'int'],
-                        ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],                        
+                        ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
                         ['key' => 'b', 'label' => 'Blk', 'type' => 'int'],
                         ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
                         ['key' => 'sat', 'label' => 'SAT', 'type' => 'int'],
                         ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
-                        
+
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
                         'sortDirection' => 'desc',
                     ],
                     'filters' => [
-                        'league_abbrev' => [                            
+                        'league_abbrev' => [
                             'value' => 'NHL',
                             'locked' => true,
                         ],
-                        
+
+                    ],
+                ]),
+            ],
+
+            [
+                'name' => 'Goalies',
+                'slug' => 'goalie',
+                'author_id' => 1,
+                'organization_id' => 1,
+                'visibility' => 'public_guest',
+                'sport' => 'hockey',
+                'settings' => json_encode([
+                    'columns' => [
+                        ['key' => 'sa', 'label' => 'SA', 'type' => 'int'],
+                        ['key' => 'sv', 'label' => 'SV', 'type' => 'int'],
+                        ['key' => 'ga', 'label' => 'GA', 'type' => 'int'],
+                        ['key' => 'so', 'label' => 'SO', 'type' => 'int'],
+
+
+                    ],
+                    'sort' => [
+                        'sortKey' => 'sv',
+                        'sortDirection' => 'desc',
+                    ],
+                    'filters' => [
+                        'league_abbrev' => [
+                            'value' => 'NHL',
+                            'locked' => true,
+                        ],
+
                     ],
                 ]),
             ],
 
 
-            [                
+
+            [
                 'name' => 'nhl.com',
                 'slug' => 'nhl',
                 'author_id' => 1,
-                'tenant_id' => 1,
+                'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
                 'is_slicable' => false,
                 'settings' => json_encode([
-                    'columns' => [                        
+                    'columns' => [
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
@@ -85,11 +116,11 @@ class PerspectiveSeeder extends Seeder
                 ]),
             ],
 
-            [                
+            [
                 'name' => 'Standard Yahoo',
                 'slug' => 'yahoo-standard',
                 'author_id' => 1,
-                'tenant_id' => 1,
+                'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
                 'settings' => json_encode([
@@ -118,20 +149,20 @@ class PerspectiveSeeder extends Seeder
                 ]),
             ],
 
-            
-            [                
+
+            [
                 'name' => 'Prospects',
                 'slug' => 'prospects',
                 'author_id' => 1,
-                'tenant_id' => 1,
+                'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
                 'settings' => json_encode([
-                    'columns' => [                        
+                    'columns' => [
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
-                        
+
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
@@ -143,7 +174,7 @@ class PerspectiveSeeder extends Seeder
                             'value' => 'NHL',
                             'locked' => true,
                         ],
-                        
+
                     ],
                 ]),
             ],

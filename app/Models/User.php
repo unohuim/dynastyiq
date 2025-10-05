@@ -1,17 +1,13 @@
 <?php
+// app/Models/User.php
 
 declare(strict_types=1);
 
 namespace App\Models;
 
-use App\Models\League;
-use App\Models\Team;
-use App\Models\LeagueUserTeam;
-use App\Models\RankingProfile;
-use App\Models\IntegrationSecret;
-use App\Models\Role;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -33,7 +29,8 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
-        'tenant_id',
+        'current_team_id',
+        'profile_photo_path',
     ];
 
     /**
@@ -53,7 +50,7 @@ class User extends Authenticatable
         'profile_photo_url',
     ];
 
-    protected function casts(): array
+    public function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
@@ -61,19 +58,30 @@ class User extends Authenticatable
         ];
     }
 
-    /**
-     * Leagues the user participates in (via league_user_teams).
-     */
-    public function leagues(): BelongsToMany
+    // --- Relationships ------------------------------------------------------
+
+    public function organizations(): BelongsToMany
     {
-        return $this->belongsToMany(League::class, 'league_user_teams', 'user_id', 'league_id')
+        return $this->belongsToMany(Organization::class, 'organization_user')
+            ->withPivot(['settings', 'deleted_at'])
+            ->withTimestamps();
+    }
+
+    public function roles(): BelongsToMany
+    {
+        // Includes global roles (organization_id NULL) and org-scoped roles.
+        return $this->belongsToMany(Role::class, 'role_user')
+            ->withPivot(['organization_id'])
+            ->withTimestamps();
+    }
+
+    public function platformLeagues(): BelongsToMany
+    {
+        return $this->belongsToMany(PlatformLeague::class, 'league_user_teams', 'user_id', 'platform_league_id')
             ->withPivot(['team_id', 'is_active', 'extras', 'synced_at'])
             ->withTimestamps();
     }
 
-    /**
-     * Teams the user is assigned to (via league_user_teams).
-     */
     public function teams(): BelongsToMany
     {
         return $this->belongsToMany(Team::class, 'league_user_teams', 'user_id', 'team_id')
@@ -81,9 +89,6 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
-    /**
-     * User↔Team assignment rows.
-     */
     public function leagueUserTeams()
     {
         return $this->hasMany(LeagueUserTeam::class);
@@ -101,30 +106,23 @@ class User extends Authenticatable
             'player_rankings',
             'player_id',
             'ranking_profile_id'
-        )->withPivot(['score', 'description', 'visibility', 'settings'])
+        )
+            ->withPivot(['score', 'description', 'visibility', 'settings'])
             ->withTimestamps();
     }
 
-    /**
-     * Integration secrets belonging to the user.
-     */
     public function integrationSecrets()
     {
         return $this->hasMany(IntegrationSecret::class);
     }
 
-    /**
-     * Get the user's Fantrax secret (if any).
-     */
     public function fantraxSecret()
     {
         return $this->hasOne(IntegrationSecret::class)->where('provider', 'fantrax');
     }
 
-    /**
-     * Check if the user is a commissioner for a given league.
-     * Looks for extras.is_commish=true in league_user_teams.
-     */
+    // --- Domain helpers -----------------------------------------------------
+
     public function isCommissionerForLeague(int $leagueId): bool
     {
         return LeagueUserTeam::query()
@@ -134,10 +132,6 @@ class User extends Authenticatable
             ->exists();
     }
 
-    /**
-     * Check if the user is an admin for a given league.
-     * Looks for extras.is_admin=true in league_user_teams.
-     */
     public function isAdminForLeague(int $leagueId): bool
     {
         return LeagueUserTeam::query()
@@ -147,18 +141,30 @@ class User extends Authenticatable
             ->exists();
     }
 
-    public function roles()
+    public function hasGlobalRole(string $slug): bool
     {
-        return $this->belongsToMany(Role::class, 'role_user');
+        return $this->roles()
+            ->where('roles.slug', $slug)
+            ->where('roles.scope', 'global')
+            ->whereNull('role_user.organization_id')
+            ->exists();
     }
 
-    public function hasRole(string $roleName): bool
+    public function hasOrgRole(string $slug, int $organizationId): bool
     {
-        return $this->roles()->where('slug', $roleName)->exists();
+        return $this->roles()
+            ->where('roles.slug', $slug)
+            ->where('roles.scope', 'organization')
+            ->where('role_user.organization_id', $organizationId)
+            ->exists();
     }
 
-    public function hasAnyRole(array $roleNames): bool
+    public function hasAnyOrgRole(array $slugs, int $organizationId): bool
     {
-        return $this->roles()->whereIn('slug', $roleNames)->exists();
+        return $this->roles()
+            ->whereIn('roles.slug', $slugs)
+            ->where('roles.scope', 'organization')
+            ->where('role_user.organization_id', $organizationId)
+            ->exists();
     }
 }

@@ -1,0 +1,113 @@
+/* range-slider.css */
+.rs {
+    --rs-active: #6366F1;
+    --rs-rail: #e5e7eb;
+    --rs-thumb-size: 14px;
+    --rs-rail-height: 4px;
+
+    font: inherit;
+    color: #111827;
+    user-select: none;
+}
+
+.rs-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.rs-label {
+    font-weight: 600;
+}
+
+.rs-range {
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.rs-body {
+    position: relative;
+    height: 24px;
+    /* enough room for thumbs */
+}
+
+.rs-rail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(50% - var(--rs-rail-height) / 2);
+    height: var(--rs-rail-height);
+    background: var(--rs-rail);
+    border-radius: 999px;
+}
+
+.rs-fill {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: var(--rs-active);
+    border-radius: 999px;
+}
+
+/* native inputs overlayed; keep tracks invisible, only thumbs visible */
+.rs-input {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 100%;
+    width: 100%;
+    background: transparent;
+    margin: 0;
+    pointer-events: none;
+    /* thumbs will still capture */
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+/* hide the native track */
+.rs-input::-webkit-slider-runnable-track {
+    background: transparent;
+    height: var(--rs-rail-height);
+}
+
+.rs-input::-moz-range-track {
+    background: transparent;
+    height: var(--rs-rail-height);
+}
+
+/* thumbs */
+.rs-input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    pointer-events: auto;
+    /* re-enable for thumb */
+    width: var(--rs-thumb-size);
+    height: var(--rs-thumb-size);
+    border-radius: 50%;
+    background: var(--rs-active);
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .08);
+}
+
+.rs-input::-moz-range-thumb {
+    pointer-events: auto;
+    width: var(--rs-thumb-size);
+    height: var(--rs-thumb-size);
+    border-radius: 50%;
+    background: var(--rs-active);
+    border: 2px solid white;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .08);
+}
+
+/* focus ring */
+.rs-input:focus-visible::-webkit-slider-thumb {
+    outline: 2px solid #4338CA;
+    outline-offset: 2px;
+}
+
+.rs-input:focus-visible::-moz-range-thumb {
+    outline: 2px solid #4338CA;
+    outline-offset: 2px;
+}

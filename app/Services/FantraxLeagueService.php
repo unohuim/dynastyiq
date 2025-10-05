@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\League;
-use App\Models\Team;
+use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use App\Events\FantraxLeagueCreated;
+use App\Events\FantraxLeagueUpdated;
 
 class FantraxLeagueService
 {
@@ -29,13 +31,14 @@ class FantraxLeagueService
         $now = now();
 
         foreach ($leagues as $payload) {
-            $league = null;
+            $platformLeague = null;
             $team   = null;
 
             // 1) League + Team inside a small transaction
-            DB::transaction(function () use ($payload, $now, &$league, &$team): void {
+            DB::transaction(function () use ($payload, $now, &$platformLeague, &$team): void {
                 // League (unique: platform + platform_league_id)
-                $league = League::updateOrCreate(
+
+                $platformLeague = PlatformLeague::updateOrCreate(
                     [
                         'platform'           => 'fantrax',
                         'platform_league_id' => (string) ($payload['leagueId'] ?? ''),
@@ -47,10 +50,11 @@ class FantraxLeagueService
                     ]
                 );
 
+
                 // Team (unique: league_id + platform_team_id)
-                $team = Team::updateOrCreate(
+                $team = PlatformTeam::updateOrCreate(
                     [
-                        'league_id'        => $league->id,
+                        'platform_league_id'        => $platformLeague->id,
                         'platform_team_id' => (string) ($payload['teamId'] ?? ''),
                     ],
                     [
@@ -61,11 +65,28 @@ class FantraxLeagueService
                 );
             });
 
+
+
+            // Fire only after the transaction above has committed
+            if ($platformLeague?->wasRecentlyCreated) {
+                DB::afterCommit(function () use ($platformLeague): void {
+                    event(new FantraxLeagueCreated($platformLeague->id));
+                });
+
+            }
+            // elseif ($platformLeague?->wasChanged()) {
+            //     DB::afterCommit(function () use ($platformLeague): void {
+            //         event(new FantraxLeagueUpdated($platformLeague->id));
+            //     });
+
+            // }
+
+
             // 2) User ↔ Team assignment outside txn (so failures don't roll back league/team)
-            if ($league && $team) {
+            if ($platformLeague && $team) {
                 $keys = [
                     'user_id'   => $user->id,
-                    'league_id' => $league->id,
+                    'platform_league_id' => $platformLeague->id,
                 ];
 
                 $pivot = [
@@ -83,5 +104,6 @@ class FantraxLeagueService
                 }
             }
         }
+
     }
 }

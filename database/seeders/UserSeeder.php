@@ -2,18 +2,18 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use Carbon\Carbon;
-use Illuminate\Support\Facades\Hash;
-use App\Models\User;
-use App\Models\RankingProfile;
 use App\Models\Organization;
+use App\Models\RankingProfile;
+use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        // Add more entries as needed; org is created/updated first, then user.
         $rows = [
             [
                 'user' => [
@@ -21,7 +21,7 @@ class UserSeeder extends Seeder
                     'email'    => 'robert@woofs.ca',
                     'password' => 'password',
                 ],
-                'org'  => [
+                'org' => [
                     'short_name' => 'Uno',
                     'name'       => 'Unohuim org',
                 ],
@@ -29,30 +29,43 @@ class UserSeeder extends Seeder
         ];
 
         foreach ($rows as $row) {
-            // 1) Ensure Organization exists (idempotent)
+            $slug = Str::slug($row['org']['short_name'] ?? $row['org']['name']);
+
+            // 1) Ensure Organization exists (by slug)
             $org = Organization::updateOrCreate(
-                ['short_name' => $row['org']['short_name']],
-                ['name' => $row['org']['name']]
+                ['slug' => $slug],
+                [
+                    'name'       => $row['org']['name'],
+                    'short_name' => $row['org']['short_name'] ?? null,
+                ]
             );
 
-            // 2) Create/Update User with tenant_id = org id (idempotent by email)
+            // 2) Create/Update User (idempotent by email)
             $user = User::updateOrCreate(
                 ['email' => $row['user']['email']],
                 [
                     'name'              => $row['user']['name'],
                     'password'          => Hash::make($row['user']['password']),
-                    'tenant_id'         => $org->id,
                     'email_verified_at' => Carbon::now(),
                 ]
             );
 
-            // 3) Ensure a default Ranking Profile per user/tenant
+            // 3) Ensure membership (organization_user pivot)
+            $user->organizations()->syncWithoutDetaching([$org->id => ['settings' => null]]);
+
+            // 4) Optionally set org owner if none
+            if (empty($org->owner_user_id)) {
+                $org->owner_user_id = $user->id;
+                $org->save();
+            }
+
+            // 5) Ensure a default Ranking Profile per user/org
             RankingProfile::firstOrCreate([
-                'name'       => 'Default Ranking Profile',
-                'author_id'  => $user->id,
-                'tenant_id'  => $org->id,
-                'visibility' => 'private',
-                'sport'      => 'hockey',
+                'name'             => 'Default Ranking Profile',
+                'author_id'        => $user->id,
+                'organization_id'  => $org->id,      // renamed from tenant_id
+                'visibility'       => 'private',
+                'sport'            => 'hockey',
             ]);
         }
     }

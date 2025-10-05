@@ -5,6 +5,8 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
+use App\Models\User;
 
 
 class AppServiceProvider extends ServiceProvider
@@ -22,6 +24,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Blade::component('card-section', \App\View\Components\CardSection::class);
+
+
+        //Gates
+        Gate::define('view-nav-communities', function (User $user) {
+            return $user->organizations()
+                ->whereNotNull('organizations.settings')
+                ->exists();
+        });
+
+
         // Socialite: extend with Discord provider
         Event::listen(function (\SocialiteProviders\Manager\SocialiteWasCalled $event) {
             $event->extendSocialite('discord', \SocialiteProviders\Discord\Provider::class);

@@ -25,7 +25,7 @@ return new class extends Migration
                   ->constrained('users')
                   ->nullOnDelete();
 
-            $table->foreignId('tenant_id')
+            $table->foreignId('organization_id')
                   ->nullable()
                   ->constrained('organizations')
                   ->nullOnDelete();

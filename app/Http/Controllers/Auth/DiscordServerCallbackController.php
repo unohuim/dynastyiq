@@ -12,90 +12,139 @@ use Illuminate\Support\Facades\Http;
 
 class DiscordServerCallbackController extends Controller
 {
+    // GET /auth/discord-server/callback
     public function __invoke(Request $request)
     {
-        $code  = $request->get('code');
-        $error = $request->get('error');
+        $code  = (string) $request->query('code', '');
+        $state = (string) $request->query('state', '');
+        $error = (string) $request->query('error', '');
 
-        if ($error || !$code) {
-            return redirect()->route('dashboard')
-                ->with('error', 'Discord server authorization failed.');
+        if ($error || $code === '' || $state === '') {
+            return redirect()->route('communities.index')->with('error', 'Discord authorization failed.');
         }
 
-        // 1) Exchange the code for a token
-        $tokenResp = Http::asForm()->post('https://discord.com/api/oauth2/token', [
+        // org context from encrypted state
+        try {
+            $payload = decrypt($state);
+            $orgId   = (int) ($payload['org_id'] ?? 0);
+        } catch (\Throwable $e) {
+            return redirect()->route('communities.index')->with('error', 'Invalid state.');
+        }
+        $org = Organization::find($orgId);
+        if (! $org) {
+            return redirect()->route('communities.index')->with('error', 'Organization not found.');
+        }
+
+        // app-side guard: admin (level >= 10) for this org
+        /** @var \App\Models\User $user */
+        $user = Auth::user();
+        $maxLevel = (int) $user->roles()->wherePivot('organization_id', $org->id)->max('level');
+        if ($maxLevel < 10) {
+            return redirect()->route('communities.index')->with('error', 'Not authorized.');
+        }
+
+        // Exchange code → token
+        $token = Http::asForm()->post('https://discord.com/api/oauth2/token', [
             'client_id'     => config('services.discord.client_id'),
             'client_secret' => config('services.discord.client_secret'),
             'grant_type'    => 'authorization_code',
             'code'          => $code,
             'redirect_uri'  => route('discord-server.callback'),
+        ])->throw()->json('access_token');
+
+        // Who authorized?
+        $me = Http::withToken($token)->get('https://discord.com/api/oauth2/@me')->throw()->json();
+        $discordUserId = (string) data_get($me, 'user.id', '');
+
+        // Guilds user can manage
+        $guilds = Http::withToken($token)->get('https://discord.com/api/users/@me/guilds')->throw()->json();
+
+
+        $eligible = collect($guilds)->filter(function ($g) {
+            $perm = (int) ($g['permissions'] ?? 0);
+            return ($g['owner'] ?? false) || ($perm & 0x20) || ($perm & 0x8);
+        })->map(fn ($g) => [
+            'id'          => (string) $g['id'],
+            'name'        => (string) ($g['name'] ?? 'Unknown Server'),
+            'permissions' => (string) ($g['permissions'] ?? '0'),
+            'icon'        => (string) ($g['icon'] ?? ''), // <-- add this
+        ])->values()->all();
+
+
+
+        if (empty($eligible)) {
+            return redirect()->route('communities.index')->with('error', 'No eligible servers found.');
+        }
+
+        // stash for attach step and show picker
+        session([
+            'discord.connect.org_id'  => $org->id,
+            'discord.connect.user_id' => $discordUserId,
+            'discord.connect.guilds'  => $eligible,
         ]);
 
-        if (! $tokenResp->ok()) {
-            return redirect()->route('dashboard')
-                ->with('error', 'Failed to exchange code with Discord.');
+        return view('discord.choose-guild', [
+            'organization' => $org,
+            'guilds'       => $eligible,
+        ]);
+    }
+
+    // POST /auth/discord-server/attach
+    public function attach(Request $request)
+    {
+        $validated = $request->validate([
+            'guild_ids'   => 'required|array|min:1',
+            'guild_ids.*' => 'string',
+        ]);
+
+        $orgId   = (int) session('discord.connect.org_id', 0);
+        $userId  = (string) session('discord.connect.user_id', '');
+        $allowed = collect((array) session('discord.connect.guilds', []));
+
+        $org = Organization::find($orgId);
+        if (! $org) {
+            return redirect()->route('communities.index')->with('error', 'Organization not found.');
         }
 
-        $oauth = $tokenResp->json();
-
-        // 2) Read install context from querystring
-        $guildId     = (string) $request->get('guild_id');     // present on bot OAuth
-        $permissions = (string) $request->get('permissions');  // permissions integer as string
-        $guildName   = (string) $request->get('guild_name', ''); // sometimes not sent
-
-        if (empty($guildId)) {
-            return redirect()->route('dashboard')
-                ->with('error', 'Missing guild information from Discord.');
-        }
-
-        // 3) (Optional) Identify who installed it (Discord user id)
-        $installedBy = null;
-        if (!empty($oauth['access_token'])) {
-            $me = Http::withToken($oauth['access_token'])->get('https://discord.com/api/oauth2/@me');
-            if ($me->ok()) {
-                $installedBy = data_get($me->json(), 'user.id');
-            }
-        }
-
-        // 4) Resolve current organization (requires authenticated user)
+        /** @var \App\Models\User $user */
         $user = Auth::user();
-        $org  = $user?->organization ?? (isset($user->tenant_id) ? Organization::find($user->tenant_id) : null);
-
-        if (!$org) {
-            return redirect()->route('dashboard')
-                ->with('error', 'No organization context found for this install.');
+        $maxLevel = (int) $user->roles()->wherePivot('organization_id', $org->id)->max('level');
+        if ($maxLevel < 10) {
+            return redirect()->route('communities.index')->with('error', 'Not authorized.');
         }
 
-        // 5) Upsert DiscordServer and link via pivot discord_organizations
-        DB::transaction(function () use ($org, $guildId, $guildName, $installedBy, $permissions, $oauth) {
-            // Upsert into discord_servers (one row per guild)
-            $server = DiscordServer::updateOrCreate(
-                ['discord_guild_id' => $guildId],
-                [
-                    'organization_id'              => $org->id, // ensures ownership; if moving guilds, unique will enforce one-org-per-server
-                    'discord_guild_name'           => $guildName ?: ('Discord Guild ' . $guildId),
-                    'installed_by_discord_user_id' => $installedBy,
-                    'access_token'                 => $oauth['access_token']   ?? null,
-                    'refresh_token'                => $oauth['refresh_token']  ?? null,
-                    'token_expires_at'             => isset($oauth['expires_in']) ? now()->addSeconds((int) $oauth['expires_in']) : null,
-                    'granted_permissions'          => $permissions,
-                ]
-            );
+        // Keep only selections that were actually authorized by Discord in the prior step
+        $selected = collect($validated['guild_ids'])->unique()->map(function ($id) use ($allowed) {
+            return $allowed->firstWhere('id', (string) $id);
+        })->filter()->values();
 
-            // Ensure pivot link exists (one org↔many servers; one server→one org)
-            DB::table('discord_organizations')->updateOrInsert(
-                ['discord_server_id' => $server->id],
-                [
-                    'organization_id' => $org->id,
-                    'linked_at'       => now(),
-                    'meta'            => null,
-                    'created_at'      => now(),
-                    'updated_at'      => now(),
-                ]
-            );
+        if ($selected->isEmpty()) {
+            return redirect()->route('communities.index')->with('error', 'Invalid selection.');
+        }
+
+        DB::transaction(function () use ($org, $selected, $userId) {
+            foreach ($selected as $g) {
+                DiscordServer::updateOrCreate(
+                    ['discord_guild_id' => $g['id']],
+                    [
+                        'organization_id'              => $org->id,
+                        'discord_guild_name'           => $g['name'],
+                        'installed_by_discord_user_id' => $userId,
+                        'granted_permissions'          => (string) ($g['permissions'] ?? '0'),
+                        'meta'                         => ['icon' => $g['icon'] ?? null], // <-- save icon
+                    ]
+                );
+            }
         });
 
-        return redirect()->route('dashboard')
-            ->with('success', 'DynastyIQ bot connected to your server!');
+        // clear session
+        session()->forget([
+            'discord.connect.org_id',
+            'discord.connect.user_id',
+            'discord.connect.guilds',
+        ]);
+
+        return redirect()->route('communities.index')->with('success', $selected->count().' server(s) connected.');
     }
+
 }

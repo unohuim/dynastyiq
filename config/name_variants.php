@@ -31,6 +31,9 @@ return [
         'nicholas'    => ['Nicholas', 'Nick', 'Nicky'],
         'john'        => ['John', 'Johnny', 'Jack'],
         'roderick'    => ['Roderick', 'Rod'],
+        'mack'        => ['Macklin', 'Mac', 'McDonald', 'MacDonald'],
+        'mac'         => ['Macklin', 'Mack', 'McDonald', 'MacDonald'],
+        'macklin'     => ['Mack'],
     ],
 
 ];
