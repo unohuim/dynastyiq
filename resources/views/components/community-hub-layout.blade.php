@@ -7,9 +7,6 @@
     $active = $activeId ?? null;
 @endphp
 
-@once
-  @vite('resources/js/community-hub.js')
-@endonce
 
 <x-app-layout>
     <div class="py-6 px-4 sm:px-6 lg:px-8"
