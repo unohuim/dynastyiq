@@ -84,10 +84,13 @@ class SumNHLPlayByPlay
 
                 // Shots on goal (include goals as SOG)
                 $isSOG = fn ($p) => in_array($p->type_desc_key, ['shot-on-goal', 'goal'], true);
-                $sog   = $playerPlays->filter(fn ($p) => $p->shooting_player_id == $playerId && $isSOG($p))->count();
-                $ppsog = $pp()->filter(fn ($p) => $p->shooting_player_id == $playerId && $isSOG($p))->count();
-                $evsog = $ev()->filter(fn ($p) => $p->shooting_player_id == $playerId && $isSOG($p))->count();
-                $pksog = $pk()->filter(fn ($p) => $p->shooting_player_id == $playerId && $isSOG($p))->count();
+                $isShooter = fn ($p) => (int) ($p->shooting_player_id ?? $p->scoring_player_id ?? 0) === (int) $playerId;
+
+                $sog   = $playerPlays->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $ppsog = $pp()->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $evsog = $ev()->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $pksog = $pk()->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+
 
                 // Missed shots
                 $sm   = $playerPlays->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
@@ -221,7 +224,7 @@ class SumNHLPlayByPlay
                     'psg'    => (int) ($psgByPlayer[(int)$playerId] ?? 0),
 
                     'fg'  => (int) ((int)$playerId === (int)$firstGoalPid), // first goal of the game
-                    'htk' => (int) ($g >= 3), 
+                    'htk' => (int) ($g >= 3),
 
                     // Empty net
                     'ens' => (int) $ens,
