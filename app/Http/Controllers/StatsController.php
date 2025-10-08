@@ -408,65 +408,93 @@ class StatsController extends BaseController
     /**
      * Assemble rows grouped by player, summing totals.
      */
-    private function assembleRowsFromCollection(Collection $collection, array $columns, string $slice, bool $canSlice, string $mode): Collection
-    {
+    private function assembleRowsFromCollection(
+        Collection $collection,
+        array $columns,
+        string $slice,
+        bool $canSlice,
+        string $mode
+    ): Collection {
         $rows = collect();
 
-        $grouped = $collection->groupBy(function ($row) {
-            return $row->player_id ?? $row->nhl_player_id;
-        });
+        $grouped = $collection->groupBy(fn ($row) => $row->player_id ?? $row->nhl_player_id);
 
         foreach ($grouped as $playerStats) {
             $entry  = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
             $player = $entry->player;
+            $isSeason = ($mode === 'season');
 
             $contract        = $player?->contracts()->exists() ? $player->contracts()->first() : null;
             $contractSeason  = $contract?->seasons->last();
             $contractLastLbl = $contractSeason?->label ?? '';
-            $contractAavRaw  = is_numeric($contractSeason?->aav) ? (float) $contractSeason->aav : 0.0;   // dollars
-            $contractAavM    = $contractAavRaw > 0 ? $contractAavRaw / 1_000_000 : 0.0;                  // millions
-
+            $contractAavRaw  = is_numeric($contractSeason?->aav) ? (float) $contractSeason->aav : 0.0;
+            $contractAavM    = $contractAavRaw > 0 ? $contractAavRaw / 1_000_000 : 0.0;
             $contractAav     = $contractAavRaw > 0 ? '$' . number_format($contractAavM, 3) . 'm' : '$0.000m';
             $lastYearNum     = $this->parseContractLastYear($contractLastLbl);
 
-            $gpSum = ($mode === 'range')
-                ? $playerStats->pluck('nhl_game_id')->unique()->count()
-                : (int) $playerStats->sum('gp');
+            // GP and TOI (normalize to seconds -> minutes)
+            if ($isSeason) {
+                $gpSum = (int) ($entry->gp ?? 0);
 
-            $toiMin = 0.0;
-            if ($playerStats->sum('toi_minutes') > 0) {
-                $toiMin = (float) $playerStats->sum('toi_minutes');
-            } elseif ($playerStats->sum('toi') > 0) {
-                $toi = (float) $playerStats->sum('toi');
-                $toiMin = $toi > 4000 ? $toi / 60.0 : $toi;
+                $toiSec = 0.0;
+                if (isset($entry->toi_minutes) && is_numeric($entry->toi_minutes)) {
+                    // On nhl_season_stats this is SECONDS
+                    $toiSec = (float) $entry->toi_minutes;
+                } elseif (isset($entry->toi) && is_numeric($entry->toi)) {
+                    $v = (float) $entry->toi;
+                    $toiSec = $v > 4000 ? $v : $v * 60.0;
+                }
+            } else {
+                $gpSum = ($mode === 'range')
+                    ? $playerStats->pluck('nhl_game_id')->unique()->count()
+                    : (int) $playerStats->sum('gp');
+
+                $toiSec = 0.0;
+                if ($playerStats->sum('toi_seconds') > 0) {
+                    $toiSec = (float) $playerStats->sum('toi_seconds');
+                } elseif ($playerStats->sum('toi_minutes') > 0) {
+                    $v = (float) $playerStats->sum('toi_minutes');
+                    $toiSec = $v > 4000 ? $v : $v * 60.0;
+                } elseif ($playerStats->sum('toi') > 0) {
+                    $v = (float) $playerStats->sum('toi');
+                    $toiSec = $v > 4000 ? $v : $v * 60.0;
+                }
             }
+            $toiMin = $toiSec / 60.0;
 
             $row = [
-                'name'                    => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
-                'age'                     => $this->playerAge($player),
-                'team'                    => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
-                'pos_type'                => $player?->pos_type,
-                'contract_value'          => $contractAav,      // formatted e.g. $6.250m
-                'contract_value_num'      => round($contractAavM, 3),     // numeric, in millions
-                'contract_last_year'      => $contractLastLbl,  // label e.g. "2027-28"
-                'contract_last_year_num'  => $lastYearNum,      // numeric, e.g. 2028
-                'gp'                      => max(0, $gpSum),
+                'name'                   => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
+                'age'                    => $this->playerAge($player),
+                'team'                   => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
+                'pos_type'               => $player?->pos_type,
+                'contract_value'         => $contractAav,
+                'contract_value_num'     => round($contractAavM, 3),
+                'contract_last_year'     => $contractLastLbl,
+                'contract_last_year_num' => $lastYearNum,
+                'gp'                     => max(0, $gpSum),
             ];
 
             foreach ($columns as $col) {
                 $key = $col['key'] ?? null;
-                if (!$key || $key === 'gp') continue;
+                if (!$key || $key === 'gp') {
+                    continue;
+                }
 
-                $total = (float) $playerStats->sum($key);
-
-                if ($canSlice && $slice !== 'total') {
-                    if ($slice === 'pgp') {
-                        $row[$key] = $gpSum > 0 ? round($total / $gpSum, 2) : 0.0;
-                    } elseif ($slice === 'p60') {
-                        $row[$key] = $toiMin > 0 ? round($total / ($toiMin / 60.0), 2) : 0.0;
-                    }
+                if ($isSeason) {
+                    // Use mapped season rate fields when slicing
+                    $val = $this->getStatValue($entry, $key, $canSlice ? $slice : 'total');
+                    $row[$key] = is_numeric($val) ? (float) $val : 0.0;
                 } else {
-                    $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
+                    $total = (float) $playerStats->sum($key);
+                    if ($canSlice && $slice !== 'total') {
+                        if ($slice === 'pgp') {
+                            $row[$key] = $gpSum > 0 ? round($total / $gpSum, 2) : 0.0;
+                        } elseif ($slice === 'p60') {
+                            $row[$key] = $toiMin > 0 ? round($total / ($toiMin / 60.0), 2) : 0.0;
+                        }
+                    } else {
+                        $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
+                    }
                 }
             }
 
@@ -475,6 +503,8 @@ class StatsController extends BaseController
 
         return $rows;
     }
+
+
 
 
 
@@ -825,7 +855,7 @@ class StatsController extends BaseController
     }
 
 
-    
+
 
     /**
      * Compute age bounds for the active dataset without DB-specific functions.
