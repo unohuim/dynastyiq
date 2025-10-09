@@ -35,7 +35,7 @@ const formatAAV = (val) => {
     }
     if (n == null) return "";
     if (n > 1000) n = n / 1e6;
-    return `$${n.toFixed(3)}`;
+    return `$${n.toFixed(1)}`;
 };
 
 // Persist filters per-container across re-renders
