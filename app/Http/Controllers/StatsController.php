@@ -80,9 +80,22 @@ class StatsController extends BaseController
         ]);
     }
 
+
+
+    // helper (place once in the controller)
+    private function formatTimeOnIce(int $seconds): string
+    {
+        $m = intdiv($seconds, 60);
+        $s = $seconds % 60;
+        return sprintf('%d:%02d', $m, $s);
+    }
+
+
+
     /** ───────────────────────────── API (AJAX) ───────────────────────────── */
     public function payload(Request $request)
     {
+        \Log::info('pre validate request: ', ['request'=>$request]);
         $request->validate([
             'perspectiveId' => 'nullable|integer|exists:perspectives,id',
             'perspective'   => 'nullable|string',
@@ -95,6 +108,8 @@ class StatsController extends BaseController
             'from'          => 'nullable|date',
             'to'            => 'nullable|date',
         ]);
+
+        \Log::info('post validate request: ', ['request'=>$request]);
 
         $user = $request->user();
 
@@ -111,12 +126,15 @@ class StatsController extends BaseController
                 ->firstOrFail();
         }
 
+        \Log::info('api request: ', ['request'=>$request]);
         $season         = $request->input('season_id', $request->input('season'));
         $sliceParam     = $request->input('slice', 'total');
         $gameType       = (int) $request->input('game_type', 2);
         $period         = (string) $request->input('period', 'season');
         $canSlice       = (bool)($perspective->is_slicable ?? true);
         $effectiveSlice = $canSlice ? $sliceParam : 'total';
+
+
 
         if ($period === 'season') {
             [$payload] = $this->buildAndFormatPlayersPayload(
@@ -379,49 +397,49 @@ class StatsController extends BaseController
         $grouped = $collection->groupBy(fn ($row) => $row->player_id ?? $row->nhl_player_id);
 
         foreach ($grouped as $playerStats) {
-            $entry   = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
-            $player  = $entry->player;
+            $entry    = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
+            $player   = $entry->player;
             $isSeason = ($mode === 'season');
 
             $contract        = $player?->contracts()->exists() ? $player->contracts()->first() : null;
             $contractSeason  = $contract?->seasons->last();
             $contractLastLbl = $contractSeason?->label ?? '';
             $contractAavRaw  = is_numeric($contractSeason?->aav) ? (float) $contractSeason->aav : 0.0;
+
             $contractAavM    = $contractAavRaw > 0 ? $contractAavRaw / 1_000_000 : 0.0;
-            $contractAav     = $contractAavRaw > 0 ? '$' . number_format($contractAavM, 3) . 'm' : '$0.000m';
+            $contractAav     = $contractAavRaw > 0 ? '$' . number_format($contractAavM, 1) . 'm' : '$0.0m';
+
             $lastYearNum     = $this->parseContractLastYear($contractLastLbl);
 
-            // GP & TOI (normalize to seconds, then minutes)
+            // GP & TOI (normalize to INT seconds first)
             if ($isSeason) {
                 $gpSum = (int) ($entry->gp ?? 0);
 
-                $toiSec = 0.0;
+                $toiSec = 0;
                 if (isset($entry->toi_seconds) && is_numeric($entry->toi_seconds)) {
-                    $toiSec = (float)$entry->toi_seconds;
+                    $toiSec = (int) $entry->toi_seconds;
                 } elseif (isset($entry->toi) && is_numeric($entry->toi)) {
-                    $toiSec = (float)$entry->toi; // your schema
+                    $toiSec = (int) $entry->toi; // seconds in your schema
                 } elseif (isset($entry->toi_minutes) && is_numeric($entry->toi_minutes)) {
-                    $v = (float)$entry->toi_minutes;
-                    $toiSec = ($v > 4000) ? $v : $v * 60.0; // tolerate misnamed data
+                    $v = (float) $entry->toi_minutes;
+                    $toiSec = (int) (($v > 4000) ? $v : $v * 60.0);
                 }
-                $toiMin = $toiSec / 60.0;
             } else {
                 $gpSum = ($mode === 'range')
-                    ? $playerStats->pluck('nhl_game_id')->unique()->count()
+                    ? (int) $playerStats->pluck('nhl_game_id')->unique()->count()
                     : (int) $playerStats->sum('gp');
 
-                $toiSec = 0.0;
-                if ($playerStats->sum('toi_seconds') > 0) {
-                    $toiSec = (float) $playerStats->sum('toi_seconds');
-                } elseif ($playerStats->sum('toi_minutes') > 0) {
-                    $v = (float) $playerStats->sum('toi_minutes');
-                    $toiSec = $v > 4000 ? $v : $v * 60.0;
-                } elseif ($playerStats->sum('toi') > 0) {
-                    $v = (float) $playerStats->sum('toi');
-                    $toiSec = $v > 4000 ? $v : $v * 60.0;
+                $toiSec = 0;
+                if (($sum = (int) $playerStats->sum('toi_seconds')) > 0) {
+                    $toiSec = $sum;
+                } elseif (($sum = (float) $playerStats->sum('toi_minutes')) > 0) {
+                    $toiSec = (int) (($sum > 4000) ? $sum : $sum * 60.0);
+                } elseif (($sum = (float) $playerStats->sum('toi')) > 0) {
+                    $toiSec = (int) (($sum > 4000) ? $sum : $sum * 60.0);
                 }
             }
-            $toiMin = $toiSec / 60.0;
+
+            $toiPerGameSec = ($gpSum > 0) ? (int) floor($toiSec / $gpSum) : 0;
 
             $row = [
                 'name'                   => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
@@ -429,30 +447,36 @@ class StatsController extends BaseController
                 'team'                   => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
                 'pos_type'               => $player?->pos_type,
                 'contract_value'         => $contractAav,
-                'contract_value_num'     => round($contractAavM, 3),
+                'contract_value_num'     => round($contractAavM, 1),
                 'contract_last_year'     => $contractLastLbl,
                 'contract_last_year_num' => $lastYearNum,
                 'gp'                     => max(0, $gpSum),
+
+                // TOI immediately after GP
+                'toi_seconds'            => $toiPerGameSec,
+                'toi'                    => $this->formatTimeOnIce($toiPerGameSec),
             ];
 
             foreach ($columns as $col) {
                 $key = $col['key'] ?? null;
-                if (!$key || $key === 'gp') continue;
+                if (!$key || $key === 'gp' || $key === 'toi' || $key === 'toi_seconds') {
+                    continue;
+                }
 
-                if ($isSeason) {
-                    $val = $this->getStatValue($entry, $key, $canSlice ? $slice : 'total');
-                    $row[$key] = is_numeric($val) ? (float) $val : 0.0;
-                } else {
-                    $total = (float) $playerStats->sum($key);
-                    if ($canSlice && $slice !== 'total') {
-                        if ($slice === 'pgp') {
-                            $row[$key] = $gpSum > 0 ? round($total / $gpSum, 2) : 0.0;
-                        } elseif ($slice === 'p60') {
-                            $row[$key] = $toiMin > 0 ? round($total / ($toiMin / 60.0), 2) : 0.0;
-                        }
-                    } else {
-                        $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
+                // total for this key
+                $total = $isSeason
+                    ? (float) ($entry->{$key} ?? 0)
+                    : (float) $playerStats->sum($key);
+
+                if ($canSlice && $slice !== 'total') {
+                    if ($slice === 'pgp') {
+                        $row[$key] = $gpSum > 0 ? round($total / $gpSum, 2) : 0.0;
+                    } elseif ($slice === 'p60') {
+                        // use INT seconds, convert to hours
+                        $row[$key] = $toiSec > 0 ? round($total / ($toiSec / 3600), 2) : 0.0;
                     }
+                } else {
+                    $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
                 }
             }
 
@@ -596,29 +620,28 @@ class StatsController extends BaseController
     {
         $table = $base->getModel()->getTable();
 
-        // ---- Join players as `pf` so we can filter by team/pos/age everywhere
+        // Join players as `pf` so we can filter by team/pos/age everywhere.
         if ($table === 'stats') {
             $base->leftJoin('players as pf', 'pf.id', '=', "{$table}.player_id");
-        } else {
-            // nhl_season_stats / nhl_game_summaries
+        } else { // nhl_season_stats / nhl_game_summaries
             $base->leftJoin('players as pf', 'pf.nhl_id', '=', "{$table}.nhl_player_id");
         }
 
-        // ---- Base schema (always available)
+        // Base schema (always available in the UI)
         $schema = [
-            ['key' => 'age',  'label' => 'Age',      'type' => 'int',   'bounds' => $this->ageBoundsForBase($base)],
-            ['key' => 'team', 'label' => 'Team',     'type' => 'enum',  'options' => $this->teamOptionsForBase($base)],
-            ['key' => 'pos',  'label' => 'Position', 'type' => 'enum',  'options' => $this->positionOptionsForBase($base)],
+            ['key' => 'age',  'label' => 'Age',      'type' => 'int',  'bounds' => $this->ageBoundsForBase($base)],
+            ['key' => 'team', 'label' => 'Team',     'type' => 'enum', 'options' => $this->teamOptionsForBase($base)],
+            ['key' => 'pos',  'label' => 'Position', 'type' => 'enum', 'options' => $this->positionOptionsForBase($base)],
         ];
 
-        // ---- Perspective numeric columns -> add with bounds
+        // Perspective numeric columns -> add with bounds
         foreach ($columns as $col) {
             $key = $col['key'] ?? null;
             if (!$key || in_array($key, ['name','age','team','contract_value','gp'], true)) {
                 continue;
             }
 
-            $b = $this->bounds($base, $key); // vendor-neutral min/max
+            $b = $this->bounds($base, $key);
             $schema[] = [
                 'key'    => $key,
                 'label'  => $col['label'] ?? \Illuminate\Support\Str::title(str_replace('_',' ', $key)),
@@ -628,8 +651,8 @@ class StatsController extends BaseController
             ];
         }
 
-        // ---- Expose GP slider only for tables that physically have it
-        if (in_array($table, ['stats', 'nhl_season_stats'], true)) {
+        // Expose GP slider only for tables that physically have it.
+        if (\Illuminate\Support\Facades\Schema::hasColumn($table, 'gp')) {
             $schema[] = [
                 'key'    => 'gp',
                 'label'  => 'GP',
@@ -639,24 +662,29 @@ class StatsController extends BaseController
             ];
         }
 
-        // ---- Whitelist of *physical* numeric keys we can safely filter on
-        // (no virtual UI fields like contract_value_num, etc.)
-        $physicalNumeric = collect($schema)
-            ->filter(fn ($s) => strtolower($s['type'] ?? '') === 'number' && !empty($s['key']))
-            ->pluck('key')
-            ->flip(); // for O(1) lookup: isset($physicalNumeric[$key])
+        // Derived/virtual numeric keys that must NOT be pushed to SQL in the generic pass.
+        $virtualOrDerived = ['age', 'contract_value_num', 'contract_last_year_num'];
 
-        // ---- Collect what we applied (for UI)
+        // Whitelist of physical numeric keys we can safely filter on.
+        $physicalNumeric = collect($schema)
+            ->filter(function ($s) use ($virtualOrDerived) {
+                return strtolower($s['type'] ?? '') === 'number'
+                    && !empty($s['key'])
+                    && !in_array($s['key'], $virtualOrDerived, true);
+            })
+            ->pluck('key')
+            ->flip(); // O(1) lookup
+
+        // Echo back what was applied (for UI hydration)
         $applied = [
             'filters'  => [],
             'pos'      => array_values(array_filter((array)($request?->query('pos', []) ?? []), 'strlen')),
             'pos_type' => array_values(array_filter((array)($request?->query('pos_type', []) ?? []), 'strlen')),
         ];
 
-        // ---- Discrete filters on pf.*
+        // pos_type / pos filters (on pf.*)
         if (!empty($applied['pos_type'])) {
             $base->whereIn('pf.pos_type', $applied['pos_type']);
-            // If user picked G, lock position to G as well
             if (in_array('G', array_map('strtoupper', $applied['pos_type']), true)) {
                 $base->where('pf.position', 'G');
             }
@@ -664,7 +692,6 @@ class StatsController extends BaseController
 
         if (!empty($applied['pos'])) {
             $posU = array_map('strtoupper', $applied['pos']);
-            // If any non-G is selected, drop G from the list
             if (array_diff($posU, ['G'])) {
                 $posU = array_values(array_diff($posU, ['G']));
             }
@@ -684,12 +711,12 @@ class StatsController extends BaseController
             $applied['filters']['team'] = $teams;
         }
 
-        // ---- Age range -> pf.dob range (DB-agnostic)
+        // Age min/max -> pf.dob range (DB-agnostic)
         $ageMin = $request?->query('age_min');
         $ageMax = $request?->query('age_max');
         if ($ageMin !== null || $ageMax !== null) {
-            $today = \Illuminate\Support\Carbon::today();
-            $youngestDob = $ageMin !== null ? $today->copy()->subYears((int)$ageMin)->toDateString() : null;             // newest DOB
+            $today       = \Illuminate\Support\Carbon::today();
+            $youngestDob = $ageMin !== null ? $today->copy()->subYears((int)$ageMin)->toDateString() : null;              // newest DOB
             $oldestDob   = $ageMax !== null ? $today->copy()->subYears((int)$ageMax + 1)->addDay()->toDateString() : null; // oldest DOB
 
             if ($oldestDob && $youngestDob) {
@@ -706,26 +733,23 @@ class StatsController extends BaseController
             ];
         }
 
-        // ---- Dynamic numeric filters: only apply if the key is in our whitelist
-        // This prevents MySQL from erroring on virtual UI fields.
-        $all = $request?->query() ?? [];
-        foreach ($all as $k => $v) {
+        // Dynamic numeric filters via *_min / *_max for physical columns only.
+        foreach (($request?->query() ?? []) as $k => $v) {
             if (!is_scalar($v)) continue;
             if (!preg_match('/^(.*)_(min|max)$/', $k, $m)) continue;
 
             $baseKey = $m[1];
-            $bound   = $m[2]; // 'min' | 'max'
+            $bound   = $m[2];
 
-            // skip non-physical/virtual keys
-            if (!isset($physicalNumeric[$baseKey])) continue;
+            if ($baseKey === 'age') continue;                 // handled above via DOB
+            if (!isset($physicalNumeric[$baseKey])) continue; // only real numeric columns
 
-            // map to the real column on the active table (e.g., toi -> toi_minutes on the view)
             $col = $this->mapFilterColumn($base, $baseKey);
             if (!$col) continue;
 
-            $val = is_numeric($v) ? (float)$v : null;
-
+            $val  = is_numeric($v) ? (float)$v : null;
             $pair = $applied['filters'][$baseKey] ?? ['min' => null, 'max' => null];
+
             if ($bound === 'min') {
                 $pair['min'] = $val;
                 if ($val !== null) $base->where($col, '>=', $val);
@@ -733,11 +757,13 @@ class StatsController extends BaseController
                 $pair['max'] = $val;
                 if ($val !== null) $base->where($col, '<=', $val);
             }
+
             $applied['filters'][$baseKey] = $pair;
         }
 
         return [$schema, $applied];
     }
+
 
 
 
@@ -807,6 +833,16 @@ class StatsController extends BaseController
             $maxVal = (clone $qb)->max($col);
         } catch (\Illuminate\Database\QueryException $e) {
             // MySQL 42S22 / Postgres 42703 => unknown column / invalid identifier
+            \Log::error('bounds() failed', [
+                'table'    => $table,
+                'key'      => $key,
+                'col'      => $col,
+                'sql'      => (clone $qb)->toSql(),
+                'bindings' => (clone $qb)->getBindings(),
+                'code'     => $e->getCode(),
+                'message'  => $e->getMessage(),
+            ]);
+
             if ($e->getCode() === '42S22' || str_contains($e->getMessage(), 'Unknown column') ||
                 str_contains($e->getMessage(), '42703')) {
                 return ['min' => 0, 'max' => 0];
