@@ -136,6 +136,8 @@ class DiscordWebhookController extends Controller
             ->orderBy('pl.name')
             ->get();
 
+        \Log::info('user teams: ', ['rows'=>$rows]);
+
 
         return response()->json([
             'target_discord_user_id' => (string) $discordId,
