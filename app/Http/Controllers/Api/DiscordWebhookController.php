@@ -106,20 +106,36 @@ class DiscordWebhookController extends Controller
             ->where('user_id', $viewerUserId)
             ->pluck('league_id');
 
-        // target's teams limited to mutual leagues
+        // // target's teams limited to mutual leagues
+        // $rows = DB::table('league_user_teams as lut')
+        //     ->join('leagues as l', 'l.id', '=', 'lut.league_id')
+        //     ->join('teams as t', 't.id', '=', 'lut.team_id')
+        //     ->where('lut.user_id', $targetUserId)
+        //     ->whereIn('lut.league_id', $viewerLeagueIds)
+        //     ->select([
+        //         'l.platform_league_id as league_id',
+        //         'l.name as league_name',
+        //         't.platform_team_id as team_id',
+        //         't.name as team_name',
+        //     ])
+        //     ->orderBy('l.name')
+        //     ->get();
+
+        // target's teams limited to mutual platform leagues
         $rows = DB::table('league_user_teams as lut')
-            ->join('leagues as l', 'l.id', '=', 'lut.league_id')
-            ->join('teams as t', 't.id', '=', 'lut.team_id')
+            ->join('platform_leagues as pl', 'pl.id', '=', 'lut.platform_league_id')
+            ->join('platform_teams as pt', 'pt.id', '=', 'lut.team_id')
             ->where('lut.user_id', $targetUserId)
-            ->whereIn('lut.league_id', $viewerLeagueIds)
+            ->whereIn('lut.platform_league_id', $viewerLeagueIds) // platform_league_ids
             ->select([
-                'l.platform_league_id as league_id',
-                'l.name as league_name',
-                't.platform_team_id as team_id',
-                't.name as team_name',
+                'pl.id as league_id',
+                'pl.name as league_name',
+                'pt.platform_team_id as team_id',
+                'pt.name as team_name',
             ])
-            ->orderBy('l.name')
+            ->orderBy('pl.name')
             ->get();
+
 
         return response()->json([
             'target_discord_user_id' => (string) $discordId,
