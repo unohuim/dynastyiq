@@ -101,34 +101,19 @@ class DiscordWebhookController extends Controller
             ]);
         }
 
-        // leagues the viewer is in
-        $viewerLeagueIds = DB::table('league_user_teams')
+        // leagues (platform_leagues) the viewer is in
+        $viewerPlatformLeagueIds = DB::table('league_user_teams')
             ->where('user_id', $viewerUserId)
-            ->pluck('league_id');
-
-        // // target's teams limited to mutual leagues
-        // $rows = DB::table('league_user_teams as lut')
-        //     ->join('leagues as l', 'l.id', '=', 'lut.league_id')
-        //     ->join('teams as t', 't.id', '=', 'lut.team_id')
-        //     ->where('lut.user_id', $targetUserId)
-        //     ->whereIn('lut.league_id', $viewerLeagueIds)
-        //     ->select([
-        //         'l.platform_league_id as league_id',
-        //         'l.name as league_name',
-        //         't.platform_team_id as team_id',
-        //         't.name as team_name',
-        //     ])
-        //     ->orderBy('l.name')
-        //     ->get();
+            ->pluck('platform_league_id');
 
         // target's teams limited to mutual platform leagues
         $rows = DB::table('league_user_teams as lut')
             ->join('platform_leagues as pl', 'pl.id', '=', 'lut.platform_league_id')
             ->join('platform_teams as pt', 'pt.id', '=', 'lut.team_id')
             ->where('lut.user_id', $targetUserId)
-            ->whereIn('lut.platform_league_id', $viewerLeagueIds) // platform_league_ids
+            ->whereIn('lut.platform_league_id', $viewerPlatformLeagueIds)
             ->select([
-                'pl.id as league_id',
+                'pl.id as platform_league_id',
                 'pl.name as league_name',
                 'pt.platform_team_id as team_id',
                 'pt.name as team_name',
