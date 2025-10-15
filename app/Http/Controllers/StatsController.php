@@ -227,19 +227,29 @@ class StatsController extends BaseController
                     ->all();
             }
             if (empty($leagueIds)) return; // nothing to constrain
+
             // Available in ANY of the user's leagues
-            $base->whereExists(function ($q) use ($leagueIds) {
-                $q->selectRaw('1')
-                ->from('platform_leagues as l')
-                ->whereIn('l.id', $leagueIds)
-                ->whereNotExists(function ($q2) {
-                    $q2->from('platform_roster_memberships as prm')
-                        ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
-                        ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
-                        ->whereNull('prm.ends_at')
-                        ->whereColumn('pt.platform_league_id', 'l.id') // this league
-                        ->whereColumn('fx.player_id', 'pf.id');        // this player
-                });
+            // $base->whereExists(function ($q) use ($leagueIds) {
+            //     $q->selectRaw('1')
+            //     ->from('platform_leagues as l')
+            //     ->whereIn('l.id', $leagueIds)
+            //     ->whereNotExists(function ($q2) {
+            //         $q2->from('platform_roster_memberships as prm')
+            //             ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+            //             ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
+            //             ->whereNull('prm.ends_at')
+            //             ->whereColumn('pt.platform_league_id', 'l.id') // this league
+            //             ->whereColumn('fx.player_id', 'pf.id');        // this player
+            //     });
+            // });
+
+            $base->whereNotExists(function ($q) use ($leagueId) {
+                $q->from('platform_roster_memberships as prm')
+                ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+                ->whereNull('prm.ends_at')
+                ->where('pt.platform_league_id', $leagueId)
+                ->whereColumn('prm.player_id', 'pf.id')  // <- key change
+                ->selectRaw('1');
             });
 
             \Log::info('Avail in any league constraint added: ', ['base'=>$base]);
