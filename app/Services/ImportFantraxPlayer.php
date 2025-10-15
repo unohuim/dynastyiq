@@ -46,8 +46,8 @@ class ImportFantraxPlayer
             ]
         );
 
-        if ($player === null && $entry['team'] != "(N/A)") {
-            Log::info('[Fantrax] Upserted FantraxPlayer without link', ['name'=> $entry['name']]);
+        if ($player === null && (($entry['team'] ?? null) !== '(N/A)')) {
+            Log::info('[Fantrax] Upserted FantraxPlayer without link', ['name' => $entry['name'] ?? null]);
         }
     }
 
@@ -83,8 +83,8 @@ class ImportFantraxPlayer
             ->where('last_name', $last);
 
         if (!empty($entry['position'])) {
-            $first = mb_substr((string)$entry['position'], 0, 1, 'UTF-8');
-            $query->whereRaw('substr(position, 1, 1) = ?', [$first]);
+            $posInitial = mb_substr((string)$entry['position'], 0, 1, 'UTF-8');
+            $query->whereRaw('substr(position, 1, 1) = ?', [$posInitial]);
         }
 
         if (!empty($entry['team'])) {
@@ -96,17 +96,18 @@ class ImportFantraxPlayer
             return $player;
         }
 
-        // 5) Fallback to full_name
-        $fullName = trim("{$first} {$last}");
-        $query    = Player::query()->where('full_name', $fullName);
+        // Fallback: full_name
+        $fullFirst = $first; // keep the real first name
+        $fullName  = trim("{$fullFirst} {$last}");
+        $fallback  = Player::query()->where('full_name', $fullName);
 
         if (!empty($entry['position'])) {
-            $query->where('position', $entry['position']);
+            $fallback->where('position', $entry['position']);
         }
         if (!empty($entry['team'])) {
-            $query->where('team_abbrev', $entry['team']);
+            $fallback->where('team_abbrev', $entry['team']);
         }
 
-        return $query->first();
+        return $fallback->first();
     }
 }
