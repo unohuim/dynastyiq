@@ -19,10 +19,20 @@ use Illuminate\View\View;
 
 class StatsController extends BaseController
 {
-    /** ───────────────────────────── Page (SSR) ───────────────────────────── */
     public function index(): View
     {
         $user = Auth::user();
+
+        $connectedLeagues = $user
+            ? $user->platformLeagues()
+                ->select('platform_leagues.id', 'platform_leagues.name')
+                ->distinct()
+                ->orderBy('platform_leagues.name')
+                ->get()
+                ->map(fn ($l) => ['id' => (int) $l->id, 'name' => (string) $l->name])
+                ->values()
+                ->all()
+            : [];
 
         $perspModels = Perspective::forUser($user)->orderBy('id')->get();
 
@@ -72,13 +82,15 @@ class StatsController extends BaseController
         }
 
         return view('stats-view', [
-            'payload'       => $payload,
-            'perspectives'  => $perspectives,
+            'payload'               => $payload,
+            'perspectives'          => $perspectives,
             'selectedPerspectiveId' => $selectedPerspectiveId,
-            'selectedSlug'  => $selectedSlug,
-            'defaultSeason' => $payload['meta']['season'] ?? null,
+            'selectedSlug'          => $selectedSlug,
+            'defaultSeason'         => $payload['meta']['season'] ?? null,
+            'connectedLeagues'      => $connectedLeagues,
         ]);
     }
+
 
 
 
@@ -95,7 +107,7 @@ class StatsController extends BaseController
     /** ───────────────────────────── API (AJAX) ───────────────────────────── */
     public function payload(Request $request)
     {
-        \Log::info('pre validate request: ', ['request'=>$request]);
+        \Log::info('pre validate request: ', ['request' => $request]);
         $request->validate([
             'perspectiveId' => 'nullable|integer|exists:perspectives,id',
             'perspective'   => 'nullable|string',
@@ -107,11 +119,23 @@ class StatsController extends BaseController
             'game_type'     => 'nullable|in:1,2,3',
             'from'          => 'nullable|date',
             'to'            => 'nullable|date',
+            'availability'  => 'nullable|integer',
         ]);
 
-        \Log::info('post validate request: ', ['request'=>$request]);
+        \Log::info('post validate request: ', ['request' => $request]);
 
         $user = $request->user();
+
+        $connectedLeagues = $user
+            ? $user->platformLeagues()
+                ->select('platform_leagues.id', 'platform_leagues.name')
+                ->distinct()
+                ->orderBy('platform_leagues.name')
+                ->get()
+                ->map(fn ($l) => ['id' => (int) $l->id, 'name' => (string) $l->name])
+                ->values()
+                ->all()
+            : [];
 
         // Resolve perspective (prefer slug)
         if ($request->filled('perspectiveId')) {
@@ -126,15 +150,13 @@ class StatsController extends BaseController
                 ->firstOrFail();
         }
 
-        \Log::info('api request: ', ['request'=>$request]);
+        \Log::info('api request: ', ['request' => $request]);
         $season         = $request->input('season_id', $request->input('season'));
         $sliceParam     = $request->input('slice', 'total');
         $gameType       = (int) $request->input('game_type', 2);
         $period         = (string) $request->input('period', 'season');
         $canSlice       = (bool)($perspective->is_slicable ?? true);
         $effectiveSlice = $canSlice ? $sliceParam : 'total';
-
-
 
         if ($period === 'season') {
             [$payload] = $this->buildAndFormatPlayersPayload(
@@ -145,6 +167,9 @@ class StatsController extends BaseController
                 $gameType,
                 $request
             );
+
+            $payload['connectedLeagues'] = $connectedLeagues;
+
             return response()->json($payload);
         }
 
@@ -161,8 +186,74 @@ class StatsController extends BaseController
             $request
         );
 
+        $payload['connectedLeagues'] = $connectedLeagues;
+
         return response()->json($payload);
     }
+
+
+
+    /**
+     * Apply "availability" from a single integer param:
+     *   0 => no constraint
+     *   -1 => "available in any of the user's leagues"
+     *   N (>1) => "available in internal league id N (platform_leagues.id)"
+     *
+     * Current = platform_roster_memberships.ends_at IS NULL.
+     * player match uses local players.id (pf.id).
+     */
+    private function applyAvailabilityToBase($base, ?Request $request, $user): void
+    {
+        $val = (int) ($request?->input('availability', 0) ?? 0);
+        if ($val === 0) return;
+
+        // Build the set of internal platform_leagues.id values to check against.
+        $leagueIds = [];
+
+        if ($val === -1) {
+            if ($user) {
+                $leagueIds = $user->platformLeagues()
+                    ->pluck('platform_leagues.id')
+                    ->map(fn ($i) => (int) $i)
+                    ->all();
+            }
+            if (empty($leagueIds)) return; // nothing to constrain
+            // Available in ANY of the user's leagues
+            $base->whereExists(function ($q) use ($leagueIds) {
+                $q->selectRaw('1')
+                ->from('platform_leagues as l')
+                ->whereIn('l.id', $leagueIds)
+                ->whereNotExists(function ($q2) {
+                    $q2->from('platform_roster_memberships as prm')
+                        ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+                        ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
+                        ->whereNull('prm.ends_at')
+                        ->whereColumn('pt.platform_league_id', 'l.id') // this league
+                        ->whereColumn('fx.player_id', 'pf.id');        // this player
+                });
+            });
+            return;
+        }
+
+        // Specific league id
+        $leagueId = (int) $val;
+        $base->whereNotExists(function ($q) use ($leagueId) {
+            $q->from('platform_roster_memberships as prm')
+            ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+            ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
+            ->whereNull('prm.ends_at')
+            ->where('pt.platform_league_id', $leagueId)
+            ->whereColumn('fx.player_id', 'pf.id')
+            ->selectRaw('1');
+        });
+    }
+
+
+
+
+
+
+
 
     /** ─────────────── Build + format PLAYERS payload (SEASON) ─────────────── */
     private function buildAndFormatPlayersPayload(
@@ -262,6 +353,8 @@ class StatsController extends BaseController
 
         // Merge applied echo
         $applied['filters'] = array_merge($applied['filters'] ?? [], $appliedExtra['filters'] ?? []);
+        $avail = (int) ($request?->input('availability', 0) ?? 0);
+        $leagueIdMeta = $avail > 0 ? $avail : null;
 
         $formatted = [
             'headings' => $headings,
@@ -283,6 +376,8 @@ class StatsController extends BaseController
                 'appliedFilters'     => $applied['filters'] ?? [],
                 'pos'                => $applied['pos'] ?? [],
                 'pos_type'           => $applied['pos_type'] ?? [],
+                'availability'       => $avail,
+                'league_id'          => $leagueIdMeta,
             ],
         ];
 
@@ -357,6 +452,9 @@ class StatsController extends BaseController
         }
 
         $applied['filters'] = array_merge($applied['filters'] ?? [], $appliedExtra['filters'] ?? []);
+        $avail = (int) ($request?->input('availability', 0) ?? 0);
+        $leagueIdMeta = $avail > 0 ? $avail : null;
+
 
         $formatted = [
             'headings' => $headings,
@@ -378,6 +476,8 @@ class StatsController extends BaseController
                 'appliedFilters'     => $applied['filters'] ?? [],
                 'pos'                => $applied['pos'] ?? [],
                 'pos_type'           => $applied['pos_type'] ?? [],
+                'availability' => $avail,
+                'league_id'    => $leagueIdMeta,
             ],
         ];
 
@@ -626,6 +726,8 @@ class StatsController extends BaseController
         } else { // nhl_season_stats / nhl_game_summaries
             $base->leftJoin('players as pf', 'pf.nhl_id', '=', "{$table}.nhl_player_id");
         }
+
+        $this->applyAvailabilityToBase($base, $request, $request?->user());
 
         // Base schema (always available in the UI)
         $schema = [

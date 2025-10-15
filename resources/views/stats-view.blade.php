@@ -59,6 +59,7 @@
       // initial payload + endpoints
       window.__stats = @json($payload);
       window.api = { stats: "{{ url('/api/stats') }}" };
+      window.__connectedLeagues = @json($connectedLeagues);
 
       // ensure every row has row.stats{}
       function normalizeStatsPayload(payload){
@@ -110,8 +111,8 @@
 
       {{-- =============== DESKTOP BAR =============== --}}
       <div class="hidden sm:block px-4">
-        <div class="rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2">
-          <div class="flex flex-wrap items-center gap-3 p-3">
+        <div class="relative z-30 overflow-visible rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2">
+          <div class="flex flex-wrap justify-between items-center gap-3 p-3">
 
             <!-- Perspective -->
             <div class="relative">
@@ -191,51 +192,104 @@
               <svg class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z"/></svg>
             </div>
 
-            <!-- Actions -->
-            <div class="ml-auto flex items-center gap-2">
-              <button type="button"
-                      @click="resetFilters()"
-                      class="h-10 px-4 rounded-full text-sm ring-1 ring-gray-200 bg-white hover:bg-gray-50">
-                Reset
-              </button>
-              <button type="button"
-                      @click="isFilterOpen = true"
-                      class="h-10 px-4 rounded-full bg-indigo-600 text-white text-sm shadow hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                Filters
-              </button>
+
+            <!-- League Availability -->
+            <div class="relative" x-data="{
+                open:false,
+                label(val){
+                    if(val==='all') return 'All Players';
+                    if(val==='available') return 'Available';
+                    const m = (window.__connectedLeagues||[])
+                    .filter(Boolean)
+                    .find(l => l && `league:${l.id}`===val);
+                    return m ? (m.name ?? 'League') : 'All Players';
+                }
+                }">
+                <button type="button"
+                        @click="open=!open"
+                        :aria-expanded="open"
+                        class="h-10 w-64 inline-flex items-center justify-between rounded-full bg-white px-4 text-sm ring-1 ring-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <span x-text="label(leagueScope)"></span>
+                    <svg class="ml-2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z" clip-rule="evenodd"/></svg>
+                </button>
+
+                <div x-show="open" x-transition @click.outside="open=false"
+                    class="absolute z-50 mt-1 w-64 max-h-60 overflow-auto rounded-md bg-white p-1 text-sm shadow-lg ring-1 ring-black/5">
+
+                    <button type="button" @click="leagueScope='all'; fetchPayload(); open=false"
+                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
+                    All Players
+                    </button>
+                    <button type="button" @click="leagueScope='available'; fetchPayload(); open=false"
+                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
+                    Available
+                    </button>
+
+                    <div class="my-1 border-t border-gray-200"></div>
+                    <div class="px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wide">
+                    League Availability
+                    </div>
+
+                    <template x-for="opt in (availableLeagues||[]).filter(o => String(o.value||'').startsWith('league:'))" :key="opt.value">
+                    <button type="button"
+                            @click="leagueScope=opt.value; fetchPayload(); open=false"
+                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50"
+                            x-text="opt.label"></button>
+                    </template>
+                </div>
             </div>
 
-          </div>
 
-          <!-- Positions (desktop bar) -->
-          <div class="flex-1 items-center gap-2 pl-3 pb-3">
-            <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
-              <button type="button"
-                      class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                      :class="filters.pos.includes(p)
-                        ? 'bg-indigo-600 text-white ring-indigo-600/30'
-                        : 'bg-white text-gray-700 hover:bg-gray-50'"
-                      @click="togglePos(p); fetchPayload()"
-                      x-text="p"></button>
-            </template>
 
-            <button type="button"
-                    class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                    :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                    @click="togglePosType('F'); fetchPayload()">F</button>
 
-            <button type="button"
-                    class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                    :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                    @click="togglePosType('D'); fetchPayload()">D</button>
+            <!-- Positions + Actions (desktop bar, single row) -->
+            <div class="w-full flex items-center gap-2 pb-3">
+                <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
+                    <button type="button"
+                            class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                            :class="filters.pos.includes(p)
+                            ? 'bg-indigo-600 text-white ring-indigo-600/30'
+                            : 'bg-white text-gray-700 hover:bg-gray-50'"
+                            @click="togglePos(p); fetchPayload()"
+                            x-text="p"></button>
+                </template>
 
-            <button type="button"
-                    class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                    :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                    @click="togglePosType('G'); fetchPayload()">G</button>
-          </div>
+                <button type="button"
+                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                        :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        @click="togglePosType('F'); fetchPayload()">F</button>
+
+                <button type="button"
+                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                        :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        @click="togglePosType('D'); fetchPayload()">D</button>
+
+                <button type="button"
+                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
+                        :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                        @click="togglePosType('G'); fetchPayload()">G</button>
+
+
+                <!-- Actions on far right -->
+                <div class="ml-auto flex items-center gap-2">
+                    <button type="button"
+                            @click="resetFilters()"
+                            class="h-10 px-4 rounded-full text-sm ring-1 ring-gray-200 bg-white hover:bg-gray-50">
+                    Reset
+                    </button>
+                    <button type="button"
+                            @click="isFilterOpen = true"
+                            class="h-10 px-4 rounded-full bg-indigo-600 text-white text-sm shadow hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    Filters
+                    </button>
+                </div>
+            </div>
+
+
         </div>
       </div>
+
+
 
       {{-- Mount point for the list/table --}}
       <div id="stats-page" class="sm:px-4"></div>
@@ -380,6 +434,7 @@
                       </template>
                     </select>
                   </div>
+
                 </div>
               </div>
             </div>
@@ -611,6 +666,18 @@
   <script>
     function statsPage(){
       return {
+        leagueScope: 'all',
+        availableLeagues: [
+            { value:'all',       label:'All Players' },
+            { value:'available', label:'Available'   },
+        ].concat(
+            (window.__connectedLeagues || [])
+                .filter(Boolean)
+                .filter(l => l && l.id != null)
+                .map(l => ({ value:`league:${l.id}`, label:String(l.name ?? '') }))
+        ),
+
+
         /* layout */
         isMobile: window.innerWidth < {{ $mobileBreakpoint }} ,
 
@@ -636,6 +703,16 @@
         schema: [],
         appliedFilters: {},   // <-- keep the server echo to fix collapsed bounds
         filters:{ pos:[], pos_type:[], team:[], age:{min:null,max:null}, num:{} },
+
+
+        availabilityFromScope(){
+            if (this.leagueScope === 'all')       return 0; // all players
+            if (this.leagueScope === 'available') return -1; // any of user's leagues
+            if (String(this.leagueScope||'').startsWith('league:')) {
+                return +String(this.leagueScope).split(':')[1]; // numeric league_id
+            }
+            return 0;
+        },
 
         /* getters */
         get schemaArr(){ return Array.isArray(this.schema)? this.schema : [] },
@@ -763,6 +840,7 @@
         init(){
           window.addEventListener('resize', ()=>{ this.isMobile = window.innerWidth < {{ $mobileBreakpoint }}; });
 
+
           window.addEventListener('statsUpdated', (e) => {
             const meta = e.detail?.json?.meta || {};
 
@@ -778,6 +856,39 @@
             if (meta.season    != null) this.season_id = String(meta.season);
             if (meta.game_type != null) this.game_type = String(meta.game_type);
             if (typeof meta.canSlice === 'boolean') this.canSlice = meta.canSlice;
+
+
+            // reflect server echo back into the dropdown
+            if (meta.availability != null) {
+                const a = String(meta.availability);
+                if (a === '0') {
+                    this.leagueScope = 'all';
+                } else if (a === '-1') {
+                    this.leagueScope = 'available';
+                } else if (a > 0) {
+
+                    // league id (including 1)
+                    const lid = meta.league_id ?? +a;
+                    this.leagueScope = `league:${lid}`;
+                }
+            }
+
+            // --- hydrate leagues from API if present ---
+            const leaguesFromApi = e.detail?.json?.connectedLeagues;
+            if (Array.isArray(leaguesFromApi) && leaguesFromApi.length) {
+            window.__connectedLeagues = leaguesFromApi.filter(Boolean);
+            }
+            // (Re)build dropdown from the cached global; never drop to empty
+            this.availableLeagues = [
+            { value:'all',       label:'All Players' },
+            { value:'available', label:'Available'   },
+            ...((window.__connectedLeagues || [])
+                .filter(l => l && l.id != null)
+                .map(l => ({ value:`league:${l.id}`, label:String(l.name ?? '') })))
+            ];
+
+
+
 
             // bring in schema; if any item has collapsed bounds, patch from appliedFilters
             const raw = Array.isArray(meta.filterSchema) ? meta.filterSchema : [];
@@ -839,6 +950,8 @@
           return (!v || (v.min == null && v.max == null) ||
                   (+v.min === +B.min && +v.max === +B.max));
         },
+
+
         buildParams(){
           const p = new URLSearchParams();
 
@@ -895,6 +1008,10 @@
             if (min != null) p.append('contract_last_year_num_min', Math.round(+min));
             if (max != null) p.append('contract_last_year_num_max', Math.round(+max));
           }
+
+            // availability / league constraint
+            const avail = this.availabilityFromScope();
+            p.append('availability', String(avail)); // 0 | 1 | league_id
 
           return p;
         },

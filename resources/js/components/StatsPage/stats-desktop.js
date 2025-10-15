@@ -107,7 +107,7 @@ export function renderStatsDesktop(
     // Controls bar (sticky)
     const controls = document.createElement("div");
     controls.className =
-        "sticky top-0 z-30 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+        "sticky top-0 z-10 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
 
     // Name filter input
     const nameInput = document.createElement("input");
