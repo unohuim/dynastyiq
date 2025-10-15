@@ -59,55 +59,92 @@ class ImportFantraxPlayer
      */
     private function resolvePlayer(array $entry): ?Player
     {
-        // 2) Parse "Last, First"
+        // Parse "Last, First"
         [$last, $first] = array_map(
-            static fn (string $part): string => trim($part),
+            static fn ($p) => trim((string)$p),
             explode(',', (string)($entry['name'] ?? '')) + [1 => '']
         );
+        if ($last === '' || $first === '') return null;
 
-        // 3) First-name variants from config
-        $variantsMap   = config('name_variants.first_name_variants', []);
-        $firstLower    = strtolower($first);
-        $firstVariants = [$first];
+        $team          = $this->normalizeTeam($entry['team'] ?? null);
+        $posInitial    = $this->normalizePos($entry['position'] ?? null); // L/C/R/D/G (single letter)
+        $firstVariants = $this->firstNameVariants($first);
 
-        foreach ($variantsMap as $aliases) {
-            if (in_array($firstLower, array_map('strtolower', (array)$aliases), true)) {
-                $firstVariants = (array)$aliases;
-                break;
+        // Helpers
+        $pick = static fn($qb) => (clone $qb)->limit(2)->pluck('id')->count();
+        $one  = static fn($qb) => (($id = (clone $qb)->limit(1)->value('id')) ? Player::find($id) : null);
+
+        // 0) Exact First + Last (fast path)
+        $q0 = Player::query()
+            ->whereRaw('lower(first_name) = lower(?)', [$first])
+            ->whereRaw('lower(last_name)  = lower(?)', [$last]);
+        $c = $pick($q0);
+        if ($c === 1) return $one($q0);
+        // If 0 or >1, continue with layered narrowing.
+
+        // 1) Last name only
+        $q = Player::query()->whereRaw('lower(last_name) = lower(?)', [$last]);
+        $c = $pick($q);
+        if ($c === 1) return $one($q);
+        if ($c === 0) return null;
+
+        // 2) Add first-name variants
+        $q = (clone $q)->whereIn('first_name', $firstVariants);
+        $c = $pick($q);
+        if ($c === 1) return $one($q);
+        if ($c === 0) return null;
+
+        // 3) Add team (still keeping last + first variants)
+        if ($team) {
+            $q = (clone $q)->whereRaw('upper(team_abbrev) = upper(?)', [$team]);
+            $c = $pick($q);
+            if ($c === 1) return $one($q);
+            if ($c === 0) return null;
+        }
+
+        // 4) Add position **first letter** only (keeps all prior constraints)
+        if ($posInitial) {
+            // left(position,1) works on Postgres & MySQL
+            $q = (clone $q)->whereRaw('upper(left(position,1)) = ?', [$posInitial]);
+            $c = $pick($q);
+            if ($c === 1) return $one($q);
+            if ($c === 0) return null;
+        }
+
+        // Still ambiguous
+        return null;
+    }
+
+    private function normalizeTeam(?string $team): ?string
+    {
+        $t = strtoupper(trim((string)$team));
+        return ($t === '' || $t === '(N/A)') ? null : $t;
+    }
+
+    private function normalizePos(?string $pos): ?string
+    {
+        $p = strtoupper(trim((string)$pos));
+        if ($p === '') return null;
+        // Map LW→L, RW→R, others → first character
+        if ($p === 'LW') return 'L';
+        if ($p === 'RW') return 'R';
+        return mb_substr($p, 0, 1, 'UTF-8'); // C/D/G handled here
+    }
+
+    private function firstNameVariants(string $first): array
+    {
+        $map = config('name_variants.first_name_variants', []);
+        $needle = strtolower($first);
+        foreach ($map as $aliases) {
+            $aliases = (array)$aliases;
+            if (in_array($needle, array_map('strtolower', $aliases), true)) {
+                return array_values(array_unique($aliases));
             }
         }
-
-        // 4) Lookup by first/last (+ optional filters)
-        $query = Player::query()
-            ->whereIn('first_name', $firstVariants)
-            ->where('last_name', $last);
-
-        if (!empty($entry['position'])) {
-            $posInitial = mb_substr((string)$entry['position'], 0, 1, 'UTF-8');
-            $query->whereRaw('substr(position, 1, 1) = ?', [$posInitial]);
-        }
-
-        if (!empty($entry['team'])) {
-            $query->where('team_abbrev', $entry['team']);
-        }
-
-        $player = $query->first();
-        if ($player) {
-            return $player;
-        }
-
-        // Fallback: full_name
-        $fullFirst = $first; // keep the real first name
-        $fullName  = trim("{$fullFirst} {$last}");
-        $fallback  = Player::query()->where('full_name', $fullName);
-
-        if (!empty($entry['position'])) {
-            $fallback->where('position', $entry['position']);
-        }
-        if (!empty($entry['team'])) {
-            $fallback->where('team_abbrev', $entry['team']);
-        }
-
-        return $fallback->first();
+        return [$first];
     }
+
+
+
+
 }
