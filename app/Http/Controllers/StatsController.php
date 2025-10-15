@@ -214,6 +214,8 @@ class StatsController extends BaseController
         $val = (int) ($request?->input('availability', 0) ?? 0);
         if ($val === 0) return;
 
+        \Log::info('Availability constraints added: ');
+
         // Build the set of internal platform_leagues.id values to check against.
         $leagueIds = [];
 
@@ -239,10 +241,13 @@ class StatsController extends BaseController
                         ->whereColumn('fx.player_id', 'pf.id');        // this player
                 });
             });
+
+            \Log::info('Avail in any league constraint added: ', ['base'=>$base]);
             return;
         }
 
         // Specific league id
+        \Log::info('League constraint added ', ['leagueId'=>$leagueId]);
         $leagueId = (int) $val;
         $base->whereNotExists(function ($q) use ($leagueId) {
             $q->from('platform_roster_memberships as prm')
@@ -253,6 +258,8 @@ class StatsController extends BaseController
             ->whereColumn('fx.player_id', 'pf.id')
             ->selectRaw('1');
         });
+
+        \Log::info('League constraint added to base ', ['base'=>$base]);
     }
 
 
@@ -736,7 +743,6 @@ class StatsController extends BaseController
 
         $this->applyAvailabilityToBase($base, $request, $request?->user());
 
-        \Log::info('avail applie to base: ', ['base'=>$base]);
 
         // Base schema (always available in the UI)
         $schema = [
@@ -871,6 +877,8 @@ class StatsController extends BaseController
 
             $applied['filters'][$baseKey] = $pair;
         }
+
+        \Log::info('applied: ', ['applied'=>$applied]);
 
         return [$schema, $applied];
     }
