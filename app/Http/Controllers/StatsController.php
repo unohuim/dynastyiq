@@ -193,6 +193,8 @@ class StatsController extends BaseController
 
         $payload['connectedLeagues'] = $connectedLeagues;
 
+        \Log::info('updated payload: ', ['payload' => $payload]);
+
         return response()->json($payload);
     }
 
@@ -733,6 +735,8 @@ class StatsController extends BaseController
         }
 
         $this->applyAvailabilityToBase($base, $request, $request?->user());
+
+        \Log::info('avail applie to base: ', ['base'=>$base]);
 
         // Base schema (always available in the UI)
         $schema = [
