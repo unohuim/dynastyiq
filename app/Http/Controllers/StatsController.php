@@ -222,6 +222,8 @@ class StatsController extends BaseController
                 ? $user->platformLeagues()->pluck('platform_leagues.id')->map(fn($i)=>(int)$i)->all()
                 : [];
 
+            \Log::info('Grabbed league ids');
+
             if (empty($leagueIds)) return;
 
             // There exists at least one of my leagues where this player is NOT rostered
