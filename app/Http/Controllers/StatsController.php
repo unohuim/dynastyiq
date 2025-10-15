@@ -214,69 +214,46 @@ class StatsController extends BaseController
         $val = (int) ($request?->input('availability', 0) ?? 0);
         if ($val === 0) return;
 
-        \Log::info('Availability constraints added: ');
-
-        // Build the set of internal platform_leagues.id values to check against.
-        $leagueIds = [];
-
+        // Joined earlier as players alias 'pf'
+        // We only ever compare to prm.player_id now.
         if ($val === -1) {
-            if ($user) {
-                $leagueIds = $user->platformLeagues()
-                    ->pluck('platform_leagues.id')
-                    ->map(fn ($i) => (int) $i)
-                    ->all();
-            }
-            if (empty($leagueIds)) return; // nothing to constrain
+            // ANY of the user's leagues
+            $leagueIds = $user
+                ? $user->platformLeagues()->pluck('platform_leagues.id')->map(fn($i)=>(int)$i)->all()
+                : [];
 
-            // Available in ANY of the user's leagues
-            // $base->whereExists(function ($q) use ($leagueIds) {
-            //     $q->selectRaw('1')
-            //     ->from('platform_leagues as l')
-            //     ->whereIn('l.id', $leagueIds)
-            //     ->whereNotExists(function ($q2) {
-            //         $q2->from('platform_roster_memberships as prm')
-            //             ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
-            //             ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
-            //             ->whereNull('prm.ends_at')
-            //             ->whereColumn('pt.platform_league_id', 'l.id') // this league
-            //             ->whereColumn('fx.player_id', 'pf.id');        // this player
-            //     });
-            // });
+            if (empty($leagueIds)) return;
 
-            $base->whereNotExists(function ($q) use ($leagueId) {
-                $q->from('platform_roster_memberships as prm')
-                ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
-                ->whereNull('prm.ends_at')
-                ->where('pt.platform_league_id', $leagueId)
-                ->whereColumn('prm.player_id', 'pf.id')  // <- key change
-                ->selectRaw('1');
+            // There exists at least one of my leagues where this player is NOT rostered
+            $base->whereExists(function ($q) use ($leagueIds) {
+                $q->selectRaw('1')
+                ->from('platform_leagues as l')
+                ->whereIn('l.id', $leagueIds)
+                ->whereNotExists(function ($q2) {
+                    $q2->from('platform_roster_memberships as prm')
+                        ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+                        ->whereNull('prm.ends_at')
+                        ->whereColumn('pt.platform_league_id', 'l.id')  // this league
+                        ->whereColumn('prm.player_id', 'pf.id');        // this player
+                });
             });
 
-            \Log::info('Avail in any league constraint added: ', ['base'=>$base]);
+            \Log::info('Applied availability: ANY of user leagues', ['leagueIds' => $leagueIds]);
             return;
         }
 
-        // Specific league id
-        $leagueId = (int) $val;
-        \Log::info('League constraint added ', ['leagueId'=>$leagueId]);
+        // Specific league availability
+        $leagueId = $val;
         $base->whereNotExists(function ($q) use ($leagueId) {
             $q->from('platform_roster_memberships as prm')
             ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
-            ->join('fantrax_players as fx', 'fx.fantrax_id', '=', 'prm.platform_player_id')
             ->whereNull('prm.ends_at')
             ->where('pt.platform_league_id', $leagueId)
-            ->whereColumn('fx.player_id', 'pf.id')
+            ->whereColumn('prm.player_id', 'pf.id')
             ->selectRaw('1');
         });
 
-        // after $base->whereNotExists(...)
-        $sql      = $base->getQuery()->toSql();           // Eloquent\Builder -> Query\Builder
-        $bindings = $base->getQuery()->getBindings();
-
-        \Log::info('League constraint SQL', ['sql' => $sql, 'bindings' => $bindings]);
-
-        // sanity check: how many rows now?
-        \Log::info('Row count with constraint', ['count' => (clone $base)->count()]);
+        \Log::info('Applied availability: specific league', ['leagueId' => $leagueId]);
     }
 
 
