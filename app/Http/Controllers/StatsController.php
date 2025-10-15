@@ -16,6 +16,8 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\View\View;
+use Illuminate\Support\Facades\DB;
+
 
 class StatsController extends BaseController
 {
@@ -23,16 +25,7 @@ class StatsController extends BaseController
     {
         $user = Auth::user();
 
-        $connectedLeagues = $user
-            ? $user->platformLeagues()
-                ->select('platform_leagues.id', 'platform_leagues.name')
-                ->distinct()
-                ->orderBy('platform_leagues.name')
-                ->get()
-                ->map(fn ($l) => ['id' => (int) $l->id, 'name' => (string) $l->name])
-                ->values()
-                ->all()
-            : [];
+        $connectedLeagues = $this->connectedLeaguesForUser($user);
 
         $perspModels = Perspective::forUser($user)->orderBy('id')->get();
 
@@ -92,6 +85,27 @@ class StatsController extends BaseController
     }
 
 
+    private function connectedLeaguesForUser($user): array
+    {
+        if (!$user) return [];
+
+        // Adjust table/column names if yours differ
+        $rows = DB::table('platform_leagues as pl')
+            ->join('league_user_teams as lut', 'lut.platform_league_id', '=', 'pl.id')
+            ->where('lut.user_id', $user->id)
+            // Optional: uncomment if you have an "active" flag/soft-deletes on the pivot
+            // ->where('lut.is_active', true)
+            // ->whereNull('lut.deleted_at')
+            ->select('pl.id', 'pl.name')
+            ->distinct()
+            ->orderBy('pl.name')
+            ->get();
+
+        return $rows->map(fn ($r) => ['id' => (int) $r->id, 'name' => (string) $r->name])
+                    ->values()
+                    ->all();
+    }
+
 
 
     // helper (place once in the controller)
@@ -126,16 +140,7 @@ class StatsController extends BaseController
 
         $user = $request->user();
 
-        $connectedLeagues = $user
-            ? $user->platformLeagues()
-                ->select('platform_leagues.id', 'platform_leagues.name')
-                ->distinct()
-                ->orderBy('platform_leagues.name')
-                ->get()
-                ->map(fn ($l) => ['id' => (int) $l->id, 'name' => (string) $l->name])
-                ->values()
-                ->all()
-            : [];
+        $connectedLeagues = $this->connectedLeaguesForUser($user);
 
         // Resolve perspective (prefer slug)
         if ($request->filled('perspectiveId')) {
