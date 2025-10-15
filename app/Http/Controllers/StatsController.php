@@ -259,7 +259,14 @@ class StatsController extends BaseController
             ->selectRaw('1');
         });
 
-        \Log::info('League constraint added to base ', ['base'=>$base]);
+        // after $base->whereNotExists(...)
+        $sql      = $base->getQuery()->toSql();           // Eloquent\Builder -> Query\Builder
+        $bindings = $base->getQuery()->getBindings();
+
+        \Log::info('League constraint SQL', ['sql' => $sql, 'bindings' => $bindings]);
+
+        // sanity check: how many rows now?
+        \Log::info('Row count with constraint', ['count' => (clone $base)->count()]);
     }
 
 
