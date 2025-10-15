@@ -18,7 +18,7 @@ final class SyncFantraxLeague
 
     public function sync(int $platformLeagueId): void
     {
-        Log::info('Attempting to find platform league: ', ['leagueId'=>$platformLeagueId]);
+        //Log::info('Attempting to find platform league: ', ['leagueId'=>$platformLeagueId]);
 
         $league = PlatformLeague::query()->find($platformLeagueId);
 
@@ -26,7 +26,7 @@ final class SyncFantraxLeague
             return;
         }
 
-        Log::info('Found platform league', ['league'=>$league]);
+        //Log::info('Found platform league', ['league'=>$league]);
 
 
         //team rosters
@@ -140,11 +140,30 @@ final class SyncFantraxLeague
             ];
         }
 
-        if (! empty($ppiUpserts)) {
+
+        // 1) Dedupe by (platform, player_id)
+        $dedup = [];
+        foreach ($ppiUpserts as $row) {
+            $k = $row['platform'] . ':' . $row['player_id'];
+            if (isset($dedup[$k]) && $dedup[$k]['platform_player_id'] !== $row['platform_player_id']) {
+                // Optional: log when multiple Fantrax IDs map to one player_id
+                Log::warning('[FX Sync] Multiple Fantrax IDs for same player_id; keeping latest', [
+                    'player_id' => $row['player_id'],
+                    'old_fx'    => $dedup[$k]['platform_player_id'],
+                    'new_fx'    => $row['platform_player_id'],
+                ]);
+            }
+            $dedup[$k] = $row; // keep the last seen (or change policy to "first")
+        }
+        $ppiUpserts = array_values($dedup);
+
+
+        // 2) Upsert using the unique pair that exists in DB: (platform, player_id)
+        if (!empty($ppiUpserts)) {
             DB::table('platform_player_ids')->upsert(
                 $ppiUpserts,
-                ['platform', 'platform_player_id'],   // unique key
-                ['player_id', 'updated_at']           // columns to update
+                ['platform', 'player_id'],                     // <-- matches uq_platform_player_link
+                ['platform_player_id', 'updated_at']           // update FX id if it changed
             );
         }
 
