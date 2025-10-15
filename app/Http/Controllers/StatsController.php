@@ -219,7 +219,7 @@ class StatsController extends BaseController
         if ($val === -1) {
             // ANY of the user's leagues
             $leagueIds = $user
-                ? $user->platformLeagues()->pluck('id')->map(fn($i)=>(int)$i)->all()
+                ? $user->platformLeagues()->pluck('platform_leagues.id')->map(fn($i)=>(int)$i)->all()
                 : [];
 
             \Log::info('Grabbing league ids');
