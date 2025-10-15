@@ -18,36 +18,16 @@ final class SyncFantraxLeague
 
     public function sync(int $platformLeagueId): void
     {
+        Log::info('Attempting to find platform league: ', ['leagueId'=>$platformLeagueId]);
+
         $league = PlatformLeague::query()->find($platformLeagueId);
 
         if ($league === null || $league->platform !== 'fantrax') {
             return;
         }
 
-        //league info
-        // try {
-        //     $respLeagueInfo = $this->getAPIData('fantrax', 'league_info', [
-        //         'leagueId' => (string) $league->platform_league_id,
-        //     ]);
-        // } catch (RequestException) {
-        //     return;
-        // }
+        Log::info('Found platform league', ['league'=>$league]);
 
-        // $teams = $respLeagueInfo['teamInfo'] ?? [];
-        // if (empty($teams)) {
-        //     return;
-        // }
-
-        // foreach ($teamRosters as $team) {
-        //     $rows[] = [
-        //         'platform_league_id' => $league->id,
-        //         'platform_team_id' => (string) ($team['id'] ?? ''),
-        //         'name' => (string) ($team['name'] ?? 'Unnamed Team'),
-        //         'short_name' => $team['shortName'] ?? null,
-        //         'synced_at' => $now,
-        //         'updated_at' => $now,
-        //     ];
-        // }
 
         //team rosters
         try {
