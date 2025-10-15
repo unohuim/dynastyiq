@@ -247,8 +247,8 @@ class StatsController extends BaseController
         }
 
         // Specific league id
-        \Log::info('League constraint added ', ['leagueId'=>$leagueId]);
         $leagueId = (int) $val;
+        \Log::info('League constraint added ', ['leagueId'=>$leagueId]);
         $base->whereNotExists(function ($q) use ($leagueId) {
             $q->from('platform_roster_memberships as prm')
             ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
