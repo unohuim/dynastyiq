@@ -193,51 +193,59 @@
             </div>
 
 
+
             <!-- League Availability -->
-            <div class="relative" x-data="{
-                open:false,
-                label(val){
-                    if(val==='all') return 'All Players';
-                    if(val==='available') return 'Available';
-                    const m = (window.__connectedLeagues||[])
-                    .filter(Boolean)
-                    .find(l => l && `league:${l.id}`===val);
-                    return m ? (m.name ?? 'League') : 'All Players';
-                }
-                }">
-                <button type="button"
-                        @click="open=!open"
-                        :aria-expanded="open"
-                        class="h-10 w-64 inline-flex items-center justify-between rounded-full bg-white px-4 text-sm ring-1 ring-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <span x-text="label(leagueScope)"></span>
-                    <svg class="ml-2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z" clip-rule="evenodd"/></svg>
-                </button>
+            @php $hasLeagues = !empty($connectedLeagues); @endphp
 
-                <div x-show="open" x-transition @click.outside="open=false"
-                    class="absolute z-50 mt-1 w-64 max-h-60 overflow-auto rounded-md bg-white p-1 text-sm shadow-lg ring-1 ring-black/5">
-
-                    <button type="button" @click="leagueScope='all'; fetchPayload(); open=false"
-                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
-                    All Players
-                    </button>
-                    <button type="button" @click="leagueScope='available'; fetchPayload(); open=false"
-                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
-                    Available
-                    </button>
-
-                    <div class="my-1 border-t border-gray-200"></div>
-                    <div class="px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wide">
-                    League Availability
-                    </div>
-
-                    <template x-for="opt in (availableLeagues||[]).filter(o => String(o.value||'').startsWith('league:'))" :key="opt.value">
+            @if ($hasLeagues)
+                <div class="relative"
+                    x-show="hasConnectedLeagues"
+                    x-cloak
+                    x-data="{
+                        open:false,
+                        label(val){
+                            if(val==='all') return 'All Players';
+                            if(val==='available') return 'Available';
+                            const m = (window.__connectedLeagues||[])
+                            .filter(Boolean)
+                            .find(l => l && `league:${l.id}`===val);
+                            return m ? (m.name ?? 'League') : 'All Players';
+                        }
+                    }">
                     <button type="button"
-                            @click="leagueScope=opt.value; fetchPayload(); open=false"
-                            class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50"
-                            x-text="opt.label"></button>
-                    </template>
+                            @click="open=!open"
+                            :aria-expanded="open"
+                            class="h-10 w-64 inline-flex items-center justify-between rounded-full bg-white px-4 text-sm ring-1 ring-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <span x-text="label(leagueScope)"></span>
+                        <svg class="ml-2 h-4 w-4 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z" clip-rule="evenodd"/></svg>
+                    </button>
+
+                    <div x-show="open" x-transition @click.outside="open=false"
+                        class="absolute z-50 mt-1 w-64 max-h-60 overflow-auto rounded-md bg-white p-1 text-sm shadow-lg ring-1 ring-black/5">
+
+                        <button type="button" @click="leagueScope='all'; fetchPayload(); open=false"
+                                class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
+                        All Players
+                        </button>
+                        <button type="button" @click="leagueScope='available'; fetchPayload(); open=false"
+                                class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50">
+                        Available
+                        </button>
+
+                        <div class="my-1 border-t border-gray-200"></div>
+                        <div class="px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wide">
+                        League Availability
+                        </div>
+
+                        <template x-for="opt in (availableLeagues||[]).filter(o => String(o.value||'').startsWith('league:'))" :key="opt.value">
+                        <button type="button"
+                                @click="leagueScope=opt.value; fetchPayload(); open=false"
+                                class="w-full select-none truncate rounded px-3 py-2 text-left text-gray-900 hover:bg-indigo-50"
+                                x-text="opt.label"></button>
+                        </template>
+                    </div>
                 </div>
-            </div>
+            @endif
 
 
 
@@ -704,6 +712,10 @@
         appliedFilters: {},   // <-- keep the server echo to fix collapsed bounds
         filters:{ pos:[], pos_type:[], team:[], age:{min:null,max:null}, num:{} },
 
+
+        get hasConnectedLeagues(){
+            return Array.isArray(window.__connectedLeagues) && window.__connectedLeagues.length > 0;
+        },
 
         availabilityFromScope(){
             if (this.leagueScope === 'all')       return 0; // all players

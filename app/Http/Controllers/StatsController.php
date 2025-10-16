@@ -883,8 +883,6 @@ class StatsController extends BaseController
             $applied['filters'][$baseKey] = $pair;
         }
 
-        \Log::info('applied: ', ['applied'=>$applied]);
-
         return [$schema, $applied];
     }
 

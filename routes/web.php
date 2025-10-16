@@ -34,6 +34,11 @@ Route::get('/players', [PlayerStatsController::class, 'index'])
 
 Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
 
+Route::get('/api/stats', [StatsController::class, 'payload'])
+    ->middleware('web')
+    ->name('stats.payload'); // public but session-aware
+
+
 
 // Discord Server joins
 Route::get('/auth/discord-server/redirect/{organization}', function (Organization $organization) {
