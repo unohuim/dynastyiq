@@ -214,19 +214,23 @@ class StatsController extends BaseController
         $val = (int) ($request?->input('availability', 0) ?? 0);
         if ($val === 0) return;
 
-        // Joined earlier as players alias 'pf'
-        // We only ever compare to prm.player_id now.
-        if ($val === -1) {
-            // ANY of the user's leagues
-            $leagueIds = $user
-                ? $user->platformLeagues()->pluck('platform_leagues.id')->map(fn($i)=>(int)$i)->all()
-                : [];
 
-            \Log::info('Grabbing league ids');
+        if ($val === -1) {
+            // robust user id (works for web/ajax/api)
+            $uid = $user?->id ?? Auth::id();
+            if (!$uid) return;
+
+            // get internal platform_leagues.id values from the pivot
+            $leagueIds = DB::table('league_user_teams')
+                ->where('user_id', $uid)
+                ->pluck('platform_league_id')
+                ->map(fn ($i) => (int) $i)
+                ->all();
+
+            \Log::info('Availability ANY: fetched league ids', ['uid' => $uid, 'leagueIdsCount' => count($leagueIds)]);
 
             if (empty($leagueIds)) return;
 
-            // There exists at least one of my leagues where this player is NOT rostered
             $base->whereExists(function ($q) use ($leagueIds) {
                 $q->selectRaw('1')
                 ->from('platform_leagues as l')
@@ -240,11 +244,11 @@ class StatsController extends BaseController
                 });
             });
 
-            \Log::info('Applied availability: ANY of user leagues', ['leagueIds' => $leagueIds]);
+            \Log::info('Availability ANY applied');
             return;
         }
 
-        // Specific league availability
+        // specific league stays the same
         $leagueId = $val;
         $base->whereNotExists(function ($q) use ($leagueId) {
             $q->from('platform_roster_memberships as prm')
@@ -254,9 +258,9 @@ class StatsController extends BaseController
             ->whereColumn('prm.player_id', 'pf.id')
             ->selectRaw('1');
         });
-
-        \Log::info('Applied availability: specific league', ['leagueId' => $leagueId]);
+        \Log::info('Availability SPECIFIC applied', ['leagueId' => $leagueId]);
     }
+
 
 
 
@@ -666,6 +670,8 @@ class StatsController extends BaseController
 
         return [$filtered, $applied, $virtualSchema];
     }
+
+
 
     /** ───────────────────────────── Small helpers ───────────────────────────── */
     private function parseContractLastYear(?string $label): ?int
