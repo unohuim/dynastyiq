@@ -217,8 +217,11 @@ class StatsController extends BaseController
 
         if ($val === -1) {
             // robust user id (works for web/ajax/api)
+            \Log::info('verifying user');
             $uid = $user?->id ?? Auth::id();
             if (!$uid) return;
+
+            \Log::info('user authed');
 
             // get internal platform_leagues.id values from the pivot
             $leagueIds = DB::table('league_user_teams')
