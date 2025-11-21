@@ -92,9 +92,7 @@ Route::get('/discord/join', function () {
 })->name('discord.join');
 
 
-//ensures that all logins are done through discord oauth
-Route::match(['get','post'], '/login', fn () => redirect()->route('discord.redirect'))
-    ->name('login');
+// Login route handled by Fortify; see FortifyServiceProvider for Discord redirect.
 
 
 
