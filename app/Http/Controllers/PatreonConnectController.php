@@ -29,7 +29,7 @@ class PatreonConnectController extends Controller
 
         $authorizeUrl = config('patreon.oauth.authorize', 'https://www.patreon.com/oauth2/authorize');
         $clientId = config('services.patreon.client_id');
-        $redirectUri = config('services.patreon.redirect');
+        $redirectUri = $this->redirectUri();
         $scopes = implode(' ', config('patreon.scopes', ['identity', 'campaigns', 'memberships']));
 
         $query = http_build_query([
@@ -85,7 +85,7 @@ class PatreonConnectController extends Controller
                     'code' => $code,
                     'client_id' => config('services.patreon.client_id'),
                     'client_secret' => config('services.patreon.client_secret'),
-                    'redirect_uri' => config('services.patreon.redirect'),
+                    'redirect_uri' => $this->redirectUri(),
                 ]
             )->throw()->json();
 
@@ -234,5 +234,11 @@ class PatreonConnectController extends Controller
         return config('services.patreon.webhook_secret')
             ?? $existingAccount?->webhook_secret
             ?? Str::random(32);
+    }
+
+    protected function redirectUri(): string
+    {
+        return config('services.patreon.redirect')
+            ?? route('patreon.callback');
     }
 }

@@ -88,6 +88,87 @@ class PatreonConnectControllerTest extends TestCase
         $this->assertSame('keep-me', $account->webhook_secret);
     }
 
+    public function test_redirect_falls_back_to_callback_route_when_config_missing(): void
+    {
+        config()->set('services.patreon.redirect', null);
+
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => ['commissioner_tools' => true],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        $response = $this
+            ->actingAs($user)
+            ->get(route('patreon.redirect', $organization->id));
+
+        $response->assertRedirect();
+        $this->assertStringContainsString(
+            urlencode(route('patreon.callback')),
+            $response->headers->get('Location')
+        );
+    }
+
+    public function test_callback_uses_callback_route_when_redirect_not_configured(): void
+    {
+        config()->set('services.patreon.redirect', null);
+
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => ['commissioner_tools' => true],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        Http::fake([
+            'https://www.patreon.com/api/oauth2/token' => function ($request) {
+                $this->assertSame(route('patreon.callback'), $request['redirect_uri']);
+
+                return Http::response([
+                    'access_token' => 'token',
+                    'refresh_token' => 'refresh',
+                    'expires_in' => 3600,
+                    'scope' => 'identity campaigns',
+                ], 200);
+            },
+            'https://www.patreon.com/api/oauth2/v2/identity*' => Http::response([
+                'data' => [
+                    'attributes' => ['full_name' => 'Tester'],
+                    'relationships' => ['campaign' => ['data' => ['id' => '123']]],
+                ],
+                'included' => [
+                    [
+                        'type' => 'campaign',
+                        'attributes' => [
+                            'name' => 'Tester Campaign',
+                            'avatar_photo_url' => 'https://example.test/avatar.png',
+                        ],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $state = encrypt([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'ts' => now()->timestamp,
+        ]);
+
+        $this
+            ->actingAs($user)
+            ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
+            ->assertRedirect(route('communities.index'));
+    }
+
     public function test_callback_requires_existing_organization(): void
     {
         $user = User::factory()->create();
