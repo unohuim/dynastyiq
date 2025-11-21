@@ -14,7 +14,8 @@
       nameDefault: @js($organization?->name ?? ''),
       commishDefault: @js(data_get($orgSettings, 'commissioner_tools', false)),
       creatorDefault: @js(data_get($orgSettings, 'creator_tools', false)),
-      updateUrl: @js(route('organizations.settings.update', ['organization' => 0])),
+      updateUrlBase: @js(route('organizations.settings.update', ['organization' => null])),
+      updateUrlWithId: @js(route('organizations.settings.update', ['organization' => '__ORG__'])),
       csrf: @js(csrf_token()),
   })"
 >
@@ -116,7 +117,8 @@
       seedName: cfg.nameDefault,
       commishEnabled: cfg.commishDefault,
       creatorEnabled: cfg.creatorDefault,
-      updateUrl: cfg.updateUrl,
+      updateUrlBase: cfg.updateUrlBase,
+      updateUrlWithId: cfg.updateUrlWithId,
       csrf: cfg.csrf,
       saving: false,
       ignoreOrgWatch: false,
@@ -134,8 +136,9 @@
       // helpers
       async api(payload) {
         this.saving = true;
-        const id  = (this.orgId ?? 0);
-        const url = this.updateUrl.replace(/\/0(?!\d)/, '/' + id);
+        const url = this.orgId
+          ? this.updateUrlWithId.replace('__ORG__', this.orgId)
+          : this.updateUrlBase;
 
         try {
           const res  = await fetch(url, {
