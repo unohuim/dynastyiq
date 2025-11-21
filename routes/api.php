@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\Api\DiscordWebhookController;
 use App\Http\Controllers\StatsController;
+use App\Http\Controllers\PatreonWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -34,6 +35,10 @@ Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJ
 Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserTeams']);
 
 Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax']);
+
+// Patreon Webhooks
+Route::post('/patreon/webhook', [PatreonWebhookController::class, 'handle'])
+    ->name('patreon.webhook');
 
 
 

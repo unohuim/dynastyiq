@@ -21,7 +21,7 @@ class CommunitiesController extends Controller
         $communities = $user->organizations()
             ->whereNotNull('organizations.settings')   // enabled = settings not null
             ->whereNull('organizations.deleted_at')    // exclude soft-deleted orgs
-            ->with(['leagues', 'discordServers'])
+            ->with(['leagues', 'discordServers', 'providerAccounts'])
             ->orderBy('organizations.name')
             ->get();
 

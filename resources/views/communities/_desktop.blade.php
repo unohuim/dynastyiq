@@ -122,6 +122,8 @@
 
             @include('communities._desktop-connected-servers')
 
+            @include('communities._desktop-memberships')
+
             {{-- Leagues: live-gated by commissioner_tools --}}
             <div
                 class="col-span-full lg:col-span-3"
