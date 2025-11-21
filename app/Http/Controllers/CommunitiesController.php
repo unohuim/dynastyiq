@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Models\PlatformLeague;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
 
 class CommunitiesController extends Controller
@@ -18,10 +19,27 @@ class CommunitiesController extends Controller
     {
         $user = Auth::user();
 
+        $hasMembershipsTable = Schema::hasTable('memberships');
+
         $communities = $user->organizations()
             ->whereNotNull('organizations.settings')   // enabled = settings not null
             ->whereNull('organizations.deleted_at')    // exclude soft-deleted orgs
-            ->with(['leagues', 'discordServers', 'providerAccounts'])
+            ->with([
+                'leagues',
+                'discordServers',
+                'providerAccounts',
+            ])
+            ->when($hasMembershipsTable, function ($query) {
+                $query->with([
+                    'memberships' => function ($membershipQuery) {
+                        $membershipQuery
+                            ->where('provider', 'patreon')
+                            ->with(['memberProfile', 'membershipTier'])
+                            ->latest('synced_at')
+                            ->latest();
+                    },
+                ]);
+            })
             ->orderBy('organizations.name')
             ->get();
 

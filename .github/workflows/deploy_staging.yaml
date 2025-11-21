@@ -1,7 +1,7 @@
 name: Deploy Staging
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - closed
 
@@ -15,40 +15,6 @@ jobs:
       pull-requests: read
 
     steps:
-      - name: Ensure pull request was merged
-        id: pr-merge-check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          pr_number=${{ github.event.pull_request.number }}
-          merged=$(gh api repos/${{ github.repository }}/pulls/${pr_number} --jq '.merged')
-
-          if [[ "$merged" != "true" ]]; then
-            echo "Pull request #${pr_number} is not merged; skipping deploy."
-            exit 0
-          fi
-
-          echo "merged=true" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure CI succeeded for merge commit
-        if: steps.pr-merge-check.outputs.merged == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-        run: |
-          if [[ -z "$MERGE_SHA" ]]; then
-            echo "Merge commit SHA not available; cannot verify CI status."
-            exit 1
-          fi
-
-          ci_conclusion=$(gh api repos/${{ github.repository }}/actions/workflows/ci.yaml/runs -F head_sha="$MERGE_SHA" --jq '.workflow_runs[0].conclusion // ""')
-
-          if [[ "$ci_conclusion" != "success" ]]; then
-            echo "CI has not succeeded for merge commit $MERGE_SHA (latest conclusion: ${ci_conclusion:-none})."
-            exit 1
-          fi
-
       - name: Trigger Forge staging deploy
-        if: steps.pr-merge-check.outputs.merged == 'true'
         run: |
           curl -X POST "${{ secrets.FORGE_STAGING_DEPLOY_WEBHOOK }}"

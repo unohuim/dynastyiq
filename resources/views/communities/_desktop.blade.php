@@ -218,13 +218,15 @@
       form.querySelector('input[name="name"]').value = data.organization.name;
 
       const activeItem = document.querySelector('.community-item[aria-current="true"]');
-      if (activeItem) {
-        activeItem.dataset.name = data.organization.name;
-        const nameSpan = activeItem.querySelector('.flex-1');
-        if (nameSpan) nameSpan.textContent = data.organization.name;
-      }
+        if (activeItem) {
+          activeItem.dataset.name = data.organization.name;
+          const nameSpan = activeItem.querySelector('.flex-1');
+          if (nameSpan) nameSpan.textContent = data.organization.name;
+        }
+
+      window.toast?.success('Community name updated.');
     } catch (err) {
-      alert('Could not save changes.');
+      window.toast?.error('Could not save changes.') ?? console.error(err);
     } finally {
       btn.disabled = false;
     }

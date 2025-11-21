@@ -104,10 +104,18 @@
             csrf: cfg.csrf,
             saving: false,
 
+            notify(type, message) {
+                if (window.toast?.[type]) {
+                    window.toast[type](message);
+                } else if (window.toast?.show) {
+                    window.toast.show(message, { type });
+                }
+            },
+
             async savePref(key, value) {
                 this.saving = true;
                 try {
-                    await fetch(this.updateUrl, {
+                    const res = await fetch(this.updateUrl, {
                         method: 'PUT',
                         headers: {
                             'Content-Type': 'application/json',
@@ -119,30 +127,53 @@
                             value
                         }) // null => delete row (fallback to config)
                     });
+                    if (!res.ok) {
+                        throw new Error(`Save failed (${res.status})`);
+                    }
+
+                    this.notify('success', 'Notification preferences saved.');
                 } finally {
                     this.saving = false;
                 }
             },
 
+            handleError(message) {
+                this.notify('error', message || 'Could not save preference.');
+
+                // Revert to last known value from DB/config for safety
+                this.dmEnabled = !!cfg.dmDefault;
+                this.pcEnabled = !!cfg.channelDefault;
+                this.pcChannel = cfg.channelNameDefault || '';
+            },
+
+            async safeSave(key, value) {
+                try {
+                    await this.savePref(key, value);
+                } catch (err) {
+                    console.error('[notifications] save error', err);
+                    this.handleError(err?.message);
+                }
+            },
+
             init() {
                 this.$watch('dmEnabled', (v) => {
-                    this.savePref('notifications.discord.dm', !!v);
+                    this.safeSave('notifications.discord.dm', !!v);
                 });
 
                 this.$watch('pcEnabled', (v) => {
-                    this.savePref('notifications.discord.channel', !!v);
+                    this.safeSave('notifications.discord.channel', !!v);
 
                     if (v && !this.pcChannel) {
                         this.pcChannel = cfg.channelNameDefault || '';
                     }
                     // persist name when enabling; remove when disabling
-                    this.savePref('notifications.discord.channel-name', v ? (this.pcChannel || null) : null);
+                    this.safeSave('notifications.discord.channel-name', v ? (this.pcChannel || null) : null);
                 });
             },
 
             saveChannel() {
                 if (!this.pcEnabled) return;
-                this.savePref('notifications.discord.channel-name', this.pcChannel || null);
+                this.safeSave('notifications.discord.channel-name', this.pcChannel || null);
             }
         }
     }

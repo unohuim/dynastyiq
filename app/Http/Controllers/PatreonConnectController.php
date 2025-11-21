@@ -48,12 +48,18 @@ class PatreonConnectController extends Controller
         $organization = Organization::findOrFail($state['organization_id'] ?? 0);
         $this->assertUserCanManage($organization);
 
+        $existingAccount = ProviderAccount::where('organization_id', $organization->id)
+            ->where('provider', 'patreon')
+            ->first();
+
         $code = $request->string('code')->value();
         if (!$code) {
             return redirect()->route('communities.index')->withErrors([
                 'patreon' => 'Missing authorization code.',
             ]);
         }
+
+        $displayName = 'Patreon';
 
         try {
             $tokenResponse = Http::asForm()->post(
@@ -75,8 +81,24 @@ class PatreonConnectController extends Controller
         } catch (Throwable $e) {
             return redirect()->route('communities.index')->withErrors([
                 'patreon' => 'Unable to connect to Patreon: ' . $e->getMessage(),
-            ]);
+            ])->with('error', 'Unable to connect to Patreon.');
         }
+
+        $campaign = collect($identity['included'] ?? [])
+            ->firstWhere('type', 'campaign');
+
+        $userMeta = array_filter([
+            'id' => data_get($identity, 'data.id'),
+            'full_name' => data_get($identity, 'data.attributes.full_name'),
+            'email' => data_get($identity, 'data.attributes.email'),
+            'vanity' => data_get($identity, 'data.attributes.vanity'),
+            'image_url' => data_get($identity, 'data.attributes.image_url'),
+        ]);
+
+        $campaignMeta = array_filter([
+            'id' => data_get($identity, 'data.relationships.campaign.data.id'),
+            'name' => data_get($campaign, 'attributes.creation_name'),
+        ]);
 
         $account = ProviderAccount::updateOrCreate(
             [
@@ -86,7 +108,7 @@ class PatreonConnectController extends Controller
             [
                 'status'         => 'connected',
                 'external_id'    => data_get($identity ?? [], 'data.relationships.campaign.data.id'),
-                'display_name'   => data_get($identity ?? [], 'data.attributes.full_name'),
+                'display_name'   => $displayName,
                 'access_token'   => $tokenResponse['access_token'] ?? null,
                 'refresh_token'  => $tokenResponse['refresh_token'] ?? null,
                 'token_expires_at' => now()->addSeconds((int) ($tokenResponse['expires_in'] ?? 3600)),
@@ -95,11 +117,15 @@ class PatreonConnectController extends Controller
                     : config('patreon.scopes'),
                 'connected_at'   => now(),
                 'last_sync_error'=> null,
-                'webhook_secret' => $this->getWebhookSecret($organization),
+                'webhook_secret' => $this->getWebhookSecret($organization, $existingAccount),
+                'meta'           => array_filter([
+                    'user' => $userMeta,
+                    'campaign' => $campaignMeta,
+                ]),
             ]
         );
 
-        return redirect()->route('communities.index')->with('status', 'Patreon connected');
+        return redirect()->route('communities.index')->with('success', 'Patreon connected');
     }
 
     public function disconnect(Organization $organization): RedirectResponse|JsonResponse
@@ -118,7 +144,7 @@ class PatreonConnectController extends Controller
             return response()->json(['ok' => true]);
         }
 
-        return redirect()->route('communities.index')->with('status', 'Patreon disconnected');
+        return redirect()->route('communities.index')->with('success', 'Patreon disconnected');
     }
 
     protected function assertUserCanManage(Organization $organization): void
@@ -134,9 +160,10 @@ class PatreonConnectController extends Controller
         }
     }
 
-    protected function getWebhookSecret(Organization $organization): string
+    protected function getWebhookSecret(Organization $organization, ?ProviderAccount $existingAccount = null): string
     {
         return config('services.patreon.webhook_secret')
+            ?? $existingAccount?->webhook_secret
             ?? Str::random(32);
     }
 }

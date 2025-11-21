@@ -3,6 +3,7 @@
 use App\Console\Commands\FantraxImportPlayersCommand;
 use App\Console\Commands\FantraxSyncCommand;
 use App\Console\Commands\ImportCapWagesCommand;
+use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
 use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
@@ -19,6 +20,7 @@ use Sentry\Laravel\Integration;
 return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PatreonNightlySync::class,
+        BackfillShotGeometryCommand::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

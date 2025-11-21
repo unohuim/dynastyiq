@@ -43,6 +43,8 @@ return new class extends Migration
             $table->integer('x_coord')->nullable();
             $table->integer('y_coord')->nullable();
             $table->string('home_team_defending_side')->nullable();
+            $table->decimal('shot_distance', 8, 2)->nullable();
+            $table->decimal('shot_angle', 7, 3)->nullable();
             $table->string('zone_code')->nullable();
             $table->string('code_type')->nullable();
 
