@@ -48,6 +48,10 @@ class PatreonConnectController extends Controller
         $organization = Organization::findOrFail($state['organization_id'] ?? 0);
         $this->assertUserCanManage($organization);
 
+        $existingAccount = ProviderAccount::where('organization_id', $organization->id)
+            ->where('provider', 'patreon')
+            ->first();
+
         $code = $request->string('code')->value();
         if (!$code) {
             return redirect()->route('communities.index')->withErrors([
@@ -95,7 +99,7 @@ class PatreonConnectController extends Controller
                     : config('patreon.scopes'),
                 'connected_at'   => now(),
                 'last_sync_error'=> null,
-                'webhook_secret' => $this->getWebhookSecret($organization),
+                'webhook_secret' => $this->getWebhookSecret($organization, $existingAccount),
             ]
         );
 
@@ -134,9 +138,10 @@ class PatreonConnectController extends Controller
         }
     }
 
-    protected function getWebhookSecret(Organization $organization): string
+    protected function getWebhookSecret(Organization $organization, ?ProviderAccount $existingAccount = null): string
     {
         return config('services.patreon.webhook_secret')
+            ?? $existingAccount?->webhook_secret
             ?? Str::random(32);
     }
 }
