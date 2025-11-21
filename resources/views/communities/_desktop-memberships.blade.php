@@ -59,15 +59,13 @@
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
                         @if($patreonAvatar)
-                            <img src="{{ $patreonAvatar }}" alt="{{ $patreonName }} avatar" class="h-10 w-10 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
+                            <img src="{{ $patreonAvatar }}" alt="Patreon avatar" class="h-10 w-10 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
                         @else
-                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-200 text-sm font-semibold text-slate-700">
-                                {{ $patreonInitial }}
-                            </div>
+                            <div class="h-10 w-10 rounded-lg bg-slate-200"></div>
                         @endif
                         <div>
                             <div class="text-sm font-semibold text-slate-900">
-                                {{ $patreonName }}
+                                {{ $patreonDisplay['name'] ?? $patreonUser['full_name'] ?? $patreonAccount->display_name ?? 'Patreon account' }}
                             </div>
                             <div class="text-xs text-slate-600">
                                 @if(!empty($patreonDisplay['handle']))
