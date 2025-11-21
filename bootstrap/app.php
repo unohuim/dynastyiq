@@ -13,8 +13,6 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Sentry\Laravel\Integration;
-use App\Console\Commands\PatreonNightlySync;
-use App\Http\Middleware\HydrateDiscordSession;
 
 
 
