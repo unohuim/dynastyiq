@@ -49,6 +49,16 @@ class PatreonConnectControllerTest extends TestCase
                     'relationships' => ['campaign' => ['data' => ['id' => '123']]],
                 ],
             ], 200),
+            'https://www.patreon.com/api/oauth2/v2/campaigns/123*' => Http::response([
+                'data' => [
+                    'id' => '123',
+                    'type' => 'campaign',
+                    'attributes' => [
+                        'name' => 'Tester Campaign',
+                        'avatar_photo_url' => 'https://example.test/avatar.png',
+                    ],
+                ],
+            ], 200),
         ]);
 
         $state = encrypt([

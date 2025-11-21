@@ -59,8 +59,6 @@ class PatreonConnectController extends Controller
             ]);
         }
 
-        $displayName = 'Patreon';
-
         try {
             $tokenResponse = Http::asForm()->post(
                 config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token'),
@@ -75,7 +73,11 @@ class PatreonConnectController extends Controller
 
             $identity = Http::withToken($tokenResponse['access_token'] ?? '')
                 ->acceptJson()
-                ->get(config('patreon.base_url') . '/identity', ['include' => 'campaign'])
+                ->get(config('patreon.base_url') . '/identity', [
+                    'include' => 'campaign',
+                    'fields[user]' => 'full_name,vanity,email,image_url',
+                    'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                ])
                 ->throw()
                 ->json();
         } catch (Throwable $e) {
@@ -84,8 +86,45 @@ class PatreonConnectController extends Controller
             ])->with('error', 'Unable to connect to Patreon.');
         }
 
+        $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+
         $campaign = collect($identity['included'] ?? [])
             ->firstWhere('type', 'campaign');
+
+        if (!$campaign && $campaignId) {
+            try {
+                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                    ->acceptJson()
+                    ->get(config('patreon.base_url') . '/campaigns/' . $campaignId, [
+                        'include' => 'creator',
+                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                    ])
+                    ->throw()
+                    ->json();
+
+                $campaign = $campaignResponse['data'] ?? null;
+            } catch (Throwable) {
+                // Ignore campaign lookup failures when we already have the campaign id
+            }
+        }
+
+        if (!$campaign && !$campaignId) {
+            try {
+                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                    ->acceptJson()
+                    ->get(config('patreon.base_url') . '/campaigns', [
+                        'include' => 'creator',
+                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                        'page[count]' => 1,
+                    ])
+                    ->throw()
+                    ->json();
+
+                $campaign = $campaignResponse['data'][0] ?? null;
+            } catch (Throwable) {
+                // Ignore campaign lookup failures when neither id nor include data is available
+            }
+        }
 
         $userMeta = array_filter([
             'id' => data_get($identity, 'data.id'),
@@ -96,13 +135,18 @@ class PatreonConnectController extends Controller
         ]);
 
         $campaignMeta = array_filter([
-            'id' => data_get($identity, 'data.relationships.campaign.data.id'),
+            'id' => $campaignId,
             'name' => data_get($campaign, 'attributes.creation_name')
                 ?? data_get($campaign, 'attributes.name'),
             'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
                 ?? data_get($campaign, 'attributes.image_small_url')
                 ?? data_get($campaign, 'attributes.image_url'),
         ]);
+
+        $displayName = $campaignMeta['name']
+            ?? $userMeta['full_name']
+            ?? $userMeta['vanity']
+            ?? 'Creator page';
 
         $account = ProviderAccount::updateOrCreate(
             [
