@@ -97,7 +97,11 @@ class PatreonConnectController extends Controller
 
         $campaignMeta = array_filter([
             'id' => data_get($identity, 'data.relationships.campaign.data.id'),
-            'name' => data_get($campaign, 'attributes.creation_name'),
+            'name' => data_get($campaign, 'attributes.creation_name')
+                ?? data_get($campaign, 'attributes.name'),
+            'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
+                ?? data_get($campaign, 'attributes.image_small_url')
+                ?? data_get($campaign, 'attributes.image_url'),
         ]);
 
         $account = ProviderAccount::updateOrCreate(
