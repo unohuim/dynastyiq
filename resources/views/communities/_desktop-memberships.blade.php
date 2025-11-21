@@ -15,7 +15,26 @@
     };
 @endphp
 
-<section class="col-span-full lg:col-span-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+<section
+    class="col-span-full lg:col-span-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+    x-data="{
+        enabled: {{ $currentOrg?->creatorToolsEnabled() ? 'true' : 'false' }},
+        orgId: {{ $currentOrg?->id ?? 'null' }},
+    }"
+    x-show="enabled"
+    x-cloak
+    x-on:org:settings-updated.window="
+        if ($event.detail?.organization_id === orgId) {
+            if ($event.detail?.enabled === false) {
+                enabled = false;
+                return;
+            }
+
+            const creator = $event.detail?.settings?.creator_tools;
+            if (creator !== undefined) enabled = !!creator;
+        }
+    "
+>
     <div class="mb-3 flex items-center justify-between">
         <div>
             <h3 class="text-sm font-semibold tracking-wider text-slate-600 uppercase">Memberships</h3>
