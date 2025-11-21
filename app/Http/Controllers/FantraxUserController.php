@@ -68,7 +68,10 @@ class FantraxUserController extends Controller
             ]);
         }
 
-        return back()->with('success', 'Fantrax connected (' . count($leagues) . ' league(s) found).');
+        return back()->with([
+            'status' => 'Fantrax connected (' . count($leagues) . ' league(s) found).',
+            'success' => 'Fantrax connected (' . count($leagues) . ' league(s) found).',
+        ]);
     }
 
     /**
@@ -84,7 +87,10 @@ class FantraxUserController extends Controller
             $secret->delete();
         }
 
-        return back()->with('success', 'Fantrax disconnected.');
+        return back()->with([
+            'status' => 'Fantrax disconnected.',
+            'success' => 'Fantrax disconnected.',
+        ]);
     }
 
     private function respondError(Request $request, string $message): RedirectResponse|JsonResponse
