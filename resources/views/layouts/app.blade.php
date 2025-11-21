@@ -48,6 +48,8 @@
             </main>
         </div>
 
+        @include('partials.toast-container')
+
         @stack('modals') @livewireScripts @stack('scripts')
     </body>
 </html>
