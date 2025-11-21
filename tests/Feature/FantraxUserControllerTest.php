@@ -152,6 +152,8 @@ class FantraxUserControllerTest extends TestCase
         $response->assertSessionHasErrors([
             'fantrax_secret_key' => 'Unable to reach Fantrax. Try again.',
         ]);
+
+        $this->assertDatabaseCount('integration_secrets', 0);
     }
 
     public function test_save_returns_error_when_no_leagues_found(): void
@@ -174,6 +176,34 @@ class FantraxUserControllerTest extends TestCase
                 'ok' => false,
                 'error' => 'Invalid Fantrax Secret Key.',
             ]);
+    }
+
+    public function test_save_does_not_persist_secret_or_dispatch_event_when_no_leagues_found(): void
+    {
+        $user = User::factory()->create();
+
+        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
+        $controller->shouldReceive('getAPIData')
+            ->once()
+            ->andReturn(['leagues' => []]);
+
+        $this->app->instance(FantraxUserController::class, $controller);
+
+        Event::fake([FantraxUserConnected::class]);
+
+        $response = $this->actingAs($user)->postJson(route('integrations.fantrax.save'), [
+            'fantrax_secret_key' => 'secret-key',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'ok' => false,
+                'error' => 'Invalid Fantrax Secret Key.',
+            ]);
+
+        $this->assertDatabaseCount('integration_secrets', 0);
+        Event::assertNotDispatched(FantraxUserConnected::class);
+        $this->assertFalse(session()->has('fantrax.connected'));
     }
 
     public function test_save_returns_form_error_when_no_leagues_found(): void
