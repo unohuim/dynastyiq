@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -44,9 +45,31 @@ class PatreonConnectController extends Controller
 
     public function callback(Request $request): RedirectResponse
     {
-        $state = decrypt($request->string('state')->value());
-        $organization = Organization::findOrFail($state['organization_id'] ?? 0);
-        $this->assertUserCanManage($organization);
+        if ($request->has('error')) {
+            return $this->errorRedirect(
+                $request->string('error_description')->toString()
+                    ?: 'Authorization was denied.'
+            );
+        }
+
+        try {
+            $state = decrypt($request->string('state')->value());
+        } catch (Throwable) {
+            return $this->errorRedirect('Invalid authorization response.');
+        }
+
+        if (($state['user_id'] ?? null) !== Auth::id() || empty($state['organization_id'])) {
+            return $this->errorRedirect('Invalid authorization response.');
+        }
+
+        $organization = Organization::find($state['organization_id']);
+        if (!$organization) {
+            return $this->errorRedirect('Organization not found.');
+        }
+
+        if (!$this->userCanManage($organization)) {
+            return $this->errorRedirect('You do not have permission to connect this organization.');
+        }
 
         $existingAccount = ProviderAccount::where('organization_id', $organization->id)
             ->where('provider', 'patreon')
@@ -54,12 +77,8 @@ class PatreonConnectController extends Controller
 
         $code = $request->string('code')->value();
         if (!$code) {
-            return redirect()->route('communities.index')->withErrors([
-                'patreon' => 'Missing authorization code.',
-            ]);
+            return $this->errorRedirect('Missing authorization code.');
         }
-
-        $displayName = 'Patreon';
 
         try {
             $tokenResponse = Http::asForm()->post(
@@ -75,17 +94,62 @@ class PatreonConnectController extends Controller
 
             $identity = Http::withToken($tokenResponse['access_token'] ?? '')
                 ->acceptJson()
-                ->get(config('patreon.base_url') . '/identity', ['include' => 'campaign'])
+                ->get(config('patreon.base_url') . '/identity', [
+                    'include' => 'campaign',
+                    'fields[user]' => 'full_name,vanity,email,image_url',
+                    'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                ])
                 ->throw()
                 ->json();
         } catch (Throwable $e) {
-            return redirect()->route('communities.index')->withErrors([
-                'patreon' => 'Unable to connect to Patreon: ' . $e->getMessage(),
-            ])->with('error', 'Unable to connect to Patreon.');
+            Log::warning('Patreon callback failed', [
+                'organization_id' => $organization->id,
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->errorRedirect('Unable to connect to Patreon: ' . $e->getMessage());
         }
+
+        $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
 
         $campaign = collect($identity['included'] ?? [])
             ->firstWhere('type', 'campaign');
+
+        if (!$campaign && $campaignId) {
+            try {
+                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                    ->acceptJson()
+                    ->get(config('patreon.base_url') . '/campaigns/' . $campaignId, [
+                        'include' => 'creator',
+                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                    ])
+                    ->throw()
+                    ->json();
+
+                $campaign = $campaignResponse['data'] ?? null;
+            } catch (Throwable) {
+                // Ignore campaign lookup failures when we already have the campaign id
+            }
+        }
+
+        if (!$campaign && !$campaignId) {
+            try {
+                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                    ->acceptJson()
+                    ->get(config('patreon.base_url') . '/campaigns', [
+                        'include' => 'creator',
+                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                        'page[count]' => 1,
+                    ])
+                    ->throw()
+                    ->json();
+
+                $campaign = $campaignResponse['data'][0] ?? null;
+            } catch (Throwable) {
+                // Ignore campaign lookup failures when neither id nor include data is available
+            }
+        }
 
         $userMeta = array_filter([
             'id' => data_get($identity, 'data.id'),
@@ -96,13 +160,18 @@ class PatreonConnectController extends Controller
         ]);
 
         $campaignMeta = array_filter([
-            'id' => data_get($identity, 'data.relationships.campaign.data.id'),
+            'id' => $campaignId,
             'name' => data_get($campaign, 'attributes.creation_name')
                 ?? data_get($campaign, 'attributes.name'),
             'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
                 ?? data_get($campaign, 'attributes.image_small_url')
                 ?? data_get($campaign, 'attributes.image_url'),
         ]);
+
+        $displayName = $campaignMeta['name']
+            ?? $userMeta['full_name']
+            ?? $userMeta['vanity']
+            ?? 'Creator page';
 
         $account = ProviderAccount::updateOrCreate(
             [
@@ -162,6 +231,26 @@ class PatreonConnectController extends Controller
         if (!$hasOrg) {
             abort(403);
         }
+    }
+
+    protected function userCanManage(Organization $organization): bool
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->organizations()
+            ->where('organizations.id', $organization->id)
+            ->exists();
+    }
+
+    protected function errorRedirect(string $message): RedirectResponse
+    {
+        return redirect()->route('communities.index')
+            ->withErrors(['patreon' => $message])
+            ->with('error', 'Unable to connect to Patreon.');
     }
 
     protected function getWebhookSecret(Organization $organization, ?ProviderAccount $existingAccount = null): string
