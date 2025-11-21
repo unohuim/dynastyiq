@@ -69,7 +69,7 @@ class ProviderAccount extends Model
                     ?? $user['vanity']
                     ?? $user['email']
                     ?? $this->display_name
-                    ?? 'Patreon',
+                    ?? 'Creator page',
                 'email' => $user['email'] ?? null,
                 'handle' => $handle,
                 'account_id' => $user['id'] ?? null,
