@@ -1,5 +1,6 @@
 @php
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
+    $patreonMemberships = $currentOrg?->memberships?->where('provider', 'patreon') ?? collect();
     $status = $patreonAccount?->status ?? 'disconnected';
     $statusCopy = [
         'connected' => 'Online',
@@ -13,7 +14,7 @@
     };
 @endphp
 
-<section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+<section class="col-span-full lg:col-span-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div class="mb-3 flex items-center justify-between">
         <div>
             <h3 class="text-sm font-semibold tracking-wider text-slate-600 uppercase">Memberships</h3>
@@ -55,5 +56,54 @@
         <div class="rounded-xl border border-dashed border-slate-300 p-3 text-xs text-slate-600">
             Auto-sync via webhooks with nightly fallback. When offline, we pause updates but keep access unchanged.
         </div>
+
+        @if($patreonAccount)
+            <div
+                class="rounded-xl border border-slate-200 bg-slate-50"
+                x-data="{ open: true }"
+            >
+                <button
+                    type="button"
+                    class="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-slate-700"
+                    @click="open = !open"
+                >
+                    <span>Members</span>
+                    <svg
+                        :class="open ? 'rotate-180' : ''"
+                        class="h-4 w-4 text-slate-500 transition-transform"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                    >
+                        <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+
+                <div x-show="open" x-cloak class="divide-y divide-slate-200 border-t border-slate-200">
+                    @forelse($patreonMemberships as $membership)
+                        <div class="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
+                            <div class="min-w-0">
+                                <p class="truncate text-sm font-semibold text-slate-800">
+                                    {{ $membership->memberProfile?->display_name ?? 'Unknown member' }}
+                                </p>
+                                @if($membership->memberProfile?->email)
+                                    <p class="truncate text-xs text-slate-500">{{ $membership->memberProfile->email }}</p>
+                                @endif
+                            </div>
+                            <div class="text-right">
+                                <p class="text-xs font-semibold text-indigo-700">
+                                    {{ $membership->membershipTier?->name ?? 'No tier' }}
+                                </p>
+                                <p class="text-[11px] text-slate-500">
+                                    {{ $membership->status ? ucfirst($membership->status) : 'Unknown status' }}
+                                </p>
+                            </div>
+                        </div>
+                    @empty
+                        <div class="px-3 py-3 text-xs text-slate-600">No members synced yet.</div>
+                    @endforelse
+                </div>
+            </div>
+        @endif
     </div>
 </section>
