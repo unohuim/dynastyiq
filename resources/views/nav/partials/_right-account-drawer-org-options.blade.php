@@ -14,8 +14,8 @@
       nameDefault: @js($organization?->name ?? ''),
       commishDefault: @js(data_get($orgSettings, 'commissioner_tools', false)),
       creatorDefault: @js(data_get($orgSettings, 'creator_tools', false)),
-      updateUrlBase: @js(route('organizations.settings.update', ['organization' => null])),
-      updateUrlWithId: @js(route('organizations.settings.update', ['organization' => '__ORG__'])),
+      updateUrlBase: @js(url('/organizations/settings')),
+      updateUrlWithId: @js(url('/organizations/__ORG__/settings')),
       csrf: @js(csrf_token()),
   })"
 >
