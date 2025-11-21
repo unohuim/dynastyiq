@@ -98,12 +98,6 @@ class PatreonConnectController extends Controller
             'name' => data_get($campaign, 'attributes.creation_name'),
         ]);
 
-        $displayName = $userMeta['full_name']
-            ?? $campaignMeta['name']
-            ?? $userMeta['vanity']
-            ?? $userMeta['email']
-            ?? 'Patreon';
-
         $account = ProviderAccount::updateOrCreate(
             [
                 'organization_id' => $organization->id,

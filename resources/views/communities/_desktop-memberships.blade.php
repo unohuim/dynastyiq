@@ -35,35 +35,19 @@
                     @else
                         <div class="h-8 w-8 rounded-lg bg-slate-200"></div>
                     @endif
-                    <div class="space-y-0.5">
+                    <div>
                         <div class="text-sm font-semibold text-slate-900">
-                            {{ $patreonUser['full_name'] ?? $patreonUser['vanity'] ?? $patreonCampaign['name'] ?? $patreonAccount->display_name ?? 'Patreon account' }}
+                            {{ $patreonUser['full_name'] ?? $patreonAccount->display_name ?? 'Patreon account' }}
                         </div>
-                        <div class="text-xs text-slate-600 space-y-0.5">
+                        <div class="text-xs text-slate-600">
                             @if(!empty($patreonUser['email']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Email:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonUser['email'] }}</span>
-                                </div>
-                            @endif
-
-                            @if(!empty($patreonCampaign['name']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Campaign:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonCampaign['name'] }}</span>
-                                </div>
-                            @elseif(!empty($patreonUser['vanity']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Handle:</span>
-                                    <span class="font-medium text-slate-700">{{ '@' . ltrim($patreonUser['vanity'], '@') }}</span>
-                                </div>
+                                {{ $patreonUser['email'] }}
+                            @elseif(!empty($patreonCampaign['name']))
+                                Campaign: {{ $patreonCampaign['name'] }}
                             @elseif($patreonAccount->external_id)
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Campaign ID:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonAccount->external_id }}</span>
-                                </div>
+                                ID: {{ $patreonAccount->external_id }}
                             @else
-                                <span>Connected via Patreon</span>
+                                Connected via Patreon
                             @endif
                         </div>
                     </div>
