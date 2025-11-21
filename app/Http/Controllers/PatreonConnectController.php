@@ -86,10 +86,12 @@ class PatreonConnectController extends Controller
             ])->with('error', 'Unable to connect to Patreon.');
         }
 
+        $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+
         $campaign = collect($identity['included'] ?? [])
             ->firstWhere('type', 'campaign');
 
-        if (!$campaign) {
+        if (!$campaign && !$campaignId) {
             $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
                 ->acceptJson()
                 ->get(config('patreon.base_url') . '/campaigns', [
@@ -112,7 +114,7 @@ class PatreonConnectController extends Controller
         ]);
 
         $campaignMeta = array_filter([
-            'id' => data_get($identity, 'data.relationships.campaign.data.id'),
+            'id' => $campaignId,
             'name' => data_get($campaign, 'attributes.creation_name')
                 ?? data_get($campaign, 'attributes.name'),
             'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
