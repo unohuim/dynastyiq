@@ -7,6 +7,11 @@
     $patreonDisplay = $patreonIdentity['display'] ?? [];
     $patreonTeam = $patreonIdentity['team'] ?? [];
     $patreonAvatar = $patreonIdentity['avatar'] ?? null;
+    $patreonName = $patreonDisplay['name']
+        ?? $patreonUser['full_name']
+        ?? $patreonAccount?->display_name
+        ?? 'Patreon';
+    $patreonInitial = mb_substr($patreonName, 0, 1);
     $status = $patreonAccount?->status ?? 'disconnected';
     $statusCopy = [
         'connected' => 'Online',

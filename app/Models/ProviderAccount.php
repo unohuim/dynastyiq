@@ -54,14 +54,18 @@ class ProviderAccount extends Model
             ? '@' . ltrim((string) $user['vanity'], '@')
             : null;
 
+        $avatar = $user['image_url']
+            ?? $campaign['image_url']
+            ?? null;
+
         return [
             'user' => $user,
             'campaign' => $campaign,
             'team' => $team,
-            'avatar' => $user['image_url'] ?? null,
+            'avatar' => $avatar,
             'display' => array_filter([
-                'name' => $user['full_name']
-                    ?? $campaign['name']
+                'name' => $campaign['name']
+                    ?? $user['full_name']
                     ?? $user['vanity']
                     ?? $user['email']
                     ?? $this->display_name
