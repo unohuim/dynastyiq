@@ -1,9 +1,7 @@
 @php
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
     $patreonMemberships = $currentOrg?->memberships?->where('provider', 'patreon') ?? collect();
-    $patreonUser = $patreonAccount?->meta['user'] ?? [];
-    $patreonCampaign = $patreonAccount?->meta['campaign'] ?? [];
-    $patreonAvatar = $patreonUser['image_url'] ?? null;
+    $patreonIdentity = $patreonAccount?->patreonIdentity() ?? [];
     $status = $patreonAccount?->status ?? 'disconnected';
     $statusCopy = [
         'connected' => 'Online',
