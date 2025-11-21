@@ -134,7 +134,7 @@ Route::middleware([
     )->name('user.preferences.update');
 
     // Organization settings
-    Route::put('/organizations/{organization?}/settings',
+    Route::put('/organizations/settings/{organization?}',
         [\App\Http\Controllers\OrganizationsController::class, 'updateSettings']
     )->name('organizations.settings.update');
 
