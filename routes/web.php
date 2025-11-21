@@ -68,9 +68,11 @@ Route::middleware('auth')->post('/auth/discord-server/attach', [\App\Http\Contro
 
 //socialite auth routes
 Route::get('/auth/discord/redirect', function () {
+    $redirectUri = config('services.discord.redirect') ?: route('discord.callback');
+
     return Socialite::driver('discord')
         ->scopes(['identify','email'])
-        ->redirectUrl(route('discord.callback'))
+        ->redirectUrl($redirectUri)
         ->redirect();
 })->name('discord.redirect');
 

@@ -8,6 +8,8 @@ on:
 
 jobs:
   test:
+    # Skip merge commits while still running for direct pushes and pull requests
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request')
     runs-on: ubuntu-latest
 
     services:
