@@ -92,9 +92,11 @@ Route::get('/discord/join', function () {
 })->name('discord.join');
 
 
-//ensures that all logins are done through discord oauth
-Route::match(['get','post'], '/login', fn () => redirect()->route('discord.redirect'))
-    ->name('login');
+//ensures that all logins are done through discord oauth outside of automated testing
+if (! app()->environment('testing')) {
+    Route::match(['get','post'], '/login', fn () => redirect()->route('discord.redirect'))
+        ->name('login');
+}
 
 
 

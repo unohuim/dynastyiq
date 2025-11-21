@@ -1,5 +1,14 @@
 <?php
 
+use App\Console\Commands\FantraxImportPlayersCommand;
+use App\Console\Commands\FantraxSyncCommand;
+use App\Console\Commands\ImportCapWagesCommand;
+use App\Console\Commands\ImportNhlPlayersCommand;
+use App\Console\Commands\NhlDiscoverCommand;
+use App\Console\Commands\NhlProcessCommand;
+use App\Console\Commands\PatreonNightlySync;
+use App\Console\Commands\SumNhlSeasonCommand;
+use App\Http\Middleware\HydrateDiscordSession;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
