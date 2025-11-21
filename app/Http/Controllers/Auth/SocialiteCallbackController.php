@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 
@@ -118,12 +119,19 @@ class SocialiteCallbackController extends Controller
         $guildId = (string) config('services.discord.diq_guild_id');
         $discordUserId = (string) $account->provider_user_id;
 
-        try {
-            if ($this->isDiscordMember($guildId, $discordUserId)) {
-                session(['diq-user.connected' => true]);
+        if ($guildId !== '') {
+            try {
+                if ($this->isDiscordMember($guildId, $discordUserId)) {
+                    session(['diq-user.connected' => true]);
+                }
+            } catch (\Throwable $e) {
+                report($e);
+                Log::warning('Discord guild membership check failed', [
+                    'guild_id' => $guildId,
+                    'discord_user_id' => $discordUserId,
+                    'exception' => $e,
+                ]);
             }
-        } catch (\Throwable $e) {
-            // Optional: report($e);
         }
 
         return redirect()->intended('/');
