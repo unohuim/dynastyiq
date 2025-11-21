@@ -68,7 +68,7 @@ class FantraxUserController extends Controller
             ]);
         }
 
-        return back()->with('status', 'Fantrax connected (' . count($leagues) . ' league(s) found).');
+        return back()->with('success', 'Fantrax connected (' . count($leagues) . ' league(s) found).');
     }
 
     /**
@@ -84,7 +84,7 @@ class FantraxUserController extends Controller
             $secret->delete();
         }
 
-        return back()->with('status', 'Fantrax disconnected.');
+        return back()->with('success', 'Fantrax disconnected.');
     }
 
     private function respondError(Request $request, string $message): RedirectResponse|JsonResponse
@@ -93,6 +93,8 @@ class FantraxUserController extends Controller
             return response()->json(['ok' => false, 'error' => $message], 422);
         }
 
-        return back()->withErrors(['fantrax_secret_key' => $message]);
+        return back()
+            ->withErrors(['fantrax_secret_key' => $message])
+            ->with('error', $message);
     }
 }
