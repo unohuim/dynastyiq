@@ -59,6 +59,8 @@ class PatreonConnectController extends Controller
             ]);
         }
 
+        $displayName = 'Patreon';
+
         try {
             $tokenResponse = Http::asForm()->post(
                 config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token'),
