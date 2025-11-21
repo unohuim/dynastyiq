@@ -40,6 +40,32 @@ class ProviderAccount extends Model
         'last_webhook_at' => 'datetime',
     ];
 
+    public function patreonIdentity(): array
+    {
+        if ($this->provider !== 'patreon') {
+            return [];
+        }
+
+        $user = $this->meta['user'] ?? [];
+        $campaign = $this->meta['campaign'] ?? [];
+
+        return [
+            'name' => $user['full_name']
+                ?? $campaign['name']
+                ?? $user['vanity']
+                ?? $user['email']
+                ?? $this->display_name
+                ?? 'Patreon',
+            'email' => $user['email'] ?? null,
+            'handle' => isset($user['vanity'])
+                ? '@' . ltrim((string) $user['vanity'], '@')
+                : null,
+            'campaign' => $campaign['name'] ?? null,
+            'campaign_id' => $campaign['id'] ?? null,
+            'avatar' => $user['image_url'] ?? null,
+        ];
+    }
+
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
