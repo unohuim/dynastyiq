@@ -7,12 +7,15 @@ namespace Tests\Feature;
 use App\Models\Organization;
 use App\Models\ProviderAccount;
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class PatreonConnectControllerTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_callback_preserves_existing_webhook_secret(): void
     {
         $user = User::factory()->create();
