@@ -43,7 +43,7 @@ Route::get('/api/stats', [StatsController::class, 'payload'])
 
 
 // Discord Server joins
-Route::get('/auth/discord-server/redirect/{organization}', function (Organization $organization) {
+Route::middleware('auth')->get('/auth/discord-server/redirect/{organization}', function (Organization $organization) {
     $user = Auth::user();
 
     $isAdmin = $user?->roles()
@@ -61,7 +61,7 @@ Route::get('/auth/discord-server/redirect/{organization}', function (Organizatio
 })->name('discord-server.redirect');
 
 
-Route::post('/auth/discord-server/attach', [\App\Http\Controllers\Auth\DiscordServerCallbackController::class, 'attach'])
+Route::middleware('auth')->post('/auth/discord-server/attach', [\App\Http\Controllers\Auth\DiscordServerCallbackController::class, 'attach'])
     ->name('discord-server.attach');
 
 
@@ -70,6 +70,7 @@ Route::post('/auth/discord-server/attach', [\App\Http\Controllers\Auth\DiscordSe
 Route::get('/auth/discord/redirect', function () {
     return Socialite::driver('discord')
         ->scopes(['identify','email'])
+        ->redirectUrl(route('discord.callback'))
         ->redirect();
 })->name('discord.redirect');
 
