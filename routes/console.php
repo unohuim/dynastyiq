@@ -1,6 +1,5 @@
 <?php
 
-use Illuminate\Foundation\Console\ClosureCommand;
 use Illuminate\Support\Facades\Schedule;
 
 
