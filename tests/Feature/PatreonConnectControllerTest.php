@@ -16,6 +16,17 @@ class PatreonConnectControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_callback_with_invalid_state_redirects_with_error(): void
+    {
+        $user = User::factory()->create();
+
+        $this
+            ->actingAs($user)
+            ->get(route('patreon.callback', ['state' => 'invalid', 'code' => 'abc']))
+            ->assertRedirect(route('communities.index'))
+            ->assertSessionHasErrors('patreon');
+    }
+
     public function test_callback_preserves_existing_webhook_secret(): void
     {
         $user = User::factory()->create();
@@ -75,5 +86,22 @@ class PatreonConnectControllerTest extends TestCase
         $account->refresh();
 
         $this->assertSame('keep-me', $account->webhook_secret);
+    }
+
+    public function test_callback_requires_existing_organization(): void
+    {
+        $user = User::factory()->create();
+
+        $state = encrypt([
+            'organization_id' => 9999,
+            'user_id' => $user->id,
+            'ts' => now()->timestamp,
+        ]);
+
+        $this
+            ->actingAs($user)
+            ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
+            ->assertRedirect(route('communities.index'))
+            ->assertSessionHasErrors('patreon');
     }
 }

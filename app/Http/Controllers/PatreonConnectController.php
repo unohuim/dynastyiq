@@ -44,8 +44,27 @@ class PatreonConnectController extends Controller
 
     public function callback(Request $request): RedirectResponse
     {
-        $state = decrypt($request->string('state')->value());
-        $organization = Organization::findOrFail($state['organization_id'] ?? 0);
+        try {
+            $state = decrypt($request->string('state')->value());
+        } catch (Throwable) {
+            return redirect()->route('communities.index')->withErrors([
+                'patreon' => 'Invalid authorization response.',
+            ])->with('error', 'Unable to connect to Patreon.');
+        }
+
+        if (($state['user_id'] ?? null) !== Auth::id() || empty($state['organization_id'])) {
+            return redirect()->route('communities.index')->withErrors([
+                'patreon' => 'Invalid authorization response.',
+            ])->with('error', 'Unable to connect to Patreon.');
+        }
+
+        $organization = Organization::find($state['organization_id']);
+        if (!$organization) {
+            return redirect()->route('communities.index')->withErrors([
+                'patreon' => 'Organization not found.',
+            ])->with('error', 'Unable to connect to Patreon.');
+        }
+
         $this->assertUserCanManage($organization);
 
         $existingAccount = ProviderAccount::where('organization_id', $organization->id)
