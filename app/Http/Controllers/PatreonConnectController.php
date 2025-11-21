@@ -82,6 +82,28 @@ class PatreonConnectController extends Controller
             ]);
         }
 
+        $campaign = collect($identity['included'] ?? [])
+            ->firstWhere('type', 'campaign');
+
+        $userMeta = array_filter([
+            'id' => data_get($identity, 'data.id'),
+            'full_name' => data_get($identity, 'data.attributes.full_name'),
+            'email' => data_get($identity, 'data.attributes.email'),
+            'vanity' => data_get($identity, 'data.attributes.vanity'),
+            'image_url' => data_get($identity, 'data.attributes.image_url'),
+        ]);
+
+        $campaignMeta = array_filter([
+            'id' => data_get($identity, 'data.relationships.campaign.data.id'),
+            'name' => data_get($campaign, 'attributes.creation_name'),
+        ]);
+
+        $displayName = $userMeta['full_name']
+            ?? $campaignMeta['name']
+            ?? $userMeta['vanity']
+            ?? $userMeta['email']
+            ?? 'Patreon';
+
         $account = ProviderAccount::updateOrCreate(
             [
                 'organization_id' => $organization->id,
@@ -90,7 +112,7 @@ class PatreonConnectController extends Controller
             [
                 'status'         => 'connected',
                 'external_id'    => data_get($identity ?? [], 'data.relationships.campaign.data.id'),
-                'display_name'   => data_get($identity ?? [], 'data.attributes.full_name'),
+                'display_name'   => $displayName,
                 'access_token'   => $tokenResponse['access_token'] ?? null,
                 'refresh_token'  => $tokenResponse['refresh_token'] ?? null,
                 'token_expires_at' => now()->addSeconds((int) ($tokenResponse['expires_in'] ?? 3600)),
@@ -100,6 +122,10 @@ class PatreonConnectController extends Controller
                 'connected_at'   => now(),
                 'last_sync_error'=> null,
                 'webhook_secret' => $this->getWebhookSecret($organization, $existingAccount),
+                'meta'           => array_filter([
+                    'user' => $userMeta,
+                    'campaign' => $campaignMeta,
+                ]),
             ]
         );
 

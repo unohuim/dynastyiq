@@ -1,6 +1,9 @@
 @php
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
     $patreonMemberships = $currentOrg?->memberships?->where('provider', 'patreon') ?? collect();
+    $patreonUser = $patreonAccount?->meta['user'] ?? [];
+    $patreonCampaign = $patreonAccount?->meta['campaign'] ?? [];
+    $patreonAvatar = $patreonUser['image_url'] ?? null;
     $status = $patreonAccount?->status ?? 'disconnected';
     $statusCopy = [
         'connected' => 'Online',
@@ -24,6 +27,56 @@
     </div>
 
     <div class="space-y-3 text-sm text-slate-700">
+        @if($patreonAccount)
+            <div class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div class="flex items-center gap-3">
+                    @if($patreonAvatar)
+                        <img src="{{ $patreonAvatar }}" alt="Patreon avatar" class="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
+                    @else
+                        <div class="h-8 w-8 rounded-lg bg-slate-200"></div>
+                    @endif
+                    <div class="space-y-0.5">
+                        <div class="text-sm font-semibold text-slate-900">
+                            {{ $patreonUser['full_name'] ?? $patreonUser['vanity'] ?? $patreonCampaign['name'] ?? $patreonAccount->display_name ?? 'Patreon account' }}
+                        </div>
+                        <div class="text-xs text-slate-600 space-y-0.5">
+                            @if(!empty($patreonUser['email']))
+                                <div class="flex items-center gap-1">
+                                    <span class="text-slate-500">Email:</span>
+                                    <span class="font-medium text-slate-700">{{ $patreonUser['email'] }}</span>
+                                </div>
+                            @endif
+
+                            @if(!empty($patreonCampaign['name']))
+                                <div class="flex items-center gap-1">
+                                    <span class="text-slate-500">Campaign:</span>
+                                    <span class="font-medium text-slate-700">{{ $patreonCampaign['name'] }}</span>
+                                </div>
+                            @elseif(!empty($patreonUser['vanity']))
+                                <div class="flex items-center gap-1">
+                                    <span class="text-slate-500">Handle:</span>
+                                    <span class="font-medium text-slate-700">{{ '@' . ltrim($patreonUser['vanity'], '@') }}</span>
+                                </div>
+                            @elseif($patreonAccount->external_id)
+                                <div class="flex items-center gap-1">
+                                    <span class="text-slate-500">Campaign ID:</span>
+                                    <span class="font-medium text-slate-700">{{ $patreonAccount->external_id }}</span>
+                                </div>
+                            @else
+                                <span>Connected via Patreon</span>
+                            @endif
+                        </div>
+                    </div>
+                </div>
+                <a
+                    href="{{ route('patreon.redirect', $currentOrg->id) }}"
+                    class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                    Change
+                </a>
+            </div>
+        @endif
+
         <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div class="flex items-center justify-between text-xs text-slate-600">
                 <span>Last sync</span>
@@ -41,6 +94,12 @@
                     @csrf
                     <button type="submit" class="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300">Sync now</button>
                 </form>
+                <a
+                    href="{{ route('patreon.redirect', $currentOrg->id) }}"
+                    class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                >
+                    Change account
+                </a>
                 <form method="POST" action="{{ route('patreon.disconnect', $currentOrg->id) }}">
                     @csrf
                     @method('DELETE')
