@@ -119,6 +119,17 @@
       updateUrl: cfg.updateUrl,
       csrf: cfg.csrf,
       saving: false,
+      ignoreOrgWatch: false,
+      ignoreCommishWatch: false,
+      ignoreCreatorWatch: false,
+
+      notify(type, message) {
+        if (window.toast?.[type]) {
+          window.toast[type](message);
+        } else if (window.toast?.show) {
+          window.toast.show(message, { type });
+        }
+      },
 
       // helpers
       async api(payload) {
@@ -139,6 +150,10 @@
 
           const json = await res.json().catch(() => ({}));
 
+          if (!res.ok) {
+            throw new Error(json?.message || 'Request failed');
+          }
+
           // Authoritative emit (post-save) via Alpine
           this.$dispatch('org:settings-updated', {
             organization_id: this.orgId ?? json?.organization?.id ?? null,
@@ -157,41 +172,83 @@
 
       // lifecycle
       init() {
-        this.$watch('orgEnabled', async (v) => {
+        this.$watch('orgEnabled', async (v, old) => {
+          if (this.ignoreOrgWatch) {
+            this.ignoreOrgWatch = false;
+            return;
+          }
+
           if (v && !this.orgName && this.seedName) this.orgName = this.seedName;
           if (!v) this.orgOpen = false;
 
-          const resp = await this.api({
-            enabled: v,
-            name: this.orgName || null,
-            organization_id: this.orgId,
-            commissioner_tools: v ? !!this.commishEnabled : null,
-            creator_tools: v ? !!this.creatorEnabled : null,
-          });
+          try {
+            const resp = await this.api({
+              enabled: v,
+              name: this.orgName || null,
+              organization_id: this.orgId,
+              commissioner_tools: v ? !!this.commishEnabled : null,
+              creator_tools: v ? !!this.creatorEnabled : null,
+            });
 
-          if (resp?.organization?.id) this.orgId = resp.organization.id;
-          if (resp?.settings) {
-            this.commishEnabled = !!resp.settings.commissioner_tools;
-            this.creatorEnabled = !!resp.settings.creator_tools;
+            if (resp?.organization?.id) this.orgId = resp.organization.id;
+            if (resp?.settings) {
+              this.commishEnabled = !!resp.settings.commissioner_tools;
+              this.creatorEnabled = !!resp.settings.creator_tools;
+            }
+
+            this.notify('success', v ? 'Community tools enabled.' : 'Community tools disabled.');
+          } catch (err) {
+            console.error(err);
+            this.notify('error', 'Could not update community tools.');
+            this.ignoreOrgWatch = true;
+            this.orgEnabled = old;
           }
         });
 
-        this.$watch('commishEnabled', (v) => {
+        this.$watch('commishEnabled', async (v, old) => {
+          if (this.ignoreCommishWatch) {
+            this.ignoreCommishWatch = false;
+            return;
+          }
           if (!this.orgEnabled) return;
-          this.api({
-            enabled: true,
-            organization_id: this.orgId,
-            commissioner_tools: !!v,
-          });
+
+          try {
+            await this.api({
+              enabled: true,
+              organization_id: this.orgId,
+              commissioner_tools: !!v,
+            });
+
+            this.notify('success', v ? 'Commissioner tools enabled.' : 'Commissioner tools disabled.');
+          } catch (err) {
+            console.error(err);
+            this.notify('error', 'Could not update commissioner tools.');
+            this.ignoreCommishWatch = true;
+            this.commishEnabled = old;
+          }
         });
 
-        this.$watch('creatorEnabled', (v) => {
+        this.$watch('creatorEnabled', async (v, old) => {
+          if (this.ignoreCreatorWatch) {
+            this.ignoreCreatorWatch = false;
+            return;
+          }
           if (!this.orgEnabled) return;
-          this.api({
-            enabled: true,
-            organization_id: this.orgId,
-            creator_tools: !!v,
-          });
+
+          try {
+            await this.api({
+              enabled: true,
+              organization_id: this.orgId,
+              creator_tools: !!v,
+            });
+
+            this.notify('success', v ? 'Creator tools enabled.' : 'Creator tools disabled.');
+          } catch (err) {
+            console.error(err);
+            this.notify('error', 'Could not update creator tools.');
+            this.ignoreCreatorWatch = true;
+            this.creatorEnabled = old;
+          }
         });
       },
 
