@@ -28,40 +28,24 @@
         @if($patreonAccount)
             <div class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <div class="flex items-center gap-3">
-                    @if(!empty($patreonIdentity['avatar']))
-                        <img src="{{ $patreonIdentity['avatar'] }}" alt="Patreon avatar" class="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
+                    @if($patreonAvatar)
+                        <img src="{{ $patreonAvatar }}" alt="Patreon avatar" class="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
                     @else
                         <div class="h-8 w-8 rounded-lg bg-slate-200"></div>
                     @endif
-                    <div class="space-y-0.5">
+                    <div>
                         <div class="text-sm font-semibold text-slate-900">
-                            {{ $patreonIdentity['name'] ?? 'Patreon account' }}
+                            {{ $patreonUser['full_name'] ?? $patreonAccount->display_name ?? 'Patreon account' }}
                         </div>
-                        <div class="text-xs text-slate-600 space-y-0.5">
-                            @if(!empty($patreonIdentity['email']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Email:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonIdentity['email'] }}</span>
-                                </div>
-                            @endif
-
-                            @if(!empty($patreonIdentity['campaign']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Campaign:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonIdentity['campaign'] }}</span>
-                                </div>
-                            @elseif(!empty($patreonIdentity['handle']))
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Handle:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonIdentity['handle'] }}</span>
-                                </div>
-                            @elseif($patreonIdentity['campaign_id'] ?? $patreonAccount->external_id)
-                                <div class="flex items-center gap-1">
-                                    <span class="text-slate-500">Campaign ID:</span>
-                                    <span class="font-medium text-slate-700">{{ $patreonIdentity['campaign_id'] ?? $patreonAccount->external_id }}</span>
-                                </div>
+                        <div class="text-xs text-slate-600">
+                            @if(!empty($patreonUser['email']))
+                                {{ $patreonUser['email'] }}
+                            @elseif(!empty($patreonCampaign['name']))
+                                Campaign: {{ $patreonCampaign['name'] }}
+                            @elseif($patreonAccount->external_id)
+                                ID: {{ $patreonAccount->external_id }}
                             @else
-                                <span>Connected via Patreon</span>
+                                Connected via Patreon
                             @endif
                         </div>
                     </div>

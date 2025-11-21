@@ -187,10 +187,18 @@ window.__dropdownSelectInit = window.__dropdownSelectInit || (function () {
 
     const url = resolveAction();
 
+    const showToast = (type, message) => {
+      if (window.toast?.[type]) {
+        window.toast[type](message);
+      } else if (window.toast?.show) {
+        window.toast.show(message, { type });
+      }
+    };
+
     // Hard guard so we never POST to the index page by accident
     if (!url || url === '#' || url === '/' || /\/communities(\?|$)/.test(url)) {
       console.warn('[createLeague] Missing/invalid action URL on form:', url);
-      alert('Cannot submit: missing endpoint to create a league.');
+      showToast('error', 'Cannot submit: missing endpoint to create a league.');
       return;
     }
 
@@ -201,11 +209,11 @@ window.__dropdownSelectInit = window.__dropdownSelectInit || (function () {
     const platformId   = form.querySelector('[name="platform_league_id"]')?.value || '';
 
     if (!name) {
-      alert('Please enter a league name.');
+      showToast('error', 'Please enter a league name.');
       return;
     }
     if (platform && !platformId) {
-      alert('Please select or enter a Fantrax league ID.');
+      showToast('error', 'Please select or enter a Fantrax league ID.');
       return;
     }
 
@@ -236,15 +244,15 @@ window.__dropdownSelectInit = window.__dropdownSelectInit || (function () {
       if (!res.ok || data?.ok !== true) {
         const msg = data?.message || `Create failed (${res.status})`;
         console.warn('[createLeague] Server responded with error:', res.status, data);
-        alert(msg);
+        showToast('error', msg);
         return;
       }
 
-      // Reload to reflect fresh leagues list/count
-      window.location.reload();
+      showToast('success', 'League created successfully.');
+      window.setTimeout(() => window.location.reload(), 350);
     } catch (err) {
       console.error('[createLeague] Network/JS error:', err);
-      alert('Could not create league.');
+      showToast('error', 'Could not create league.');
     } finally {
       if (btn) btn.disabled = false;
     }

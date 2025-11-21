@@ -81,7 +81,7 @@ class PatreonConnectController extends Controller
         } catch (Throwable $e) {
             return redirect()->route('communities.index')->withErrors([
                 'patreon' => 'Unable to connect to Patreon: ' . $e->getMessage(),
-            ]);
+            ])->with('error', 'Unable to connect to Patreon.');
         }
 
         $campaign = collect($identity['included'] ?? [])
@@ -99,12 +99,6 @@ class PatreonConnectController extends Controller
             'id' => data_get($identity, 'data.relationships.campaign.data.id'),
             'name' => data_get($campaign, 'attributes.creation_name'),
         ]);
-
-        $displayName = $userMeta['full_name']
-            ?? $campaignMeta['name']
-            ?? $userMeta['vanity']
-            ?? $userMeta['email']
-            ?? $displayName;
 
         $account = ProviderAccount::updateOrCreate(
             [
@@ -131,7 +125,7 @@ class PatreonConnectController extends Controller
             ]
         );
 
-        return redirect()->route('communities.index')->with('status', 'Patreon connected');
+        return redirect()->route('communities.index')->with('success', 'Patreon connected');
     }
 
     public function disconnect(Organization $organization): RedirectResponse|JsonResponse
@@ -150,7 +144,7 @@ class PatreonConnectController extends Controller
             return response()->json(['ok' => true]);
         }
 
-        return redirect()->route('communities.index')->with('status', 'Patreon disconnected');
+        return redirect()->route('communities.index')->with('success', 'Patreon disconnected');
     }
 
     protected function assertUserCanManage(Organization $organization): void

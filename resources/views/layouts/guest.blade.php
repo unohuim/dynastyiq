@@ -22,6 +22,8 @@
             {{ $slot }}
         </div>
 
+        @include('partials.toast-container')
+
         @livewireScripts
     </body>
 </html>
