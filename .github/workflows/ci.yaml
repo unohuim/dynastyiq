@@ -4,6 +4,8 @@ on:
   push:
     branches: [staging]
   pull_request:
+    # Avoid running on manual merges (PR closed/merged events)
+    types: [opened, synchronize, reopened]
     branches: [staging]
 
 jobs:
