@@ -17,6 +17,8 @@ use App\Http\Controllers\StatsController;
 use App\Http\Controllers\CommunitiesController;
 use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
+use App\Http\Controllers\PatreonConnectController;
+use App\Http\Controllers\PatreonSyncController;
 use App\Services\ImportUserFantraxLeagues;
 
 /*
@@ -162,6 +164,16 @@ Route::middleware([
         Route::post('/players/rankings/upload', 'upload')->name('player.rankings.upload');
         Route::post('/players/rankings/manual', 'manual')->name('player.rankings.manual');
     });
+
+    // Patreon Memberships
+    Route::get('/organizations/{organization}/patreon/redirect', [PatreonConnectController::class, 'redirect'])
+        ->name('patreon.redirect');
+    Route::get('/organizations/patreon/callback', [PatreonConnectController::class, 'callback'])
+        ->name('patreon.callback');
+    Route::delete('/organizations/{organization}/patreon', [PatreonConnectController::class, 'disconnect'])
+        ->name('patreon.disconnect');
+    Route::post('/organizations/{organization}/patreon/sync', [PatreonSyncController::class, 'sync'])
+        ->name('patreon.sync');
 
     Route::controller(PlayByPlayController::class)->group(function () {
         Route::get('/admin/import-playbyplays', 'ImportPlayByPlays');

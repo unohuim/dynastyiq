@@ -44,7 +44,14 @@ return [
     ],
 
     'diq' => [
-        'guild_id'  => env('DIQ_GUILD_ID'),  
+        'guild_id'  => env('DIQ_GUILD_ID'),
+    ],
+
+    'patreon' => [
+        'client_id'     => env('PATREON_CLIENT_ID'),
+        'client_secret' => env('PATREON_CLIENT_SECRET'),
+        'redirect'      => env('PATREON_REDIRECT_URI'),
+        'webhook_secret'=> env('PATREON_WEBHOOK_SECRET'),
     ],
 
 

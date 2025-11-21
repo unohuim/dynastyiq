@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d testing"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+          extensions: pdo_pgsql, bcmath
+
+      - name: Install Composer deps
+        run: composer install --no-interaction --prefer-dist
+
+      - name: Setup .env
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          echo "DB_CONNECTION=pgsql" >> .env
+          echo "DB_HOST=127.0.0.1" >> .env
+          echo "DB_PORT=5432" >> .env
+          echo "DB_DATABASE=testing" >> .env
+          echo "DB_USERNAME=postgres" >> .env
+          echo "DB_PASSWORD=postgres" >> .env
+
+      - name: Migrate + Seed
+        run: php artisan migrate:fresh --seed --force
+
+      - name: Build Assets
+        run: |
+          npm ci
+          npm run build
+          
+      - name: Run Tests
+        run: php artisan test

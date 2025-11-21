@@ -57,6 +57,26 @@ class Organization extends Model
         return $this->hasMany(\App\Models\DiscordServer::class);
     }
 
+    public function providerAccounts(): HasMany
+    {
+        return $this->hasMany(ProviderAccount::class);
+    }
+
+    public function memberProfiles(): HasMany
+    {
+        return $this->hasMany(MemberProfile::class);
+    }
+
+    public function memberships(): HasMany
+    {
+        return $this->hasMany(Membership::class);
+    }
+
+    public function membershipTiers(): HasMany
+    {
+        return $this->hasMany(MembershipTier::class);
+    }
+
     // --- Convenience --------------------------------------------------------
 
     public function commissionerToolsEnabled(): bool
