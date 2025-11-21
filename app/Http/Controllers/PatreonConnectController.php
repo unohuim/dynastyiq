@@ -11,6 +11,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Throwable;
 
@@ -73,9 +74,7 @@ class PatreonConnectController extends Controller
 
         $code = $request->string('code')->value();
         if (!$code) {
-            return redirect()->route('communities.index')->withErrors([
-                'patreon' => 'Missing authorization code.',
-            ]);
+            return $this->errorRedirect('Missing authorization code.');
         }
 
         try {
@@ -100,9 +99,13 @@ class PatreonConnectController extends Controller
                 ->throw()
                 ->json();
         } catch (Throwable $e) {
-            return redirect()->route('communities.index')->withErrors([
-                'patreon' => 'Unable to connect to Patreon: ' . $e->getMessage(),
-            ])->with('error', 'Unable to connect to Patreon.');
+            Log::warning('Patreon callback failed', [
+                'organization_id' => $organization->id,
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return $this->errorRedirect('Unable to connect to Patreon: ' . $e->getMessage());
         }
 
         $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
@@ -204,6 +207,26 @@ class PatreonConnectController extends Controller
         if (!$hasOrg) {
             abort(403);
         }
+    }
+
+    protected function userCanManage(Organization $organization): bool
+    {
+        $user = Auth::user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return $user->organizations()
+            ->where('organizations.id', $organization->id)
+            ->exists();
+    }
+
+    protected function errorRedirect(string $message): RedirectResponse
+    {
+        return redirect()->route('communities.index')
+            ->withErrors(['patreon' => $message])
+            ->with('error', 'Unable to connect to Patreon.');
     }
 
     protected function getWebhookSecret(Organization $organization, ?ProviderAccount $existingAccount = null): string
