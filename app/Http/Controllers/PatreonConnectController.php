@@ -59,8 +59,6 @@ class PatreonConnectController extends Controller
             ]);
         }
 
-        $displayName = 'Patreon';
-
         try {
             $tokenResponse = Http::asForm()->post(
                 config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token'),
@@ -75,7 +73,11 @@ class PatreonConnectController extends Controller
 
             $identity = Http::withToken($tokenResponse['access_token'] ?? '')
                 ->acceptJson()
-                ->get(config('patreon.base_url') . '/identity', ['include' => 'campaign'])
+                ->get(config('patreon.base_url') . '/identity', [
+                    'include' => 'campaign',
+                    'fields[user]' => 'full_name,vanity,email,image_url',
+                    'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                ])
                 ->throw()
                 ->json();
         } catch (Throwable $e) {
@@ -86,6 +88,20 @@ class PatreonConnectController extends Controller
 
         $campaign = collect($identity['included'] ?? [])
             ->firstWhere('type', 'campaign');
+
+        if (!$campaign) {
+            $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                ->acceptJson()
+                ->get(config('patreon.base_url') . '/campaigns', [
+                    'include' => 'creator',
+                    'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                    'page[count]' => 1,
+                ])
+                ->throw()
+                ->json();
+
+            $campaign = $campaignResponse['data'][0] ?? null;
+        }
 
         $userMeta = array_filter([
             'id' => data_get($identity, 'data.id'),
@@ -103,6 +119,11 @@ class PatreonConnectController extends Controller
                 ?? data_get($campaign, 'attributes.image_small_url')
                 ?? data_get($campaign, 'attributes.image_url'),
         ]);
+
+        $displayName = $campaignMeta['name']
+            ?? $userMeta['full_name']
+            ?? $userMeta['vanity']
+            ?? 'Creator page';
 
         $account = ProviderAccount::updateOrCreate(
             [
