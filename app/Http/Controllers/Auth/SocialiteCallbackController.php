@@ -21,7 +21,10 @@ class SocialiteCallbackController extends Controller
 
     public function __invoke()
     {
-        $oauth = Socialite::driver('discord')->stateless()->user();
+        $oauth = Socialite::driver('discord')
+            ->redirectUrl($this->discordRedirectUri())
+            ->stateless()
+            ->user();
 
         $account = DB::transaction(function () use ($oauth) {
             $existing = SocialAccount::where('provider', 'discord')
@@ -234,5 +237,10 @@ class SocialiteCallbackController extends Controller
         }
 
         return $slug;
+    }
+
+    private function discordRedirectUri(): string
+    {
+        return config('services.discord.redirect') ?: route('discord.callback');
     }
 }
