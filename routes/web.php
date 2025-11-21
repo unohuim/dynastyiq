@@ -70,6 +70,7 @@ Route::post('/auth/discord-server/attach', [\App\Http\Controllers\Auth\DiscordSe
 Route::get('/auth/discord/redirect', function () {
     return Socialite::driver('discord')
         ->scopes(['identify','email'])
+        ->redirectUrl(route('discord.callback'))
         ->redirect();
 })->name('discord.redirect');
 
