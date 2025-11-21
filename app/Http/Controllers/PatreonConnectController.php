@@ -110,39 +110,18 @@ class PatreonConnectController extends Controller
         $campaign = collect($identity['included'] ?? [])
             ->firstWhere('type', 'campaign');
 
-        if (!$campaign && $campaignId) {
-            try {
-                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
-                    ->acceptJson()
-                    ->get(config('patreon.base_url') . '/campaigns/' . $campaignId, [
-                        'include' => 'creator',
-                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                    ])
-                    ->throw()
-                    ->json();
-
-                $campaign = $campaignResponse['data'] ?? null;
-            } catch (Throwable) {
-                // Ignore campaign lookup failures when we already have the campaign id
-            }
-        }
-
         if (!$campaign && !$campaignId) {
-            try {
-                $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
-                    ->acceptJson()
-                    ->get(config('patreon.base_url') . '/campaigns', [
-                        'include' => 'creator',
-                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                        'page[count]' => 1,
-                    ])
-                    ->throw()
-                    ->json();
+            $campaignResponse = Http::withToken($tokenResponse['access_token'] ?? '')
+                ->acceptJson()
+                ->get(config('patreon.base_url') . '/campaigns', [
+                    'include' => 'creator',
+                    'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                    'page[count]' => 1,
+                ])
+                ->throw()
+                ->json();
 
-                $campaign = $campaignResponse['data'][0] ?? null;
-            } catch (Throwable) {
-                // Ignore campaign lookup failures when neither id nor include data is available
-            }
+            $campaign = $campaignResponse['data'][0] ?? null;
         }
 
         $userMeta = array_filter([
