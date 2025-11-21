@@ -48,21 +48,30 @@ class ProviderAccount extends Model
 
         $user = $this->meta['user'] ?? [];
         $campaign = $this->meta['campaign'] ?? [];
+        $team = $this->meta['team'] ?? [];
+
+        $handle = isset($user['vanity'])
+            ? '@' . ltrim((string) $user['vanity'], '@')
+            : null;
 
         return [
-            'name' => $user['full_name']
-                ?? $campaign['name']
-                ?? $user['vanity']
-                ?? $user['email']
-                ?? $this->display_name
-                ?? 'Patreon',
-            'email' => $user['email'] ?? null,
-            'handle' => isset($user['vanity'])
-                ? '@' . ltrim((string) $user['vanity'], '@')
-                : null,
-            'campaign' => $campaign['name'] ?? null,
-            'campaign_id' => $campaign['id'] ?? null,
+            'user' => $user,
+            'campaign' => $campaign,
+            'team' => $team,
             'avatar' => $user['image_url'] ?? null,
+            'display' => array_filter([
+                'name' => $user['full_name']
+                    ?? $campaign['name']
+                    ?? $user['vanity']
+                    ?? $user['email']
+                    ?? $this->display_name
+                    ?? 'Patreon',
+                'email' => $user['email'] ?? null,
+                'handle' => $handle,
+                'account_id' => $user['id'] ?? null,
+                'campaign' => $campaign['name'] ?? null,
+                'campaign_id' => $campaign['id'] ?? null,
+            ]),
         ];
     }
 
