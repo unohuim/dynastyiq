@@ -106,7 +106,7 @@ class PatreonConnectController extends Controller
             [
                 'status'         => 'connected',
                 'external_id'    => data_get($identity ?? [], 'data.relationships.campaign.data.id'),
-                'display_name'   => data_get($identity ?? [], 'data.attributes.full_name'),
+                'display_name'   => $displayName,
                 'access_token'   => $tokenResponse['access_token'] ?? null,
                 'refresh_token'  => $tokenResponse['refresh_token'] ?? null,
                 'token_expires_at' => now()->addSeconds((int) ($tokenResponse['expires_in'] ?? 3600)),
