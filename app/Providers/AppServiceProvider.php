@@ -30,7 +30,7 @@ class AppServiceProvider extends ServiceProvider
         //Gates
         Gate::define('view-nav-communities', function (User $user) {
             return $user->organizations()
-                ->whereNotNull('organizations.settings')
+                ->whereNull('organizations.deleted_at')
                 ->exists();
         });
 
