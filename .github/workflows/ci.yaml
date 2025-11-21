@@ -3,12 +3,10 @@ name: CI
 on:
   push:
     branches: [staging]
-  pull_request:
-    branches: [staging]
 
 jobs:
   test:
-    # Skip merge commits while still running for direct pushes and pull requests
+    # Skip merge commits while still running for direct pushes
     if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'Merge pull request')
     runs-on: ubuntu-latest
 
