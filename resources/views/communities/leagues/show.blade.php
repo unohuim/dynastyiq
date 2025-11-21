@@ -213,6 +213,14 @@
 
 {{-- Inline JS (form submits) --}}
 <script>
+const showToast = (type, message) => {
+  if (window.toast?.[type]) {
+    window.toast[type](message);
+  } else if (window.toast?.show) {
+    window.toast.show(message, { type });
+  }
+};
+
 (() => {
   const form = document.getElementById('connectFantraxForm');
   if (!form) return;
@@ -231,11 +239,11 @@
     const discordId        = form.querySelector('[name="discord_server_id"]')?.value || '';
 
     if (!name) {
-      alert('Please enter a league name.');
+      showToast('error', 'Please enter a league name.');
       return;
     }
     if (platform && !platformLeagueId) {
-      alert('Please select or enter a Fantrax league ID.');
+      showToast('error', 'Please select or enter a Fantrax league ID.');
       return;
     }
 
@@ -260,9 +268,10 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error('Save failed');
-      window.location.reload();
+      showToast('success', 'League linked to Fantrax.');
+      window.setTimeout(() => window.location.reload(), 350);
     } catch (err) {
-      alert('Could not save changes.');
+      showToast('error', 'Could not save changes.');
     } finally {
       btn.disabled = false;
     }
@@ -295,9 +304,10 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok !== true) throw new Error('Save failed');
-      window.location.reload();
+      showToast('success', 'Discord server updated.');
+      window.setTimeout(() => window.location.reload(), 350);
     } catch (err) {
-      alert('Could not update Discord server.');
+      showToast('error', 'Could not update Discord server.');
     } finally {
       btn.disabled = false;
     }
