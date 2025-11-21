@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\PlayByPlay;
 use App\Models\NhlGame;
+use App\Services\ShotGeometryService;
 use App\Traits\HasAPITrait;
 
 class ImportNHLPlayByPlay
@@ -46,6 +47,8 @@ class ImportNHLPlayByPlay
 
     public function import($gameId): int
     {
+        $shotGeometryService = app(ShotGeometryService::class);
+
         try {
             \Log::warning("Trying Pbp import for game {$gameId}");
 
@@ -153,6 +156,8 @@ class ImportNHLPlayByPlay
                     'x_coord' => $details['xCoord'] ?? null,
                     'y_coord' => $details['yCoord'] ?? null,
                     'zone_code' => $details['zoneCode'] ?? null,
+                    'shot_distance' => null,
+                    'shot_angle' => null,
 
                     'scoring_player_id' => $details['scoringPlayerId'] ?? null,
                     'scoring_player_total' => $details['scoringPlayerTotal'] ?? 0,
@@ -189,6 +194,23 @@ class ImportNHLPlayByPlay
                     $homeTeamId,
                     $awayTeamId,
                 );
+
+                if ($shotGeometryService->isShotAttempt($data['type_desc_key'], $data['shot_type'])) {
+                    $geometry = $shotGeometryService->computeFromContext(
+                        $data['x_coord'],
+                        $data['y_coord'],
+                        $data['event_owner_team_id'],
+                        $data['home_team_defending_side'],
+                        $data['period'],
+                        $homeTeamId,
+                        $awayTeamId,
+                    );
+
+                    if ($geometry) {
+                        $data['shot_distance'] = $geometry['distance'];
+                        $data['shot_angle'] = $geometry['angle'];
+                    }
+                }
 
                 PlayByPlay::updateOrCreate(
                     [
