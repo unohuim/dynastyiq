@@ -1,6 +1,8 @@
 {{-- resources/views/communities/index.blade.php --}}
-@php /** @var \Illuminate\Support\Collection|\App\Models\Organization[]
-$communities */ $mobileBreakpoint = config('viewports.mobile', 768); @endphp
+@php /** @var \Illuminate\Support\Collection|\App\Models\Organization[] $communities */
+    $mobileBreakpoint = config('viewports.mobile', 768);
+    $activeCommunity = $activeCommunity ?? $communities->first();
+@endphp
 
 <x-app-layout>
     <div class="py-6 px-4 sm:px-6 lg:px-8">
@@ -29,6 +31,7 @@ $communities */ $mobileBreakpoint = config('viewports.mobile', 768); @endphp
                     <select
                         id="mobileCommunitySelect"
                         class="mt-1 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-gray-200 outline-none focus:border-white/20"
+                        data-active-slug="{{ $activeCommunity?->slug }}"
                     >
                         @foreach ($communities as $org)
                         <option
@@ -49,7 +52,7 @@ $communities */ $mobileBreakpoint = config('viewports.mobile', 768); @endphp
                             id="mobileCommunityTitle"
                             class="text-2xl font-semibold text-white"
                         >
-                            {{ $communities->first()->name }}
+                            {{ $activeCommunity?->name ?? $communities->first()->name }}
                         </h2>
                     </div>
                 </div>
@@ -58,7 +61,7 @@ $communities */ $mobileBreakpoint = config('viewports.mobile', 768); @endphp
 
         {{-- DESKTOP TEMPLATE VIA PARTIAL --}}
         <template id="tpl-desktop">
-            @include('communities._desktop', ['communities' => $communities])
+            @include('communities._desktop', ['communities' => $communities, 'activeCommunity' => $activeCommunity])
         </template>
         @endif
     </div>
@@ -74,8 +77,8 @@ $communities */ $mobileBreakpoint = config('viewports.mobile', 768); @endphp
             const state = {
                 isMobile: window.innerWidth < mobileBreakpoint,
                 activeCommunity: {
-                    slug: @json($communities->first()->slug),
-                    name: @json($communities->first()->name),
+                    slug: @json($activeCommunity?->slug ?? $communities->first()->slug),
+                    name: @json($activeCommunity?->name ?? $communities->first()->name),
                 },
             };
 

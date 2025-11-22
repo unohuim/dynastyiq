@@ -1,7 +1,9 @@
 {{-- resources/views/communities/partials/desktop.blade.php --}}
 @php
     /** @var \Illuminate\Support\Collection|\App\Models\Organization[] $communities */
-    $currentOrg = $communities->first();
+    $currentOrg = ($activeCommunity ?? null)
+        ? $communities->firstWhere('id', $activeCommunity->id)
+        : $communities->first();
     $user = auth()->user();
 
     // Highest org-scoped role (by numeric level, higher = higher)
@@ -37,7 +39,7 @@
                         data-slug="{{ $org->slug }}"
                         data-name="{{ $org->name }}"
                         data-org-id="{{ $org->id }}"
-                        aria-current="{{ $i === 0 ? 'true' : 'false' }}"
+                        aria-current="{{ ($currentOrg && $currentOrg->id === $org->id) ? 'true' : 'false' }}"
                     >
                         <div class="flex items-center gap-3">
                             <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-700">
