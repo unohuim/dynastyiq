@@ -43,6 +43,11 @@ class CommunitiesController extends Controller
             ->orderBy('organizations.name')
             ->get();
 
+        $activeOrganizationId = session()->pull('active_organization_id');
+        $activeCommunity = $communities
+            ->firstWhere('id', $activeOrganizationId)
+            ?? $communities->first();
+
         // Fantrax: connected?
         $fantraxConnected = $user->fantraxSecret()->exists();
 
@@ -71,6 +76,7 @@ class CommunitiesController extends Controller
 
         return view('communities.index', [
             'communities'       => $communities,
+            'activeCommunity'   => $activeCommunity,
             'fantraxConnected'  => $fantraxConnected,
             'fantraxOptions'    => $fantraxOptions,
         ]);
