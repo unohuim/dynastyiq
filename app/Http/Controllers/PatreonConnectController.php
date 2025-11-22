@@ -127,6 +127,10 @@ class PatreonConnectController extends Controller
             $campaign = $campaignResponse['data'][0] ?? null;
         }
 
+        if (!$campaignId && $campaign) {
+            $campaignId = data_get($campaign, 'id');
+        }
+
         $userMeta = array_filter([
             'id' => data_get($identity, 'data.id'),
             'full_name' => data_get($identity, 'data.attributes.full_name'),
@@ -156,7 +160,7 @@ class PatreonConnectController extends Controller
             ],
             [
                 'status'         => 'connected',
-                'external_id'    => data_get($identity ?? [], 'data.relationships.campaign.data.id'),
+                'external_id'    => $campaignId,
                 'display_name'   => $displayName,
                 'access_token'   => $tokenResponse['access_token'] ?? null,
                 'refresh_token'  => $tokenResponse['refresh_token'] ?? null,
