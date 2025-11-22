@@ -30,7 +30,12 @@ class PatreonConnectController extends Controller
         $authorizeUrl = config('patreon.oauth.authorize', 'https://www.patreon.com/oauth2/authorize');
         $clientId = config('services.patreon.client_id');
         $redirectUri = $this->redirectUri();
-        $scopes = implode(' ', config('patreon.scopes', ['identity', 'campaigns', 'memberships']));
+        $scopes = implode(' ', config('patreon.scopes', [
+            'identity',
+            'identity[email]',
+            'campaigns',
+            'campaigns.members',
+        ]));
 
         $query = http_build_query([
             'response_type' => 'code',
