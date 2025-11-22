@@ -351,6 +351,80 @@ class PatreonConnectControllerTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_memberships_section_shows_connected_patreon_account_after_callback(): void
+    {
+        Carbon::setTestNow('2024-01-01 00:00:00');
+
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => [
+                'commissioner_tools' => true,
+                'creator_tools' => true,
+            ],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        Http::fake([
+            'https://www.patreon.com/api/oauth2/token' => Http::response([
+                'access_token' => 'token',
+                'refresh_token' => 'refresh',
+                'expires_in' => 7200,
+                'scope' => 'identity campaigns memberships',
+            ], 200),
+            'https://www.patreon.com/api/oauth2/v2/identity*' => Http::response([
+                'data' => [
+                    'id' => 'user-1',
+                    'attributes' => ['full_name' => 'Tester', 'email' => 'test@example.com'],
+                    'relationships' => ['campaign' => ['data' => ['id' => '123']]],
+                ],
+                'included' => [
+                    [
+                        'type' => 'campaign',
+                        'id' => '123',
+                        'attributes' => [
+                            'name' => 'Tester Campaign',
+                            'avatar_photo_url' => 'https://example.test/avatar.png',
+                        ],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        $state = encrypt([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'ts' => now()->timestamp,
+        ]);
+
+        $this
+            ->actingAs($user)
+            ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
+            ->assertRedirect(route('communities.index'));
+
+        $this->assertDatabaseCount('provider_accounts', 1);
+        $this->assertDatabaseHas('provider_accounts', [
+            'organization_id' => $organization->id,
+            'provider' => 'patreon',
+            'display_name' => 'Tester Campaign',
+            'status' => 'connected',
+        ]);
+
+        $response = $this
+            ->actingAs($user)
+            ->get(route('communities.index'));
+
+        $response->assertOk();
+        $response->assertSee('Memberships');
+        $response->assertSee('Tester Campaign');
+
+        Carbon::setTestNow();
+    }
+
     public function test_callback_fetches_campaign_when_identity_has_no_campaign(): void
     {
         Carbon::setTestNow('2024-01-01 00:00:00');
