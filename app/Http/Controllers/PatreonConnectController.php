@@ -174,7 +174,10 @@ class PatreonConnectController extends Controller
             ]
         );
 
-        return redirect()->route('communities.index')->with('success', 'Patreon connected');
+        return redirect()
+            ->route('communities.index')
+            ->with('success', 'Patreon connected')
+            ->with('active_organization_id', $organization->id);
     }
 
     public function disconnect(Organization $organization): RedirectResponse|JsonResponse
