@@ -406,6 +406,7 @@ class PatreonConnectControllerTest extends TestCase
             ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
             ->assertRedirect(route('communities.index'));
 
+        $this->assertDatabaseCount('provider_accounts', 1);
         $this->assertDatabaseHas('provider_accounts', [
             'organization_id' => $organization->id,
             'provider' => 'patreon',
