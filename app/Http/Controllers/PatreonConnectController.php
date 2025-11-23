@@ -55,6 +55,8 @@ class PatreonConnectController extends Controller
         PatreonSyncService $sync
     ): RedirectResponse
     {
+        dd($request->all());
+
         try {
             $state = decrypt($request->string('state')->value());
         } catch (Throwable) {
