@@ -78,22 +78,40 @@ class PatreonSyncService
         try {
             $base = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
             $campaignId = $account->external_id;
-            $query = ['include' => 'memberships,memberships.currently_entitled_tiers'];
 
-            $identity = Http::withToken($token)
+            if (!$campaignId) {
+                $identity = Http::withToken($token)
+                    ->acceptJson()
+                    ->get("{$base}/identity", ['include' => 'campaign'])
+                    ->throw()
+                    ->json();
+
+                $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+                $account->external_id = $campaignId ? (string) $campaignId : null;
+                $account->save();
+            }
+
+            if (!$campaignId) {
+                throw new \RuntimeException('Patreon campaign ID missing after OAuth.');
+            }
+
+            $membersResponse = Http::withToken($token)
                 ->acceptJson()
-                ->get("{$base}/identity", $query)
+                ->get("{$base}/campaigns/{$campaignId}/members", [
+                    'include' => 'currently_entitled_tiers',
+                    'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,last_charge_date,pledge_relationship_start,currently_entitled_tiers,currency',
+                    'fields[tier]' => 'title,description,amount_cents,currency,published',
+                ])
                 ->throw()
                 ->json();
 
-            $members = Arr::wrap(data_get($identity, 'included'));
-            $tiers   = array_values(array_filter($members, fn ($item) => data_get($item, 'type') === 'tier'));
-            $members = array_values(array_filter($members, fn ($item) => data_get($item, 'type') === 'member'));
+            $tiers = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'included')), fn ($item) => data_get($item, 'type') === 'tier'));
+            $members = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'data')), fn ($item) => data_get($item, 'type') === 'member'));
 
             return [
                 'tiers' => $tiers,
                 'members' => $members,
-                'campaign_id' => $campaignId ?? data_get($identity, 'data.relationships.campaign.data.id'),
+                'campaign_id' => $campaignId,
             ];
         } catch (Throwable $e) {
             $account->forceFill([
