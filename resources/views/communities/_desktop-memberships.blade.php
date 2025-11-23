@@ -13,14 +13,18 @@
         ?? 'Creator page';
     $patreonInitial = mb_substr($patreonName, 0, 1);
     $status = $patreonAccount?->status ?? 'disconnected';
-    $statusCopy = [
-        'connected' => 'Online',
-        'offline' => 'Offline',
-        'disconnected' => 'Not connected',
-    ][$status] ?? ucfirst($status);
-    $badgeClass = match($status) {
-        'connected' => 'bg-emerald-100 text-emerald-800',
-        'offline' => 'bg-amber-100 text-amber-800',
+    $isSyncing = $status === 'connected' && !$patreonAccount?->last_synced_at;
+    $statusCopy = $isSyncing
+        ? 'Syncing…'
+        : ([
+            'connected' => 'Online',
+            'offline' => 'Offline',
+            'disconnected' => 'Not connected',
+        ][$status] ?? ucfirst($status));
+    $badgeClass = match(true) {
+        $isSyncing => 'bg-amber-100 text-amber-800',
+        $status === 'connected' => 'bg-emerald-100 text-emerald-800',
+        $status === 'offline' => 'bg-amber-100 text-amber-800',
         default => 'bg-slate-100 text-slate-700',
     };
 @endphp
