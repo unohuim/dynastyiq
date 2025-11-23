@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Models\Organization;
 use App\Models\ProviderAccount;
 use App\Services\Patreon\PatreonClient;
+use App\Services\Patreon\PatreonSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -48,7 +49,11 @@ class PatreonConnectController extends Controller
         return redirect()->away($authorizeUrl . '?' . $query);
     }
 
-    public function callback(Request $request, PatreonClient $patreon): RedirectResponse
+    public function callback(
+        Request $request,
+        PatreonClient $patreon,
+        PatreonSyncService $sync
+    ): RedirectResponse
     {
         try {
             $state = decrypt($request->string('state')->value());
@@ -121,7 +126,11 @@ class PatreonConnectController extends Controller
                 ?? $userMeta['vanity']
                 ?? 'Creator page';
 
-            ProviderAccount::updateOrCreate(
+            if (!$campaignId) {
+                return $this->errorRedirect('Unable to determine Patreon campaign.');
+            }
+
+            $account = ProviderAccount::updateOrCreate(
                 [
                     'organization_id' => $organization->id,
                     'provider' => 'patreon',
@@ -150,6 +159,8 @@ class PatreonConnectController extends Controller
                     ]),
                 ]
             );
+
+            $sync->syncProviderAccount($account);
         } catch (Throwable $e) {
             Log::warning('Patreon callback failed', [
                 'organization_id' => $organization->id,
