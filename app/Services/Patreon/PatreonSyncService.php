@@ -86,13 +86,14 @@ class PatreonSyncService
                     ->throw()
                     ->json();
 
-                $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+                $campaignId = data_get($identity, 'data.relationships.campaign.data.id')
+                    ?? data_get($identity, 'data.id');
                 $account->external_id = $campaignId ? (string) $campaignId : null;
                 $account->save();
             }
 
             if (!$campaignId) {
-                throw new \RuntimeException('Patreon campaign ID missing after OAuth.');
+                return ['tiers' => [], 'members' => [], 'campaign_id' => null];
             }
 
             $membersResponse = Http::withToken($token)
