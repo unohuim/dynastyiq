@@ -81,24 +81,17 @@ class PatreonSyncService
         }
 
         try {
-            $base = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-            $campaignId = $account->external_id;
+            $campaignId = $account->external_id ?? (string) data_get($account->meta, 'campaign.id');
 
             if (!$campaignId) {
-                [$identity, $account] = $this->callPatreon($account, function (string $accessToken) use ($base) {
-                    return Http::withToken($accessToken)
-                        ->acceptJson()
-                        ->get("{$base}/identity")
-                        ->throw()
-                        ->json();
+                [$identity, $account] = $this->callPatreon($account, function (string $accessToken) {
+                    return $this->client->getIdentity($accessToken);
                 });
 
                 $creatorId = data_get($identity, 'data.id');
 
                 [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
-                    return $this->client->getCreatorCampaigns($accessToken, [
-                        'include' => 'tiers',
-                    ]);
+                    return $this->client->getCampaigns($accessToken);
                 });
 
                 $campaign = collect($campaignResponse['data'] ?? [])->first(function (array $item) use ($creatorId) {
@@ -106,9 +99,20 @@ class PatreonSyncService
                 });
 
                 $campaign ??= data_get($campaignResponse, 'data.0');
-                $campaignId = data_get($campaign, 'id');
+                $campaignId = $campaign ? (string) data_get($campaign, 'id') : null;
 
                 $meta = (array) ($account->meta ?? []);
+                if ($identity) {
+                    data_set($meta, 'account_id', data_get($identity, 'data.id'));
+                    data_set($meta, 'user', array_filter([
+                        'id' => data_get($identity, 'data.id'),
+                        'full_name' => data_get($identity, 'data.attributes.full_name'),
+                        'email' => data_get($identity, 'data.attributes.email'),
+                        'vanity' => data_get($identity, 'data.attributes.vanity'),
+                        'image_url' => data_get($identity, 'data.attributes.image_url'),
+                    ]));
+                }
+
                 if ($campaign) {
                     data_set($meta, 'campaign', array_filter([
                         'id' => $campaignId,
@@ -121,7 +125,7 @@ class PatreonSyncService
                 }
 
                 $account->forceFill([
-                    'external_id' => $campaignId ? (string) $campaignId : null,
+                    'external_id' => $campaignId ?: null,
                     'meta' => $meta,
                 ])->save();
             }
@@ -130,7 +134,29 @@ class PatreonSyncService
                 return ['tiers' => [], 'members' => [], 'campaign_id' => null];
             }
 
-            [$members, $tiers, $account] = $this->fetchMembers($account, (string) $campaignId, $base);
+            $members = [];
+            $tiers = [];
+
+            [$response, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
+                return $this->client->getMembers($accessToken, (string) $campaignId);
+            });
+
+            while (true) {
+                $members = array_merge(
+                    $members,
+                    array_values(array_filter(Arr::wrap(data_get($response, 'data')), fn ($item) => data_get($item, 'type') === 'member'))
+                );
+                $tiers = $this->mergeUniqueById($tiers, Arr::wrap(data_get($response, 'included')), 'tier');
+
+                $nextUrl = data_get($response, 'links.next');
+                if (!$nextUrl) {
+                    break;
+                }
+
+                [$response, $account] = $this->callPatreon($account, function (string $accessToken) use ($nextUrl) {
+                    return Http::withToken($accessToken)->acceptJson()->get($nextUrl)->throw()->json();
+                });
+            }
 
             return [
                 'tiers' => $tiers,
@@ -201,7 +227,9 @@ class PatreonSyncService
             $attributes = data_get($member, 'attributes', []);
             $email = data_get($attributes, 'email');
             $name  = data_get($attributes, 'full_name', data_get($attributes, 'patron_status', 'Member'));
-            $pledge = data_get($attributes, 'currently_entitled_amount_cents');
+            $pledge = data_get($attributes, 'will_pay_amount_cents')
+                ?? data_get($attributes, 'pledge_sum_cents')
+                ?? data_get($attributes, 'lifetime_support_cents');
             $status = data_get($attributes, 'patron_status', 'active');
             $tierId = Arr::first(
                 (array) data_get($member, 'relationships.currently_entitled_tiers.data'),
@@ -301,44 +329,6 @@ class PatreonSyncService
 
             throw $e;
         }
-    }
-
-    /**
-     * @return array{0: array<int, mixed>, 1: array<int, mixed>, 2: ProviderAccount}
-     */
-    protected function fetchMembers(ProviderAccount $account, string $campaignId, string $base): array
-    {
-        $members = [];
-        $tiers = [];
-        $nextUrl = "{$base}/campaigns/{$campaignId}/members";
-        $params = [
-            'include' => 'currently_entitled_tiers',
-            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,last_charge_date,pledge_relationship_start,currently_entitled_tiers,currency',
-            'fields[tier]' => 'title,description,amount_cents,currency,published',
-        ];
-
-        while ($nextUrl) {
-            [$response, $account] = $this->callPatreon($account, function (string $accessToken) use (&$params, $nextUrl) {
-                $request = Http::withToken($accessToken)->acceptJson();
-
-                if ($params) {
-                    return $request->get($nextUrl, $params)->throw()->json();
-                }
-
-                return $request->get($nextUrl)->throw()->json();
-            });
-
-            $tiers = $this->mergeUniqueById($tiers, Arr::wrap(data_get($response, 'included')), 'tier');
-            $members = array_merge(
-                $members,
-                array_values(array_filter(Arr::wrap(data_get($response, 'data')), fn ($item) => data_get($item, 'type') === 'member'))
-            );
-
-            $nextUrl = data_get($response, 'links.next');
-            $params = []; // links.next already contains query params
-        }
-
-        return [$members, $tiers, $account];
     }
 
     protected function mergeUniqueById(array $existing, array $items, string $type): array
