@@ -33,6 +33,29 @@ class PatreonClient
         return $response;
     }
 
+    public function refreshToken(string $refreshToken): array
+    {
+        $tokenUrl = config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token');
+
+        $response = Http::asForm()
+            ->acceptJson()
+            ->post($tokenUrl, [
+                'grant_type' => 'refresh_token',
+                'refresh_token' => $refreshToken,
+                'client_id' => config('services.patreon.client_id'),
+                'client_secret' => config('services.patreon.client_secret'),
+            ])
+            ->throw()
+            ->json();
+
+        $response['access_token'] = (string) ($response['access_token'] ?? '');
+        $response['refresh_token'] = (string) ($response['refresh_token'] ?? '');
+        $response['expires_in'] = (int) ($response['expires_in'] ?? 0);
+        $response['scope'] = Str::of($response['scope'] ?? '')->trim()->value();
+
+        return $response;
+    }
+
     public function getIdentity(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');

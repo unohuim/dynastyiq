@@ -45,6 +45,8 @@ class PatreonConnectController extends Controller
             'scope' => $scopes,
             'state' => $state,
             'prompt' => 'login',
+            'force_login' => true,
+            'r' => (string) Str::uuid(),
         ]);
 
         return redirect()->away($authorizeUrl . '?' . $query);
