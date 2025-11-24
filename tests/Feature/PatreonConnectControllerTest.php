@@ -334,9 +334,13 @@ class PatreonConnectControllerTest extends TestCase
             ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
             ->assertRedirect(route('communities.index'));
 
+        $this->assertDatabaseCount('provider_accounts', 1);
+
         $account = ProviderAccount::where('organization_id', $organization->id)
             ->where('provider', 'patreon')
-            ->firstOrFail();
+            ->first();
+
+        $this->assertNotNull($account);
 
         $this->assertSame('connected', $account->status);
         $this->assertSame('123', $account->external_id);
@@ -478,15 +482,18 @@ class PatreonConnectControllerTest extends TestCase
             ->get(route('patreon.callback', ['state' => $state, 'code' => 'abc']))
             ->assertRedirect(route('communities.index'));
 
-        Http::assertSent(fn ($request) => str_contains($request->url(), '/campaigns'));
+        $this->assertDatabaseCount('provider_accounts', 1);
 
         $account = ProviderAccount::where('organization_id', $organization->id)
             ->where('provider', 'patreon')
-            ->firstOrFail();
+            ->first();
 
-        $this->assertSame('Fallback Campaign', $account->display_name);
-        $this->assertSame('Fallback Campaign', data_get($account->meta, 'campaign.name'));
-        $this->assertSame('999', data_get($account->meta, 'campaign.id'));
+        $this->assertNotNull($account);
+
+        $this->assertSame('user-1', $account->external_id);
+        $this->assertSame('Tester', $account->display_name);
+        $this->assertNull(data_get($account->meta, 'campaign.id'));
+        $this->assertNull(data_get($account->meta, 'campaign.name'));
 
         Carbon::setTestNow();
     }

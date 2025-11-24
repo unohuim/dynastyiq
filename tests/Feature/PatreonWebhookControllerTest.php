@@ -38,7 +38,7 @@ class PatreonWebhookControllerTest extends TestCase
     {
         Log::spy();
 
-        config(['services.patreon.webhook_secret' => 'secret-key']);
+        config(['services.patreon.webhook_secret' => 'test-secret']);
 
         $this->mock(PatreonSyncService::class, function ($mock): void {
             $mock->shouldNotReceive('handleWebhook');
@@ -54,7 +54,13 @@ class PatreonWebhookControllerTest extends TestCase
             ],
         ];
 
-        $response = $this->postJson(route('patreon.webhook'), $payload);
+        $secret = 'test-secret';
+        $raw = json_encode($payload);
+        $sig = hash_hmac('sha256', $raw, $secret);
+
+        $response = $this->postJson(route('patreon.webhook'), $payload, [
+            'X-Patreon-Signature' => $sig,
+        ]);
 
         $response->assertNoContent();
 
