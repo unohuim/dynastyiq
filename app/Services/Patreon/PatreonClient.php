@@ -82,25 +82,29 @@ class PatreonClient
             ->json();
     }
 
-    public function getCreatorCampaigns(string $accessToken): array
+    public function getCreatorCampaigns(string $accessToken, array $query = []): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
 
         $url = $baseUrl . '/campaigns';
         $campaigns = [];
         $included = [];
+        $params = $query;
 
         do {
-            $response = Http::withToken($accessToken)
-                ->acceptJson()
-                ->get($url)
-                ->throw()
-                ->json();
+            $request = Http::withToken($accessToken)->acceptJson();
+
+            if ($params) {
+                $response = $request->get($url, $params)->throw()->json();
+            } else {
+                $response = $request->get($url)->throw()->json();
+            }
 
             $campaigns = array_merge($campaigns, $response['data'] ?? []);
             $included = array_merge($included, $response['included'] ?? []);
 
             $url = $response['links']['next'] ?? null;
+            $params = [];
         } while ($url);
 
         return [
