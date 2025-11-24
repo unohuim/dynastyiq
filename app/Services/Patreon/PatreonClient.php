@@ -62,11 +62,7 @@ class PatreonClient
 
         return Http::withToken($accessToken)
             ->acceptJson()
-            ->get($baseUrl . '/identity', [
-                'include' => 'campaign',
-                'fields[user]' => 'full_name,vanity,email,image_url',
-                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-            ])
+            ->get($baseUrl . '/identity')
             ->throw()
             ->json();
     }
@@ -84,5 +80,32 @@ class PatreonClient
             ])
             ->throw()
             ->json();
+    }
+
+    public function getCreatorCampaigns(string $accessToken): array
+    {
+        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+
+        $url = $baseUrl . '/campaigns';
+        $campaigns = [];
+        $included = [];
+
+        do {
+            $response = Http::withToken($accessToken)
+                ->acceptJson()
+                ->get($url)
+                ->throw()
+                ->json();
+
+            $campaigns = array_merge($campaigns, $response['data'] ?? []);
+            $included = array_merge($included, $response['included'] ?? []);
+
+            $url = $response['links']['next'] ?? null;
+        } while ($url);
+
+        return [
+            'data' => $campaigns,
+            'included' => $included,
+        ];
     }
 }
