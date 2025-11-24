@@ -90,7 +90,10 @@ class PatreonConnectController extends Controller
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
 
             $identity = $patreon->getIdentity($tokenResponse['access_token']);
-            $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token']);
+            $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token'], [
+                'include' => 'creator',
+                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+            ]);
             $creatorId = data_get($identity, 'data.id');
             $campaign = collect($campaigns['data'] ?? [])->first(function (array $campaign) use ($creatorId) {
                 return data_get($campaign, 'relationships.creator.data.id') === $creatorId;
@@ -115,7 +118,8 @@ class PatreonConnectController extends Controller
                     ?? data_get($campaign, 'attributes.image_url'),
             ]);
 
-            $displayName = $campaignMeta['name']
+            $displayName = data_get($campaign, 'attributes.creation_name')
+                ?? data_get($campaign, 'attributes.name')
                 ?? $userMeta['full_name']
                 ?? $userMeta['vanity']
                 ?? 'Creator page';
