@@ -9,6 +9,7 @@ use App\Models\Membership;
 use App\Models\MembershipEvent;
 use App\Models\MembershipTier;
 use App\Models\ProviderAccount;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
@@ -17,6 +18,10 @@ use Throwable;
 
 class PatreonSyncService
 {
+    public function __construct(protected PatreonClient $client)
+    {
+    }
+
     public function syncProviderAccount(ProviderAccount $account, ?array $snapshot = null): array
     {
         $account->refresh();
@@ -70,8 +75,8 @@ class PatreonSyncService
 
     protected function fetchRemoteSnapshot(ProviderAccount $account): array
     {
-        $token = $account->access_token;
-        if (!$token) {
+        $account = $this->refreshAccountToken($account);
+        if (!$account->access_token) {
             return ['tiers' => [], 'members' => []];
         }
 
@@ -80,14 +85,34 @@ class PatreonSyncService
             $campaignId = $account->external_id;
 
             if (!$campaignId) {
-                $identity = Http::withToken($token)
-                    ->acceptJson()
-                    ->get("{$base}/identity", ['include' => 'campaign'])
-                    ->throw()
-                    ->json();
+                [$identity, $account] = $this->callPatreon($account, function (string $accessToken) use ($base) {
+                    return Http::withToken($accessToken)
+                        ->acceptJson()
+                        ->get("{$base}/identity", ['include' => 'campaign'])
+                        ->throw()
+                        ->json();
+                });
 
-                $campaignId = data_get($identity, 'data.relationships.campaign.data.id')
-                    ?? data_get($identity, 'data.id');
+                $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+
+                if (!$campaignId) {
+                    [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($base) {
+                        return Http::withToken($accessToken)
+                            ->acceptJson()
+                            ->get("{$base}/campaigns", [
+                                'include' => 'creator',
+                                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                                'page[count]' => 1,
+                            ])
+                            ->throw()
+                            ->json();
+                    });
+
+                    $campaignId = data_get($campaignResponse, 'data.0.id');
+                }
+
+                $campaignId ??= data_get($identity, 'data.id');
+
                 $account->external_id = $campaignId ? (string) $campaignId : null;
                 $account->save();
             }
@@ -96,18 +121,7 @@ class PatreonSyncService
                 return ['tiers' => [], 'members' => [], 'campaign_id' => null];
             }
 
-            $membersResponse = Http::withToken($token)
-                ->acceptJson()
-                ->get("{$base}/campaigns/{$campaignId}/members", [
-                    'include' => 'currently_entitled_tiers',
-                    'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,last_charge_date,pledge_relationship_start,currently_entitled_tiers,currency',
-                    'fields[tier]' => 'title,description,amount_cents,currency,published',
-                ])
-                ->throw()
-                ->json();
-
-            $tiers = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'included')), fn ($item) => data_get($item, 'type') === 'tier'));
-            $members = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'data')), fn ($item) => data_get($item, 'type') === 'member'));
+            [$members, $tiers, $account] = $this->fetchMembers($account, (string) $campaignId, $base);
 
             return [
                 'tiers' => $tiers,
@@ -231,5 +245,107 @@ class PatreonSyncService
         }
 
         return $count;
+    }
+
+    protected function refreshAccountToken(ProviderAccount $account, bool $force = false): ProviderAccount
+    {
+        $expiresAt = $account->token_expires_at;
+        $shouldRefresh = $force;
+
+        if (!$shouldRefresh && $expiresAt) {
+            $shouldRefresh = now()->greaterThanOrEqualTo($expiresAt->subMinutes(5));
+        }
+
+        if (!$shouldRefresh || !$account->refresh_token) {
+            return $account;
+        }
+
+        $tokens = $this->client->refreshToken($account->refresh_token);
+
+        $meta = (array) ($account->meta ?? []);
+        data_set($meta, 'tokens.access_token', $tokens['access_token']);
+        data_set($meta, 'tokens.refresh_token', $tokens['refresh_token']);
+
+        $account->forceFill([
+            'access_token' => $tokens['access_token'] ?? $account->access_token,
+            'refresh_token' => $tokens['refresh_token'] ?? $account->refresh_token,
+            'token_expires_at' => now()->addSeconds((int) ($tokens['expires_in'] ?? 3600)),
+            'meta' => $meta,
+        ])->save();
+
+        return $account->refresh();
+    }
+
+    /**
+     * @return array{0: array, 1: ProviderAccount}
+     */
+    protected function callPatreon(ProviderAccount $account, callable $callback): array
+    {
+        try {
+            return [$callback($account->access_token), $account];
+        } catch (RequestException $e) {
+            if ($e->response && $e->response->status() === 401 && $account->refresh_token) {
+                $account = $this->refreshAccountToken($account, true);
+
+                return [$callback($account->access_token), $account];
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array{0: array<int, mixed>, 1: array<int, mixed>, 2: ProviderAccount}
+     */
+    protected function fetchMembers(ProviderAccount $account, string $campaignId, string $base): array
+    {
+        $members = [];
+        $tiers = [];
+        $nextUrl = "{$base}/campaigns/{$campaignId}/members";
+        $params = [
+            'include' => 'currently_entitled_tiers',
+            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,last_charge_date,pledge_relationship_start,currently_entitled_tiers,currency',
+            'fields[tier]' => 'title,description,amount_cents,currency,published',
+        ];
+
+        while ($nextUrl) {
+            [$response, $account] = $this->callPatreon($account, function (string $accessToken) use (&$params, $nextUrl) {
+                $request = Http::withToken($accessToken)->acceptJson();
+
+                if ($params) {
+                    return $request->get($nextUrl, $params)->throw()->json();
+                }
+
+                return $request->get($nextUrl)->throw()->json();
+            });
+
+            $tiers = $this->mergeUniqueById($tiers, Arr::wrap(data_get($response, 'included')), 'tier');
+            $members = array_merge(
+                $members,
+                array_values(array_filter(Arr::wrap(data_get($response, 'data')), fn ($item) => data_get($item, 'type') === 'member'))
+            );
+
+            $nextUrl = data_get($response, 'links.next');
+            $params = []; // links.next already contains query params
+        }
+
+        return [$members, $tiers, $account];
+    }
+
+    protected function mergeUniqueById(array $existing, array $items, string $type): array
+    {
+        $map = collect($existing)
+            ->keyBy(fn ($item) => data_get($item, 'id'))
+            ->all();
+
+        foreach ($items as $item) {
+            if (data_get($item, 'type') !== $type) {
+                continue;
+            }
+
+            $map[(string) data_get($item, 'id')] = $item;
+        }
+
+        return array_values($map);
     }
 }
