@@ -44,6 +44,7 @@ class PatreonConnectController extends Controller
             'redirect_uri' => $redirectUri,
             'scope' => $scopes,
             'state' => $state,
+            'prompt' => 'login',
         ]);
 
         return redirect()->away($authorizeUrl . '?' . $query);
