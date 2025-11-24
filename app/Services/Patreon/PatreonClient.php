@@ -74,9 +74,7 @@ class PatreonClient
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get($baseUrl . '/campaigns', [
-                'include' => 'creator',
-                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                'page[count]' => 1,
+                'include' => 'tiers',
             ])
             ->throw()
             ->json();

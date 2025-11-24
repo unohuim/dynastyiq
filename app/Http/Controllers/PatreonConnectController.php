@@ -91,8 +91,7 @@ class PatreonConnectController extends Controller
 
             $identity = $patreon->getIdentity($tokenResponse['access_token']);
             $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token'], [
-                'include' => 'creator',
-                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                'include' => 'tiers',
             ]);
             $creatorId = data_get($identity, 'data.id');
             $campaign = collect($campaigns['data'] ?? [])->first(function (array $campaign) use ($creatorId) {

@@ -97,9 +97,7 @@ class PatreonSyncService
 
                 [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
                     return $this->client->getCreatorCampaigns($accessToken, [
-                        'include' => 'tiers,creator',
-                        'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                        'fields[tier]' => 'title,description,amount_cents,currency,published',
+                        'include' => 'tiers',
                     ]);
                 });
 
