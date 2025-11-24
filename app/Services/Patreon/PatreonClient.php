@@ -80,6 +80,36 @@ class PatreonClient
             ->json();
     }
 
+    public function getCampaign(string $accessToken, string $campaignId): array
+    {
+        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->get("{$baseUrl}/campaigns/{$campaignId}", [
+                'include' => 'tiers',
+                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+            ])
+            ->throw()
+            ->json();
+    }
+
+    public function getMembers(string $accessToken, string $campaignId): array
+    {
+        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->get($baseUrl . '/members', [
+                'filter[campaign_id]' => $campaignId,
+                'include' => 'currently_entitled_tiers',
+                'fields[member]' => 'full_name,email,patron_status,lifetime_support_cents,pledge_sum_cents,currently_entitled_tiers,will_pay_amount_cents',
+                'fields[tier]' => 'title,amount_cents',
+            ])
+            ->throw()
+            ->json();
+    }
+
     public function getCreatorCampaigns(string $accessToken, array $query = []): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');

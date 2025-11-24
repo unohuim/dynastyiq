@@ -13,6 +13,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class PatreonConnectController extends Controller
@@ -90,15 +91,27 @@ class PatreonConnectController extends Controller
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
 
             $identity = $patreon->getIdentity($tokenResponse['access_token']);
-            $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token'], [
-                'include' => 'tiers',
-            ]);
+            $campaigns = $patreon->getCampaigns($tokenResponse['access_token']);
             $creatorId = data_get($identity, 'data.id');
             $campaign = collect($campaigns['data'] ?? [])->first(function (array $campaign) use ($creatorId) {
                 return data_get($campaign, 'relationships.creator.data.id') === $creatorId;
             });
 
             $campaignId = $campaign ? data_get($campaign, 'id') : null;
+            $campaignDetails = $campaignId
+                ? $patreon->getCampaign($tokenResponse['access_token'], (string) $campaignId)
+                : null;
+            $campaignAttributes = $campaignDetails['data']['attributes'] ?? [];
+            $campaignName = $campaignAttributes['creation_name']
+                ?? $campaignAttributes['name']
+                ?? data_get($campaign, 'attributes.creation_name')
+                ?? data_get($campaign, 'attributes.name');
+            $campaignImage = $campaignAttributes['avatar_photo_url']
+                ?? $campaignAttributes['image_small_url']
+                ?? $campaignAttributes['image_url']
+                ?? data_get($campaign, 'attributes.avatar_photo_url')
+                ?? data_get($campaign, 'attributes.image_small_url')
+                ?? data_get($campaign, 'attributes.image_url');
 
             $userMeta = array_filter([
                 'id' => data_get($identity, 'data.id'),
@@ -110,15 +123,11 @@ class PatreonConnectController extends Controller
 
             $campaignMeta = array_filter([
                 'id' => $campaignId,
-                'name' => data_get($campaign, 'attributes.creation_name')
-                    ?? data_get($campaign, 'attributes.name'),
-                'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
-                    ?? data_get($campaign, 'attributes.image_small_url')
-                    ?? data_get($campaign, 'attributes.image_url'),
+                'name' => $campaignName,
+                'image_url' => $campaignImage,
             ]);
 
-            $displayName = data_get($campaign, 'attributes.creation_name')
-                ?? data_get($campaign, 'attributes.name')
+            $displayName = $campaignName
                 ?? $userMeta['full_name']
                 ?? $userMeta['vanity']
                 ?? 'Creator page';
