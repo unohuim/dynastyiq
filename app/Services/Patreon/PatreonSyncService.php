@@ -88,33 +88,42 @@ class PatreonSyncService
                 [$identity, $account] = $this->callPatreon($account, function (string $accessToken) use ($base) {
                     return Http::withToken($accessToken)
                         ->acceptJson()
-                        ->get("{$base}/identity", ['include' => 'campaign'])
+                        ->get("{$base}/identity")
                         ->throw()
                         ->json();
                 });
 
-                $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
+                $creatorId = data_get($identity, 'data.id');
 
-                if (!$campaignId) {
-                    [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($base) {
-                        return Http::withToken($accessToken)
-                            ->acceptJson()
-                            ->get("{$base}/campaigns", [
-                                'include' => 'creator',
-                                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                                'page[count]' => 1,
-                            ])
-                            ->throw()
-                            ->json();
-                    });
+                [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
+                    return $this->client->getCreatorCampaigns($accessToken, [
+                        'include' => 'tiers,creator',
+                    ]);
+                });
 
-                    $campaignId = data_get($campaignResponse, 'data.0.id');
+                $campaign = collect($campaignResponse['data'] ?? [])->first(function (array $item) use ($creatorId) {
+                    return $creatorId && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
+                });
+
+                $campaign ??= data_get($campaignResponse, 'data.0');
+                $campaignId = data_get($campaign, 'id');
+
+                $meta = (array) ($account->meta ?? []);
+                if ($campaign) {
+                    data_set($meta, 'campaign', array_filter([
+                        'id' => $campaignId,
+                        'name' => data_get($campaign, 'attributes.creation_name')
+                            ?? data_get($campaign, 'attributes.name'),
+                        'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
+                            ?? data_get($campaign, 'attributes.image_small_url')
+                            ?? data_get($campaign, 'attributes.image_url'),
+                    ]));
                 }
 
-                $campaignId ??= data_get($identity, 'data.id');
-
-                $account->external_id = $campaignId ? (string) $campaignId : null;
-                $account->save();
+                $account->forceFill([
+                    'external_id' => $campaignId ? (string) $campaignId : null,
+                    'meta' => $meta,
+                ])->save();
             }
 
             if (!$campaignId) {
