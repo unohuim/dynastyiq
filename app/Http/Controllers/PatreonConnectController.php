@@ -13,7 +13,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Throwable;
 
 class PatreonConnectController extends Controller
@@ -44,9 +43,6 @@ class PatreonConnectController extends Controller
             'redirect_uri' => $redirectUri,
             'scope' => $scopes,
             'state' => $state,
-            'prompt' => 'login',
-            'force_login' => true,
-            'r' => (string) Str::uuid(),
         ]);
 
         return redirect()->away($authorizeUrl . '?' . $query);
@@ -94,21 +90,13 @@ class PatreonConnectController extends Controller
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
 
             $identity = $patreon->getIdentity($tokenResponse['access_token']);
+            $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token']);
+            $creatorId = data_get($identity, 'data.id');
+            $campaign = collect($campaigns['data'] ?? [])->first(function (array $campaign) use ($creatorId) {
+                return data_get($campaign, 'relationships.creator.data.id') === $creatorId;
+            });
 
-            $campaignId = data_get($identity, 'data.relationships.campaign.data.id');
-            $campaign = collect($identity['included'] ?? [])->firstWhere('type', 'campaign');
-
-            if (!$campaign && !$campaignId) {
-                $campaignResponse = $patreon->getCampaigns($tokenResponse['access_token']);
-                $campaign = $campaignResponse['data'][0] ?? null;
-            }
-
-            if (!$campaignId && $campaign) {
-                $campaignId = data_get($campaign, 'id');
-            }
-
-            // Patreon sometimes returns no campaign for creators with free pages; fall back to creator ID
-            $campaignId ??= data_get($identity, 'data.id');
+            $campaignId = $campaign ? data_get($campaign, 'id') : null;
 
             $userMeta = array_filter([
                 'id' => data_get($identity, 'data.id'),
