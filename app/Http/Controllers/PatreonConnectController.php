@@ -55,8 +55,6 @@ class PatreonConnectController extends Controller
         PatreonSyncService $sync
     ): RedirectResponse
     {
-        dd($request->all());
-
         try {
             $state = decrypt($request->string('state')->value());
         } catch (Throwable) {
@@ -106,6 +104,9 @@ class PatreonConnectController extends Controller
                 $campaignId = data_get($campaign, 'id');
             }
 
+            // Patreon sometimes returns no campaign for creators with free pages; fall back to creator ID
+            $campaignId ??= data_get($identity, 'data.id');
+
             $userMeta = array_filter([
                 'id' => data_get($identity, 'data.id'),
                 'full_name' => data_get($identity, 'data.attributes.full_name'),
@@ -127,10 +128,6 @@ class PatreonConnectController extends Controller
                 ?? $userMeta['full_name']
                 ?? $userMeta['vanity']
                 ?? 'Creator page';
-
-            if (!$campaignId) {
-                return $this->errorRedirect('Unable to determine Patreon campaign.');
-            }
 
             $account = ProviderAccount::updateOrCreate(
                 [
