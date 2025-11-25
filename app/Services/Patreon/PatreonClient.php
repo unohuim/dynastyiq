@@ -67,6 +67,9 @@ class PatreonClient
             ->json();
     }
 
+    /**
+     * Allowed includes: creator
+     */
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -84,9 +87,9 @@ class PatreonClient
     }
 
     /**
-     * IMPORTANT:
-     * This endpoint NEVER returns full tier attributes.
-     * We ONLY fetch campaign + creator here.
+     * Allowed includes: tiers
+     * NO creator include here — invalid
+     * NO extra campaign fields — invalid
      */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
@@ -95,17 +98,13 @@ class PatreonClient
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
-                'include' => 'creator',
-                'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
-                'fields[creator]' => 'full_name,image_url',
+                'include' => 'tiers',
+                'fields[tier]' => 'title,amount_cents,description',
             ])
             ->throw()
             ->json();
     }
 
-    /**
-     * This endpoint returns the REAL tier data.
-     */
     public function getCampaignTiers(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -147,7 +146,6 @@ class PatreonClient
             $included = array_merge($included, $response['included'] ?? []);
 
             $url = $response['links']['next'] ?? null;
-
             $params = [];
         } while ($url);
 
