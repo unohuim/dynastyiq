@@ -30,9 +30,11 @@ class TierMapper
             $externalId = (string) data_get($tier, 'id');
             $attributes = (array) data_get($tier, 'attributes', []);
             $name = (string) ($attributes['title'] ?? 'Tier');
+            $amountCents = $attributes['amount_cents'] ?? null;
+            $currency = $attributes['currency'] ?? 'USD';
 
             $model = $this->findExistingMappedTier($externalId)
-                ?? $this->matchDiqTierByName($name);
+                ?? $this->matchDiqTierByName($name, $amountCents, $currency);
 
             $diqOwned = $model?->provider_account_id === null;
 
@@ -56,7 +58,7 @@ class TierMapper
                 'name' => $diqOwned ? $model->name : $name,
                 'description' => $diqOwned ? $model->description : ($attributes['description'] ?? null),
                 'amount_cents' => $diqOwned ? $model->amount_cents : ($attributes['amount_cents'] ?? null),
-                'currency' => $diqOwned ? $model->currency : ($attributes['currency'] ?? 'USD'),
+                'currency' => $diqOwned ? $model->currency : ($currency ?? 'USD'),
                 'is_active' => (bool) ($attributes['published'] ?? true),
                 'synced_at' => now(),
             ]);
@@ -80,13 +82,25 @@ class TierMapper
             ->first();
     }
 
-    protected function matchDiqTierByName(string $name): ?MembershipTier
+    protected function matchDiqTierByName(string $name, ?int $amountCents, ?string $currency): ?MembershipTier
     {
         return MembershipTier::where('organization_id', $this->account->organization_id)
             ->whereNull('provider_account_id')
             ->get()
-            ->first(function (MembershipTier $tier) use ($name) {
-                return Str::lower($tier->name) === Str::lower($name);
+            ->first(function (MembershipTier $tier) use ($name, $amountCents, $currency) {
+                if (Str::lower($tier->name) !== Str::lower($name)) {
+                    return false;
+                }
+
+                if ($amountCents !== null && $tier->amount_cents !== null && (int) $tier->amount_cents !== (int) $amountCents) {
+                    return false;
+                }
+
+                if ($currency && $tier->currency && Str::upper((string) $tier->currency) !== Str::upper((string) $currency)) {
+                    return false;
+                }
+
+                return true;
             });
     }
 }

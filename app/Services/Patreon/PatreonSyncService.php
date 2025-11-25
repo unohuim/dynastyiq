@@ -182,6 +182,14 @@ class PatreonSyncService
 
             $profile = $this->resolveMemberProfile($account, $externalId, $email, $name, $avatar);
 
+            $endedAt = null;
+
+            if ($status !== 'active') {
+                $endedAt = data_get($attributes, 'last_charge_date')
+                    ?? data_get($attributes, 'pledge_relationship_start')
+                    ?? now()->toIsoString();
+            }
+
             $this->membershipSync->sync(
                 $account,
                 $profile,
@@ -191,7 +199,7 @@ class PatreonSyncService
                 (string) ($attributes['currency'] ?? 'USD'),
                 $status,
                 data_get($attributes, 'pledge_relationship_start'),
-                data_get($attributes, 'last_charge_date'),
+                $endedAt,
                 $member
             );
         }
@@ -214,15 +222,10 @@ class PatreonSyncService
 
         $tokens = $this->client->refreshToken($account->refresh_token);
 
-        $meta = (array) ($account->meta ?? []);
-        data_set($meta, 'tokens.access_token', $tokens['access_token']);
-        data_set($meta, 'tokens.refresh_token', $tokens['refresh_token']);
-
         $account->forceFill([
             'access_token' => $tokens['access_token'] ?? $account->access_token,
             'refresh_token' => $tokens['refresh_token'] ?? $account->refresh_token,
             'token_expires_at' => now()->addSeconds((int) ($tokens['expires_in'] ?? 3600)),
-            'meta' => $meta,
         ])->save();
 
         return $account->refresh();
