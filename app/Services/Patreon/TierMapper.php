@@ -31,8 +31,8 @@ class TierMapper
 
             $externalId = (string) data_get($tier, 'id');
             $attributes = (array) data_get($tier, 'attributes', []);
-            $name = (string) ($attributes['title'] ?? 'Tier');
-            $amountCents = $attributes['amount_cents'] ?? null;
+            $name = (string) (data_get($attributes, 'title') ?? 'Tier');
+            $amountCents = data_get($attributes, 'amount_cents');
             $currency = $this->campaignCurrency;
 
             $model = $this->findExistingMappedTier($externalId)
@@ -58,10 +58,10 @@ class TierMapper
 
             $model->fill([
                 'name' => $diqOwned ? $model->name : $name,
-                'description' => $diqOwned ? $model->description : ($attributes['description'] ?? null),
-                'amount_cents' => $diqOwned ? $model->amount_cents : ($attributes['amount_cents'] ?? null),
+                'description' => $diqOwned ? $model->description : data_get($attributes, 'description'),
+                'amount_cents' => $diqOwned ? $model->amount_cents : ($amountCents !== null ? (int) $amountCents : null),
                 'currency' => $diqOwned ? $model->currency : ($currency ?? 'USD'),
-                'is_active' => (bool) ($attributes['published'] ?? true),
+                'is_active' => (bool) (data_get($attributes, 'published') ?? true),
                 'synced_at' => now(),
             ]);
 

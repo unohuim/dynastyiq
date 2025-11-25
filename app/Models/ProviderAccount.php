@@ -56,18 +56,16 @@ class ProviderAccount extends Model
         $avatar = $identity['image_url']
             ?? $campaign['image_url']
             ?? null;
+        $campaignName = $campaign['summary'] ?? null;
 
-        $campaignName = $campaign['creation_name']
-            ?? $campaign['vanity']
-            ?? $campaign['summary']
+        $identityDisplay = $identity['full_name']
+            ?? ($identity['vanity'] ?? null)
             ?? null;
 
         $displayName = $campaignName
-            ?? $identity['full_name']
-            ?? $identity['vanity']
-            ?? $identity['email']
             ?? $this->display_name
-            ?? 'Creator page';
+            ?? $identityDisplay
+            ?? 'Patreon Creator';
 
         return [
             'identity' => $identity,
