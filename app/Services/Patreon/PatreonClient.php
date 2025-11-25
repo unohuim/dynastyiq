@@ -56,6 +56,9 @@ class PatreonClient
         return $response;
     }
 
+    /**
+     * Identity MUST be called with no includes / fields.
+     */
     public function getIdentity(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -67,6 +70,10 @@ class PatreonClient
             ->json();
     }
 
+    /**
+     * Fetch all campaigns belonging to the creator.
+     * Only allowed include is "creator".
+     */
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -74,14 +81,17 @@ class PatreonClient
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get($baseUrl . '/campaigns', [
-                'include' => 'creator,tiers',
-                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
-                'fields[tier]' => 'title,amount_cents',
+                'include' => 'creator',
+                'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
 
+    /**
+     * Fetch campaign details with tiers.
+     * Allowed include = tiers
+     */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -90,35 +100,32 @@ class PatreonClient
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
                 'include' => 'tiers',
-                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
 
+    /**
+     * Fetch ALL campaign members (paginated).
+     * Allowed include = currently_entitled_tiers
+     * No fields[...] allowed.
+     */
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
 
-        $url = $baseUrl . "/campaigns/{$campaignId}/members";
+        $url = "{$baseUrl}/campaigns/{$campaignId}/members";
         $members = [];
         $included = [];
+
         $params = [
-            'include' => 'current_entitled_tiers',
-            'fields[member]' => implode(',', [
-                'full_name',
-                'email',
-                'patron_status',
-                'currently_entitled_amount_cents',
-                'pledge_relationship_start',
-                'current_entitled_tiers',
-                'lifetime_support_cents',
-            ]),
-            'fields[tier]' => 'title,amount_cents',
+            'include' => 'currently_entitled_tiers',
+            'page[count]' => 50,
         ];
 
         do {
-            $response = (array) Http::withToken($accessToken)
+            $response = Http::withToken($accessToken)
                 ->acceptJson()
                 ->get($url, $params)
                 ->throw()
@@ -128,42 +135,13 @@ class PatreonClient
             $included = array_merge($included, $response['included'] ?? []);
 
             $url = $response['links']['next'] ?? null;
+
+            // After first call, remove params and follow pagination URLs directly
             $params = [];
         } while ($url);
 
         return [
             'data' => $members,
-            'included' => $included,
-        ];
-    }
-
-    public function getCreatorCampaigns(string $accessToken, array $query = []): array
-    {
-        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-
-        $url = $baseUrl . '/campaigns';
-        $campaigns = [];
-        $included = [];
-        $params = $query;
-
-        do {
-            $request = Http::withToken($accessToken)->acceptJson();
-
-            if ($params) {
-                $response = (array) $request->get($url, $params)->throw()->json();
-            } else {
-                $response = (array) $request->get($url)->throw()->json();
-            }
-
-            $campaigns = array_merge($campaigns, $response['data'] ?? []);
-            $included = array_merge($included, $response['included'] ?? []);
-
-            $url = $response['links']['next'] ?? null;
-            $params = [];
-        } while ($url);
-
-        return [
-            'data' => $campaigns,
             'included' => $included,
         ];
     }
