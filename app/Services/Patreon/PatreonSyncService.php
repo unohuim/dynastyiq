@@ -77,7 +77,19 @@ class PatreonSyncService
     {
         $account = $this->refreshAccountToken($account);
         if (!$account->access_token) {
-            return ['tiers' => [], 'members' => []];
+            $meta = [
+                'identity' => [],
+                'campaign' => [],
+            ];
+
+            $account->forceFill(['meta' => $meta])->save();
+
+            return [
+                'tiers' => [],
+                'members' => [],
+                'campaign_id' => null,
+                'campaign_currency' => 'USD',
+            ];
         }
 
         try {
@@ -96,19 +108,21 @@ class PatreonSyncService
 
             $campaignId = $campaign ? (string) data_get($campaign, 'id') : ($account->external_id ?: null);
 
-            if (!$campaignId) {
-                return ['tiers' => [], 'members' => [], 'campaign_id' => null];
+            $campaignWithTiers = [];
+            $campaignCurrency = 'USD';
+            $membersResponse = [];
+
+            if ($campaignId) {
+                [$campaignWithTiers, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
+                    return $this->client->getCampaign($accessToken, (string) $campaignId);
+                });
+
+                $campaignCurrency = data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
+
+                [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
+                    return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
+                });
             }
-
-            [$campaignWithTiers, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
-                return $this->client->getCampaign($accessToken, (string) $campaignId);
-            });
-
-            $campaignCurrency = data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
-
-            [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
-                return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
-            });
 
             $campaignTiers = array_values(array_filter(Arr::wrap(data_get($campaignWithTiers, 'included')), function ($item) {
                 return data_get($item, 'type') === 'tier';
@@ -120,16 +134,26 @@ class PatreonSyncService
 
             $tiers = $this->mergeUniqueById($campaignTiers, Arr::wrap(data_get($membersResponse, 'included')), 'tier');
 
-            $meta = array_filter([
-                'user' => $this->identityMeta($identity),
-                'campaign' => $this->campaignMeta($campaign ?? [], $campaignWithTiers ?? []),
-            ]);
+            $identityMeta = $this->identityMeta($identity);
+            $campaignMeta = $this->campaignMeta($campaign ?? [], $campaignWithTiers ?? []);
+
+            $meta = [
+                'identity' => $identityMeta,
+                'campaign' => $campaignMeta,
+            ];
+
+            $displayName = $campaignMeta['creation_name']
+                ?? $campaignMeta['vanity']
+                ?? $campaignMeta['summary']
+                ?? $identityMeta['full_name']
+                ?? $identityMeta['vanity']
+                ?? $identityMeta['email']
+                ?? $account->display_name
+                ?? 'Patreon Campaign';
 
             $account->forceFill([
                 'external_id' => $campaignId,
-                'display_name' => data_get($meta, 'campaign.name')
-                    ?? data_get($meta, 'user.full_name')
-                    ?? $account->display_name,
+                'display_name' => $displayName,
                 'meta' => $meta,
             ])->save();
 
@@ -326,7 +350,8 @@ class PatreonSyncService
             'full_name' => data_get($identity, 'data.attributes.full_name'),
             'email' => data_get($identity, 'data.attributes.email'),
             'vanity' => data_get($identity, 'data.attributes.vanity'),
-            'image_url' => data_get($identity, 'data.attributes.image_url'),
+            'image_url' => data_get($identity, 'data.attributes.image_url')
+                ?? data_get($identity, 'data.attributes.thumb_url'),
         ]);
     }
 
@@ -337,10 +362,10 @@ class PatreonSyncService
 
         return array_filter([
             'id' => data_get($campaignWithTiers, 'data.id') ?? data_get($campaign, 'id'),
-            'name' => $attributes['creation_name']
-                ?? $attributes['name']
-                ?? $fallbackAttributes['creation_name']
-                ?? $fallbackAttributes['name'],
+            'creation_name' => $attributes['creation_name']
+                ?? $fallbackAttributes['creation_name'],
+            'vanity' => $attributes['vanity'] ?? $fallbackAttributes['vanity'],
+            'summary' => $attributes['summary'] ?? $fallbackAttributes['summary'],
             'image_url' => $attributes['avatar_photo_url']
                 ?? $attributes['image_small_url']
                 ?? $attributes['image_url']

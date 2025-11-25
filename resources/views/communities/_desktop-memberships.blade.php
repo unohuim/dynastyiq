@@ -2,7 +2,7 @@
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
     $patreonMemberships = $currentOrg?->memberships?->where('provider', 'patreon') ?? collect();
     $patreonIdentity = $patreonAccount?->patreonIdentity() ?? [];
-    $patreonUser = $patreonIdentity['user'] ?? [];
+    $patreonUser = $patreonIdentity['identity'] ?? [];
     $patreonCampaign = $patreonIdentity['campaign'] ?? [];
     $patreonDisplay = $patreonIdentity['display'] ?? [];
     $patreonTeam = $patreonIdentity['team'] ?? [];
@@ -139,7 +139,7 @@
                         @forelse($patreonTeam as $member)
                             <div class="rounded border border-slate-200 bg-slate-50 px-3 py-2">
                                 <p class="text-sm font-semibold text-slate-800">
-                                    {{ data_get($member, 'name') ?? data_get($member, 'email') ?? 'Patreon teammate' }}
+                                    {{ data_get($member, 'full_name') ?? data_get($member, 'email') ?? 'Patreon teammate' }}
                                 </p>
                                 <p class="text-[11px] text-slate-500">
                                     {{ data_get($member, 'role') ?? 'Collaborator' }}
