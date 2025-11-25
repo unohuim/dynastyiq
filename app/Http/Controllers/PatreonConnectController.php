@@ -11,6 +11,7 @@ use App\Services\Patreon\PatreonSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -91,27 +92,41 @@ class PatreonConnectController extends Controller
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
 
             $identity = $patreon->getIdentity($tokenResponse['access_token']);
-            $campaigns = $patreon->getCampaigns($tokenResponse['access_token']);
+            $campaigns = $patreon->getCreatorCampaigns($tokenResponse['access_token'], [
+                'include' => 'benefits,tiers,creator',
+                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                'fields[tier]' => 'title,amount_cents',
+            ]);
             $creatorId = data_get($identity, 'data.id');
             $campaign = collect($campaigns['data'] ?? [])->first(function (array $campaign) use ($creatorId) {
-                return data_get($campaign, 'relationships.creator.data.id') === $creatorId;
+                return $creatorId && data_get($campaign, 'relationships.creator.data.id') === (string) $creatorId;
             });
+            $campaign ??= data_get($campaigns, 'data.0');
 
-            $campaignId = $campaign ? data_get($campaign, 'id') : null;
-            $campaignDetails = $campaignId
-                ? $patreon->getCampaign($tokenResponse['access_token'], (string) $campaignId)
-                : null;
-            $campaignAttributes = $campaignDetails['data']['attributes'] ?? [];
+            $campaignId = $campaign
+                ? (string) data_get($campaign, 'id')
+                : (string) data_get($identity, 'data.relationships.campaign.data.id');
+            $campaignAttributes = (array) data_get($campaign, 'attributes', []);
             $campaignName = $campaignAttributes['creation_name']
                 ?? $campaignAttributes['name']
-                ?? data_get($campaign, 'attributes.creation_name')
-                ?? data_get($campaign, 'attributes.name');
+                ?? data_get($identity, 'data.attributes.full_name')
+                ?? data_get($identity, 'data.attributes.vanity')
+                ?? 'Creator page';
             $campaignImage = $campaignAttributes['avatar_photo_url']
                 ?? $campaignAttributes['image_small_url']
                 ?? $campaignAttributes['image_url']
-                ?? data_get($campaign, 'attributes.avatar_photo_url')
-                ?? data_get($campaign, 'attributes.image_small_url')
-                ?? data_get($campaign, 'attributes.image_url');
+                ?? data_get($identity, 'data.attributes.image_url');
+            if (!$campaignImage) {
+                $campaignImage = 'https://www.patreon.com/favicon.ico';
+            }
+
+            $membersResponse = $campaignId
+                ? $patreon->getCampaignMembers($tokenResponse['access_token'], (string) $campaignId)
+                : ['data' => [], 'included' => []];
+            $members = array_values(array_filter($membersResponse['data'] ?? [], fn ($item) => data_get($item, 'type') === 'member'));
+            $campaignTiers = array_values(array_filter($campaigns['included'] ?? [], fn ($item) => data_get($item, 'type') === 'tier'));
+            $memberTiers = array_values(array_filter($membersResponse['included'] ?? [], fn ($item) => data_get($item, 'type') === 'tier'));
+            $tiers = $this->mergeUniqueById($campaignTiers, $memberTiers);
 
             $userMeta = array_filter([
                 'id' => data_get($identity, 'data.id'),
@@ -124,6 +139,7 @@ class PatreonConnectController extends Controller
             $campaignMeta = array_filter([
                 'id' => $campaignId,
                 'name' => $campaignName,
+                'creation_name' => $campaignAttributes['creation_name'] ?? null,
                 'image_url' => $campaignImage,
             ]);
 
@@ -154,15 +170,21 @@ class PatreonConnectController extends Controller
                         'account_id' => $userMeta['id'] ?? null,
                         'user' => $userMeta,
                         'campaign' => $campaignMeta,
+                        'members' => $members,
+                        'tiers' => $tiers,
                         'tokens' => [
                             'access_token' => $tokenResponse['access_token'] ?? null,
                             'refresh_token' => $tokenResponse['refresh_token'] ?? null,
                         ],
-                    ]),
+                    ], fn ($value) => $value !== null),
                 ]
             );
 
-            $sync->syncProviderAccount($account);
+            $sync->syncProviderAccount($account, [
+                'tiers' => $tiers,
+                'members' => $members,
+                'campaign_id' => $campaignId,
+            ]);
         } catch (Throwable $e) {
             Log::warning('Patreon callback failed', [
                 'organization_id' => $organization->id,
@@ -242,5 +264,22 @@ class PatreonConnectController extends Controller
     {
         return config('services.patreon.redirect')
             ?? route('patreon.callback');
+    }
+
+    protected function mergeUniqueById(array $existing, array $items): array
+    {
+        $map = collect($existing)
+            ->keyBy(fn ($item) => data_get($item, 'id'))
+            ->all();
+
+        foreach ($items as $item) {
+            if (!Arr::has($item, 'id')) {
+                continue;
+            }
+
+            $map[(string) data_get($item, 'id')] = $item;
+        }
+
+        return array_values($map);
     }
 }

@@ -94,20 +94,37 @@ class PatreonClient
             ->json();
     }
 
-    public function getMembers(string $accessToken, string $campaignId): array
+    public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
 
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($baseUrl . '/members', [
-                'filter[campaign_id]' => $campaignId,
-                'include' => 'currently_entitled_tiers',
-                'fields[member]' => 'full_name,email,patron_status,lifetime_support_cents,pledge_sum_cents,currently_entitled_tiers,will_pay_amount_cents',
-                'fields[tier]' => 'title,amount_cents',
-            ])
-            ->throw()
-            ->json();
+        $url = $baseUrl . "/campaigns/{$campaignId}/members";
+        $members = [];
+        $included = [];
+        $params = [
+            'include' => 'currently_entitled_tiers',
+            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,currently_entitled_tiers',
+            'fields[tier]' => 'title,amount_cents',
+        ];
+
+        do {
+            $response = (array) Http::withToken($accessToken)
+                ->acceptJson()
+                ->get($url, $params)
+                ->throw()
+                ->json();
+
+            $members = array_merge($members, $response['data'] ?? []);
+            $included = array_merge($included, $response['included'] ?? []);
+
+            $url = $response['links']['next'] ?? null;
+            $params = [];
+        } while ($url);
+
+        return [
+            'data' => $members,
+            'included' => $included,
+        ];
     }
 
     public function getCreatorCampaigns(string $accessToken, array $query = []): array
@@ -123,9 +140,9 @@ class PatreonClient
             $request = Http::withToken($accessToken)->acceptJson();
 
             if ($params) {
-                $response = $request->get($url, $params)->throw()->json();
+                $response = (array) $request->get($url, $params)->throw()->json();
             } else {
-                $response = $request->get($url)->throw()->json();
+                $response = (array) $request->get($url)->throw()->json();
             }
 
             $campaigns = array_merge($campaigns, $response['data'] ?? []);
