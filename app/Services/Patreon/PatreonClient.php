@@ -82,13 +82,14 @@ class PatreonClient
             ->acceptJson()
             ->get($baseUrl . '/campaigns', [
                 'include' => 'creator',
-                'fields[campaign]' => 'creation_name,image_url,image_small_url,summary,published_at,patron_count,pledge_url,is_monthly,is_nsfw',
-                'fields[creator]' => 'full_name,vanity,image_url',
+                'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
+                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
+
 
 
 
@@ -104,14 +105,15 @@ class PatreonClient
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
                 'include' => 'tiers,creator',
-                'fields[campaign]' => 'creation_name,image_url,image_small_url,summary,published_at,patron_count,pledge_url,is_monthly,is_nsfw',
-                'fields[tier]' => 'title,amount_cents,description,published',
-                'fields[creator]' => 'full_name,vanity,image_url',
+                'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
+                'fields[tier]' => 'title,amount_cents',
+                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
+
 
 
     /**
