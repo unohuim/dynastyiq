@@ -75,6 +75,7 @@ class PatreonSyncService
     protected function fetchRemoteSnapshot(ProviderAccount $account): array
     {
         $account = $this->refreshAccountToken($account);
+
         if (!$account->access_token) {
             $meta = [
                 'identity' => [],
@@ -92,18 +93,24 @@ class PatreonSyncService
         }
 
         try {
-            [$identity, $account] = $this->callPatreon($account, function (string $accessToken) {
-                return $this->client->getIdentity($accessToken);
-            });
+            [$identity, $account] = $this->callPatreon(
+                $account,
+                fn (string $accessToken): array => $this->client->getIdentity($accessToken)
+            );
 
-            [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
-                return $this->client->getCampaigns($accessToken);
-            });
+            [$campaignResponse, $account] = $this->callPatreon(
+                $account,
+                fn (string $accessToken): array => $this->client->getCampaigns($accessToken)
+            );
 
             $creatorId = data_get($identity, 'data.id');
-            $campaign = collect($campaignResponse['data'] ?? [])->first(function (array $item) use ($creatorId) {
-                return $creatorId && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
-            }) ?? data_get($campaignResponse, 'data.0');
+
+            $campaign = collect($campaignResponse['data'] ?? [])->first(
+                function (array $item) use ($creatorId): bool {
+                    return $creatorId
+                        && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
+                }
+            ) ?? data_get($campaignResponse, 'data.0');
 
             $campaignId = $campaign ? (string) data_get($campaign, 'id') : ($account->external_id ?: null);
 
@@ -112,26 +119,45 @@ class PatreonSyncService
             $membersResponse = [];
 
             if ($campaignId) {
-                [$campaignWithTiers, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
-                    return $this->client->getCampaign($accessToken, (string) $campaignId);
-                });
+                [$campaignWithTiers, $account] = $this->callPatreon(
+                    $account,
+                    fn (string $accessToken): array => $this->client->getCampaign($accessToken, (string) $campaignId)
+                );
 
-                $campaignCurrency = (string) data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
+                $campaignCurrency = (string) data_get(
+                    $campaignWithTiers,
+                    'data.attributes.currency',
+                    'USD'
+                );
 
-                [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
-                    return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
-                });
+                [$membersResponse, $account] = $this->callPatreon(
+                    $account,
+                    fn (string $accessToken): array => $this->client->getCampaignMembers(
+                        $accessToken,
+                        (string) $campaignId
+                    )
+                );
             }
 
-            $campaignTiers = array_values(array_filter(Arr::wrap(data_get($campaignWithTiers, 'included')), function ($item) {
-                return data_get($item, 'type') === 'tier';
-            }));
+            $campaignTiers = array_values(
+                array_filter(
+                    Arr::wrap(data_get($campaignWithTiers, 'included')),
+                    fn ($item): bool => data_get($item, 'type') === 'tier'
+                )
+            );
 
-            $members = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'data')), function ($item) {
-                return data_get($item, 'type') === 'member';
-            }));
+            $members = array_values(
+                array_filter(
+                    Arr::wrap(data_get($membersResponse, 'data')),
+                    fn ($item): bool => data_get($item, 'type') === 'member'
+                )
+            );
 
-            $tiers = $this->mergeUniqueById($campaignTiers, Arr::wrap(data_get($membersResponse, 'included')), 'tier');
+            $tiers = $this->mergeUniqueById(
+                $campaignTiers,
+                Arr::wrap(data_get($membersResponse, 'included')),
+                'tier'
+            );
 
             $identityMeta = $this->identityMeta($identity);
             $campaignMeta = $this->campaignMeta($campaign ?? [], $campaignWithTiers ?? []);
@@ -185,8 +211,12 @@ class PatreonSyncService
         return $mapper->map($tiers);
     }
 
-    protected function syncMembers(ProviderAccount $account, array $members, array $tierMap, string $campaignCurrency): int
-    {
+    protected function syncMembers(
+        ProviderAccount $account,
+        array $members,
+        array $tierMap,
+        string $campaignCurrency
+    ): int {
         $count = 0;
 
         foreach ($members as $member) {
@@ -195,13 +225,19 @@ class PatreonSyncService
             }
 
             $count++;
+
             $externalId = (string) data_get($member, 'id');
             $attributes = (array) data_get($member, 'attributes', []);
+
             $email = data_get($attributes, 'email');
-            $name = data_get($attributes, 'full_name') ?: data_get($attributes, 'patron_status', 'Member');
+            $name = data_get($attributes, 'full_name')
+                ?: (string) data_get($attributes, 'patron_status', 'Member');
+
             $pledge = data_get($attributes, 'currently_entitled_amount_cents')
                 ?? data_get($attributes, 'lifetime_support_cents');
+
             $status = $this->mapStatus((string) data_get($attributes, 'patron_status'));
+
             $tierId = Arr::first((array) data_get($member, 'relationships.currently_entitled_tiers.data'));
             $membershipTier = $tierId ? ($tierMap[(string) data_get($tierId, 'id')] ?? null) : null;
 
