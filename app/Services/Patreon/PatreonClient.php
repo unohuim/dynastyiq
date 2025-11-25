@@ -109,7 +109,9 @@ class PatreonClient
     /**
      * Fetch ALL campaign members (paginated).
      * Allowed include = currently_entitled_tiers
-     * No fields[...] allowed.
+     * Allowed fields:
+     *  - fields[member] = full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents
+     *  - fields[tier] = title,amount_cents
      */
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
@@ -122,6 +124,8 @@ class PatreonClient
         $params = [
             'include' => 'currently_entitled_tiers',
             'page[count]' => 50,
+            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
+            'fields[tier]' => 'title,amount_cents',
         ];
 
         do {
