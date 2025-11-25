@@ -9,7 +9,6 @@ use App\Models\MembershipEvent;
 use App\Models\ProviderAccount;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -117,7 +116,7 @@ class PatreonSyncService
                     return $this->client->getCampaign($accessToken, (string) $campaignId);
                 });
 
-                $campaignCurrency = data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
+                $campaignCurrency = (string) data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
 
                 [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
                     return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
@@ -137,17 +136,18 @@ class PatreonSyncService
             $identityMeta = $this->identityMeta($identity);
             $campaignMeta = $this->campaignMeta($campaign ?? [], $campaignWithTiers ?? []);
 
+            $campaignCurrency = (string) ($campaignMeta['currency'] ?? $campaignCurrency);
+
             $meta = [
                 'identity' => $identityMeta,
                 'campaign' => $campaignMeta,
             ];
 
-            $displayName = $campaignMeta['creation_name']
-                ?? $campaignMeta['vanity']
-                ?? $campaignMeta['summary']
-                ?? $identityMeta['full_name']
-                ?? $identityMeta['vanity']
-                ?? $identityMeta['email']
+            $identityDisplayName = $this->identityDisplayName($identity);
+            $campaignDisplayName = $this->campaignDisplayName($campaign ?? [], $campaignWithTiers ?? []);
+
+            $displayName = $campaignDisplayName
+                ?? $identityDisplayName
                 ?? $account->display_name
                 ?? 'Patreon Campaign';
 
@@ -199,22 +199,18 @@ class PatreonSyncService
             $attributes = (array) data_get($member, 'attributes', []);
             $email = data_get($attributes, 'email');
             $name = data_get($attributes, 'full_name') ?: data_get($attributes, 'patron_status', 'Member');
-            $avatar = data_get($attributes, 'image_url') ?? data_get($attributes, 'thumb_url');
             $pledge = data_get($attributes, 'currently_entitled_amount_cents')
-                ?? data_get($attributes, 'will_pay_amount_cents')
-                ?? data_get($attributes, 'pledge_sum_cents')
                 ?? data_get($attributes, 'lifetime_support_cents');
-            $status = $this->mapStatus(data_get($attributes, 'patron_status'));
+            $status = $this->mapStatus((string) data_get($attributes, 'patron_status'));
             $tierId = Arr::first((array) data_get($member, 'relationships.currently_entitled_tiers.data'));
             $membershipTier = $tierId ? ($tierMap[(string) data_get($tierId, 'id')] ?? null) : null;
 
-            $profile = $this->resolveMemberProfile($account, $externalId, $email, $name, $avatar);
+            $profile = $this->resolveMemberProfile($account, $externalId, $email, $name, null);
 
             $endedAt = null;
 
             if ($status !== 'active') {
-                $endedAt = data_get($attributes, 'last_charge_date')
-                    ?? data_get($attributes, 'pledge_relationship_start')
+                $endedAt = data_get($attributes, 'pledge_relationship_start')
                     ?? now()->toIsoString();
             }
 
@@ -362,17 +358,50 @@ class PatreonSyncService
 
         return array_filter([
             'id' => data_get($campaignWithTiers, 'data.id') ?? data_get($campaign, 'id'),
-            'creation_name' => $attributes['creation_name']
-                ?? $fallbackAttributes['creation_name'],
-            'vanity' => $attributes['vanity'] ?? $fallbackAttributes['vanity'],
-            'summary' => $attributes['summary'] ?? $fallbackAttributes['summary'],
-            'image_url' => $attributes['avatar_photo_url']
-                ?? $attributes['image_small_url']
-                ?? $attributes['image_url']
-                ?? $fallbackAttributes['avatar_photo_url']
-                ?? $fallbackAttributes['image_small_url']
-                ?? $fallbackAttributes['image_url'],
+            'summary' => data_get($attributes, 'summary') ?? data_get($fallbackAttributes, 'summary'),
+            'image_url' => data_get($attributes, 'avatar_photo_url')
+                ?? data_get($attributes, 'image_small_url')
+                ?? data_get($attributes, 'image_url')
+                ?? data_get($fallbackAttributes, 'avatar_photo_url')
+                ?? data_get($fallbackAttributes, 'image_small_url')
+                ?? data_get($fallbackAttributes, 'image_url'),
+            'currency' => data_get($attributes, 'currency') ?? data_get($fallbackAttributes, 'currency'),
         ]);
+    }
+
+    protected function identityDisplayName(array $identity): string
+    {
+        $fullName = (string) data_get($identity, 'data.attributes.full_name');
+        if ($fullName !== '') {
+            return $fullName;
+        }
+
+        $first = (string) data_get($identity, 'data.attributes.first_name');
+        $last = (string) data_get($identity, 'data.attributes.last_name');
+
+        if ($first !== '' || $last !== '') {
+            return trim($first . ' ' . $last);
+        }
+
+        $vanity = (string) data_get($identity, 'data.attributes.vanity');
+        if ($vanity !== '') {
+            return $vanity;
+        }
+
+        return 'Patreon Creator';
+    }
+
+    protected function campaignDisplayName(array $campaign, array $campaignWithTiers): ?string
+    {
+        $attributes = (array) data_get($campaignWithTiers, 'data.attributes', []);
+        $fallbackAttributes = (array) data_get($campaign, 'attributes', []);
+
+        return data_get($attributes, 'summary')
+            ?? data_get($attributes, 'one_liner')
+            ?? data_get($attributes, 'pledge_url')
+            ?? data_get($fallbackAttributes, 'summary')
+            ?? data_get($fallbackAttributes, 'one_liner')
+            ?? data_get($fallbackAttributes, 'pledge_url');
     }
 
     protected function mapStatus(?string $patronStatus): string
