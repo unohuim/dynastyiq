@@ -129,7 +129,10 @@ class PatreonSyncService
                     && data_get($item, 'relationships.creator.data.id') === $creatorId;
             }) ?? ($campaignsResponse['data'][0] ?? null);
 
-        $campaignId = $campaign ? (string) data_get($campaign, 'id') : ($account->external_id ?: null);
+        $fromApi = data_get($campaign, 'id');
+        $campaignId = $fromApi !== null && $fromApi !== ''
+            ? (string) $fromApi
+            : ($account->external_id ?: null);
 
         $campaignDetails = [];
 
