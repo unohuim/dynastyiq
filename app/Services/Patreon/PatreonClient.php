@@ -67,9 +67,6 @@ class PatreonClient
             ->json();
     }
 
-    /**
-     * Allowed includes: creator
-     */
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -78,19 +75,12 @@ class PatreonClient
             ->acceptJson()
             ->get("{$baseUrl}/campaigns", [
                 'include' => 'creator',
-                'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
-                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
 
-    /**
-     * Allowed includes: tiers
-     * NO creator include here — invalid
-     * NO extra campaign fields — invalid
-     */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -98,8 +88,7 @@ class PatreonClient
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
-                'include' => 'tiers',
-                'fields[tier]' => 'title,amount_cents,description',
+                'include' => 'creator',
             ])
             ->throw()
             ->json();
@@ -130,8 +119,7 @@ class PatreonClient
         $params = [
             'include' => 'currently_entitled_tiers',
             'page[count]' => 50,
-            'fields[member]' =>
-                'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
+            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
             'fields[tier]' => 'title,amount_cents',
         ];
 

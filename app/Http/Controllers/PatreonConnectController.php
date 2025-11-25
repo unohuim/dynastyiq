@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 class PatreonConnectController extends Controller
@@ -80,7 +81,7 @@ class PatreonConnectController extends Controller
         try {
             $code = $request->string('code')->value();
             if (!$code) {
-                throw new \RuntimeException('Missing authorization code.');
+                throw new RuntimeException('Missing authorization code.');
             }
 
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
@@ -108,6 +109,13 @@ class PatreonConnectController extends Controller
 
             $syncService->syncProviderAccount($account->refresh());
         } catch (Throwable $e) {
+            if (isset($account)) {
+                $account->forceFill([
+                    'last_sync_error' => $e->getMessage(),
+                    'status' => 'offline',
+                ])->save();
+            }
+
             Log::warning('Patreon callback failed', [
                 'organization_id' => $organization->id,
                 'user_id' => Auth::id(),
