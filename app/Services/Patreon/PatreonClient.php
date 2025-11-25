@@ -83,7 +83,6 @@ class PatreonClient
             ->get($baseUrl . '/campaigns', [
                 'include' => 'creator',
                 'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
-                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
@@ -107,7 +106,6 @@ class PatreonClient
                 'include' => 'tiers,creator',
                 'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
                 'fields[tier]' => 'title,amount_cents',
-                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
