@@ -138,7 +138,7 @@ class PatreonSyncService
             $tiers = [];
 
             [$response, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
-                return $this->client->getMembers($accessToken, (string) $campaignId);
+                return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
             });
 
             while (true) {
@@ -229,6 +229,7 @@ class PatreonSyncService
             $name  = data_get($attributes, 'full_name', data_get($attributes, 'patron_status', 'Member'));
             $pledge = data_get($attributes, 'will_pay_amount_cents')
                 ?? data_get($attributes, 'pledge_sum_cents')
+                ?? data_get($attributes, 'currently_entitled_amount_cents')
                 ?? data_get($attributes, 'lifetime_support_cents');
             $status = data_get($attributes, 'patron_status', 'active');
             $tierId = Arr::first(
