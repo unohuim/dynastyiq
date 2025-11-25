@@ -5,21 +5,20 @@ declare(strict_types=1);
 namespace App\Services\Patreon;
 
 use App\Models\MemberProfile;
-use App\Models\Membership;
 use App\Models\MembershipEvent;
-use App\Models\MembershipTier;
 use App\Models\ProviderAccount;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class PatreonSyncService
 {
-    public function __construct(protected PatreonClient $client)
-    {
+    public function __construct(
+        protected PatreonClient $client,
+        protected MembershipSyncService $membershipSync
+    ) {
     }
 
     public function syncProviderAccount(ProviderAccount $account, ?array $snapshot = null): array
@@ -33,16 +32,16 @@ class PatreonSyncService
         }
 
         $tiers = $this->upsertTiers($account, $snapshot['tiers'] ?? []);
-        $members = $this->upsertMembers($account, $snapshot['members'] ?? [], $tiers);
+        $members = $this->syncMembers($account, $snapshot['members'] ?? [], $tiers);
 
         $account->forceFill([
-            'status'        => 'connected',
-            'last_synced_at'=> now(),
+            'status' => 'connected',
+            'last_synced_at' => now(),
             'last_sync_error' => null,
         ])->save();
 
         return [
-            'tiers_synced'   => count($tiers),
+            'tiers_synced' => count($tiers),
             'members_synced' => $members,
         ];
     }
@@ -50,7 +49,7 @@ class PatreonSyncService
     public function handleWebhook(ProviderAccount $account, array $payload): void
     {
         $snapshot = [
-            'tiers'   => Arr::wrap(data_get($payload, 'included')),
+            'tiers' => Arr::wrap(data_get($payload, 'included')),
             'members' => Arr::wrap(data_get($payload, 'data')),
         ];
 
@@ -62,9 +61,9 @@ class PatreonSyncService
 
         MembershipEvent::create([
             'provider_account_id' => $account->id,
-            'event_type'          => 'patreon.webhook',
-            'payload'             => $payload,
-            'occurred_at'         => now(),
+            'event_type' => 'patreon.webhook',
+            'payload' => $payload,
+            'occurred_at' => now(),
         ]);
 
         Log::info('Patreon webhook processed', [
@@ -81,82 +80,55 @@ class PatreonSyncService
         }
 
         try {
-            $campaignId = $account->external_id ?? (string) data_get($account->meta, 'campaign.id');
+            [$identity, $account] = $this->callPatreon($account, function (string $accessToken) {
+                return $this->client->getIdentity($accessToken);
+            });
 
-            if (!$campaignId) {
-                [$identity, $account] = $this->callPatreon($account, function (string $accessToken) {
-                    return $this->client->getIdentity($accessToken);
-                });
+            [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
+                return $this->client->getCampaigns($accessToken);
+            });
 
-                $creatorId = data_get($identity, 'data.id');
+            $creatorId = data_get($identity, 'data.id');
+            $campaign = collect($campaignResponse['data'] ?? [])->first(function (array $item) use ($creatorId) {
+                return $creatorId && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
+            }) ?? data_get($campaignResponse, 'data.0');
 
-                [$campaignResponse, $account] = $this->callPatreon($account, function (string $accessToken) {
-                    return $this->client->getCampaigns($accessToken);
-                });
-
-                $campaign = collect($campaignResponse['data'] ?? [])->first(function (array $item) use ($creatorId) {
-                    return $creatorId && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
-                });
-
-                $campaign ??= data_get($campaignResponse, 'data.0');
-                $campaignId = $campaign ? (string) data_get($campaign, 'id') : null;
-
-                $meta = (array) ($account->meta ?? []);
-                if ($identity) {
-                    data_set($meta, 'account_id', data_get($identity, 'data.id'));
-                    data_set($meta, 'user', array_filter([
-                        'id' => data_get($identity, 'data.id'),
-                        'full_name' => data_get($identity, 'data.attributes.full_name'),
-                        'email' => data_get($identity, 'data.attributes.email'),
-                        'vanity' => data_get($identity, 'data.attributes.vanity'),
-                        'image_url' => data_get($identity, 'data.attributes.image_url'),
-                    ]));
-                }
-
-                if ($campaign) {
-                    data_set($meta, 'campaign', array_filter([
-                        'id' => $campaignId,
-                        'name' => data_get($campaign, 'attributes.creation_name')
-                            ?? data_get($campaign, 'attributes.name'),
-                        'image_url' => data_get($campaign, 'attributes.avatar_photo_url')
-                            ?? data_get($campaign, 'attributes.image_small_url')
-                            ?? data_get($campaign, 'attributes.image_url'),
-                    ]));
-                }
-
-                $account->forceFill([
-                    'external_id' => $campaignId ?: null,
-                    'meta' => $meta,
-                ])->save();
-            }
+            $campaignId = $campaign ? (string) data_get($campaign, 'id') : ($account->external_id ?: null);
 
             if (!$campaignId) {
                 return ['tiers' => [], 'members' => [], 'campaign_id' => null];
             }
 
-            $members = [];
-            $tiers = [];
+            [$campaignWithTiers, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
+                return $this->client->getCampaign($accessToken, (string) $campaignId);
+            });
 
-            [$response, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
+            [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
                 return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
             });
 
-            while (true) {
-                $members = array_merge(
-                    $members,
-                    array_values(array_filter(Arr::wrap(data_get($response, 'data')), fn ($item) => data_get($item, 'type') === 'member'))
-                );
-                $tiers = $this->mergeUniqueById($tiers, Arr::wrap(data_get($response, 'included')), 'tier');
+            $campaignTiers = array_values(array_filter(Arr::wrap(data_get($campaignWithTiers, 'included')), function ($item) {
+                return data_get($item, 'type') === 'tier';
+            }));
 
-                $nextUrl = data_get($response, 'links.next');
-                if (!$nextUrl) {
-                    break;
-                }
+            $members = array_values(array_filter(Arr::wrap(data_get($membersResponse, 'data')), function ($item) {
+                return data_get($item, 'type') === 'member';
+            }));
 
-                [$response, $account] = $this->callPatreon($account, function (string $accessToken) use ($nextUrl) {
-                    return Http::withToken($accessToken)->acceptJson()->get($nextUrl)->throw()->json();
-                });
-            }
+            $tiers = $this->mergeUniqueById($campaignTiers, Arr::wrap(data_get($membersResponse, 'included')), 'tier');
+
+            $meta = array_filter([
+                'user' => $this->identityMeta($identity),
+                'campaign' => $this->campaignMeta($campaign ?? [], $campaignWithTiers ?? []),
+            ]);
+
+            $account->forceFill([
+                'external_id' => $campaignId,
+                'display_name' => data_get($meta, 'campaign.name')
+                    ?? data_get($meta, 'user.full_name')
+                    ?? $account->display_name,
+                'meta' => $meta,
+            ])->save();
 
             return [
                 'tiers' => $tiers,
@@ -180,40 +152,12 @@ class PatreonSyncService
 
     protected function upsertTiers(ProviderAccount $account, array $tiers): array
     {
-        $map = [];
-        foreach ($tiers as $tier) {
-            if (data_get($tier, 'type') !== 'tier') {
-                continue;
-            }
+        $mapper = new TierMapper($account);
 
-            $externalId = (string) data_get($tier, 'id');
-            $attributes = data_get($tier, 'attributes', []);
-
-            $model = MembershipTier::updateOrCreate(
-                [
-                    'provider_account_id' => $account->id,
-                    'external_id'         => $externalId,
-                ],
-                [
-                    'organization_id' => $account->organization_id,
-                    'provider'        => $account->provider,
-                    'name'            => data_get($attributes, 'title', 'Tier'),
-                    'description'     => data_get($attributes, 'description'),
-                    'amount_cents'    => data_get($attributes, 'amount_cents'),
-                    'currency'        => data_get($attributes, 'currency', 'USD'),
-                    'is_active'       => (bool) data_get($attributes, 'published', true),
-                    'synced_at'       => now(),
-                    'metadata'        => $tier,
-                ]
-            );
-
-            $map[$externalId] = $model;
-        }
-
-        return $map;
+        return $mapper->map($tiers);
     }
 
-    protected function upsertMembers(ProviderAccount $account, array $members, array $tierMap): int
+    protected function syncMembers(ProviderAccount $account, array $members, array $tierMap): int
     {
         $count = 0;
 
@@ -224,62 +168,32 @@ class PatreonSyncService
 
             $count++;
             $externalId = (string) data_get($member, 'id');
-            $attributes = data_get($member, 'attributes', []);
+            $attributes = (array) data_get($member, 'attributes', []);
             $email = data_get($attributes, 'email');
-            $name  = data_get($attributes, 'full_name', data_get($attributes, 'patron_status', 'Member'));
-            $pledge = data_get($attributes, 'will_pay_amount_cents')
+            $name = data_get($attributes, 'full_name') ?: data_get($attributes, 'patron_status', 'Member');
+            $avatar = data_get($attributes, 'image_url') ?? data_get($attributes, 'thumb_url');
+            $pledge = data_get($attributes, 'currently_entitled_amount_cents')
+                ?? data_get($attributes, 'will_pay_amount_cents')
                 ?? data_get($attributes, 'pledge_sum_cents')
-                ?? data_get($attributes, 'currently_entitled_amount_cents')
                 ?? data_get($attributes, 'lifetime_support_cents');
-            $status = data_get($attributes, 'patron_status', 'active');
-            $tierId = Arr::first(
-                (array) data_get($member, 'relationships.currently_entitled_tiers.data'),
-                null,
-                []
-            );
+            $status = $this->mapStatus(data_get($attributes, 'patron_status'));
+            $tierId = Arr::first((array) data_get($member, 'relationships.currently_entitled_tiers.data'));
+            $membershipTier = $tierId ? ($tierMap[(string) data_get($tierId, 'id')] ?? null) : null;
 
-            $profile = MemberProfile::firstOrCreate(
-                [
-                    'organization_id' => $account->organization_id,
-                    'email'           => $email,
-                ],
-                [
-                    'display_name' => $name,
-                    'external_ids' => ['patreon' => $externalId],
-                ]
-            );
+            $profile = $this->resolveMemberProfile($account, $externalId, $email, $name, $avatar);
 
-            $membership = Membership::updateOrCreate(
-                [
-                    'provider_account_id' => $account->id,
-                    'provider_member_id'  => $externalId,
-                ],
-                [
-                    'organization_id'   => $account->organization_id,
-                    'member_profile_id' => $profile->id,
-                    'membership_tier_id'=> $tierId ? ($tierMap[(string) data_get($tierId, 'id')] ?? null)?->id : null,
-                    'provider'          => $account->provider,
-                    'status'            => $status ?: 'active',
-                    'pledge_amount_cents'=> $pledge,
-                    'currency'          => data_get($attributes, 'currency', 'USD'),
-                    'started_at'        => data_get($attributes, 'pledge_relationship_start')
-                        ? Carbon::parse(data_get($attributes, 'pledge_relationship_start'))
-                        : null,
-                    'ended_at'          => data_get($attributes, 'last_charge_date') && $status === 'deleted'
-                        ? Carbon::parse(data_get($attributes, 'last_charge_date'))
-                        : null,
-                    'synced_at'         => now(),
-                    'metadata'          => $member,
-                ]
+            $this->membershipSync->sync(
+                $account,
+                $profile,
+                $externalId,
+                $membershipTier,
+                $pledge ? (int) $pledge : null,
+                (string) ($attributes['currency'] ?? 'USD'),
+                $status,
+                data_get($attributes, 'pledge_relationship_start'),
+                data_get($attributes, 'last_charge_date'),
+                $member
             );
-
-            MembershipEvent::create([
-                'membership_id'       => $membership->id,
-                'provider_account_id' => $account->id,
-                'event_type'          => 'patreon.sync',
-                'payload'             => $member,
-                'occurred_at'         => now(),
-            ]);
         }
 
         return $count;
@@ -347,5 +261,95 @@ class PatreonSyncService
         }
 
         return array_values($map);
+    }
+
+    protected function resolveMemberProfile(
+        ProviderAccount $account,
+        string $providerMemberId,
+        ?string $email,
+        ?string $displayName,
+        ?string $avatar
+    ): MemberProfile {
+        $query = MemberProfile::where('organization_id', $account->organization_id);
+
+        $profile = $query
+            ->where("external_ids->{$account->provider}", $providerMemberId)
+            ->first();
+
+        if (!$profile && $email) {
+            $profile = MemberProfile::where('organization_id', $account->organization_id)
+                ->where('email', $email)
+                ->first();
+
+            if ($profile) {
+                $profile->attachExternalId($account->provider, $providerMemberId, false);
+            }
+        }
+
+        if (!$profile) {
+            $profile = new MemberProfile([
+                'organization_id' => $account->organization_id,
+                'email' => $email,
+                'display_name' => $displayName,
+                'external_ids' => [$account->provider => $providerMemberId],
+            ]);
+        }
+
+        if (!$profile->display_name && $displayName) {
+            $profile->display_name = $displayName;
+        }
+
+        if (!$profile->avatar_url && $avatar) {
+            $profile->avatar_url = $avatar;
+        }
+
+        if (!$profile->getExternalId($account->provider)) {
+            $profile->attachExternalId($account->provider, $providerMemberId, false);
+        }
+
+        $profile->save();
+
+        return $profile;
+    }
+
+    protected function identityMeta(array $identity): array
+    {
+        return array_filter([
+            'id' => data_get($identity, 'data.id'),
+            'full_name' => data_get($identity, 'data.attributes.full_name'),
+            'email' => data_get($identity, 'data.attributes.email'),
+            'vanity' => data_get($identity, 'data.attributes.vanity'),
+            'image_url' => data_get($identity, 'data.attributes.image_url'),
+        ]);
+    }
+
+    protected function campaignMeta(array $campaign, array $campaignWithTiers): array
+    {
+        $attributes = (array) data_get($campaignWithTiers, 'data.attributes', []);
+        $fallbackAttributes = (array) data_get($campaign, 'attributes', []);
+
+        return array_filter([
+            'id' => data_get($campaignWithTiers, 'data.id') ?? data_get($campaign, 'id'),
+            'name' => $attributes['creation_name']
+                ?? $attributes['name']
+                ?? $fallbackAttributes['creation_name']
+                ?? $fallbackAttributes['name'],
+            'image_url' => $attributes['avatar_photo_url']
+                ?? $attributes['image_small_url']
+                ?? $attributes['image_url']
+                ?? $fallbackAttributes['avatar_photo_url']
+                ?? $fallbackAttributes['image_small_url']
+                ?? $fallbackAttributes['image_url'],
+        ]);
+    }
+
+    protected function mapStatus(?string $patronStatus): string
+    {
+        return match ($patronStatus) {
+            'declined_patron' => 'declined',
+            'former_patron' => 'former_member',
+            'deleted' => 'deleted',
+            default => 'active',
+        };
     }
 }
