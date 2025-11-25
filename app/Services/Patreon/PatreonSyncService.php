@@ -26,13 +26,14 @@ class PatreonSyncService
         $account->refresh();
 
         $snapshot ??= $this->fetchRemoteSnapshot($account);
+        $campaignCurrency = (string) ($snapshot['campaign_currency'] ?? 'USD');
 
         if (!empty($snapshot['campaign_id']) && !$account->external_id) {
             $account->external_id = (string) $snapshot['campaign_id'];
         }
 
-        $tiers = $this->upsertTiers($account, $snapshot['tiers'] ?? []);
-        $members = $this->syncMembers($account, $snapshot['members'] ?? [], $tiers);
+        $tiers = $this->upsertTiers($account, $snapshot['tiers'] ?? [], $campaignCurrency);
+        $members = $this->syncMembers($account, $snapshot['members'] ?? [], $tiers, $campaignCurrency);
 
         $account->forceFill([
             'status' => 'connected',
@@ -103,6 +104,8 @@ class PatreonSyncService
                 return $this->client->getCampaign($accessToken, (string) $campaignId);
             });
 
+            $campaignCurrency = data_get($campaignWithTiers, 'data.attributes.currency', 'USD');
+
             [$membersResponse, $account] = $this->callPatreon($account, function (string $accessToken) use ($campaignId) {
                 return $this->client->getCampaignMembers($accessToken, (string) $campaignId);
             });
@@ -134,6 +137,7 @@ class PatreonSyncService
                 'tiers' => $tiers,
                 'members' => $members,
                 'campaign_id' => $campaignId,
+                'campaign_currency' => $campaignCurrency,
             ];
         } catch (Throwable $e) {
             $account->forceFill([
@@ -150,14 +154,14 @@ class PatreonSyncService
         }
     }
 
-    protected function upsertTiers(ProviderAccount $account, array $tiers): array
+    protected function upsertTiers(ProviderAccount $account, array $tiers, string $campaignCurrency): array
     {
-        $mapper = new TierMapper($account);
+        $mapper = new TierMapper($account, $campaignCurrency);
 
         return $mapper->map($tiers);
     }
 
-    protected function syncMembers(ProviderAccount $account, array $members, array $tierMap): int
+    protected function syncMembers(ProviderAccount $account, array $members, array $tierMap, string $campaignCurrency): int
     {
         $count = 0;
 
@@ -196,7 +200,7 @@ class PatreonSyncService
                 $externalId,
                 $membershipTier,
                 $pledge ? (int) $pledge : null,
-                (string) ($attributes['currency'] ?? 'USD'),
+                $campaignCurrency,
                 $status,
                 data_get($attributes, 'pledge_relationship_start'),
                 $endedAt,

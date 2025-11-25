@@ -10,8 +10,10 @@ use Illuminate\Support\Str;
 
 class TierMapper
 {
-    public function __construct(protected ProviderAccount $account)
-    {
+    public function __construct(
+        protected ProviderAccount $account,
+        protected string $campaignCurrency = 'USD'
+    ) {
     }
 
     /**
@@ -31,7 +33,7 @@ class TierMapper
             $attributes = (array) data_get($tier, 'attributes', []);
             $name = (string) ($attributes['title'] ?? 'Tier');
             $amountCents = $attributes['amount_cents'] ?? null;
-            $currency = $attributes['currency'] ?? 'USD';
+            $currency = $this->campaignCurrency;
 
             $model = $this->findExistingMappedTier($externalId)
                 ?? $this->matchDiqTierByName($name, $amountCents, $currency);
