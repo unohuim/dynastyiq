@@ -52,20 +52,25 @@ class MembershipSyncService
 
         $membership->save();
 
-        $this->logChanges($membership, $original);
+        $this->logChanges($membership, $original, $metadata);
 
         return $membership;
     }
 
-    protected function logChanges(Membership $membership, array $original): void
+    protected function logChanges(Membership $membership, array $original, array $metadata): void
     {
-        $this->maybeLogEvent($membership, 'membership_tier_id', 'tier.changed', $original);
-        $this->maybeLogEvent($membership, 'pledge_amount_cents', 'pledge.changed', $original);
-        $this->maybeLogEvent($membership, 'status', 'status.changed', $original);
+        $this->maybeLogEvent($membership, 'membership_tier_id', 'tier.changed', $original, $metadata);
+        $this->maybeLogEvent($membership, 'pledge_amount_cents', 'pledge.changed', $original, $metadata);
+        $this->maybeLogEvent($membership, 'status', 'status.changed', $original, $metadata);
     }
 
-    protected function maybeLogEvent(Membership $membership, string $field, string $eventType, array $original): void
-    {
+    protected function maybeLogEvent(
+        Membership $membership,
+        string $field,
+        string $eventType,
+        array $original,
+        array $metadata
+    ): void {
         if ($membership->$field === ($original[$field] ?? null)) {
             return;
         }
@@ -74,10 +79,7 @@ class MembershipSyncService
             'membership_id' => $membership->id,
             'provider_account_id' => $membership->provider_account_id,
             'event_type' => $eventType,
-            'payload' => [
-                $original[$field] ?? null,
-                $membership->$field,
-            ],
+            'payload' => $metadata,
             'occurred_at' => now(),
         ]);
     }
