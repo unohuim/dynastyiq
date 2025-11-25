@@ -74,7 +74,9 @@ class PatreonClient
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get($baseUrl . '/campaigns', [
-                'include' => 'tiers',
+                'include' => 'creator,tiers',
+                'fields[campaign]' => 'name,creation_name,avatar_photo_url,image_small_url,image_url',
+                'fields[tier]' => 'title,amount_cents',
             ])
             ->throw()
             ->json();
@@ -102,8 +104,16 @@ class PatreonClient
         $members = [];
         $included = [];
         $params = [
-            'include' => 'currently_entitled_tiers',
-            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,currently_entitled_tiers',
+            'include' => 'current_entitled_tiers',
+            'fields[member]' => implode(',', [
+                'full_name',
+                'email',
+                'patron_status',
+                'currently_entitled_amount_cents',
+                'pledge_relationship_start',
+                'current_entitled_tiers',
+                'lifetime_support_cents',
+            ]),
             'fields[tier]' => 'title,amount_cents',
         ];
 
