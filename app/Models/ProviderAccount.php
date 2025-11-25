@@ -46,34 +46,37 @@ class ProviderAccount extends Model
             return [];
         }
 
-        $user = $this->meta['user'] ?? [];
+        $identity = $this->meta['identity'] ?? [];
         $campaign = $this->meta['campaign'] ?? [];
-        $team = $this->meta['team'] ?? [];
 
-        $handle = isset($user['vanity'])
-            ? '@' . ltrim((string) $user['vanity'], '@')
+        $handle = isset($identity['vanity'])
+            ? '@' . ltrim((string) $identity['vanity'], '@')
             : null;
 
-        $avatar = $user['image_url']
+        $avatar = $identity['image_url']
             ?? $campaign['image_url']
             ?? null;
+        $campaignName = $campaign['summary'] ?? null;
+
+        $identityDisplay = $identity['full_name']
+            ?? ($identity['vanity'] ?? null)
+            ?? null;
+
+        $displayName = $campaignName
+            ?? $this->display_name
+            ?? $identityDisplay
+            ?? 'Patreon Creator';
 
         return [
-            'user' => $user,
+            'identity' => $identity,
             'campaign' => $campaign,
-            'team' => $team,
             'avatar' => $avatar,
             'display' => array_filter([
-                'name' => $campaign['name']
-                    ?? $user['full_name']
-                    ?? $user['vanity']
-                    ?? $user['email']
-                    ?? $this->display_name
-                    ?? 'Creator page',
-                'email' => $user['email'] ?? null,
+                'name' => $displayName,
+                'email' => $identity['email'] ?? null,
                 'handle' => $handle,
-                'account_id' => $user['id'] ?? null,
-                'campaign' => $campaign['name'] ?? null,
+                'account_id' => $identity['id'] ?? null,
+                'campaign' => $campaignName,
                 'campaign_id' => $campaign['id'] ?? null,
             ]),
         ];

@@ -77,16 +77,20 @@ class PatreonClient
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-
+    
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get($baseUrl . '/campaigns', [
                 'include' => 'creator',
+                'fields[campaign]' => 'creation_name,image_url,image_small_url,summary,published_at,patron_count,pledge_url,is_monthly,is_nsfw',
+                'fields[creator]' => 'full_name,vanity,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
+
+
 
     /**
      * Fetch campaign details with tiers.
@@ -95,21 +99,27 @@ class PatreonClient
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-
+    
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
-                'include' => 'tiers',
+                'include' => 'tiers,creator',
+                'fields[campaign]' => 'creation_name,image_url,image_small_url,summary,published_at,patron_count,pledge_url,is_monthly,is_nsfw',
+                'fields[tier]' => 'title,amount_cents,description,published',
+                'fields[creator]' => 'full_name,vanity,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
 
+
     /**
      * Fetch ALL campaign members (paginated).
      * Allowed include = currently_entitled_tiers
-     * No fields[...] allowed.
+     * Allowed fields:
+     *  - fields[member] = full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents
+     *  - fields[tier] = title,amount_cents
      */
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
@@ -122,6 +132,8 @@ class PatreonClient
         $params = [
             'include' => 'currently_entitled_tiers',
             'page[count]' => 50,
+            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
+            'fields[tier]' => 'title,amount_cents',
         ];
 
         do {

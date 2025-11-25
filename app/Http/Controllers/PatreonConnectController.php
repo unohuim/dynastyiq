@@ -7,10 +7,10 @@ namespace App\Http\Controllers;
 use App\Models\Organization;
 use App\Models\ProviderAccount;
 use App\Services\Patreon\PatreonClient;
+use App\Services\Patreon\PatreonSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -51,9 +51,9 @@ class PatreonConnectController extends Controller
 
     public function callback(
         Request $request,
-        PatreonClient $patreon
-    ): RedirectResponse
-    {
+        PatreonClient $patreon,
+        PatreonSyncService $syncService
+    ): RedirectResponse {
         try {
             $state = decrypt($request->string('state')->value());
         } catch (Throwable) {
@@ -77,10 +77,6 @@ class PatreonConnectController extends Controller
 
         $this->assertUserCanManage($organization);
 
-        $existingAccount = ProviderAccount::where('organization_id', $organization->id)
-            ->where('provider', 'patreon')
-            ->first();
-
         try {
             $code = $request->string('code')->value();
             if (!$code) {
@@ -89,20 +85,7 @@ class PatreonConnectController extends Controller
 
             $tokenResponse = $patreon->exchangeCode($code, $this->redirectUri());
             $accessToken = $tokenResponse['access_token'] ?? '';
-            $identity = $patreon->getIdentity($accessToken);
-            $creatorId = (string) data_get($identity, 'data.id');
-            $identityCampaignId = (string) data_get($identity, 'data.relationships.campaign.data.id');
-            $baseExternalId = $identityCampaignId ?: $creatorId;
             $tokenExpiresAt = now()->addSeconds((int) ($tokenResponse['expires_in'] ?? 3600));
-
-            $baseMeta = array_filter([
-                'account_id' => $creatorId ?: null,
-                'tokens' => [
-                    'access_token' => $accessToken,
-                    'refresh_token' => $tokenResponse['refresh_token'] ?? null,
-                    'expires_in' => $tokenResponse['expires_in'] ?? null,
-                ],
-            ], fn ($value) => $value !== null);
 
             $account = ProviderAccount::updateOrCreate(
                 [
@@ -111,10 +94,6 @@ class PatreonConnectController extends Controller
                 ],
                 [
                     'status' => 'connected',
-                    'external_id' => $baseExternalId,
-                    'display_name' => data_get($identity, 'data.attributes.full_name')
-                        ?? data_get($identity, 'data.attributes.vanity')
-                        ?? 'Creator page',
                     'access_token' => $accessToken,
                     'refresh_token' => $tokenResponse['refresh_token'] ?? null,
                     'token_expires_at' => $tokenExpiresAt,
@@ -123,63 +102,11 @@ class PatreonConnectController extends Controller
                         : config('patreon.scopes'),
                     'connected_at' => now(),
                     'last_sync_error' => null,
-                    'webhook_secret' => $this->getWebhookSecret($organization, $existingAccount),
-                    'meta' => $baseMeta,
+                    'webhook_secret' => $this->getWebhookSecret($organization),
                 ]
             );
 
-            $account->refresh();
-
-            $campaigns = $patreon->getCampaigns($accessToken);
-            $campaign = collect($campaigns['data'] ?? [])->first(function (array $item) use ($creatorId) {
-                return $creatorId && data_get($item, 'relationships.creator.data.id') === (string) $creatorId;
-            });
-            $campaign ??= data_get($campaigns, 'data.0');
-
-            $campaignId = $campaign ? (string) data_get($campaign, 'id') : $baseExternalId;
-            $campaignAttributes = (array) data_get($campaign, 'attributes', []);
-            $campaignName = $campaignAttributes['creation_name']
-                ?? $campaignAttributes['name']
-                ?? data_get($identity, 'data.attributes.full_name')
-                ?? data_get($identity, 'data.attributes.vanity')
-                ?? 'Creator page';
-
-            $campaignMeta = array_filter([
-                'id' => $campaignId,
-                'name' => $campaignName,
-                'avatar_photo_url' => $campaignAttributes['avatar_photo_url'] ?? null,
-                'image_small_url' => $campaignAttributes['image_small_url'] ?? null,
-                'image_url' => $campaignAttributes['image_url'] ?? null,
-            ], fn ($value) => $value !== null);
-
-            $campaignTiers = array_values(array_filter($campaigns['included'] ?? [], fn ($item) => data_get($item, 'type') === 'tier'));
-
-            $membersResponse = $patreon->getCampaignMembers($accessToken, $campaignId);
-            $members = array_values(array_filter($membersResponse['data'] ?? [], fn ($item) => data_get($item, 'type') === 'member'));
-            $memberTiers = array_values(array_filter($membersResponse['included'] ?? [], fn ($item) => data_get($item, 'type') === 'tier'));
-            $tiers = $this->mergeUniqueById($campaignTiers, $memberTiers);
-
-            $account->forceFill([
-                'status' => 'connected',
-                'external_id' => $campaignId,
-                'display_name' => $campaignName,
-                'access_token' => $accessToken,
-                'refresh_token' => $tokenResponse['refresh_token'] ?? null,
-                'token_expires_at' => $tokenExpiresAt,
-                'last_synced_at' => now(),
-                'last_sync_error' => null,
-                'meta' => array_filter([
-                    'account_id' => $creatorId ?: null,
-                    'campaign' => $campaignMeta,
-                    'members' => $members,
-                    'tiers' => $tiers,
-                    'tokens' => [
-                        'access_token' => $accessToken,
-                        'refresh_token' => $tokenResponse['refresh_token'] ?? null,
-                        'expires_in' => $tokenResponse['expires_in'] ?? null,
-                    ],
-                ], fn ($value) => $value !== null),
-            ])->save();
+            $syncService->syncProviderAccount($account->refresh());
         } catch (Throwable $e) {
             Log::warning('Patreon callback failed', [
                 'organization_id' => $organization->id,
@@ -248,10 +175,9 @@ class PatreonConnectController extends Controller
             ->with('error', 'Unable to connect to Patreon.');
     }
 
-    protected function getWebhookSecret(Organization $organization, ?ProviderAccount $existingAccount = null): string
+    protected function getWebhookSecret(Organization $organization): string
     {
         return config('services.patreon.webhook_secret')
-            ?? $existingAccount?->webhook_secret
             ?? Str::random(32);
     }
 
@@ -259,22 +185,5 @@ class PatreonConnectController extends Controller
     {
         return config('services.patreon.redirect')
             ?? route('patreon.callback');
-    }
-
-    protected function mergeUniqueById(array $existing, array $items): array
-    {
-        $map = collect($existing)
-            ->keyBy(fn ($item) => data_get($item, 'id'))
-            ->all();
-
-        foreach ($items as $item) {
-            if (!Arr::has($item, 'id')) {
-                continue;
-            }
-
-            $map[(string) data_get($item, 'id')] = $item;
-        }
-
-        return array_values($map);
     }
 }
