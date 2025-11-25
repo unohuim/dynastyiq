@@ -56,71 +56,70 @@ class PatreonClient
         return $response;
     }
 
-    /**
-     * Identity MUST be called with no includes / fields.
-     */
     public function getIdentity(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
 
         return Http::withToken($accessToken)
             ->acceptJson()
-            ->get($baseUrl . '/identity')
+            ->get("{$baseUrl}/identity")
             ->throw()
             ->json();
     }
 
-    /**
-     * Fetch all campaigns belonging to the creator.
-     * Only allowed include is "creator".
-     */
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-    
+
         return Http::withToken($accessToken)
             ->acceptJson()
-            ->get($baseUrl . '/campaigns', [
+            ->get("{$baseUrl}/campaigns", [
                 'include' => 'creator',
                 'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
+                'fields[creator]' => 'full_name,image_url',
                 'page[count]' => 10,
             ])
             ->throw()
             ->json();
     }
 
-
-
-
     /**
-     * Fetch campaign details with tiers.
-     * Allowed include = tiers
+     * IMPORTANT:
+     * This endpoint NEVER returns full tier attributes.
+     * We ONLY fetch campaign + creator here.
      */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-    
+
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
-                'include' => 'tiers,creator',
+                'include' => 'creator',
                 'fields[campaign]' => 'creation_name,patron_count,image_url,image_small_url',
-                'fields[tier]' => 'title,amount_cents',
-                'page[count]' => 10,
+                'fields[creator]' => 'full_name,image_url',
             ])
             ->throw()
             ->json();
     }
 
-
-
     /**
-     * Fetch ALL campaign members (paginated).
-     * Allowed include = currently_entitled_tiers
-     * Allowed fields:
-     *  - fields[member] = full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents
-     *  - fields[tier] = title,amount_cents
+     * This endpoint returns the REAL tier data.
      */
+    public function getCampaignTiers(string $accessToken, string $campaignId): array
+    {
+        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->get("{$baseUrl}/campaigns/{$campaignId}/tiers", [
+                'fields[tier]' => 'title,amount_cents,description',
+                'page[count]' => 50,
+            ])
+            ->throw()
+            ->json();
+    }
+
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
@@ -132,7 +131,8 @@ class PatreonClient
         $params = [
             'include' => 'currently_entitled_tiers',
             'page[count]' => 50,
-            'fields[member]' => 'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
+            'fields[member]' =>
+                'full_name,email,patron_status,currently_entitled_amount_cents,pledge_relationship_start,lifetime_support_cents',
             'fields[tier]' => 'title,amount_cents',
         ];
 
@@ -148,7 +148,6 @@ class PatreonClient
 
             $url = $response['links']['next'] ?? null;
 
-            // After first call, remove params and follow pagination URLs directly
             $params = [];
         } while ($url);
 
