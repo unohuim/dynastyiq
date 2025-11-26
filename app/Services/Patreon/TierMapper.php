@@ -24,8 +24,6 @@ class TierMapper
      */
     public function map(array $tiers): array
     {
-        Log::info('starting TierMapper map()', ['tiers'=>$tiers]);
-        
         $mapped = [];
 
         foreach ($tiers as $tier) {
@@ -35,7 +33,6 @@ class TierMapper
 
             $externalId = (string) data_get($tier, 'id');
             $attributes = (array) data_get($tier, 'attributes', []);
-            Log::info('data_get tiers', ['attributes'=>$attributes]);
             $name = (string) ($attributes['title'] ?? '');
 
             if ($name === '') {
