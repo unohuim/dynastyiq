@@ -38,18 +38,10 @@ class PatreonSyncService
             }
 
             $metadata = $this->ensureMetadata($account);
-
-            Log::info('Snapshot Patreon metadata response', [
-                'metadata' => $metadata,
-            ]);
             
             $account = $metadata['account'];
             $campaignId = $metadata['campaign_id'];
             $campaignCurrency = $metadata['campaign_currency'];
-
-            Log::info('Snapshot Patreon currency', [
-                'currency' => $campaignCurrency,
-            ]);
 
             
             if (!$campaignId) {
@@ -57,6 +49,8 @@ class PatreonSyncService
             }
 
             $tiersResponse = $snapshot['tiers'] ?? null;
+
+            Log::info('tier response', ['tiersResponse'=>$tiersResponse]);
             $tiersPayload = $tiersResponse !== null ? Arr::wrap($tiersResponse) : $this->fetchTiers($account, $campaignId);
 
             $tiers = $this->syncTiers($account, $tiersPayload, $campaignCurrency);
@@ -133,11 +127,6 @@ class PatreonSyncService
 
         $creatorId = (string) data_get($identity, 'data.id', '');
 
-
-        Log::info('Patreon creator', [
-            'creator_id' => $creatorId,
-        ]);
-
         $campaign = collect($campaignsResponse['data'] ?? [])
             ->first(function (array $item) use ($creatorId): bool {
                 return $creatorId !== ''
@@ -154,12 +143,10 @@ class PatreonSyncService
         $campaignDetails = [];
 
         if ($campaignId) {
-            Log::info('campaignId good, starting client->getCampaign()');
             [$campaignDetails, $account] = $this->callPatreon(
                 $account,
                 fn (string $accessToken): array => $this->client->getCampaign($accessToken, $campaignId)
             );
-            Log::info('client->getCampaign() returned successfully');
         }
 
         $campaignCurrency = (string) data_get($campaignDetails, 'data.attributes.currency')
@@ -190,18 +177,21 @@ class PatreonSyncService
 
     protected function fetchTiers(ProviderAccount $account, string $campaignId): array
     {
+        Log::info('starting fetchTiers');
         [$tiersResponse, $account] = $this->callPatreon(
             $account,
             fn (string $accessToken): array => $this->client->getCampaignTiers($accessToken, $campaignId)
         );
 
+        Log::info('completed fetchTiers');
         return Arr::wrap($tiersResponse['data'] ?? []);
     }
 
     protected function syncTiers(ProviderAccount $account, array $tiers, string $campaignCurrency): array
     {
+        Log::info('starting syncTiers');
         $mapper = new TierMapper($account, $campaignCurrency);
-
+        Log::info('completed syncTiers');
         return $mapper->map($tiers);
     }
 
