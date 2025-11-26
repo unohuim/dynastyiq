@@ -102,19 +102,35 @@ class PatreonClient
      */
     public function getCampaignTiers(string $accessToken, string $campaignId): array
     {
-        $baseUrl = rtrim(config('patreon.base_url'), '/');
-        $url = "{$baseUrl}/campaigns/{$campaignId}/tiers";
-        $this->lastUrl = $url;
-
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($url, [
+        $this->lastUrl = $this->getApiUrl(
+            'patreon',
+            'campaign',
+            ['campaignId' => $campaignId],
+            [
+                'include' => 'tiers',
                 'fields[tier]' => 'title,amount_cents,description',
-                'page[count]' => 50,
-            ])
-            ->throw()
-            ->json();
+            ]
+        );
+    
+        $response = $this->getAPIDataWithToken(
+            'patreon',
+            'campaign',
+            $accessToken,
+            ['campaignId' => $campaignId],
+            [
+                'include' => 'tiers',
+                'fields[tier]' => 'title,amount_cents,description',
+            ]
+        );
+    
+        return [
+            'data' => collect($response['included'] ?? [])
+                ->where('type', 'tier')
+                ->values()
+                ->all(),
+        ];
     }
+
 
     /**
      * DEFERRED SYNC
