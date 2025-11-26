@@ -9,6 +9,9 @@ use Illuminate\Support\Str;
 
 class PatreonClient
 {
+    protected ?string $lastUrl = null;
+
+    
     public function getLastPreparedUrl(): ?string
     {
         return $this->lastUrl ?? null;
