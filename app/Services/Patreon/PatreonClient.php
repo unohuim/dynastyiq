@@ -94,12 +94,14 @@ class PatreonClient
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-        $this->lastUrl = "{$baseUrl}/campaigns/{$campaignId}";
+        $getUrl = "{$baseUrl}/campaigns/{$campaignId}";
+
+        $this->lastUrl = $getUrl . '?fields[campaign]=created_at,creation_name,summary';
         
         return Http::withToken($accessToken)
             ->acceptJson()
-            ->get("{$baseUrl}/campaigns/{$campaignId}", [
-                'include' => 'creator',
+            ->get($getUrl, [
+                'fields[campaign]' => 'created_at,creation_name,summary',
             ])
             ->throw()
             ->json();
