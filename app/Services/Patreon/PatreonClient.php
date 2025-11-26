@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace App\Services\Patreon;
 
 use App\Traits\HasAPITrait;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class PatreonClient
 {
@@ -22,18 +22,16 @@ class PatreonClient
 
     public function exchangeCode(string $code, string $redirectUri): array
     {
-        $url = $this->getApiUrl('patreon', 'token');
-
-        $this->lastUrl = $url;
+        $this->lastUrl = $this->getApiUrl('patreon', 'token');
 
         $response = Http::asForm()
             ->acceptJson()
-            ->post($url, [
-                'grant_type'    => 'authorization_code',
-                'code'          => $code,
-                'client_id'     => config('apiurls.patreon.client_id'),
-                'client_secret'=> config('apiurls.patreon.client_secret'),
-                'redirect_uri' => $redirectUri,
+            ->post($this->lastUrl, [
+                'grant_type'     => 'authorization_code',
+                'code'           => $code,
+                'client_id'      => config('apiurls.patreon.client_id'),
+                'client_secret' => config('apiurls.patreon.client_secret'),
+                'redirect_uri'  => $redirectUri,
             ])
             ->throw()
             ->json();
@@ -43,17 +41,15 @@ class PatreonClient
 
     public function refreshToken(string $refreshToken): array
     {
-        $url = $this->getApiUrl('patreon', 'token');
-
-        $this->lastUrl = $url;
+        $this->lastUrl = $this->getApiUrl('patreon', 'token');
 
         $response = Http::asForm()
             ->acceptJson()
-            ->post($url, [
+            ->post($this->lastUrl, [
                 'grant_type'     => 'refresh_token',
                 'refresh_token' => $refreshToken,
-                'client_id'     => config('apiurls.patreon.client_id'),
-                'client_secret'=> config('apiurls.patreon.client_secret'),
+                'client_id'      => config('apiurls.patreon.client_id'),
+                'client_secret' => config('apiurls.patreon.client_secret'),
             ])
             ->throw()
             ->json();
@@ -65,11 +61,11 @@ class PatreonClient
     {
         $this->lastUrl = $this->getApiUrl('patreon', 'identity');
 
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl)
-            ->throw()
-            ->json();
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'identity',
+            $accessToken
+        );
     }
 
     public function getCampaigns(string $accessToken): array
@@ -79,11 +75,16 @@ class PatreonClient
             'page[count]' => 10,
         ]);
 
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl)
-            ->throw()
-            ->json();
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'campaigns',
+            $accessToken,
+            [],
+            [
+                'include' => 'creator',
+                'page[count]' => 10,
+            ]
+        );
     }
 
     public function getCampaign(string $accessToken, string $campaignId): array
@@ -97,11 +98,13 @@ class PatreonClient
             ['fields[campaign]' => 'created_at,creation_name,summary']
         );
 
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl)
-            ->throw()
-            ->json();
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'campaign',
+            $accessToken,
+            ['campaignId' => $campaignId],
+            ['fields[campaign]' => 'created_at,creation_name,summary']
+        );
     }
 
     public function getCampaignTiers(string $accessToken, string $campaignId): array
@@ -112,20 +115,25 @@ class PatreonClient
             ['campaignId' => $campaignId],
             [
                 'fields[tier]' => 'title,amount_cents,description',
-                'page[count]'  => 50,
+                'page[count]' => 50,
             ]
         );
 
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl)
-            ->throw()
-            ->json();
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'campaign_tiers',
+            $accessToken,
+            ['campaignId' => $campaignId],
+            [
+                'fields[tier]' => 'title,amount_cents,description',
+                'page[count]' => 50,
+            ]
+        );
     }
 
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
-        $url = $this->getApiUrl(
+        $this->lastUrl = $this->getApiUrl(
             'patreon',
             'campaign_members',
             ['campaignId' => $campaignId],
@@ -139,10 +147,9 @@ class PatreonClient
             ]
         );
 
-        $this->lastUrl = $url;
-
         $members = [];
         $included = [];
+        $url = $this->lastUrl;
 
         do {
             $response = Http::withToken($accessToken)
@@ -151,14 +158,14 @@ class PatreonClient
                 ->throw()
                 ->json();
 
-            $members  = array_merge($members, $response['data'] ?? []);
+            $members = array_merge($members, $response['data'] ?? []);
             $included = array_merge($included, $response['included'] ?? []);
 
             $url = $response['links']['next'] ?? null;
         } while ($url);
 
         return [
-            'data'     => $members,
+            'data' => $members,
             'included' => $included,
         ];
     }
