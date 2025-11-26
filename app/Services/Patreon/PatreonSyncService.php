@@ -132,7 +132,7 @@ class PatreonSyncService
         $fromApi = data_get($campaign, 'id');
         $campaignId = $fromApi !== null && $fromApi !== ''
             ? (string) $fromApi
-            : ($account->external_id ?: null);
+            : null;
 
         $campaignDetails = [];
 
@@ -332,7 +332,7 @@ class PatreonSyncService
     {
         // Log the API URL before executing the request
         Log::info('Patreon API request', [
-            'provider_account_id' => $account->id,
+            'provider_account_id' => $account->external_id,
             'url' => $this->client->getLastPreparedUrl(), // <-- new
         ]);
         
