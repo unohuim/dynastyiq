@@ -330,6 +330,12 @@ class PatreonSyncService
 
     protected function callPatreon(ProviderAccount $account, callable $callback): array
     {
+        // Log the API URL before executing the request
+        Log::info('Patreon API request', [
+            'provider_account_id' => $account->id,
+            'url' => $this->client->getLastPreparedUrl(), // <-- new
+        ]);
+        
         try {
             return [$callback($account->access_token), $account];
         } catch (RequestException $e) {
@@ -341,6 +347,12 @@ class PatreonSyncService
 
             throw $e;
         }
+    }
+
+
+    public function getLastPreparedUrl(): ?string
+    {
+        return $this->lastUrl ?? null;
     }
 
     protected function resolveMemberProfile(
