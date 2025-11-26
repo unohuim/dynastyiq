@@ -6,6 +6,7 @@ namespace App\Services\Patreon;
 
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class PatreonClient
 {
