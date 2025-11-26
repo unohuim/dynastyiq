@@ -9,6 +9,11 @@ use Illuminate\Support\Str;
 
 class PatreonClient
 {
+    public function getLastPreparedUrl(): ?string
+    {
+        return $this->lastUrl ?? null;
+    }
+    
     public function exchangeCode(string $code, string $redirectUri): array
     {
         $tokenUrl = config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token');
