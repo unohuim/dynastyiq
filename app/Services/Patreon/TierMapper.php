@@ -35,6 +35,7 @@ class TierMapper
 
             $externalId = (string) data_get($tier, 'id');
             $attributes = (array) data_get($tier, 'attributes', []);
+            Log::info('data_get tiers', ['attributes'=>$attributes]);
             $name = (string) ($attributes['title'] ?? '');
 
             if ($name === '') {
