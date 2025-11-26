@@ -6,7 +6,6 @@ namespace App\Services\Patreon;
 
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class PatreonClient
@@ -21,8 +20,7 @@ class PatreonClient
     }
 
     /**
-     * OAUTH ONLY — exchange code for tokens.
-     * NO campaign calls here.
+     * OAuth: exchange authorization code for tokens
      */
     public function exchangeCode(string $code, string $redirectUri): array
     {
@@ -44,67 +42,80 @@ class PatreonClient
         return $this->normalizeTokenResponse($response);
     }
 
-    
     /**
-     * OAUTH SAFE — identity only.
+     * OAuth-safe identity (used ONLY for creator ↔ user linkage)
      */
     public function getIdentity(string $accessToken): array
     {
-        $this->lastUrl = $this->getApiUrl(
-            'patreon',
-            'identity',
-            [],
-            ['fields[user]' => 'full_name,vanity,image_url']
-        );
-    
+        $this->lastUrl = $this->getApiUrl('patreon', 'identity');
+
         return $this->getAPIDataWithToken(
             'patreon',
             'identity',
-            $accessToken,
-            [],
-            ['fields[user]' => 'full_name,vanity,image_url']
+            $accessToken
         );
     }
 
-
     /**
-     * DEFERRED SYNC
+     * Campaign list WITH creator relationship + fields
      */
     public function getCampaigns(string $accessToken): array
     {
-        $baseUrl = rtrim(config('patreon.base_url'), '/');
-        $this->lastUrl = "{$baseUrl}/campaigns";
-
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl, [
+        $this->lastUrl = $this->getApiUrl(
+            'patreon',
+            'campaigns',
+            [],
+            [
                 'include' => 'creator',
+                'fields[user]' => 'full_name,image_url,vanity',
                 'page[count]' => 10,
-            ])
-            ->throw()
-            ->json();
+            ]
+        );
+
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'campaigns',
+            $accessToken,
+            [],
+            [
+                'include' => 'creator',
+                'fields[user]' => 'full_name,image_url,vanity',
+                'page[count]' => 10,
+            ]
+        );
     }
 
     /**
-     * DEFERRED SYNC
+     * Single campaign WITH creator relationship + fields
      */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
-        $baseUrl = rtrim(config('patreon.base_url'), '/');
-        $url = "{$baseUrl}/campaigns/{$campaignId}";
-        $this->lastUrl = $url;
-
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($url, [
+        $this->lastUrl = $this->getApiUrl(
+            'patreon',
+            'campaign',
+            ['campaignId' => $campaignId],
+            [
+                'include' => 'creator',
                 'fields[campaign]' => 'created_at,creation_name,summary',
-            ])
-            ->throw()
-            ->json();
+                'fields[user]' => 'full_name,image_url,vanity',
+            ]
+        );
+
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'campaign',
+            $accessToken,
+            ['campaignId' => $campaignId],
+            [
+                'include' => 'creator',
+                'fields[campaign]' => 'created_at,creation_name,summary',
+                'fields[user]' => 'full_name,image_url,vanity',
+            ]
+        );
     }
 
     /**
-     * DEFERRED SYNC
+     * Campaign tiers (via campaign include)
      */
     public function getCampaignTiers(string $accessToken, string $campaignId): array
     {
@@ -117,7 +128,7 @@ class PatreonClient
                 'fields[tier]' => 'title,amount_cents,description',
             ]
         );
-    
+
         $response = $this->getAPIDataWithToken(
             'patreon',
             'campaign',
@@ -128,7 +139,7 @@ class PatreonClient
                 'fields[tier]' => 'title,amount_cents,description',
             ]
         );
-    
+
         return [
             'data' => collect($response['included'] ?? [])
                 ->where('type', 'tier')
@@ -137,9 +148,8 @@ class PatreonClient
         ];
     }
 
-
     /**
-     * DEFERRED SYNC
+     * Campaign members
      */
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
@@ -180,7 +190,7 @@ class PatreonClient
     }
 
     /**
-     * TOKEN REFRESH — untouched
+     * Refresh OAuth token
      */
     public function refreshToken(string $refreshToken): array
     {
