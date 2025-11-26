@@ -135,7 +135,7 @@ class PatreonSyncService
 
 
         Log::info('Patreon creator', [
-            'creator_id' => creatorId,
+            'creator_id' => $creatorId,
             'result' => $result,
         ]);
 
