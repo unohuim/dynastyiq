@@ -154,10 +154,12 @@ class PatreonSyncService
         $campaignDetails = [];
 
         if ($campaignId) {
+            Log::info('campaignId good, starting client->getCampaign()');
             [$campaignDetails, $account] = $this->callPatreon(
                 $account,
                 fn (string $accessToken): array => $this->client->getCampaign($accessToken, $campaignId)
             );
+            Log::info('client->getCampaign() returned successfully');
         }
 
         $campaignCurrency = (string) data_get($campaignDetails, 'data.attributes.currency')
