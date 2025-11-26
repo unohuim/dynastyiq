@@ -118,62 +118,61 @@ class PatreonSyncService
             $account,
             fn (string $accessToken): array => $this->client->getIdentity($accessToken)
         );
-
+    
         [$campaignsResponse, $account] = $this->callPatreon(
             $account,
             fn (string $accessToken): array => $this->client->getCampaigns($accessToken)
         );
-
+    
         $creatorId = (string) data_get($identity, 'data.id', '');
-        Log::info('creator', ['creatorId'=>$creatorId]);
-
+    
         $campaign = collect($campaignsResponse['data'] ?? [])
-            ->first(function (array $item) use ($creatorId): bool {
-                return $creatorId !== ''
-                    && data_get($item, 'relationships.creator.data.id') === $creatorId;
-            }) ?? ($campaignsResponse['data'][0] ?? null);
-
-        
-
-        $fromApi = data_get($campaign, 'id');
-        $campaignId = $fromApi !== null && $fromApi !== ''
-            ? (string) $fromApi
-            : null;
-
+            ->first(fn (array $item): bool =>
+                $creatorId !== ''
+                && data_get($item, 'relationships.creator.data.id') === $creatorId
+            ) ?? ($campaignsResponse['data'][0] ?? null);
+    
+        $campaignId = (string) data_get($campaign, 'id');
+    
         $campaignDetails = [];
-
-        if ($campaignId) {
+    
+        if ($campaignId !== '') {
             [$campaignDetails, $account] = $this->callPatreon(
                 $account,
                 fn (string $accessToken): array => $this->client->getCampaign($accessToken, $campaignId)
             );
         }
-
-        $campaignCurrency = (string) data_get($campaignDetails, 'data.attributes.currency')
+    
+        $campaignCurrency =
+            (string) data_get($campaignDetails, 'data.attributes.currency')
             ?: (string) data_get($campaign, 'attributes.currency', 'USD');
-
+    
         $identityMeta = $identity ?? [];
         $campaignMeta = $campaignDetails ?: ($campaign ?? []);
-
+    
         $displayName = $this->displayNameFromMetadata($identityMeta, $campaignMeta);
-
+    
+        $avatarUrl = (string) data_get($identityMeta, 'data.attributes.image_url');
+    
         $account->forceFill([
             'external_id' => $campaignId,
             'display_name' => $displayName,
             'meta' => [
                 'identity' => $identityMeta,
                 'campaign' => $campaignMeta,
+                'avatar_url' => $avatarUrl,
             ],
             'status' => 'connected',
             'last_sync_error' => null,
         ])->save();
-
+    
         return [
             'account' => $account->refresh(),
             'campaign_id' => $campaignId,
             'campaign_currency' => $campaignCurrency !== '' ? $campaignCurrency : 'USD',
         ];
     }
+
 
     protected function fetchTiers(ProviderAccount $account, string $campaignId): array
     {
@@ -402,27 +401,15 @@ class PatreonSyncService
         return $profile;
     }
 
+    
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
-        Log::info('meta', ['id_meta'=>$identityMeta]);
-        Log::info('campaign', ['camp'=>$campaignMeta]);
-        $creatorId = data_get($campaignMeta, 'data.relationships.creator.data.id');
-        Log::info('creatorId', ['creatorId'=>$creatorId]);
-        
-        if ($creatorId && isset($campaignMeta['included'])) {
-            $creator = collect($campaignMeta['included'])
-                ->first(fn (array $item) =>
-                    data_get($item, 'type') === 'user'
-                    && data_get($item, 'id') === $creatorId
-                );
+        $identityName =
+            (string) data_get($identityMeta, 'data.attributes.full_name')
+            ?: (string) data_get($identityMeta, 'data.attributes.vanity', '');
     
-            $creatorName =
-                (string) data_get($creator, 'attributes.full_name')
-                ?: (string) data_get($creator, 'attributes.vanity', '');
-    
-            if ($creatorName !== '') {
-                return $creatorName;
-            }
+        if ($identityName !== '') {
+            return $identityName;
         }
     
         $campaignName =
