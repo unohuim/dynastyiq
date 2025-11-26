@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace App\Services\Patreon;
 
+use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class PatreonClient
 {
+    use HasAPITrait;
+
     protected ?string $lastUrl = null;
 
     public function getLastPreparedUrl(): ?string
@@ -18,8 +21,8 @@ class PatreonClient
     }
 
     /**
-     * OAuth step 1: exchange authorization code for tokens.
-     * MUST succeed and be persisted before any campaign calls.
+     * OAUTH ONLY — exchange code for tokens.
+     * NO campaign calls here.
      */
     public function exchangeCode(string $code, string $redirectUri): array
     {
@@ -29,30 +32,24 @@ class PatreonClient
         $response = Http::asForm()
             ->acceptJson()
             ->post($tokenUrl, [
-                'grant_type'    => 'authorization_code',
-                'code'          => $code,
-                'client_id'     => config('services.patreon.client_id'),
-                'client_secret'=> config('services.patreon.client_secret'),
-                'redirect_uri' => $redirectUri,
+                'grant_type'     => 'authorization_code',
+                'code'           => $code,
+                'client_id'      => config('services.patreon.client_id'),
+                'client_secret' => config('services.patreon.client_secret'),
+                'redirect_uri'  => $redirectUri,
             ])
             ->throw()
             ->json();
 
-        return [
-            'access_token'  => (string) ($response['access_token'] ?? ''),
-            'refresh_token' => (string) ($response['refresh_token'] ?? ''),
-            'expires_in'    => (int) ($response['expires_in'] ?? 0),
-            'scope'         => Str::of($response['scope'] ?? '')->trim()->value(),
-        ];
+        return $this->normalizeTokenResponse($response);
     }
 
     /**
-     * OAuth step 2: fetch creator identity.
-     * Safe to call during initial connection.
+     * OAUTH SAFE — identity only.
      */
     public function getIdentity(string $accessToken): array
     {
-        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+        $baseUrl = rtrim(config('patreon.base_url'), '/');
         $this->lastUrl = "{$baseUrl}/identity";
 
         return Http::withToken($accessToken)
@@ -62,16 +59,12 @@ class PatreonClient
             ->json();
     }
 
-    /*
-     |--------------------------------------------------------------------------
-     | Deferred sync methods
-     |--------------------------------------------------------------------------
-     | These MUST NOT be called during initial OAuth.
+    /**
+     * DEFERRED SYNC
      */
-
     public function getCampaigns(string $accessToken): array
     {
-        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+        $baseUrl = rtrim(config('patreon.base_url'), '/');
         $this->lastUrl = "{$baseUrl}/campaigns";
 
         return Http::withToken($accessToken)
@@ -84,11 +77,14 @@ class PatreonClient
             ->json();
     }
 
+    /**
+     * DEFERRED SYNC
+     */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         Log::info('starting getCampaign');
 
-        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+        $baseUrl = rtrim(config('patreon.base_url'), '/');
         $url = "{$baseUrl}/campaigns/{$campaignId}";
         $this->lastUrl = $url;
 
@@ -101,15 +97,37 @@ class PatreonClient
             ->json();
     }
 
+    /**
+     * DEFERRED SYNC
+     */
+    public function getCampaignTiers(string $accessToken, string $campaignId): array
+    {
+        $baseUrl = rtrim(config('patreon.base_url'), '/');
+        $url = "{$baseUrl}/campaigns/{$campaignId}/tiers";
+        $this->lastUrl = $url;
+
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->get($url, [
+                'fields[tier]' => 'title,amount_cents,description',
+                'page[count]' => 50,
+            ])
+            ->throw()
+            ->json();
+    }
+
+    /**
+     * DEFERRED SYNC
+     */
     public function getCampaignMembers(string $accessToken, string $campaignId): array
     {
-        $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-
+        $baseUrl = rtrim(config('patreon.base_url'), '/');
         $url = "{$baseUrl}/campaigns/{$campaignId}/members";
         $this->lastUrl = $url;
 
         $members = [];
         $included = [];
+
         $params = [
             'include' => 'currently_entitled_tiers',
             'page[count]' => 50,
@@ -136,6 +154,38 @@ class PatreonClient
         return [
             'data' => $members,
             'included' => $included,
+        ];
+    }
+
+    /**
+     * TOKEN REFRESH — untouched
+     */
+    public function refreshToken(string $refreshToken): array
+    {
+        $tokenUrl = config('patreon.oauth.token', 'https://www.patreon.com/api/oauth2/token');
+        $this->lastUrl = $tokenUrl;
+
+        $response = Http::asForm()
+            ->acceptJson()
+            ->post($tokenUrl, [
+                'grant_type'     => 'refresh_token',
+                'refresh_token' => $refreshToken,
+                'client_id'     => config('services.patreon.client_id'),
+                'client_secret'=> config('services.patreon.client_secret'),
+            ])
+            ->throw()
+            ->json();
+
+        return $this->normalizeTokenResponse($response);
+    }
+
+    protected function normalizeTokenResponse(array $response): array
+    {
+        return [
+            'access_token'  => (string) ($response['access_token'] ?? ''),
+            'refresh_token' => (string) ($response['refresh_token'] ?? ''),
+            'expires_in'    => (int) ($response['expires_in'] ?? 0),
+            'scope'         => Str::of($response['scope'] ?? '')->trim()->value(),
         ];
     }
 }
