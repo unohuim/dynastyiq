@@ -404,27 +404,25 @@ class PatreonSyncService
 
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
-        Log::info('starting displayName', ['id'=>$identityMeta]);
-        
-        $identityName = (string) data_get($identityMeta, 'data.attributes.full_name')
-            ?: (string) data_get($identityMeta, 'data.attributes.vanity', '');
-
-        Log::info('processing name', ['id_name'=>$identityName]);
-        
-        if ($identityName !== '') {
-            return $identityName;
+        $creatorName =
+            (string) data_get($campaignMeta, 'included.0.attributes.full_name')
+            ?: (string) data_get($campaignMeta, 'included.0.attributes.vanity', '');
+    
+        if ($creatorName !== '') {
+            return $creatorName;
         }
-        
-        $campaignName = (string) data_get($campaignMeta, 'data.attributes.summary')
-            ?: (string) data_get($campaignMeta, 'attributes.summary', '');
-
+    
+        $campaignName =
+            (string) data_get($campaignMeta, 'data.attributes.creation_name')
+            ?: (string) data_get($campaignMeta, 'data.attributes.summary', '');
+    
         if ($campaignName !== '') {
             return $campaignName;
         }
-
-
+    
         return 'Patreon Campaign';
     }
+
 
     protected function mapStatus(?string $patronStatus): string
     {
