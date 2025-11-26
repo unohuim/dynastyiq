@@ -53,7 +53,7 @@ class TierMapper
             $model = $this->findExistingMappedTier($externalId)
                 ?? $this->matchDiqTierByName($name, $amountCents, $currency);
 
-            $diqOwned = $model?->provider_account_id === null;
+            $diqOwned = $model !== null && $model->provider_account_id === null;
 
             if (!$model) {
                 $model = new MembershipTier();
