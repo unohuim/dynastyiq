@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Auth;
 
 class PatreonSyncController extends Controller
 {
-    public function sync(Organization $organization, PatreonSyncService $service): JsonResponse
+    public function sync(Organization $organization, PatreonSyncService $service)
     {
         $this->assertUserCanManage($organization);
 

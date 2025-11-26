@@ -21,6 +21,32 @@ trait HasAPITrait
 {
 
     /**
+ * Perform a GET request against a configured API endpoint
+ * using a runtime OAuth Bearer token.
+ */
+public function getAPIDataWithToken(
+    string $service,
+    string $endpointKey,
+    string $accessToken,
+    array $replacements = [],
+    array $query = []
+    ): array {
+        $url = $this->getApiUrl(
+            $service,
+            $endpointKey,
+            $replacements,
+            $query
+        );
+    
+        return Http::withToken($accessToken)
+            ->acceptJson()
+            ->get($url)
+            ->throw()
+            ->json();
+    }
+    
+
+    /**
      * Fetch data from a full URL (for shifts API).
      *
      * @param string $url

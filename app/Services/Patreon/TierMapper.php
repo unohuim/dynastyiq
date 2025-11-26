@@ -6,7 +6,9 @@ namespace App\Services\Patreon;
 
 use App\Models\MembershipTier;
 use App\Models\ProviderAccount;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class TierMapper
 {
@@ -31,14 +33,24 @@ class TierMapper
 
             $externalId = (string) data_get($tier, 'id');
             $attributes = (array) data_get($tier, 'attributes', []);
-            $name = (string) (data_get($attributes, 'title') ?? 'Tier');
+            $name = (string) ($attributes['title'] ?? '');
+
+            if ($name === '') {
+                Log::warning('Patreon tier missing required title', [
+                    'provider_account_id' => $this->account->id,
+                    'tier' => $tier,
+                ]);
+
+                throw new RuntimeException('Patreon tier missing required title.');
+            }
+
             $amountCents = data_get($attributes, 'amount_cents');
-            $currency = $this->campaignCurrency;
+            $currency = $this->campaignCurrency ?: 'USD';
 
             $model = $this->findExistingMappedTier($externalId)
                 ?? $this->matchDiqTierByName($name, $amountCents, $currency);
 
-            $diqOwned = $model?->provider_account_id === null;
+            $diqOwned = $model !== null && $model->provider_account_id === null;
 
             if (!$model) {
                 $model = new MembershipTier();
@@ -74,6 +86,7 @@ class TierMapper
             $mapped[$externalId] = $model;
         }
 
+        Log::info('completed map()');
         return $mapped;
     }
 
