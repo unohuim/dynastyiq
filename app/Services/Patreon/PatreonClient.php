@@ -44,6 +44,7 @@ class PatreonClient
         return $this->normalizeTokenResponse($response);
     }
 
+    
     /**
      * OAUTH SAFE — identity only.
      */
@@ -82,8 +83,6 @@ class PatreonClient
      */
     public function getCampaign(string $accessToken, string $campaignId): array
     {
-        Log::info('starting getCampaign');
-
         $baseUrl = rtrim(config('patreon.base_url'), '/');
         $url = "{$baseUrl}/campaigns/{$campaignId}";
         $this->lastUrl = $url;
