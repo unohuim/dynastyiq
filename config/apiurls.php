@@ -4,6 +4,37 @@ declare(strict_types=1);
 
 return [
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | Patreon API Configuration
+    |--------------------------------------------------------------------------
+    */
+    'patreon' => [
+        'base' => env('PATREON_BASE_URL', 'https://www.patreon.com/api/oauth2/v2'),
+
+        'client_id'     => env('PATREON_CLIENT_ID'),
+        'client_secret'=> env('PATREON_CLIENT_SECRET'),
+
+        'auth' => [
+            'in' => 'none',
+        ],
+
+        'endpoints' => [
+            // OAuth
+            'authorize' => '/oauth2/authorize',
+            'token'     => 'https://www.patreon.com/api/oauth2/token',
+
+            // API v2
+            'identity'          => '/identity',
+            'campaigns'         => '/campaigns',
+            'campaign'          => '/campaigns/{campaignId}',
+            'campaign_tiers'    => '/campaigns/{campaignId}/tiers',
+            'campaign_members'  => '/campaigns/{campaignId}/members',
+        ],
+    ],
+
+    
     /*
     |--------------------------------------------------------------------------
     | NHL API Configuration
