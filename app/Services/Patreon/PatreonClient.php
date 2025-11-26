@@ -50,15 +50,22 @@ class PatreonClient
      */
     public function getIdentity(string $accessToken): array
     {
-        $baseUrl = rtrim(config('patreon.base_url'), '/');
-        $this->lastUrl = "{$baseUrl}/identity";
-
-        return Http::withToken($accessToken)
-            ->acceptJson()
-            ->get($this->lastUrl)
-            ->throw()
-            ->json();
+        $this->lastUrl = $this->getApiUrl(
+            'patreon',
+            'identity',
+            [],
+            ['fields[user]' => 'full_name,vanity,image_url']
+        );
+    
+        return $this->getAPIDataWithToken(
+            'patreon',
+            'identity',
+            $accessToken,
+            [],
+            ['fields[user]' => 'full_name,vanity,image_url']
+        );
     }
+
 
     /**
      * DEFERRED SYNC
