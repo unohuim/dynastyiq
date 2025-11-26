@@ -183,7 +183,7 @@ class PatreonSyncService
             fn (string $accessToken): array => $this->client->getCampaignTiers($accessToken, $campaignId)
         );
 
-        Log::info('completed fetchTiers');
+        Log::info('completed fetchTiers', ['tiersResponse'=>$tiersResponse]);
         return Arr::wrap($tiersResponse['data'] ?? []);
     }
 
@@ -338,13 +338,7 @@ class PatreonSyncService
     }
 
     protected function callPatreon(ProviderAccount $account, callable $callback): array
-    {
-        // Log the API URL before executing the request
-        Log::info('Patreon API request', [
-            'provider_account_id' => $account->external_id,
-            'url' => $this->client->getLastPreparedUrl(), // <-- new
-        ]);
-        
+    {   
         try {
             return [$callback($account->access_token), $account];
         } catch (RequestException $e) {
