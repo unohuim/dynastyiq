@@ -38,10 +38,20 @@ class PatreonSyncService
             }
 
             $metadata = $this->ensureMetadata($account);
+
+            Log::info('Snapshot Patreon metadata response', [
+                'metadata' => $metadata,
+            ]);
+            
             $account = $metadata['account'];
             $campaignId = $metadata['campaign_id'];
             $campaignCurrency = $metadata['campaign_currency'];
 
+            Log::info('Snapshot Patreon currency', [
+                'currency' => $campaignCurrency,
+            ]);
+
+            
             if (!$campaignId) {
                 throw new RuntimeException('No Patreon campaign available for sync.');
             }
@@ -123,11 +133,19 @@ class PatreonSyncService
 
         $creatorId = (string) data_get($identity, 'data.id', '');
 
+
+        Log::info('Patreon creator', [
+            'creator_id' => creatorId,
+            'result' => $result,
+        ]);
+
         $campaign = collect($campaignsResponse['data'] ?? [])
             ->first(function (array $item) use ($creatorId): bool {
                 return $creatorId !== ''
                     && data_get($item, 'relationships.creator.data.id') === $creatorId;
             }) ?? ($campaignsResponse['data'][0] ?? null);
+
+        
 
         $fromApi = data_get($campaign, 'id');
         $campaignId = $fromApi !== null && $fromApi !== ''
