@@ -67,6 +67,7 @@ class PatreonClient
     public function getIdentity(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+        $this->lastUrl = $baseUrl;
 
         return Http::withToken($accessToken)
             ->acceptJson()
@@ -78,6 +79,7 @@ class PatreonClient
     public function getCampaigns(string $accessToken): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
+        $this->lastUrl = "{$baseUrl}/campaigns";
 
         return Http::withToken($accessToken)
             ->acceptJson()
@@ -92,7 +94,8 @@ class PatreonClient
     public function getCampaign(string $accessToken, string $campaignId): array
     {
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
-
+        $this->lastUrl = "{$baseUrl}/campaigns/{$campaignId}";
+        
         return Http::withToken($accessToken)
             ->acceptJson()
             ->get("{$baseUrl}/campaigns/{$campaignId}", [
