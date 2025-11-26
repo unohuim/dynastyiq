@@ -93,6 +93,8 @@ class PatreonClient
 
     public function getCampaign(string $accessToken, string $campaignId): array
     {
+        Log::info('starting getCampaign..');
+        
         $baseUrl = rtrim(config('patreon.base_url', 'https://www.patreon.com/api/oauth2/v2'), '/');
         $getUrl = "{$baseUrl}/campaigns/{$campaignId}";
 
@@ -105,6 +107,8 @@ class PatreonClient
             ])
             ->throw()
             ->json();
+
+        Log::info('Completed getCampaign');
     }
 
     public function getCampaignTiers(string $accessToken, string $campaignId): array
