@@ -404,12 +404,22 @@ class PatreonSyncService
 
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
-        $creatorName =
-            (string) data_get($campaignMeta, 'included.0.attributes.full_name')
-            ?: (string) data_get($campaignMeta, 'included.0.attributes.vanity', '');
+        $creatorId = data_get($campaignMeta, 'data.relationships.creator.data.id');
     
-        if ($creatorName !== '') {
-            return $creatorName;
+        if ($creatorId && isset($campaignMeta['included'])) {
+            $creator = collect($campaignMeta['included'])
+                ->first(fn (array $item) =>
+                    data_get($item, 'type') === 'user'
+                    && data_get($item, 'id') === $creatorId
+                );
+    
+            $creatorName =
+                (string) data_get($creator, 'attributes.full_name')
+                ?: (string) data_get($creator, 'attributes.vanity', '');
+    
+            if ($creatorName !== '') {
+                return $creatorName;
+            }
         }
     
         $campaignName =
@@ -422,6 +432,7 @@ class PatreonSyncService
     
         return 'Patreon Campaign';
     }
+
 
 
     protected function mapStatus(?string $patronStatus): string
