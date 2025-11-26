@@ -404,9 +404,13 @@ class PatreonSyncService
 
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
+        Log::info('starting displayName', ['id'=>$identityMeta]);
+        
         $identityName = (string) data_get($identityMeta, 'data.attributes.full_name')
             ?: (string) data_get($identityMeta, 'data.attributes.vanity', '');
 
+        Log::info('processing name', ['id_name'=>$identityName]);
+        
         if ($identityName !== '') {
             return $identityName;
         }
