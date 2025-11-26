@@ -24,6 +24,8 @@ class TierMapper
      */
     public function map(array $tiers): array
     {
+        Log::info('starting TierMapper map()', ['tiers'=>$tiers]);
+        
         $mapped = [];
 
         foreach ($tiers as $tier) {
@@ -86,6 +88,7 @@ class TierMapper
             $mapped[$externalId] = $model;
         }
 
+        Log::info('completed map()');
         return $mapped;
     }
 
