@@ -404,6 +404,13 @@ class PatreonSyncService
 
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
+        $identityName = (string) data_get($identityMeta, 'data.attributes.full_name')
+            ?: (string) data_get($identityMeta, 'data.attributes.vanity', '');
+
+        if ($identityName !== '') {
+            return $identityName;
+        }
+        
         $campaignName = (string) data_get($campaignMeta, 'data.attributes.summary')
             ?: (string) data_get($campaignMeta, 'attributes.summary', '');
 
@@ -411,12 +418,6 @@ class PatreonSyncService
             return $campaignName;
         }
 
-        $identityName = (string) data_get($identityMeta, 'data.attributes.full_name')
-            ?: (string) data_get($identityMeta, 'data.attributes.vanity', '');
-
-        if ($identityName !== '') {
-            return $identityName;
-        }
 
         return 'Patreon Campaign';
     }
