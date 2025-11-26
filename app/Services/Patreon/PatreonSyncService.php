@@ -50,7 +50,6 @@ class PatreonSyncService
 
             $tiersResponse = $snapshot['tiers'] ?? null;
 
-            Log::info('tier response', ['tiersResponse'=>$tiersResponse]);
             $tiersPayload = $tiersResponse !== null ? Arr::wrap($tiersResponse) : $this->fetchTiers($account, $campaignId);
 
             $tiers = $this->syncTiers($account, $tiersPayload, $campaignCurrency);
@@ -126,6 +125,7 @@ class PatreonSyncService
         );
 
         $creatorId = (string) data_get($identity, 'data.id', '');
+        Log::info('creator', ['creatorId'=>$creatorId]);
 
         $campaign = collect($campaignsResponse['data'] ?? [])
             ->first(function (array $item) use ($creatorId): bool {
@@ -404,8 +404,11 @@ class PatreonSyncService
 
     protected function displayNameFromMetadata(array $identityMeta, array $campaignMeta): string
     {
+        Log::info('meta', ['id_meta'=>$identityMeta]);
+        Log::info('campaign', ['camp'=>$campaignMeta]);
         $creatorId = data_get($campaignMeta, 'data.relationships.creator.data.id');
-    
+        Log::info('creatorId', ['creatorId'=>$creatorId]);
+        
         if ($creatorId && isset($campaignMeta['included'])) {
             $creator = collect($campaignMeta['included'])
                 ->first(fn (array $item) =>
