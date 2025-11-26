@@ -348,12 +348,7 @@ class PatreonSyncService
             throw $e;
         }
     }
-
-
-    public function getLastPreparedUrl(): ?string
-    {
-        return $this->lastUrl ?? null;
-    }
+    
 
     protected function resolveMemberProfile(
         ProviderAccount $account,
