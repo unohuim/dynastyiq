@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\ProviderAccount;
 use App\Services\Patreon\PatreonSyncService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Carbon;
@@ -16,6 +17,83 @@ use Tests\TestCase;
 class PatreonWebhookControllerTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function fakePatreonSyncResponses(): void
+    {
+        Http::fake([
+            'https://www.patreon.com/api/oauth2/v2/identity*' => Http::response([
+                'data' => [
+                    'id' => 'user-1',
+                    'attributes' => [
+                        'full_name' => 'Tester',
+                        'email' => 'member@example.com',
+                        'image_url' => 'https://example.test/avatar.png',
+                    ],
+                ],
+            ], 200),
+            'https://www.patreon.com/api/oauth2/v2/campaigns*' => function ($request) {
+                $url = $request->url();
+
+                if (str_contains($url, '/members')) {
+                    return Http::response([
+                        'data' => [],
+                        'included' => [],
+                        'links' => ['next' => null],
+                    ], 200);
+                }
+
+                if (str_contains($url, 'include=tiers')) {
+                    return Http::response([
+                        'included' => [
+                            [
+                                'type' => 'tier',
+                                'id' => 'tier-1',
+                                'attributes' => [
+                                    'title' => 'Gold',
+                                    'amount_cents' => 500,
+                                    'currency' => 'USD',
+                                ],
+                            ],
+                        ],
+                    ], 200);
+                }
+
+                if (str_contains($url, '/campaigns/123')) {
+                    return Http::response([
+                        'data' => [
+                            'id' => '123',
+                            'type' => 'campaign',
+                            'attributes' => [
+                                'currency' => 'USD',
+                                'creation_name' => 'Tester Campaign',
+                                'summary' => 'Tester Campaign',
+                            ],
+                            'relationships' => [
+                                'creator' => [
+                                    'data' => ['id' => 'user-1'],
+                                ],
+                            ],
+                        ],
+                    ], 200);
+                }
+
+                return Http::response([
+                    'data' => [
+                        [
+                            'id' => '123',
+                            'type' => 'campaign',
+                            'attributes' => ['currency' => 'USD'],
+                            'relationships' => [
+                                'creator' => [
+                                    'data' => ['id' => 'user-1'],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200);
+            },
+        ]);
+    }
 
     public function test_guard_rejects_invalid_signature(): void
     {
@@ -54,7 +132,13 @@ class PatreonWebhookControllerTest extends TestCase
             ],
         ];
 
-        $response = $this->postJson(route('patreon.webhook'), $payload);
+        $signature = hash_hmac('md5', json_encode($payload), 'secret-key');
+
+        $response = $this->postJson(
+            route('patreon.webhook'),
+            $payload,
+            ['X-Patreon-Signature' => $signature]
+        );
 
         $response->assertNoContent();
 
@@ -68,6 +152,8 @@ class PatreonWebhookControllerTest extends TestCase
 
     public function test_handle_webhook_updates_account_and_records_event(): void
     {
+        $this->fakePatreonSyncResponses();
+
         $organization = Organization::create([
             'name' => 'Org',
             'slug' => Str::slug(Str::uuid()->toString()),
@@ -78,6 +164,10 @@ class PatreonWebhookControllerTest extends TestCase
             'provider' => 'patreon',
             'display_name' => 'Test Patreon',
             'status' => 'connected',
+            'external_id' => '123',
+            'access_token' => 'token',
+            'refresh_token' => 'refresh',
+            'token_expires_at' => now()->addHour(),
         ]);
 
         $payload = [
