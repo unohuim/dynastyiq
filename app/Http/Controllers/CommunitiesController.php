@@ -52,6 +52,8 @@ class CommunitiesController extends Controller
             ->firstWhere('id', $activeOrganizationId)
             ?? $communities->first();
 
+        $currentOrg = $activeCommunity;
+
         // Fantrax: connected?
         $fantraxConnected = $user->fantraxSecret()->exists();
 
