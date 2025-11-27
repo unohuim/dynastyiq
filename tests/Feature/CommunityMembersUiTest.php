@@ -46,5 +46,5 @@ it('hydrates Alpine after swapping the desktop template', function () {
 it('registers the community members store inside the app bundle', function () {
     $appJs = file_get_contents(resource_path('js/app.js'));
 
-    expect($appJs)->toContain("import './components/community-members-store'");
+    expect($appJs)->toMatch("/import ['\\\"]\\.\\/components\\/community-members-store['\\\"]/");
 });
