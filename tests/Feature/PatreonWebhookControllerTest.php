@@ -112,6 +112,56 @@ class PatreonWebhookControllerTest extends TestCase
         $response->assertStatus(401);
     }
 
+    public function test_guard_accepts_valid_signature_and_triggers_sync(): void
+    {
+        config(['services.patreon.webhook_secret' => 'secret-key']);
+
+        $organization = Organization::create([
+            'name' => 'Org',
+            'slug' => Str::slug(Str::uuid()->toString()),
+        ]);
+
+        $account = ProviderAccount::create([
+            'organization_id' => $organization->id,
+            'provider' => 'patreon',
+            'external_id' => 'abc',
+        ]);
+
+        $payload = [
+            'data' => [
+                'relationships' => [
+                    'campaign' => [
+                        'data' => ['id' => 'abc'],
+                    ],
+                ],
+            ],
+        ];
+
+        $signature = hash_hmac('md5', json_encode($payload), 'secret-key');
+
+        $this->mock(PatreonSyncService::class, function ($mock) use ($account, $payload): void {
+            $mock
+                ->shouldReceive('handleWebhook')
+                ->once()
+                ->withArgs(function ($passedAccount, $passedPayload) use ($account, $payload): bool {
+                    return $passedAccount->is($account) && $passedPayload === $payload;
+                });
+        });
+
+        $this
+            ->postJson(route('patreon.webhook'), $payload, ['X-Patreon-Signature' => $signature])
+            ->assertNoContent();
+    }
+
+    public function test_guard_requires_signature_when_secret_configured(): void
+    {
+        config(['services.patreon.webhook_secret' => 'secret-key']);
+
+        $this
+            ->postJson(route('patreon.webhook'), ['data' => []])
+            ->assertStatus(401);
+    }
+
     public function test_returns_no_content_when_no_matching_account(): void
     {
         Log::spy();

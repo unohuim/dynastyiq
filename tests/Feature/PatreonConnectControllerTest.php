@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Models\Organization;
 use App\Models\ProviderAccount;
 use App\Models\User;
+use App\Services\Patreon\PatreonSyncService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -412,6 +413,102 @@ class PatreonConnectControllerTest extends TestCase
         $this->assertSame('Tester Campaign', data_get($account->meta, 'campaign.data.attributes.summary'));
 
         Carbon::setTestNow();
+    }
+
+    public function test_disconnect_deletes_account_and_returns_json(): void
+    {
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => ['commissioner_tools' => true],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        $account = ProviderAccount::create([
+            'organization_id' => $organization->id,
+            'provider' => 'patreon',
+            'display_name' => 'To Remove',
+        ]);
+
+        $this
+            ->actingAs($user)
+            ->deleteJson(route('patreon.disconnect', $organization))
+            ->assertOk()
+            ->assertJson(['ok' => true]);
+
+        $this->assertModelMissing($account);
+    }
+
+    public function test_manual_sync_endpoint_returns_payload_for_authorized_user(): void
+    {
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => ['commissioner_tools' => true],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        $account = ProviderAccount::create([
+            'organization_id' => $organization->id,
+            'provider' => 'patreon',
+            'status' => 'connected',
+        ]);
+
+        $this->mock(PatreonSyncService::class, function ($mock): void {
+            $mock
+                ->shouldReceive('syncProviderAccount')
+                ->once()
+                ->andReturn(['members_synced' => 2, 'tiers_synced' => 1]);
+        });
+
+        $response = $this
+            ->actingAs($user)
+            ->postJson(route('patreon.sync', $organization));
+
+        $response
+            ->assertOk()
+            ->assertJson([
+                'ok' => true,
+                'account_id' => $account->id,
+                'members_synced' => 2,
+                'tiers_synced' => 1,
+            ]);
+    }
+
+    public function test_callback_missing_code_returns_error_without_creating_account(): void
+    {
+        $user = User::factory()->create();
+
+        $organization = Organization::create([
+            'name' => 'Test Org',
+            'short_name' => 'test-org',
+            'slug' => 'test-org-' . Str::random(6),
+            'settings' => ['commissioner_tools' => true],
+        ]);
+
+        $user->organizations()->sync([$organization->id]);
+
+        $state = encrypt([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'ts' => now()->timestamp,
+        ]);
+
+        $this
+            ->actingAs($user)
+            ->get(route('patreon.callback', ['state' => $state]))
+            ->assertRedirect(route('communities.index'))
+            ->assertSessionHasErrors('patreon');
+
+        $this->assertDatabaseCount('provider_accounts', 0);
     }
 
     public function test_memberships_section_shows_connected_patreon_account_after_callback(): void
