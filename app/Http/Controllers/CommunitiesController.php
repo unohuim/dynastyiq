@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\PlatformLeague;
+use App\Models\Membership;
+use App\Models\MembershipTier;
+use App\Http\Resources\MembershipResource;
+use App\Http\Resources\MembershipTierResource;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
@@ -48,6 +52,8 @@ class CommunitiesController extends Controller
             ->firstWhere('id', $activeOrganizationId)
             ?? $communities->first();
 
+        $currentOrg = $activeCommunity;
+
         // Fantrax: connected?
         $fantraxConnected = $user->fantraxSecret()->exists();
 
@@ -74,11 +80,29 @@ class CommunitiesController extends Controller
                     ->values();
         }
 
+        $initialMembersQuery = $currentOrg
+            ? $currentOrg->memberships()
+                ->with(['memberProfile', 'membershipTier', 'providerAccount'])
+                ->latest()
+            : Membership::query()->latest();
+
+        $initialMembers = MembershipResource::collection(
+            $initialMembersQuery->paginate(10)
+        )->response()->getData(true);
+
+        $initialTiers = MembershipTierResource::collection(
+            $currentOrg
+                ? $currentOrg->membershipTiers()->orderBy('name')->get()
+                : MembershipTier::query()->get()
+        )->resolve();
+
         return view('communities.index', [
             'communities'       => $communities,
             'activeCommunity'   => $activeCommunity,
             'fantraxConnected'  => $fantraxConnected,
             'fantraxOptions'    => $fantraxOptions,
+            'initialMembers'    => $initialMembers,
+            'initialTiers'      => $initialTiers,
         ]);
     }
 }
