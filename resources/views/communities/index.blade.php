@@ -118,6 +118,12 @@
                 }
             }
 
+            function hydrateAlpine() {
+                if (window.Alpine && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.initTree(root);
+                }
+            }
+
             function render() {
                 const nextIsMobile = window.innerWidth < mobileBreakpoint;
                 if (root.children.length === 0 || nextIsMobile !== state.isMobile) {
@@ -125,6 +131,7 @@
                     root.innerHTML = '';
                     const frag = (state.isMobile ? tplMobile : tplDesktop).content.cloneNode(true);
                     root.appendChild(frag);
+                    hydrateAlpine();
                 }
                 if (state.isMobile) bindMobileEvents(); else bindDesktopEvents();
             }
