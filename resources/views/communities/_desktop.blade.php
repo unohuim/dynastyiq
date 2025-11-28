@@ -83,7 +83,7 @@
     {{-- Main: Community Manager Hub --}}
     <main
         class="rounded-2xl border border-slate-200 bg-white p-0 overflow-hidden"
-        x-data="communityMembersHub(@js($desktopConfig))"
+        x-data="communityMembersHub(@json($desktopConfig))"
     >
         {{-- Header --}}
         <div class="border-b border-slate-200 px-6 py-5">
