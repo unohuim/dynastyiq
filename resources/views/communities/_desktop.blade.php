@@ -36,6 +36,18 @@
     $memberships = $currentOrg?->memberships ?? collect();
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
     $commissionerEnabled = $currentOrg?->commissionerToolsEnabled();
+
+    $desktopConfig = [
+        'organizationId' => $currentOrg?->id,
+        'organizationName' => $currentOrg?->name,
+        'endpoints' => [
+            'members' => $currentOrg ? route('communities.members.index', $currentOrg) : '',
+            'tiers' => $currentOrg ? route('communities.tiers.index', $currentOrg) : '',
+            'settings' => $currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id]) : '',
+        ],
+        'initialMembers' => $initialMembers ?? [],
+        'initialTiers' => $initialTiers ?? [],
+    ];
 @endphp
 
 <div class="grid grid-cols-[280px,1fr] gap-6">
@@ -71,17 +83,7 @@
     {{-- Main: Community Manager Hub --}}
     <main
         class="rounded-2xl border border-slate-200 bg-white p-0 overflow-hidden"
-        x-data="communityMembersHub({
-            organizationId: {{ $currentOrg?->id ?? 'null' }},
-            organizationName: @json($currentOrg?->name),
-            endpoints: {
-                members: @json($currentOrg ? route('communities.members.index', $currentOrg) : ''),
-                tiers: @json($currentOrg ? route('communities.tiers.index', $currentOrg) : ''),
-                settings: @json($currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id]) : ''),
-            },
-            initialMembers: @json($initialMembers ?? []),
-            initialTiers: @json($initialTiers ?? []),
-        })"
+        x-data="communityMembersHub({{ \Illuminate\Support\Js::from($desktopConfig) }})"
     >
         {{-- Header --}}
         <div class="border-b border-slate-200 px-6 py-5">
