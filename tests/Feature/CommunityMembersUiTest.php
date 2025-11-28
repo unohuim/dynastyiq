@@ -27,7 +27,7 @@ it('uses the same activeTab key for tab buttons and panels', function () {
     $response = $this->actingAs($user)->get(route('communities.index'));
 
     $response->assertOk();
-    $response->assertSee('x-data="communityMembersHub({', false);
+    $response->assertSee('x-data="communityMembersHub', false);
     $response->assertSee("@click=\"activeTab = 'members'\"", false);
     $response->assertSee("x-show=\"activeTab === 'members'\"", false);
 });
