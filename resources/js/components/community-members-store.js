@@ -340,17 +340,29 @@ export function createCommunityMembersStore() {
     };
 }
 
-export function registerCommunityMembersStore() {
-    document.addEventListener("alpine:init", () => {
-        Alpine.store("communityMembers", createCommunityMembersStore());
+function registerCommunityMembersStore() {
+    const alpine = window.Alpine || Alpine;
 
-        Alpine.data("communityMembersHub", (config) => ({
-            activeTab: "members",
-            init() {
-                this.$store.communityMembers.bootstrap(config);
-            },
-        }));
-    });
+    if (!alpine) return;
+
+    // Register the global store + component only once per page load.
+    if (!alpine.store("communityMembers")) {
+        alpine.store("communityMembers", createCommunityMembersStore());
+    }
+
+    alpine.data("communityMembersHub", (config) => ({
+        activeTab: "members",
+        init() {
+            this.$store.communityMembers.bootstrap(config);
+        },
+    }));
 }
 
-registerCommunityMembersStore();
+// Ensure registration works whether Alpine has already been injected or not.
+if (window.Alpine) {
+    registerCommunityMembersStore();
+}
+
+document.addEventListener("alpine:init", registerCommunityMembersStore);
+
+export { registerCommunityMembersStore };
