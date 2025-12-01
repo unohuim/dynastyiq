@@ -350,12 +350,7 @@ function registerCommunityMembersStore() {
         alpine.store("communityMembers", createCommunityMembersStore());
     }
 
-    alpine.data("communityMembersHub", (config) => ({
-        activeTab: "members",
-        init() {
-            this.$store.communityMembers.bootstrap(config);
-        },
-    }));
+    alpine.data("communityMembersHub", communityMembersHub);
 }
 
 // Ensure registration works whether Alpine has already been injected or not.
@@ -364,5 +359,23 @@ if (window.Alpine) {
 }
 
 document.addEventListener("alpine:init", registerCommunityMembersStore);
+
+function communityMembersHub(config) {
+    return {
+        activeTab: "members",
+        init() {
+            // Ensure the store exists even if Alpine boot order changes.
+            if (!this.$store.communityMembers) {
+                registerCommunityMembersStore();
+            }
+
+            this.$store.communityMembers.bootstrap(config);
+        },
+    };
+}
+
+// Also expose the factory globally so x-data can resolve it even before Alpine
+// processes named data providers.
+window.communityMembersHub = communityMembersHub;
 
 export { registerCommunityMembersStore };
