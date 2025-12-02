@@ -1,5 +1,3 @@
-import Alpine from "alpinejs";
-
 const defaultMeta = {
     current_page: 1,
     last_page: 1,
@@ -341,7 +339,7 @@ export function createCommunityMembersStore() {
 }
 
 function registerCommunityMembersStore() {
-    const alpine = window.Alpine || Alpine;
+    const alpine = window.Alpine;
 
     if (!alpine) return;
 
