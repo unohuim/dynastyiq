@@ -555,7 +555,8 @@ class PatreonConnectControllerTest extends TestCase
             ->get(route('communities.index'));
 
         $response->assertOk();
-        $response->assertSee('Memberships');
+        $response->assertSee('Patreon');
+        $response->assertSee('Community Members');
         $response->assertSee('Tester');
 
         Carbon::setTestNow();
