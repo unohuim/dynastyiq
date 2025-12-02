@@ -1,6 +1,5 @@
 import './bootstrap';
-import './echo';
-import Alpine from 'alpinejs';
+import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
 
 // import { PlayerStatsPage } from './components/PlayerStatsPage/player-stats-page.js';
@@ -13,6 +12,21 @@ import './components/community-members-store';
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";
 // window.RangeSlider = RangeSlider;
 
+// Reuse a pre-loaded Alpine instance (e.g., from a CDN include) to avoid the
+// "Detected multiple instances of Alpine running" warning. If none exists,
+// fall back to the bundled version.
+const Alpine = window.Alpine ?? AlpineImport;
+
+// Ensure the Focus plugin is installed on whichever instance we end up using.
+if (!Alpine.__hasFocusPlugin) {
+    Alpine.plugin(focus);
+    Alpine.__hasFocusPlugin = true;
+}
+
 window.Alpine = Alpine;
-Alpine.plugin(focus);
-Alpine.start();
+
+// Only start Alpine once per page load.
+if (!window.__alpineStarted) {
+    Alpine.start();
+    window.__alpineStarted = true;
+}
