@@ -1,0 +1,10 @@
+# Discord toast investigation
+
+Findings from reviewing the code paths involved when attaching a Discord server and rendering toast notifications:
+
+1. **Flash payloads**: The Discord attach controller flashes a plain string (`"<count> server(s) connected."`) on success. There are no array/object flashes that would break the inline Alpine expression in `x-data` unless another flow flashes non-string data into `success`, `status`, `error`, or `info`.【F:app/Http/Controllers/Auth/DiscordServerCallbackController.php†L141-L148】【F:resources/views/partials/toast-container.blade.php†L3-L19】
+2. **Toast registration timing**: The toast component registers itself via an inline script that waits for `window.Alpine` or the `alpine:init` event. If Alpine is not loaded or started on the first render of a page (e.g., due to a deferred client-side render that skips `app.js`), `window.toast` will be undefined until a full page load replays the partial—matching the "toasts appear after navigating away/back" symptom.【F:resources/views/partials/toast-container.blade.php†L54-L94】
+3. **Communities page hydration**: `communities.index` manually replaces the `#rootView` contents and only hydrates that subtree with `window.Alpine.initTree(root)` once Alpine reports readiness. A client-side navigation that injects this view without rerunning the layout scripts could leave the toast partial uninitialized on the first visit, with toasts showing after a subsequent full navigation when the layout script runs normally.【F:resources/views/communities/index.blade.php†L42-L109】
+4. **Layout coverage**: Both the Discord guild chooser and the communities index use `x-app-layout`, which always includes the toast partial. If toasts are missing, it points to Alpine initialization timing rather than the layout omitting the component.【F:resources/views/layouts/app.blade.php†L26-L55】【F:resources/views/discord/choose-guild.blade.php†L1-L21】
+
+These checks suggest the runtime issue is most likely an Alpine boot/order problem on the post-Discord-attach landing page rather than malformed flash data.
