@@ -17,6 +17,21 @@ import './components/community-members-store';
 // fall back to the bundled version.
 const Alpine = window.Alpine ?? AlpineImport;
 
+// If Alpine was already started elsewhere (e.g., injected by another script),
+// treat it as started so we don't call `Alpine.start()` twice.
+if (!window.__alpineStarted && window.Alpine?.version) {
+    window.__alpineStarted = true;
+}
+
+// Keep the flag in sync if some other script starts Alpine later on.
+document.addEventListener(
+    'alpine:initialized',
+    () => {
+        window.__alpineStarted = true;
+    },
+    { once: true }
+);
+
 // Ensure the Focus plugin is installed on whichever instance we end up using.
 if (!Alpine.__hasFocusPlugin) {
     Alpine.plugin(focus);
