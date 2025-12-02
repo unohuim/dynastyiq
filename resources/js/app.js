@@ -7,6 +7,7 @@ import { StatsPage } from './components/StatsPage/stats-page.js';
 import './leagues-hub.js';
 import './community-hub.js';
 import './components/community-members-store';
+import { registerToastStack } from './components/toast-stack';
 
 // import "./components/RangeSlider/range-slider.css";
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";
@@ -39,6 +40,8 @@ if (!Alpine.__hasFocusPlugin) {
 }
 
 window.Alpine = Alpine;
+
+registerToastStack(Alpine);
 
 // Only start Alpine once per page load.
 if (!window.__alpineStarted) {
