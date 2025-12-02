@@ -73,6 +73,7 @@
             const root = document.getElementById('rootView');
             const tplDesktop = document.getElementById('tpl-desktop');
             const tplMobile  = document.getElementById('tpl-mobile');
+            let hasBooted = false;
 
             const state = {
                 isMobile: window.innerWidth < mobileBreakpoint,
@@ -118,6 +119,12 @@
                 }
             }
 
+            function hydrateAlpine() {
+                if (window.Alpine && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.initTree(root);
+                }
+            }
+
             function render() {
                 const nextIsMobile = window.innerWidth < mobileBreakpoint;
                 if (root.children.length === 0 || nextIsMobile !== state.isMobile) {
@@ -125,12 +132,24 @@
                     root.innerHTML = '';
                     const frag = (state.isMobile ? tplMobile : tplDesktop).content.cloneNode(true);
                     root.appendChild(frag);
+                    hydrateAlpine();
                 }
                 if (state.isMobile) bindMobileEvents(); else bindDesktopEvents();
             }
 
-            render();
-            window.addEventListener('resize', () => render());
+            function tryBoot() {
+                if (hasBooted) return true;
+                if (!(window.Alpine && typeof window.Alpine.initTree === 'function')) return false;
+
+                hasBooted = true;
+                render();
+                window.addEventListener('resize', render);
+                return true;
+            }
+
+            if (!tryBoot()) {
+                document.addEventListener('alpine:init', () => tryBoot(), { once: true });
+            }
         })();
     </script>
     @endif

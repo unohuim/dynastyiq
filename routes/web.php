@@ -17,6 +17,8 @@ use App\Http\Controllers\StatsController;
 use App\Http\Controllers\CommunitiesController;
 use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
+use App\Http\Controllers\CommunityMemberController;
+use App\Http\Controllers\CommunityTierController;
 use App\Http\Controllers\PatreonConnectController;
 use App\Http\Controllers\PatreonSyncController;
 use App\Services\ImportUserFantraxLeagues;
@@ -138,6 +140,28 @@ Route::middleware([
     Route::put('/organizations/{organization?}/settings',
         [\App\Http\Controllers\OrganizationsController::class, 'updateSettings']
     )->name('organizations.settings.update');
+
+    Route::prefix('/communities/{organization}')
+        ->middleware('auth')
+        ->group(function () {
+            Route::get('/members', [CommunityMemberController::class, 'index'])
+                ->name('communities.members.index');
+            Route::post('/members', [CommunityMemberController::class, 'store'])
+                ->name('communities.members.store');
+            Route::put('/members/{membership}', [CommunityMemberController::class, 'update'])
+                ->name('communities.members.update');
+            Route::delete('/members/{membership}', [CommunityMemberController::class, 'destroy'])
+                ->name('communities.members.destroy');
+
+            Route::get('/tiers', [CommunityTierController::class, 'index'])
+                ->name('communities.tiers.index');
+            Route::post('/tiers', [CommunityTierController::class, 'store'])
+                ->name('communities.tiers.store');
+            Route::put('/tiers/{membershipTier}', [CommunityTierController::class, 'update'])
+                ->name('communities.tiers.update');
+            Route::delete('/tiers/{membershipTier}', [CommunityTierController::class, 'destroy'])
+                ->name('communities.tiers.destroy');
+        });
 
 
     Route::controller(PlayerImportController::class)->group(function () {

@@ -10,6 +10,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
+
 class NhlImportProgressRepoTest extends TestCase
 {
     use RefreshDatabase;
