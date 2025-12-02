@@ -1,6 +1,7 @@
 import './bootstrap';
 import './echo';
 import Alpine from 'alpinejs';
+import focus from '@alpinejs/focus';
 
 // import { PlayerStatsPage } from './components/PlayerStatsPage/player-stats-page.js';
 import { StatsPage } from './components/StatsPage/stats-page.js';
@@ -13,4 +14,5 @@ import './components/community-members-store';
 // window.RangeSlider = RangeSlider;
 
 window.Alpine = Alpine;
+Alpine.plugin(focus);
 Alpine.start();
