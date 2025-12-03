@@ -315,6 +315,17 @@
                                         <p class="text-[11px] text-slate-500" x-text="tier.provider_managed ? 'Provider-managed' : 'Manual tier'"></p>
                                     </div>
                                     <div class="flex items-center gap-3">
+                                        <div class="text-right">
+                                            <p
+                                                class="text-sm font-semibold text-slate-900"
+                                                x-text="$store.communityMembers.formatMoney(tier.amount_cents, tier.currency)"
+                                            ></p>
+                                            <p
+                                                class="text-[11px] text-slate-500"
+                                                x-text="tier.currency || 'USD'"
+                                                x-show="tier.amount_cents !== null && tier.amount_cents !== undefined"
+                                            ></p>
+                                        </div>
                                         <x-dropdown align="right" width="48">
                                             <x-slot name="trigger">
                                                 <button type="button" class="rounded-full p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200">
