@@ -41,9 +41,9 @@
         'organizationId' => $currentOrg?->id,
         'organizationName' => $currentOrg?->name,
         'endpoints' => [
-            'members' => $currentOrg ? route('communities.members.index', $currentOrg) : '',
-            'tiers' => $currentOrg ? route('communities.tiers.index', $currentOrg) : '',
-            'settings' => $currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id]) : '',
+            'members' => $currentOrg ? route('communities.members.index', $currentOrg, absolute: false) : '',
+            'tiers' => $currentOrg ? route('communities.tiers.index', $currentOrg, absolute: false) : '',
+            'settings' => $currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id], absolute: false) : '',
         ],
         'initialMembers' => $initialMembers ?? [],
         'initialTiers' => $initialTiers ?? [],
@@ -310,11 +310,32 @@
                             </template>
                             <template x-for="tier in $store.communityMembers.tiers" :key="tier.id">
                                 <div class="flex items-center justify-between gap-3 px-4 py-3">
-                                    <div>
-                                        <p class="text-sm font-semibold text-slate-800" x-text="tier.name"></p>
+                                    <div class="space-y-1">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm font-semibold text-slate-800" x-text="tier.name"></p>
+                                            <template x-if="tier.provider_label">
+                                                <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                                                    <svg class="h-3 w-3" viewBox="0 0 256 315" fill="currentColor" aria-hidden="true">
+                                                        <path d="M34.86 0H0v315h34.86V0ZM178.18 67.21c-42.33 0-77 34.66-77 77s34.66 77 77 77c42.33 0 77-34.66 77-77s-34.66-77-77-77Z" />
+                                                    </svg>
+                                                    <span x-text="tier.provider_label"></span>
+                                                </span>
+                                            </template>
+                                        </div>
                                         <p class="text-[11px] text-slate-500" x-text="tier.provider_managed ? 'Provider-managed' : 'Manual tier'"></p>
                                     </div>
                                     <div class="flex items-center gap-3">
+                                        <div class="text-right">
+                                            <p
+                                                class="text-sm font-semibold text-slate-900"
+                                                x-text="$store.communityMembers.formatMoney(tier.amount_cents, tier.currency)"
+                                            ></p>
+                                            <p
+                                                class="text-[11px] text-slate-500"
+                                                x-text="tier.currency || 'USD'"
+                                                x-show="tier.amount_cents !== null && tier.amount_cents !== undefined"
+                                            ></p>
+                                        </div>
                                         <x-dropdown align="right" width="48">
                                             <x-slot name="trigger">
                                                 <button type="button" class="rounded-full p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200">
@@ -444,6 +465,7 @@
             x-show="$store.communityMembers.modals.member"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.member = false"
+            @click.self="$store.communityMembers.modals.member = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.member = false">
                 <div class="flex items-center justify-between">
@@ -496,6 +518,7 @@
             x-show="$store.communityMembers.modals.tier"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.tier = false"
+            @click.self="$store.communityMembers.modals.tier = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.tier = false">
                 <div class="flex items-center justify-between">
@@ -547,6 +570,7 @@
             x-show="$store.communityMembers.modals.confirmMemberId"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.confirmMemberId = null"
+            @click.self="$store.communityMembers.modals.confirmMemberId = null"
         >
             <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmMemberId = null">
                 <h3 class="text-lg font-semibold text-slate-900">Delete member?</h3>
@@ -564,6 +588,7 @@
             x-show="$store.communityMembers.modals.confirmTierId"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.confirmTierId = null"
+            @click.self="$store.communityMembers.modals.confirmTierId = null"
         >
             <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmTierId = null">
                 <h3 class="text-lg font-semibold text-slate-900">Delete tier?</h3>
@@ -581,6 +606,7 @@
             x-show="$store.communityMembers.modals.settings"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.settings = false"
+            @click.self="$store.communityMembers.modals.settings = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.settings = false">
                 <div class="flex items-center justify-between">

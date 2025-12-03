@@ -47,10 +47,22 @@ class TierMapper
             $amountCents = data_get($attributes, 'amount_cents');
             $currency = $this->campaignCurrency ?: 'USD';
 
-            $model = $this->findExistingMappedTier($externalId)
+            $model = null;
+            $normalizedAmount = $amountCents !== null ? (int) $amountCents : null;
+            $isFreeTier = $normalizedAmount === null || $normalizedAmount === 0;
+
+            if ($isFreeTier) {
+                $model = $this->findExistingMappedTier($externalId)
+                    ?: $this->findExistingFreeTier($currency);
+            }
+
+            $model ??= $this->findExistingMappedTier($externalId)
                 ?? $this->matchDiqTierByName($name, $amountCents, $currency);
 
-            $diqOwned = $model !== null && $model->provider_account_id === null;
+            $diqOwned = $model !== null
+                && $model->provider_account_id === null
+                && $normalizedAmount !== 0
+                && $normalizedAmount !== null;
 
             if (!$model) {
                 $model = new MembershipTier();
@@ -71,7 +83,9 @@ class TierMapper
             $model->fill([
                 'name' => $diqOwned ? $model->name : $name,
                 'description' => $diqOwned ? $model->description : data_get($attributes, 'description'),
-                'amount_cents' => $diqOwned ? $model->amount_cents : ($amountCents !== null ? (int) $amountCents : null),
+                'amount_cents' => $diqOwned
+                    ? $model->amount_cents
+                    : ($normalizedAmount !== null ? $normalizedAmount : 0),
                 'currency' => $diqOwned ? $model->currency : ($currency ?? 'USD'),
                 'is_active' => (bool) (data_get($attributes, 'published') ?? true),
                 'synced_at' => now(),
@@ -94,6 +108,21 @@ class TierMapper
     {
         return MembershipTier::where('provider_account_id', $this->account->id)
             ->where('external_id', $externalId)
+            ->first();
+    }
+
+    protected function findExistingFreeTier(?string $currency): ?MembershipTier
+    {
+        return MembershipTier::where('organization_id', $this->account->organization_id)
+            ->when($currency, function ($query, $code) {
+                $query->where(function ($currencyQuery) use ($code) {
+                    $currencyQuery->whereNull('currency')->orWhere('currency', strtoupper((string) $code));
+                });
+            })
+            ->where(function ($query) {
+                $query->whereNull('amount_cents')->orWhere('amount_cents', 0);
+            })
+            ->orderByDesc('provider_account_id')
             ->first();
     }
 
