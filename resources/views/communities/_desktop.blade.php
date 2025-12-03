@@ -41,9 +41,9 @@
         'organizationId' => $currentOrg?->id,
         'organizationName' => $currentOrg?->name,
         'endpoints' => [
-            'members' => $currentOrg ? route('communities.members.index', $currentOrg) : '',
-            'tiers' => $currentOrg ? route('communities.tiers.index', $currentOrg) : '',
-            'settings' => $currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id]) : '',
+            'members' => $currentOrg ? route('communities.members.index', $currentOrg, absolute: false) : '',
+            'tiers' => $currentOrg ? route('communities.tiers.index', $currentOrg, absolute: false) : '',
+            'settings' => $currentOrg ? route('organizations.settings.update', ['organization' => $currentOrg->id], absolute: false) : '',
         ],
         'initialMembers' => $initialMembers ?? [],
         'initialTiers' => $initialTiers ?? [],
@@ -465,6 +465,7 @@
             x-show="$store.communityMembers.modals.member"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.member = false"
+            @click.self="$store.communityMembers.modals.member = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.member = false">
                 <div class="flex items-center justify-between">
@@ -517,6 +518,7 @@
             x-show="$store.communityMembers.modals.tier"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.tier = false"
+            @click.self="$store.communityMembers.modals.tier = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.tier = false">
                 <div class="flex items-center justify-between">
@@ -568,6 +570,7 @@
             x-show="$store.communityMembers.modals.confirmMemberId"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.confirmMemberId = null"
+            @click.self="$store.communityMembers.modals.confirmMemberId = null"
         >
             <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmMemberId = null">
                 <h3 class="text-lg font-semibold text-slate-900">Delete member?</h3>
@@ -585,6 +588,7 @@
             x-show="$store.communityMembers.modals.confirmTierId"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.confirmTierId = null"
+            @click.self="$store.communityMembers.modals.confirmTierId = null"
         >
             <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmTierId = null">
                 <h3 class="text-lg font-semibold text-slate-900">Delete tier?</h3>
@@ -602,6 +606,7 @@
             x-show="$store.communityMembers.modals.settings"
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
             @keydown.escape.window="$store.communityMembers.modals.settings = false"
+            @click.self="$store.communityMembers.modals.settings = false"
         >
             <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.settings = false">
                 <div class="flex items-center justify-between">
