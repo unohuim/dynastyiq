@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Patreon;
 
 use App\Models\MemberProfile;
+use App\Models\Membership;
 use App\Models\MembershipTier;
 use App\Models\Organization;
 use App\Models\ProviderAccount;
@@ -132,5 +133,58 @@ class MembershipSyncServiceTest extends TestCase
         );
 
         $this->assertSame($initialEvents, \App\Models\MembershipEvent::count());
+    }
+
+    public function test_reuses_existing_membership_for_profile_when_provider_match_missing(): void
+    {
+        $organization = Organization::create([
+            'name' => 'Org',
+            'slug' => Str::slug('Org-' . Str::random(6)),
+            'short_name' => 'org',
+        ]);
+        $account = ProviderAccount::create([
+            'organization_id' => $organization->id,
+            'provider' => 'patreon',
+        ]);
+        $profile = MemberProfile::create([
+            'organization_id' => $organization->id,
+            'display_name' => 'Member',
+        ]);
+        $tier = MembershipTier::create([
+            'organization_id' => $organization->id,
+            'provider_account_id' => $account->id,
+            'provider' => 'patreon',
+            'external_id' => 'tier-1',
+            'name' => 'Gold',
+        ]);
+
+        $existingMembership = Membership::create([
+            'organization_id' => $organization->id,
+            'member_profile_id' => $profile->id,
+            'membership_tier_id' => null,
+            'status' => 'active',
+            'synced_at' => now()->subDay(),
+        ]);
+
+        $service = new MembershipSyncService();
+
+        $membership = $service->sync(
+            $account,
+            $profile,
+            'member-1',
+            $tier,
+            500,
+            'USD',
+            'active',
+            '2024-01-01T00:00:00Z',
+            null,
+            []
+        );
+
+        $this->assertSame($existingMembership->id, $membership->id);
+        $this->assertSame('member-1', $membership->provider_member_id);
+        $this->assertSame($account->id, $membership->provider_account_id);
+        $this->assertSame($tier->id, $membership->membership_tier_id);
+        $this->assertDatabaseCount('memberships', 1);
     }
 }
