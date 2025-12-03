@@ -25,10 +25,23 @@ class MembershipSyncService
         ?string $endedAt,
         array $metadata
     ): Membership {
-        $membership = Membership::firstOrNew([
-            'provider_account_id' => $account->id,
-            'provider_member_id' => $providerMemberId,
-        ]);
+        $membership = Membership::where('provider_account_id', $account->id)
+            ->where('provider_member_id', $providerMemberId)
+            ->first();
+
+        if (!$membership) {
+            $membership = Membership::where('organization_id', $account->organization_id)
+                ->where('member_profile_id', $profile->id)
+                ->orderByDesc('synced_at')
+                ->first();
+        }
+
+        if (!$membership) {
+            $membership = new Membership([
+                'provider_account_id' => $account->id,
+                'provider_member_id' => $providerMemberId,
+            ]);
+        }
 
         $original = [
             'membership_tier_id' => $membership->membership_tier_id,
@@ -41,6 +54,8 @@ class MembershipSyncService
             'member_profile_id' => $profile->id,
             'membership_tier_id' => $tier?->id,
             'provider' => $account->provider,
+            'provider_account_id' => $account->id,
+            'provider_member_id' => $providerMemberId,
             'status' => $status,
             'pledge_amount_cents' => $pledgeAmountCents,
             'currency' => $currency,
