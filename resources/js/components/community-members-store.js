@@ -118,6 +118,11 @@ export function createCommunityMembersStore() {
             }
         },
         openMemberModal(member = null) {
+            if (!member && !this.hasTiers) {
+                window.toast?.error?.("Add a tier before adding members.");
+                return;
+            }
+
             this.errors.member = {};
             if (member) {
                 this.memberForm = {
@@ -378,6 +383,9 @@ export function createCommunityMembersStore() {
             return status
                 .replace(/_/g, " ")
                 .replace(/^./, (s) => s.toUpperCase());
+        },
+        get hasTiers() {
+            return Array.isArray(this.tiers) && this.tiers.length > 0;
         },
     };
 }

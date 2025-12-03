@@ -179,7 +179,9 @@
                             <template x-if="$store.communityMembers.activeCollectionTab === 'members'">
                                 <button
                                     type="button"
-                                    class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                                    class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:cursor-not-allowed disabled:opacity-60"
+                                    :disabled="!$store.communityMembers.hasTiers"
+                                    :title="$store.communityMembers.hasTiers ? '' : 'Add a tier before adding members'"
                                     @click="$store.communityMembers.openMemberModal()"
                                 >
                                     Add Member
