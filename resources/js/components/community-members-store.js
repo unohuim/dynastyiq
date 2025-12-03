@@ -247,6 +247,15 @@ export function createCommunityMembersStore() {
                 this.modals.tier = false;
             } catch (error) {
                 this.errors.tier = error?.errors || { general: [error?.message] };
+
+                const message =
+                    error?.message ||
+                    this.errors.tier?.general?.[0] ||
+                    this.errors.tier?.amount_cents?.[0];
+
+                if (message && window.toast?.error) {
+                    window.toast.error(message);
+                }
             } finally {
                 this.loading.savingTier = false;
             }

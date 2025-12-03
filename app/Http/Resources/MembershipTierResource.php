@@ -26,6 +26,7 @@ class MembershipTierResource extends JsonResource
             'description' => $this->description,
             'is_active' => (bool) $this->is_active,
             'synced_at' => optional($this->synced_at)->toIso8601String(),
+            'provider_label' => $this->provider ? ucfirst($this->provider) : null,
             'provider_managed' => (bool) $this->provider_account_id,
         ];
     }

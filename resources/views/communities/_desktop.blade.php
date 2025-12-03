@@ -310,8 +310,18 @@
                             </template>
                             <template x-for="tier in $store.communityMembers.tiers" :key="tier.id">
                                 <div class="flex items-center justify-between gap-3 px-4 py-3">
-                                    <div>
-                                        <p class="text-sm font-semibold text-slate-800" x-text="tier.name"></p>
+                                    <div class="space-y-1">
+                                        <div class="flex items-center gap-2">
+                                            <p class="text-sm font-semibold text-slate-800" x-text="tier.name"></p>
+                                            <template x-if="tier.provider_label">
+                                                <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                                                    <svg class="h-3 w-3" viewBox="0 0 256 315" fill="currentColor" aria-hidden="true">
+                                                        <path d="M34.86 0H0v315h34.86V0ZM178.18 67.21c-42.33 0-77 34.66-77 77s34.66 77 77 77c42.33 0 77-34.66 77-77s-34.66-77-77-77Z" />
+                                                    </svg>
+                                                    <span x-text="tier.provider_label"></span>
+                                                </span>
+                                            </template>
+                                        </div>
                                         <p class="text-[11px] text-slate-500" x-text="tier.provider_managed ? 'Provider-managed' : 'Manual tier'"></p>
                                     </div>
                                     <div class="flex items-center gap-3">
