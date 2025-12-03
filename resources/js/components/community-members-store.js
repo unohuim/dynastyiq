@@ -89,6 +89,7 @@ export function createCommunityMembersStore() {
             try {
                 const res = await fetch(`${this.endpoints.members}?page=${page}`, {
                     headers: { Accept: "application/json" },
+                    credentials: "include",
                 });
                 const data = await res.json();
                 if (!res.ok) throw data;
@@ -105,6 +106,7 @@ export function createCommunityMembersStore() {
             try {
                 const res = await fetch(this.endpoints.tiers, {
                     headers: { Accept: "application/json" },
+                    credentials: "include",
                 });
                 const data = await res.json();
                 if (!res.ok) throw data;
@@ -174,6 +176,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify(payload),
                 });
 
@@ -225,6 +228,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify(payload),
                 });
 
@@ -261,6 +265,7 @@ export function createCommunityMembersStore() {
                         Accept: "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                 });
                 const data = res.status !== 204 ? await res.json() : {};
                 if (!res.ok) throw data;
@@ -290,6 +295,7 @@ export function createCommunityMembersStore() {
                         Accept: "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                 });
                 const data = res.status !== 204 ? await res.json() : {};
                 if (!res.ok) throw data;
@@ -312,6 +318,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify({
                         enabled: true,
                         name: this.settingsForm.name,
