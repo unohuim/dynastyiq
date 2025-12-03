@@ -336,6 +336,25 @@ export function createCommunityMembersStore() {
                 this.loading.savingSettings = false;
             }
         },
+        formatMoney(amountCents, currency = "USD") {
+            if (amountCents === null || amountCents === undefined) {
+                return "No amount set";
+            }
+
+            const value = Number(amountCents) / 100;
+            const code = currency || "USD";
+
+            try {
+                return new Intl.NumberFormat(undefined, {
+                    style: "currency",
+                    currency: code,
+                    minimumFractionDigits: 2,
+                }).format(value);
+            } catch (error) {
+                console.warn("Unable to format currency", error);
+                return `${code} ${value.toFixed(2)}`;
+            }
+        },
         statusLabel(status) {
             if (!status) return "Unknown";
             return status
