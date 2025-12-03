@@ -37,12 +37,12 @@ class CommunityTierRequest extends FormRequest
                 return;
             }
 
-            $amount = $this->input('amount_cents');
-            if ($amount === null || $amount === '') {
-                return;
-            }
+            $amountInput = $this->input('amount_cents');
+            $normalizedAmount = $amountInput !== null && $amountInput !== ''
+                ? (int) $amountInput
+                : null;
 
-            if ((int) $amount !== 0) {
+            if ($normalizedAmount !== 0 && $normalizedAmount !== null) {
                 return;
             }
 
@@ -56,7 +56,9 @@ class CommunityTierRequest extends FormRequest
             $current = $this->route('membershipTier');
 
             $existingFreeTier = $organization->membershipTiers()
-                ->where('amount_cents', 0)
+                ->where(function ($query) {
+                    $query->whereNull('amount_cents')->orWhere('amount_cents', 0);
+                })
                 ->when($current, fn ($query) => $query->where('id', '!=', $current->id))
                 ->first();
 

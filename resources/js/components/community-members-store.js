@@ -207,9 +207,18 @@ export function createCommunityMembersStore() {
             this.loading.savingTier = true;
             this.errors.tier = {};
 
+            const normalizedAmount =
+                this.tierForm.amount_cents === "" ||
+                this.tierForm.amount_cents === null ||
+                typeof this.tierForm.amount_cents === "undefined"
+                    ? null
+                    : Number(this.tierForm.amount_cents);
+
             const payload = {
                 name: this.tierForm.name,
-                amount_cents: this.tierForm.amount_cents || null,
+                amount_cents: Number.isFinite(normalizedAmount)
+                    ? normalizedAmount
+                    : null,
                 currency: this.tierForm.currency || "USD",
                 description: this.tierForm.description || null,
                 is_active: this.tierForm.is_active,

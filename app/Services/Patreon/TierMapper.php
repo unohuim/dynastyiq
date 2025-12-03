@@ -49,8 +49,9 @@ class TierMapper
 
             $model = null;
             $normalizedAmount = $amountCents !== null ? (int) $amountCents : null;
+            $isFreeTier = $normalizedAmount === null || $normalizedAmount === 0;
 
-            if ($normalizedAmount === 0) {
+            if ($isFreeTier) {
                 $model = $this->findExistingMappedTier($externalId)
                     ?: $this->findExistingFreeTier($currency);
             }
@@ -58,7 +59,10 @@ class TierMapper
             $model ??= $this->findExistingMappedTier($externalId)
                 ?? $this->matchDiqTierByName($name, $amountCents, $currency);
 
-            $diqOwned = $model !== null && $model->provider_account_id === null && $normalizedAmount !== 0;
+            $diqOwned = $model !== null
+                && $model->provider_account_id === null
+                && $normalizedAmount !== 0
+                && $normalizedAmount !== null;
 
             if (!$model) {
                 $model = new MembershipTier();
@@ -79,7 +83,9 @@ class TierMapper
             $model->fill([
                 'name' => $diqOwned ? $model->name : $name,
                 'description' => $diqOwned ? $model->description : data_get($attributes, 'description'),
-                'amount_cents' => $diqOwned ? $model->amount_cents : ($normalizedAmount !== null ? $normalizedAmount : null),
+                'amount_cents' => $diqOwned
+                    ? $model->amount_cents
+                    : ($normalizedAmount !== null ? $normalizedAmount : 0),
                 'currency' => $diqOwned ? $model->currency : ($currency ?? 'USD'),
                 'is_active' => (bool) (data_get($attributes, 'published') ?? true),
                 'synced_at' => now(),
@@ -113,7 +119,9 @@ class TierMapper
                     $currencyQuery->whereNull('currency')->orWhere('currency', strtoupper((string) $code));
                 });
             })
-            ->where('amount_cents', 0)
+            ->where(function ($query) {
+                $query->whereNull('amount_cents')->orWhere('amount_cents', 0);
+            })
             ->orderByDesc('provider_account_id')
             ->first();
     }
