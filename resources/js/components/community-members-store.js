@@ -89,6 +89,7 @@ export function createCommunityMembersStore() {
             try {
                 const res = await fetch(`${this.endpoints.members}?page=${page}`, {
                     headers: { Accept: "application/json" },
+                    credentials: "include",
                 });
                 const data = await res.json();
                 if (!res.ok) throw data;
@@ -105,6 +106,7 @@ export function createCommunityMembersStore() {
             try {
                 const res = await fetch(this.endpoints.tiers, {
                     headers: { Accept: "application/json" },
+                    credentials: "include",
                 });
                 const data = await res.json();
                 if (!res.ok) throw data;
@@ -174,6 +176,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify(payload),
                 });
 
@@ -225,6 +228,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify(payload),
                 });
 
@@ -243,6 +247,15 @@ export function createCommunityMembersStore() {
                 this.modals.tier = false;
             } catch (error) {
                 this.errors.tier = error?.errors || { general: [error?.message] };
+
+                const message =
+                    error?.message ||
+                    this.errors.tier?.general?.[0] ||
+                    this.errors.tier?.amount_cents?.[0];
+
+                if (message && window.toast?.error) {
+                    window.toast.error(message);
+                }
             } finally {
                 this.loading.savingTier = false;
             }
@@ -261,6 +274,7 @@ export function createCommunityMembersStore() {
                         Accept: "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                 });
                 const data = res.status !== 204 ? await res.json() : {};
                 if (!res.ok) throw data;
@@ -290,6 +304,7 @@ export function createCommunityMembersStore() {
                         Accept: "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                 });
                 const data = res.status !== 204 ? await res.json() : {};
                 if (!res.ok) throw data;
@@ -312,6 +327,7 @@ export function createCommunityMembersStore() {
                         "Content-Type": "application/json",
                         "X-CSRF-TOKEN": csrfToken(),
                     },
+                    credentials: "include",
                     body: JSON.stringify({
                         enabled: true,
                         name: this.settingsForm.name,
@@ -327,6 +343,25 @@ export function createCommunityMembersStore() {
                 this.errors.settings = error?.errors || { general: [error?.message] };
             } finally {
                 this.loading.savingSettings = false;
+            }
+        },
+        formatMoney(amountCents, currency = "USD") {
+            if (amountCents === null || amountCents === undefined) {
+                return "No amount set";
+            }
+
+            const value = Number(amountCents) / 100;
+            const code = currency || "USD";
+
+            try {
+                return new Intl.NumberFormat(undefined, {
+                    style: "currency",
+                    currency: code,
+                    minimumFractionDigits: 2,
+                }).format(value);
+            } catch (error) {
+                console.warn("Unable to format currency", error);
+                return `${code} ${value.toFixed(2)}`;
             }
         },
         statusLabel(status) {
