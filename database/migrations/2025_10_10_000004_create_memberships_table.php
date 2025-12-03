@@ -13,11 +13,19 @@ return new class extends Migration
         Schema::create('memberships', function (Blueprint $table) {
             $table->id();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('provider_account_id')->constrained()->cascadeOnDelete();
+            $table
+                ->foreignId('provider_account_id')
+                ->nullable()
+                ->constrained()
+                ->cascadeOnDelete();
             $table->foreignId('member_profile_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('membership_tier_id')->nullable()->constrained('membership_tiers')->nullOnDelete();
-            $table->string('provider');
-            $table->string('provider_member_id');
+            $table
+                ->foreignId('membership_tier_id')
+                ->nullable()
+                ->constrained('membership_tiers')
+                ->nullOnDelete();
+            $table->string('provider')->nullable();
+            $table->string('provider_member_id')->nullable();
             $table->string('status')->default('active');
             $table->unsignedBigInteger('pledge_amount_cents')->nullable();
             $table->string('currency', 3)->nullable();
