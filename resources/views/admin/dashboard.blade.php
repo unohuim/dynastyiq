@@ -61,7 +61,13 @@
             <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
                 <h3 class="text-lg font-semibold mb-4">Player Triage</h3>
                 <div class="flex items-center justify-between">
-                    <div>Unmatched players: {{ $unmatchedCount }}</div>
+                    <div>
+                        @if ($unmatchedPlayersCount > 0)
+                            <span>{{ $unmatchedPlayersCount }} unmatched players</span>
+                        @else
+                            <span>No unmatched players</span>
+                        @endif
+                    </div>
                     <a href="{{ route('admin.player-triage') }}" class="text-indigo-600 font-semibold">Go to Triage</a>
                 </div>
             </div>

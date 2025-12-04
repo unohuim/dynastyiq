@@ -46,7 +46,7 @@ class DashboardController extends Controller
             ];
         });
 
-        $unmatchedCount = FantraxPlayer::query()->whereNull('player_id')->count();
+        $unmatchedPlayersCount = FantraxPlayer::query()->whereNull('player_id')->count();
 
         $events = collect(Schedule::events())->map(function ($event) {
             return [
@@ -62,7 +62,7 @@ class DashboardController extends Controller
             'initialized' => $initialized,
             'upToDate' => $upToDate,
             'imports' => $imports,
-            'unmatchedCount' => $unmatchedCount,
+            'unmatchedPlayersCount' => $unmatchedPlayersCount,
             'events' => $events,
         ]);
     }
