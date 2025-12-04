@@ -17,12 +17,12 @@
                         <div class="space-x-2">
                             <form method="POST" action="{{ route('admin.imports.run', ['key' => $import['key']]) }}" class="inline">
                                 @csrf
-                                <x-primary-button type="submit">Run Now</x-primary-button>
+                                <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
                             </form>
                             @if($import['can_rerun_failed'])
                                 <form method="POST" action="{{ route('admin.imports.retry', ['key' => $import['key']]) }}" class="inline">
                                     @csrf
-                                    <x-secondary-button type="submit">Re-run failed</x-secondary-button>
+                                    <x-secondary-button type="submit" data-admin-import-button>Re-run failed</x-secondary-button>
                                 </form>
                             @endif
                         </div>

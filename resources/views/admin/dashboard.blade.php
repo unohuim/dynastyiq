@@ -25,19 +25,58 @@
                 </div>
             </div>
 
-            <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
+            <div
+                class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6"
+                x-data="adminInitialization({
+                    initialized: {{ $initialized ? 'true' : 'false' }},
+                    endpoints: {
+                        start: '{{ route('admin.initialize.run') }}',
+                        status: '{{ route('admin.initialize.index') }}',
+                    }
+                })"
+                x-init="bootstrap()"
+                x-cloak
+            >
                 <h3 class="text-lg font-semibold mb-4">Initialization</h3>
-                @if(!$initialized)
-                    <form method="POST" action="{{ route('admin.initialize.run') }}">
-                        @csrf
-                        <x-primary-button>Bring Platform Online</x-primary-button>
-                    </form>
-                @else
-                    <div class="text-green-700 font-semibold flex items-center space-x-2">
-                        <span>✅</span>
-                        <span>Platform Initialized</span>
+                <div class="flex flex-col md:flex-row md:items-start md:space-x-6 space-y-4 md:space-y-0">
+                    <div class="flex items-center space-x-3">
+                        <x-primary-button
+                            type="button"
+                            x-on:click="startInitialization"
+                            x-bind:disabled="initializing || initialized"
+                            x-text="initializing ? 'Initializing...' : (initialized ? 'Initialized' : 'Bring Platform Online')"
+                        ></x-primary-button>
+                        <span class="text-sm text-gray-600" x-show="initializing" x-text="statusLabel"></span>
                     </div>
-                @endif
+
+                    <div class="flex-1" x-show="batchId">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-700">
+                            <div>
+                                <div class="font-semibold">Batch ID</div>
+                                <div class="break-all" x-text="batchId"></div>
+                            </div>
+                            <div>
+                                <div class="font-semibold">Progress</div>
+                                <div><span x-text="progress"></span>%</div>
+                            </div>
+                            <div>
+                                <div class="font-semibold">Processed jobs</div>
+                                <div x-text="processed"></div>
+                            </div>
+                            <div>
+                                <div class="font-semibold">Failed jobs</div>
+                                <div x-text="failed"></div>
+                            </div>
+                        </div>
+
+                        <div class="w-full bg-gray-200 rounded-full h-2.5 mt-3">
+                            <div
+                                class="bg-indigo-600 h-2.5 rounded-full"
+                                :style="`width: ${progress}%`"
+                            ></div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
@@ -51,7 +90,7 @@
                             </div>
                             <form method="POST" action="{{ route('admin.imports.run', ['key' => $import['key']]) }}">
                                 @csrf
-                                <x-primary-button>Run Now</x-primary-button>
+                                <x-primary-button data-admin-import-button>Run Now</x-primary-button>
                             </form>
                         </div>
                     @endforeach
@@ -87,3 +126,4 @@
         </div>
     </div>
 </x-app-layout>
+
