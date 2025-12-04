@@ -2,8 +2,15 @@
 
 use App\Models\User;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Laravel\Fortify\Features;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    User::factory()->create();
+});
 
 test('reset password link screen can be rendered', function () {
     $response = $this->get('/forgot-password');
