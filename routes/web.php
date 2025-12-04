@@ -190,6 +190,34 @@ Route::middleware([
         Route::post('/players/rankings/manual', 'manual')->name('player.rankings.manual');
     });
 
+    Route::prefix('admin')
+        ->middleware(['admin.super', 'admin.lifecycle'])
+        ->group(function () {
+            Route::get('/initialize', [\App\Http\Controllers\Admin\InitializationController::class, 'index'])
+                ->name('admin.initialize.index');
+            Route::post('/initialize', [\App\Http\Controllers\Admin\InitializationController::class, 'run'])
+                ->name('admin.initialize.run');
+
+            Route::get('/imports', [\App\Http\Controllers\Admin\ImportsController::class, 'index'])
+                ->name('admin.imports');
+            Route::post('/imports/{key}/run', [\App\Http\Controllers\Admin\ImportsController::class, 'run'])
+                ->name('admin.imports.run');
+            Route::post('/imports/{key}/retry', [\App\Http\Controllers\Admin\ImportsController::class, 'retry'])
+                ->name('admin.imports.retry');
+
+            Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])
+                ->name('admin.player-triage');
+            Route::post('/player-triage/{platform}/{id}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
+                ->name('admin.player-triage.link');
+            Route::post('/player-triage/{platform}/{id}/variant', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'addVariant'])
+                ->name('admin.player-triage.variant');
+            Route::post('/player-triage/{platform}/{id}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
+                ->name('admin.player-triage.defer');
+
+            Route::get('/scheduler', [\App\Http\Controllers\Admin\SchedulerController::class, 'index'])
+                ->name('admin.scheduler');
+        });
+
     // Patreon Memberships
     Route::get('/organizations/{organization}/patreon/redirect', [PatreonConnectController::class, 'redirect'])
         ->name('patreon.redirect');
