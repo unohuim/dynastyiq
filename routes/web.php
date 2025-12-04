@@ -114,6 +114,8 @@ Route::middleware([
 ])->group(function () {
     Route::get('/dashboard', fn () => view('dashboard'))->name('dashboard');
 
+    Route::get('/admin', fn () => view('admin.dashboard'))->name('admin.dashboard');
+
 
     //Communities
     Route::get('/communities', [CommunitiesController::class, 'index'])
