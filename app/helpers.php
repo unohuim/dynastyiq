@@ -19,6 +19,13 @@ if (! function_exists('current_season_id')) {
     }
 }
 
+if (! function_exists('currentSeasonEndDate')) {
+    function currentSeasonEndDate(): Carbon
+    {
+        return postseason_end_date(current_season_id());
+    }
+}
+
 if (! function_exists('postseason_end_date')) {
     /**
      * Approximate the postseason end date for a given season identifier.
