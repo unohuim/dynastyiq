@@ -3,9 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\ImportCapWagesJob;
-use App\Jobs\ImportFantraxPlayersJob;
-use App\Jobs\ImportNHLPlayerJob;
+use App\Jobs\RunImportCommandJob;
 use App\Services\PlatformState;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -37,9 +35,9 @@ class InitializationController extends Controller
         abort_if($this->platformState->initialized(), 403);
 
         $batch = Bus::batch([
-            new ImportNHLPlayerJob(),
-            new ImportFantraxPlayersJob(),
-            new ImportCapWagesJob(),
+            new RunImportCommandJob('nhl:import', ['--players' => true], 'nhl'),
+            new RunImportCommandJob('fx:import', ['--players' => true], 'fantrax'),
+            new RunImportCommandJob('cap:import', ['--per-page' => 100, '--all' => true], 'contracts'),
             function () {
                 // simple referential validation: ensure required records exist
                 if (! $this->platformState->initialized()) {
