@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use App\Models\User;
-use Laravel\Jetstream\Jetstream;
 
 
 class AppServiceProvider extends ServiceProvider
@@ -25,7 +24,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        Jetstream::registerComponent('primary-button');
+        Blade::anonymousComponentPath(
+            resource_path('views/vendor/jetstream/components'),
+            'jetstream'
+        );
 
         Blade::component('card-section', \App\View\Components\CardSection::class);
 
