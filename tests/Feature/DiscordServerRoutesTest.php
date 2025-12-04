@@ -3,8 +3,15 @@
 use App\Models\Organization;
 use App\Models\Role;
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Socialite\Facades\Socialite;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    User::factory()->create();
+});
 
 it('denies non-admin users from starting discord server linking', function () {
     $organization = Organization::create([
