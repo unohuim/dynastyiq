@@ -21,7 +21,7 @@
                             <p>ID: {{ $batch->id }}</p>
                             <p>Status: {{ $batch->progress() }}% ({{ $batch->state }})</p>
                             <p>Processed: {{ $batch->processedJobs() }} / {{ $batch->totalJobs }} jobs</p>
-                            @if($batch->failedJobs->isNotEmpty())
+                            @if ($batch->failedJobs > 0)
                                 <div class="text-red-600">Failed Jobs: {{ $batch->failedJobs->count() }}</div>
                             @endif
                         </div>
