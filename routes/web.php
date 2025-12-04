@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 use Laravel\Socialite\Facades\Socialite;
+use App\Http\Middleware\GlobalFreshInstallGuard;
 use App\Models\Organization;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\PlayByPlayController;
@@ -29,7 +30,8 @@ use App\Services\ImportUserFantraxLeagues;
 |--------------------------------------------------------------------------
 */
 
-Route::get('/', fn () => view('welcome'))->name('welcome');
+Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
+    Route::get('/', fn () => view('welcome'))->name('welcome');
 
 // Public pages: Prospects and Players
 Route::get('/players', [PlayerStatsController::class, 'index'])
@@ -294,5 +296,6 @@ Route::middleware([
         Route::post('save', 'save')->name('save');
         Route::post('disconnect', 'disconnect')->name('disconnect');
     });
+});
 });
 

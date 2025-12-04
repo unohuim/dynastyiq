@@ -1,6 +1,5 @@
 <?php
 
-use App\Http\Middleware\GlobalFreshInstallGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
@@ -31,17 +30,14 @@ Route::get('/player-stats', [PlayerStatsController::class, 'payload'])
 
 // Discord
 Route::post('/discord/member-joined', [DiscordWebhookController::class, 'memberJoined'])
-    ->withoutMiddleware(GlobalFreshInstallGuard::class)
     ->name('discord.webhooks.memberJoined');
 
 Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'getUserTeams']);
 
-Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax'])
-    ->withoutMiddleware(GlobalFreshInstallGuard::class);
+Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax']);
 
 // Patreon Webhooks
 Route::post('/patreon/webhook', [PatreonWebhookController::class, 'handle'])
-    ->withoutMiddleware(\App\Http\Middleware\GlobalFreshInstallGuard::class)
     ->name('patreon.webhook');
 
 
