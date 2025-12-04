@@ -41,7 +41,7 @@ Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax'])
 
 // Patreon Webhooks
 Route::post('/patreon/webhook', [PatreonWebhookController::class, 'handle'])
-    ->withoutMiddleware(GlobalFreshInstallGuard::class)
+    ->withoutMiddleware(\App\Http\Middleware\GlobalFreshInstallGuard::class)
     ->name('patreon.webhook');
 
 
