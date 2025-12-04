@@ -19,6 +19,29 @@ if (! function_exists('current_season_id')) {
     }
 }
 
+if (! function_exists('currentSeasonEndDate')) {
+    function currentSeasonEndDate(): Carbon
+    {
+        return postseason_end_date(current_season_id());
+    }
+}
+
+if (! function_exists('postseason_end_date')) {
+    /**
+     * Approximate the postseason end date for a given season identifier.
+     *
+     * The season identifier is expected as YYYYYYYY where the first four digits
+     * represent the starting year and the last four represent the ending year.
+     * The postseason is assumed to conclude at the end of June of the ending year.
+     */
+    function postseason_end_date(string $seasonId): Carbon
+    {
+        $endYear = (int) substr($seasonId, 4, 4);
+
+        return Carbon::create($endYear, 6, 30, 23, 59, 59);
+    }
+}
+
 
 
 

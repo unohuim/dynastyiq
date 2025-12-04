@@ -24,6 +24,11 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Blade::anonymousComponentPath(
+            resource_path('views/vendor/jetstream/components'),
+            'jetstream'
+        );
+
         Blade::component('card-section', \App\View\Components\CardSection::class);
 
 

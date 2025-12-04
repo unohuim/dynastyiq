@@ -1,7 +1,15 @@
 <?php
 
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Fortify\Features;
 use Laravel\Jetstream\Jetstream;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function () {
+    User::factory()->create();
+});
 
 test('registration screen can be rendered', function () {
     $response = $this->get('/register');

@@ -131,6 +131,18 @@
                         <span class="text-sm">Profile</span>
                     </a>
 
+                    @auth
+                        <a href="{{ route('admin.dashboard') }}"
+                            class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                            <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M12 3.75l7.5 3.75v5.25c0 4.28-4.35 6.9-7.5 7.5-3.15-.6-7.5-3.22-7.5-7.5V7.5L12 3.75z" />
+                            </svg>
+                            <span class="text-sm">Admin Control Panel</span>
+                        </a>
+                    @endauth
+
                     <form method="POST" action="{{ route('logout') }}">
                         @csrf
                         <button type="submit"
