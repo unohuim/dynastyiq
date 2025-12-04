@@ -9,7 +9,9 @@ use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
 use App\Console\Commands\PatreonNightlySync;
 use App\Console\Commands\SumNhlSeasonCommand;
+use App\Http\Middleware\AdminLifecycleMiddleware;
 use App\Http\Middleware\HydrateDiscordSession;
+use App\Http\Middleware\SuperAdminMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -31,6 +33,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         //$middleware->web(HydrateDiscordSession::class);
+        $middleware->alias([
+            'admin.lifecycle' => AdminLifecycleMiddleware::class,
+            'admin.super' => SuperAdminMiddleware::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         Integration::handles($exceptions);
