@@ -5,11 +5,9 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Jobs\RunImportCommandJob;
 use App\Services\PlatformState;
-use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Redirect;
-use Illuminate\Support\Facades\URL;
 
 class InitializationController extends Controller
 {
@@ -17,22 +15,34 @@ class InitializationController extends Controller
     {
     }
 
-    public function index(Request $request)
+    public function index(Request $request): JsonResponse
     {
-        $batch = null;
-        if ($request->filled('batch_id')) {
-            $batch = Bus::findBatch($request->input('batch_id'));
+        $batchId = $request->query('batch_id');
+
+        if (! $batchId) {
+            return response()->json(['message' => 'Batch ID required.'], 400);
         }
 
-        return view('admin.initialize', [
-            'initialized' => $this->platformState->initialized(),
-            'batch' => $batch,
+        $batch = Bus::findBatch($batchId);
+
+        if (! $batch) {
+            return response()->json(['message' => 'Batch not found.'], 404);
+        }
+
+        return response()->json([
+            'progress' => $batch->progress(),
+            'processed' => $batch->processedJobs(),
+            'total' => $batch->totalJobs,
+            'failed' => $batch->failedJobs,
+            'finished' => $batch->finished(),
         ]);
     }
 
-    public function run(Request $request): RedirectResponse
+    public function run(Request $request): JsonResponse
     {
-        abort_if($this->platformState->initialized(), 403);
+        if ($this->platformState->initialized()) {
+            return response()->json(['message' => 'Platform already initialized.'], 403);
+        }
 
         $batch = Bus::batch([
             new RunImportCommandJob('nhl:import', ['--players' => true], 'nhl'),
@@ -49,6 +59,9 @@ class InitializationController extends Controller
             ->onQueue('default')
             ->dispatch();
 
-        return Redirect::to(URL::route('admin.initialize.index', ['batch_id' => $batch->id]));
+        return response()->json([
+            'batch_id' => $batch->id,
+            'total_jobs' => $batch->totalJobs,
+        ]);
     }
 }
