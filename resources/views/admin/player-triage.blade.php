@@ -23,7 +23,9 @@
                                     <form method="POST" action="{{ route('admin.player-triage.link', ['platform' => $record['platform'], 'id' => $record['id']]) }}" class="inline">
                                         @csrf
                                         <input type="hidden" name="player_id" value="{{ $suggested->id ?? '' }}">
-                                        <x-primary-button {{ empty($suggested) ? 'disabled' : '' }}>Link</x-primary-button>
+                                        <x-primary-button :disabled="empty($suggested)">
+                                            Accept Match
+                                        </x-primary-button>
                                     </form>
                                     <form method="POST" action="{{ route('admin.player-triage.variant', ['platform' => $record['platform'], 'id' => $record['id']]) }}" class="inline-flex items-center space-x-2">
                                         @csrf
