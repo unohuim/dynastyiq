@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\FantraxPlayer;
-use App\Models\PlayByPlay;
 use App\Models\Player;
 use App\Models\User;
+use App\Models\NhlGame;
 use Illuminate\Support\Carbon;
 
 class PlatformState
@@ -30,14 +30,21 @@ class PlatformState
             return false;
         }
 
-        $latest = PlayByPlay::query()->max('game_date');
-        if ($latest === null) {
+        try {
+            $latest = NhlGame::query()
+                ->whereHas('playByPlays')
+                ->max('game_date');
+
+            if ($latest === null) {
+                return false;
+            }
+
+            $season = current_season_id();
+            $postSeasonEnd = postseason_end_date($season);
+
+            return Carbon::parse($latest)->greaterThanOrEqualTo($postSeasonEnd);
+        } catch (\Throwable $e) {
             return false;
         }
-
-        $season = current_season_id();
-        $postSeasonEnd = postseason_end_date($season);
-
-        return Carbon::parse($latest)->greaterThanOrEqualTo($postSeasonEnd);
     }
 }

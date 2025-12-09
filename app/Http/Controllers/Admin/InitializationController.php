@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\RunImportCommandJob;
+use App\Jobs\ValidateInitializationJob;
 use App\Services\PlatformState;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -44,16 +45,17 @@ class InitializationController extends Controller
             return response()->json(['message' => 'Platform already initialized.'], 403);
         }
 
-        $batch = Bus::batch([
-            new RunImportCommandJob('nhl:import', ['--players' => true], 'nhl'),
+        $nhlPlayersJob = new RunImportCommandJob('nhl:import', ['--players' => true], 'nhl');
+
+        $nhlPlayersJob->chain([
             new RunImportCommandJob('fx:import', ['--players' => true], 'fantrax'),
             new RunImportCommandJob('cap:import', ['--per-page' => 100, '--all' => true], 'contracts'),
-            function () {
-                // simple referential validation: ensure required records exist
-                if (! $this->platformState->initialized()) {
-                    throw new \RuntimeException('Initialization validation failed.');
-                }
-            },
+            new RunImportCommandJob('nhl:process', [], 'pbp'),
+            new ValidateInitializationJob,
+        ]);
+
+        $batch = Bus::batch([
+            $nhlPlayersJob,
         ])->name('platform-initialization')
             ->allowFailures()
             ->onQueue('default')
