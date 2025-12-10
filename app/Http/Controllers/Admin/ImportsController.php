@@ -46,18 +46,32 @@ class ImportsController extends Controller
         return view('admin.imports', ['imports' => $imports]);
     }
 
-    public function run(Request $request, string $key): RedirectResponse
+    public function run(Request $request, string $key)
     {
         abort_unless($this->platformState->initialized(), 403);
         $batch = $this->imports->dispatch($key);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'batch_id' => $batch->id,
+                'started_at' => now()->toIso8601String(),
+            ]);
+        }
 
         return Redirect::to(URL::route('admin.imports', ['batch_id' => $batch->id]));
     }
 
-    public function retry(Request $request, string $key): RedirectResponse
+    public function retry(Request $request, string $key)
     {
         abort_unless($this->platformState->initialized(), 403);
         $batch = $this->imports->dispatch($key);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'batch_id' => $batch->id,
+                'started_at' => now()->toIso8601String(),
+            ]);
+        }
 
         return Redirect::to(URL::route('admin.imports', ['batch_id' => $batch->id]));
     }
