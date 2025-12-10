@@ -17,7 +17,6 @@ class AdminImports
             ['key' => 'nhl', 'label' => 'NHL Players', 'command' => 'nhl:import', 'options' => ['--players' => true]],
             ['key' => 'fantrax', 'label' => 'Fantrax Players', 'command' => 'fx:import', 'options' => ['--players' => true]],
             ['key' => 'contracts', 'label' => 'Contracts', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
-            ['key' => 'pbp', 'label' => 'Play-by-Play', 'command' => 'nhl:process', 'options' => []],
         ]);
     }
 
