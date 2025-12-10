@@ -5,9 +5,13 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
+use App\Models\Player;
 use App\Services\AdminImports;
 use App\Services\PlatformState;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Str;
 
 class DashboardController extends Controller
 {
@@ -15,8 +19,12 @@ class DashboardController extends Controller
     {
     }
 
-    public function index()
+    public function index(Request $request)
     {
+        if ($request->wantsJson() && $request->query('section') === 'players') {
+            return $this->players($request);
+        }
+
         $seeded = $this->platformState->seeded();
         $initialized = $this->platformState->initialized();
         $upToDate = $this->platformState->upToDate();
@@ -30,7 +38,8 @@ class DashboardController extends Controller
             return [
                 'key' => $source['key'],
                 'label' => $source['label'],
-                'last_run' => $lastRun?->ran_at,
+                'last_run' => $lastRun?->ran_at?->toDateTimeString(),
+                'run_url' => route('admin.imports.run', ['key' => $source['key']]),
             ];
         });
 
@@ -52,6 +61,57 @@ class DashboardController extends Controller
             'imports' => $imports,
             'unmatchedPlayersCount' => $unmatchedPlayersCount,
             'events' => $events,
+        ]);
+    }
+
+    protected function players(Request $request): JsonResponse
+    {
+        $perPage = (int) $request->integer('per_page', 25);
+        $perPage = max(5, min($perPage, 100));
+
+        $page = (int) $request->integer('page', 1);
+        $page = max($page, 1);
+
+        $filter = Str::of($request->string('filter')->toString())->trim();
+
+        $query = Player::query();
+
+        if ($filter->isNotEmpty()) {
+            $term = '%' . $filter . '%';
+            $query->where(function ($builder) use ($term) {
+                $builder
+                    ->where('full_name', 'like', $term)
+                    ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", [$term])
+                    ->orWhere('first_name', 'like', $term)
+                    ->orWhere('last_name', 'like', $term);
+            });
+        }
+
+        $total = $query->count();
+        $offset = ($page - 1) * $perPage;
+
+        $players = $query
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->offset($offset)
+            ->limit($perPage)
+            ->get([
+                'id',
+                'first_name',
+                'last_name',
+                'full_name',
+                'position',
+                'team_abbrev',
+            ]);
+
+        return response()->json([
+            'data' => $players,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'has_more' => ($offset + $perPage) < $total,
+            ],
         ]);
     }
 }
