@@ -7,8 +7,7 @@
 
     <div class="py-12">
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6">
-            <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
-                <h3 class="text-lg font-semibold mb-4">System Status</h3>
+            <x-card-section title="System Status" title-class="text-lg font-semibold" is-accordian="true">
                 <div class="space-y-2 text-gray-800">
                     <div class="flex items-center space-x-2">
                         <span>{{ $seeded ? '✅' : '❌' }}</span>
@@ -23,10 +22,12 @@
                         <span>{{ $upToDate ? 'Up to Date' : 'Behind' }}</span>
                     </div>
                 </div>
-            </div>
+            </x-card-section>
 
-            <div
-                class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6"
+            <x-card-section
+                title="Initialization"
+                title-class="text-lg font-semibold"
+                is-accordian="true"
                 x-data="adminInitialization({
                     initialized: {{ $initialized ? 'true' : 'false' }},
                     endpoints: {
@@ -37,7 +38,6 @@
                 x-init="bootstrap()"
                 x-cloak
             >
-                <h3 class="text-lg font-semibold mb-4">Initialization</h3>
                 <div class="flex flex-col md:flex-row md:items-start md:space-x-6 space-y-4 md:space-y-0">
                     <div class="flex items-center space-x-3">
                         <x-primary-button
@@ -77,10 +77,9 @@
                         </div>
                     </div>
                 </div>
-            </div>
+            </x-card-section>
 
-            <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
-                <h3 class="text-lg font-semibold mb-4">Imports</h3>
+            <x-card-section title="Imports" title-class="text-lg font-semibold" is-accordian="true">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     @foreach($imports as $import)
                         <div class="border rounded-lg p-4 flex items-center justify-between">
@@ -98,10 +97,9 @@
                 <div class="mt-4">
                     <a href="{{ url('/admin/pbp-import') }}" class="text-indigo-600 font-semibold">Play-by-Play →</a>
                 </div>
-            </div>
+            </x-card-section>
 
-            <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
-                <h3 class="text-lg font-semibold mb-4">Player Triage</h3>
+            <x-card-section title="Player Triage" title-class="text-lg font-semibold" is-accordian="true">
                 <div class="flex items-center justify-between">
                     <div>
                         @if ($unmatchedPlayersCount > 0)
@@ -112,10 +110,9 @@
                     </div>
                     <a href="{{ route('admin.player-triage') }}" class="text-indigo-600 font-semibold">Go to Triage</a>
                 </div>
-            </div>
+            </x-card-section>
 
-            <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
-                <h3 class="text-lg font-semibold mb-4">Scheduler</h3>
+            <x-card-section title="Scheduler" title-class="text-lg font-semibold" is-accordian="true">
                 <div class="space-y-2">
                     @foreach($events as $event)
                         <div class="border rounded-lg p-4">
@@ -125,7 +122,7 @@
                         </div>
                     @endforeach
                 </div>
-            </div>
+            </x-card-section>
         </div>
     </div>
 </x-app-layout>
