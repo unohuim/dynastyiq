@@ -3,35 +3,23 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Contract;
 use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
-use App\Models\NhlGame;
-use App\Models\Player;
-use App\Models\User;
 use App\Services\AdminImports;
-use Illuminate\Support\Carbon;
+use App\Services\PlatformState;
 use Illuminate\Support\Facades\Schedule;
 
 class DashboardController extends Controller
 {
-    public function __construct(private AdminImports $imports)
+    public function __construct(private AdminImports $imports, private PlatformState $platformState)
     {
     }
 
     public function index()
     {
-        $seeded = User::query()->count() > 0;
-
-        $initialized = $seeded
-            && Player::query()->count() > 0
-            && FantraxPlayer::query()->count() > 0
-            && Contract::query()->count() > 0;
-
-        $latestGameDate = NhlGame::query()->max('game_date');
-        $latestGameDate = $latestGameDate ? Carbon::parse($latestGameDate) : null;
-        $upToDate = $initialized
-            && optional($latestGameDate)?->greaterThanOrEqualTo(currentSeasonEndDate());
+        $seeded = $this->platformState->seeded();
+        $initialized = $this->platformState->initialized();
+        $upToDate = $this->platformState->upToDate();
 
         $imports = $this->imports->sources()->map(function (array $source) {
             $lastRun = ImportRun::query()

@@ -32,6 +32,9 @@
                     @endif
                 </div>
             @endforeach
+            <div class="bg-white shadow sm:rounded-lg p-6">
+                <a href="{{ url('/admin/pbp-import') }}" class="text-indigo-600 font-semibold">Play-by-Play →</a>
+            </div>
         </div>
     </div>
 </x-app-layout>
