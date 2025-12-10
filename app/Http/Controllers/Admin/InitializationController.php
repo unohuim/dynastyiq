@@ -50,7 +50,6 @@ class InitializationController extends Controller
         $nhlPlayersJob->chain([
             new RunImportCommandJob('fx:import', ['--players' => true], 'fantrax'),
             new RunImportCommandJob('cap:import', ['--per-page' => 100, '--all' => true], 'contracts'),
-            new RunImportCommandJob('nhl:process', [], 'pbp'),
             new ValidateInitializationJob,
         ]);
 

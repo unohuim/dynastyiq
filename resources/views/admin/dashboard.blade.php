@@ -95,6 +95,9 @@
                         </div>
                     @endforeach
                 </div>
+                <div class="mt-4">
+                    <a href="{{ url('/admin/pbp-import') }}" class="text-indigo-600 font-semibold">Play-by-Play →</a>
+                </div>
             </div>
 
             <div class="bg-white overflow-hidden shadow-xl sm:rounded-lg p-6">
