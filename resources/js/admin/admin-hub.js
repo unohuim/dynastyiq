@@ -7,12 +7,12 @@ export default function adminHub(options = {}) {
         streams: {},
         importsBusy: false,
 
-        allPlayers: [],
         players: {
             items: [],
             page: 1,
             perPage: 25,
             total: 0,
+            lastPage: 1,
             filter: '',
             loading: false,
         },
@@ -48,7 +48,16 @@ export default function adminHub(options = {}) {
             this.players.loading = true;
 
             try {
-                const response = await fetch('/admin/api/players', {
+                const params = new URLSearchParams({
+                    page: this.players.page,
+                    per_page: this.players.perPage,
+                });
+
+                if (this.players.filter.trim()) {
+                    params.set('filter', this.players.filter.trim());
+                }
+
+                const response = await fetch(`/admin/api/players?${params.toString()}`, {
                     headers: { Accept: 'application/json' },
                 });
 
@@ -56,24 +65,22 @@ export default function adminHub(options = {}) {
                     throw new Error(`Failed to load players: ${response.status}`);
                 }
 
-                const data = await response.json();
+                const payload = await response.json();
+                const meta    = payload.meta ?? {};
 
-                const incomingPlayers = data.players || [];
-                this.allPlayers = incomingPlayers.map((player) => ({
-                    ...player,
-                    team_abbrev: player.team_abbrev ?? player.team,
-                }));
-                this.players.page = 1;
-                this.applyPlayerFilter();
+                this.players.items    = payload.data || [];
+                this.players.total    = meta.total ?? this.players.items.length;
+                this.players.perPage  = meta.per_page ?? this.players.perPage;
+                this.players.page     = meta.current_page ?? this.players.page;
+                this.players.lastPage = meta.last_page ?? Math.max(1, Math.ceil(this.players.total / this.players.perPage));
 
             } catch (error) {
                 console.error(error);
 
-                // Prevent stale results when request fails
-                this.allPlayers    = [];
-                this.players.items = [];
-                this.players.total = 0;
-                this.players.page  = 1;
+                this.players.items    = [];
+                this.players.total    = 0;
+                this.players.page     = 1;
+                this.players.lastPage = 1;
 
             } finally {
                 this.players.loading = false;
@@ -81,41 +88,22 @@ export default function adminHub(options = {}) {
         },
 
         nextPage() {
-            const maxPage = Math.max(1, Math.ceil(this.players.total / this.players.perPage)) || 1;
-            if (this.players.page < maxPage) {
+            if (this.players.page < this.players.lastPage) {
                 this.players.page += 1;
-                this.applyPlayerFilter();
+                this.loadPlayers();
             }
         },
 
         previousPage() {
             if (this.players.page > 1) {
                 this.players.page -= 1;
-                this.applyPlayerFilter();
+                this.loadPlayers();
             }
         },
 
         filterPlayers() {
             this.players.page = 1;
-            this.applyPlayerFilter();
-        },
-
-        applyPlayerFilter() {
-            const q = (this.players.filter || '').toLowerCase();
-            const filtered = q
-                ? this.allPlayers.filter((p) => p.full_name.toLowerCase().includes(q))
-                : this.allPlayers;
-
-            this.players.total = filtered.length;
-
-            const maxPage = Math.max(1, Math.ceil(filtered.length / this.players.perPage)) || 1;
-            if (this.players.page > maxPage) {
-                this.players.page = maxPage;
-            }
-
-            const start = (this.players.page - 1) * this.players.perPage;
-            const end = start + this.players.perPage;
-            this.players.items = filtered.slice(start, end);
+            this.loadPlayers();
         },
 
         bindBatchEvents() {
