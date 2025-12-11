@@ -47,7 +47,7 @@ export default function adminHub(options = {}) {
             this.players.loading = true;
 
             try {
-                const response = await fetch(`/admin/players?page=${page}&filter=${this.players.filter}`);
+                const response = await fetch(`/admin/api/players?page=${page}&filter=${this.players.filter}`);
                 const data = await response.json();
 
                 this.players.items = data.data;
