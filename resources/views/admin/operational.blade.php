@@ -3,227 +3,36 @@
 >
     <div
         class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6"
-        x-data="{
-            activeTab: 'players',
-            imports: [],
-            initialization: {
-                initialized: {{ $initialized ? 'true' : 'false' }},
-                initializing: false,
-            },
-            streams: {},
-            importsBusy: false,
-            players: {
-                items: [],
-                loading: false,
-                page: 1,
-                perPage: 25,
-                total: 0,
-                filter: '',
-            },
-            init() {
-                const importsData = this.$root.dataset.imports;
-                if (importsData) {
-                    this.imports = JSON.parse(importsData);
-                }
-
-                this.bindBatchEvents();
-                this.listenForImportEvents();
-                this.initialization.initialized = Boolean(this.initialization.initialized);
-
-                window.addEventListener('admin:init-started', () => {
-                    this.initialization.initializing = true;
-                });
-
-                window.addEventListener('admin:init-finished', () => {
-                    this.initialization.initializing = false;
-                    this.initialization.initialized = true;
-                });
-
-                this.setTab(this.activeTab);
-            },
-            bindBatchEvents() {
-                window.addEventListener('admin-batch:state', (event) => {
-                    this.importsBusy = Boolean(event.detail?.active);
-                });
-            },
-            listenForImportEvents() {
-                if (!window.Echo) {
-                    return;
-                }
-
-                window.Echo.private('admin.imports').listen(
-                    '.admin.import.output',
-                    (payload) => {
-                        const key = payload.source;
-                        this.ensureStream(key);
-
-                        const stream = this.streams[key];
-                        stream.open = true;
-                        stream.messages.push({
-                            message: payload.message,
-                            status: payload.status,
-                            timestamp: payload.timestamp,
-                        });
-
-                        if (payload.status === 'started') {
-                            stream.running = true;
-                            this.importsBusy = true;
-                        }
-
-                        if (payload.status === 'finished' || payload.status === 'failed') {
-                            stream.running = false;
-                            this.refreshImportMeta(key);
-                            this.importsBusy = this.isAnyImportRunning();
-                        }
-                    }
-                );
-            },
-            ensureStream(key) {
-                if (!this.streams[key]) {
-                    this.streams[key] = {
-                        messages: [],
-                        open: false,
-                        running: false,
-                    };
-                }
-            },
-            toggleStream(key) {
-                this.ensureStream(key);
-                this.streams[key].open = !this.streams[key].open;
-            },
-            isAnyImportRunning() {
-                return Object.values(this.streams).some((stream) => stream.running);
-            },
-            async startImport(key) {
-                if (this.importsBusy) {
-                    return;
-                }
-
-                const importConfig = this.imports.find((item) => item.key === key);
-                if (!importConfig?.run_url) {
-                    return;
-                }
-
-                this.importsBusy = true;
-                this.ensureStream(key);
-                this.streams[key].messages = [];
-                this.streams[key].open = true;
-                this.streams[key].running = true;
-
-                try {
-                    const response = await fetch(importConfig.run_url, {
-                        method: 'POST',
-                        headers: {
-                            Accept: 'application/json',
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': document.querySelector('meta[name=\"csrf-token\"]').getAttribute('content'),
-                        },
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Unable to start import');
-                    }
-                } catch (error) {
-                    this.streams[key].messages.push({
-                        message: error.message,
-                        status: 'failed',
-                        timestamp: new Date().toISOString(),
-                    });
-                    this.streams[key].running = false;
-                    this.importsBusy = this.isAnyImportRunning();
-                }
-            },
-            refreshImportMeta(key) {
-                const now = new Date();
-                this.imports = this.imports.map((item) => {
-                    if (item.key === key) {
-                        return { ...item, last_run: now.toISOString() };
-                    }
-                    return item;
-                });
-            },
-            async setTab(tab) {
-                this.activeTab = tab;
-
-                if (tab === 'players') {
-                    await this.loadPlayers();
-                }
-            },
-            async loadPlayers(page = null) {
-                if (page) {
-                    this.players.page = page;
-                }
-
-                this.players.loading = true;
-
-                const params = new URLSearchParams({
-                    section: 'players',
-                    page: this.players.page,
-                    per_page: this.players.perPage,
-                    filter: this.players.filter,
-                });
-
-                try {
-                    const response = await fetch(`${window.location.pathname}?${params.toString()}`, {
-                        headers: {
-                            Accept: 'application/json',
-                        },
-                    });
-
-                    if (!response.ok) {
-                        throw new Error('Failed to load players');
-                    }
-
-                    const data = await response.json();
-                    this.players.items = data.data ?? [];
-                    this.players.total = data.pagination?.total ?? 0;
-                    this.players.page = data.pagination?.page ?? 1;
-                    this.players.perPage = data.pagination?.per_page ?? this.players.perPage;
-                } catch (error) {
-                    console.error(error);
-                } finally {
-                    this.players.loading = false;
-                }
-            },
-            nextPage() {
-                const maxPage = Math.ceil(this.players.total / this.players.perPage) || 1;
-                if (this.players.page < maxPage) {
-                    this.loadPlayers(this.players.page + 1);
-                }
-            },
-            previousPage() {
-                if (this.players.page > 1) {
-                    this.loadPlayers(this.players.page - 1);
-                }
-            },
-        }"
+        x-data="adminHub({
+            imports: @json($imports),
+            initialized: {{ $initialized ? 'true' : 'false' }}
+        })"
         x-init="init()"
         x-cloak
-        data-imports='@json($imports)'
     >
         <div class="bg-white shadow rounded-lg">
             <div class="border-b px-6 pt-4 flex items-center space-x-4">
                 <button
                     type="button"
                     class="pb-3 text-sm font-semibold border-b-2"
+                    @click="setTab('players')"
                     :class="activeTab === 'players' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                    x-on:click="setTab('players')"
                 >
                     Players
                 </button>
                 <button
                     type="button"
                     class="pb-3 text-sm font-semibold border-b-2"
+                    @click="setTab('pbp')"
                     :class="activeTab === 'pbp' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                    x-on:click="setTab('pbp')"
                 >
                     PBP
                 </button>
                 <button
                     type="button"
                     class="pb-3 text-sm font-semibold border-b-2"
+                    @click="setTab('imports')"
                     :class="activeTab === 'imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                    x-on:click="setTab('imports')"
                 >
                     Data Imports
                 </button>
