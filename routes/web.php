@@ -19,7 +19,7 @@ use App\Http\Controllers\Admin\InitializationController;
 use App\Http\Controllers\Admin\ImportsController;
 use App\Http\Controllers\Admin\PlayerTriageController;
 use App\Http\Controllers\Admin\SchedulerController;
-use App\Http\Controllers\Admin\AdminPlayerController;
+use App\Http\Controllers\Admin\AdminPlayersController;
 
 // Domain controllers
 use App\Http\Controllers\PlayByPlayController;
@@ -165,7 +165,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->group(function () {
 
                 // NEW JSON ENDPOINT REQUIRED BY ALPINE
-                Route::get('/players', [AdminPlayerController::class, 'index'])
+                Route::get('/players', [AdminPlayersController::class, 'index'])
                     ->name('admin.api.players');
             });
 
