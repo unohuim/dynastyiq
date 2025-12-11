@@ -117,6 +117,21 @@ class Player extends Model
             : null;
     }
 
+    public function setMetaAttribute($value): void
+    {
+        if ($value === null) {
+            $this->attributes['meta'] = null;
+            return;
+        }
+
+        if (is_string($value)) {
+            $this->attributes['meta'] = $value;
+            return;
+        }
+
+        $this->attributes['meta'] = json_encode($value, JSON_THROW_ON_ERROR);
+    }
+
     /**
      * All NHL units this player belongs to.
      *
