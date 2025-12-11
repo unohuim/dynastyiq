@@ -39,7 +39,7 @@ class ImportNhlPlayersCommand extends Command
         return [
             'ANA','ARI','BOS','BUF','CGY','CAR','CHI','COL','CBJ','DAL','DET','EDM',
             'FLA','LAK','MIN','MTL','NSH','NJD','NYI','NYR','OTT','PHI','PIT','SJS',
-            'SEA','STL','TBL','TOR','VAN','VGK','WSH','WPG',
+            'SEA','STL','TBL', 'UTA','TOR','VAN','VGK','WSH','WPG',
         ];
     }
 }
