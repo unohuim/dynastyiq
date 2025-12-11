@@ -7,6 +7,7 @@ export default function adminHub(options = {}) {
         streams: {},
         importsBusy: false,
 
+        allPlayers: [],
         players: {
             items: [],
             page: 1,
@@ -43,16 +44,11 @@ export default function adminHub(options = {}) {
             return undefined;
         },
 
-        async loadPlayers(page = 1) {
+        async loadPlayers() {
             this.players.loading = true;
 
             try {
-                const params = new URLSearchParams({
-                    page: String(page),
-                    filter: this.players.filter || '',
-                });
-
-                const response = await fetch(`/admin/api/players?${params.toString()}`, {
+                const response = await fetch('/admin/api/players', {
                     headers: { Accept: 'application/json' },
                 });
 
@@ -62,15 +58,19 @@ export default function adminHub(options = {}) {
 
                 const data = await response.json();
 
-                this.players.items   = data.data || [];
-                this.players.total   = data.total ?? 0;
-                this.players.page    = data.current_page ?? 1;
-                this.players.perPage = data.per_page ?? this.players.perPage;
+                const incomingPlayers = data.players || [];
+                this.allPlayers = incomingPlayers.map((player) => ({
+                    ...player,
+                    team_abbrev: player.team_abbrev ?? player.team,
+                }));
+                this.players.page = 1;
+                this.applyPlayerFilter();
 
             } catch (error) {
                 console.error(error);
 
                 // Prevent stale results when request fails
+                this.allPlayers    = [];
                 this.players.items = [];
                 this.players.total = 0;
                 this.players.page  = 1;
@@ -81,16 +81,41 @@ export default function adminHub(options = {}) {
         },
 
         nextPage() {
-            const maxPage = Math.ceil(this.players.total / this.players.perPage) || 1;
+            const maxPage = Math.max(1, Math.ceil(this.players.total / this.players.perPage)) || 1;
             if (this.players.page < maxPage) {
-                this.loadPlayers(this.players.page + 1);
+                this.players.page += 1;
+                this.applyPlayerFilter();
             }
         },
 
         previousPage() {
             if (this.players.page > 1) {
-                this.loadPlayers(this.players.page - 1);
+                this.players.page -= 1;
+                this.applyPlayerFilter();
             }
+        },
+
+        filterPlayers() {
+            this.players.page = 1;
+            this.applyPlayerFilter();
+        },
+
+        applyPlayerFilter() {
+            const q = (this.players.filter || '').toLowerCase();
+            const filtered = q
+                ? this.allPlayers.filter((p) => p.full_name.toLowerCase().includes(q))
+                : this.allPlayers;
+
+            this.players.total = filtered.length;
+
+            const maxPage = Math.max(1, Math.ceil(filtered.length / this.players.perPage)) || 1;
+            if (this.players.page > maxPage) {
+                this.players.page = maxPage;
+            }
+
+            const start = (this.players.page - 1) * this.players.perPage;
+            const end = start + this.players.perPage;
+            this.players.items = filtered.slice(start, end);
         },
 
         bindBatchEvents() {

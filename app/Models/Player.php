@@ -112,8 +112,8 @@ class Player extends Model
 
     public function getAgeAttribute(): ?int
     {
-        return $this->birthdate
-            ? \Carbon\Carbon::parse($this->birthdate)->age
+        return $this->dob
+            ? \Carbon\Carbon::parse($this->dob)->age
             : null;
     }
 
