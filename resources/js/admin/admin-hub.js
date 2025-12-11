@@ -47,15 +47,34 @@ export default function adminHub(options = {}) {
             this.players.loading = true;
 
             try {
-                const response = await fetch(`/admin/api/players?page=${page}&filter=${this.players.filter}`);
+                const params = new URLSearchParams({
+                    page: String(page),
+                    filter: this.players.filter || '',
+                });
+
+                const response = await fetch(`/admin/api/players?${params.toString()}`, {
+                    headers: { Accept: 'application/json' },
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to load players: ${response.status}`);
+                }
+
                 const data = await response.json();
 
-                this.players.items = data.data;
-                this.players.total = data.total;
-                this.players.page = data.current_page;
+                this.players.items   = data.data || [];
+                this.players.total   = data.total ?? 0;
+                this.players.page    = data.current_page ?? 1;
                 this.players.perPage = data.per_page ?? this.players.perPage;
+
             } catch (error) {
                 console.error(error);
+
+                // Prevent stale results when request fails
+                this.players.items = [];
+                this.players.total = 0;
+                this.players.page  = 1;
+
             } finally {
                 this.players.loading = false;
             }
