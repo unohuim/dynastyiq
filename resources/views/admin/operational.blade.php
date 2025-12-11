@@ -58,8 +58,8 @@
                             type="text"
                             class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
                             placeholder="Filter by name"
-                            x-model.debounce.400ms="players.filter"
-                            x-on:input="loadPlayers(1)"
+                            x-model="players.filter"
+                            x-on:input="filterPlayers()"
                         />
                     </div>
 
@@ -88,7 +88,7 @@
                                         <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.full_name"></td>
                                         <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
                                         <td class="px-4 py-3 text-sm text-gray-600" x-text="player.team_abbrev || '—'"></td>
-                                        <td class="px-4 py-3 text-sm text-gray-600" x-text="player.age"></td>
+                                        <td class="px-4 py-3 text-sm text-gray-600" x-text="player.age ?? '—'"></td>
                                         <td class="px-4 py-3 text-sm text-gray-400 text-right">Actions</td>
                                     </tr>
                                 </template>
