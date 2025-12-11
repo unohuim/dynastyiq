@@ -17,18 +17,15 @@ class AdminPlayersController extends Controller
 
         $query = Player::query();
 
-        if ($filter !== '') {
-            $query->where(function ($q) use ($filter): void {
-                $like = '%' . $filter . '%';
+        if ($filter) {
+            $clean = trim(mb_strtolower($filter));
 
-                $q->where('full_name', 'LIKE', $like)
-                    ->orWhere('first_name', 'LIKE', $like)
-                    ->orWhere('last_name', 'LIKE', $like);
+            $query->where(function ($q) use ($clean) {
+                $q->whereRaw('LOWER(full_name) LIKE ?', ["%{$clean}%"])
+                  ->orWhereRaw('LOWER(first_name) LIKE ?', ["%{$clean}%"])
+                  ->orWhereRaw('LOWER(last_name) LIKE ?', ["%{$clean}%"]);
             });
         }
-
-        // Ensure stable, predictable ordering
-        $query->orderBy('full_name');
 
         $players = $query->paginate($perPage, ['*'], 'page', $page);
 
