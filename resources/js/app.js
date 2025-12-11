@@ -182,5 +182,3 @@ window.addEventListener('admin-batch:state', (event) => {
 });
 
 updateAdminImportButtons(false);
-
-window.adminHub = adminHub;
