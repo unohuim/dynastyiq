@@ -13,21 +13,17 @@ class AdminPlayersController extends Controller
     {
         $perPage = 25;
         $page    = max((int) $request->query('page', 1), 1);
-        $filter  = trim((string) $request->query('filter', ''));
 
         $query = Player::query();
 
-        if ($filter) {
-            $clean = trim(mb_strtolower($filter));
-
-            $query->where(function ($q) use ($clean) {
-                $q->whereRaw('LOWER(full_name) LIKE ?', ["%{$clean}%"])
-                  ->orWhereRaw('LOWER(first_name) LIKE ?', ["%{$clean}%"])
-                  ->orWhereRaw('LOWER(last_name) LIKE ?', ["%{$clean}%"]);
-            });
+        if ($filter = trim($request->input('filter', ''))) {
+            $clean = mb_strtolower($filter);
+            $query->whereRaw("LOWER(full_name) LIKE ?", ["%{$clean}%"]);
         }
 
-        $players = $query->paginate($perPage, ['*'], 'page', $page);
+        $players = $query
+            ->orderBy('full_name')
+            ->paginate($perPage, ['*'], 'page', $page);
 
         return response()->json([
             'data'         => $players->getCollection()
@@ -35,6 +31,7 @@ class AdminPlayersController extends Controller
                     return [
                         'id'          => $player->id,
                         'full_name'   => $player->full_name,
+                        'age'         => $player->age,
                         'position'    => $player->position,
                         'team_abbrev' => $player->team_abbrev,
                     ];
