@@ -14,6 +14,7 @@ export default function adminHub(options = {}) {
             total: 0,
             lastPage: 1,
             filter: '',
+            allPlayers: false,
             loading: false,
         },
 
@@ -51,10 +52,11 @@ export default function adminHub(options = {}) {
                 const params = new URLSearchParams({
                     page: this.players.page,
                     per_page: this.players.perPage,
+                    all_players: this.players.allPlayers ? '1' : '0',
                 });
 
                 if (this.players.filter.trim()) {
-                    params.set('filter', this.players.filter.trim());
+                    params.set('search', this.players.filter.trim());
                 }
 
                 const response = await fetch(`/admin/api/players?${params.toString()}`, {

@@ -13,6 +13,9 @@ class AdminPlayersController extends Controller
     {
         $perPage = 25;
 
+        $search     = $request->input('filter', $request->input('search'));
+        $allPlayers = $request->boolean('all_players', false);
+
         $players = Player::query()
             ->select([
                 'id',
@@ -23,7 +26,12 @@ class AdminPlayersController extends Controller
                 'team_abbrev',
                 'dob',
             ])
-            ->when($request->filter, function ($query, $term) {
+            ->when(!$allPlayers, function ($query) {
+                $query->whereNotNull('team_abbrev')
+                    ->whereRaw("TRIM(team_abbrev) <> ''")
+                    ->where('team_abbrev', '!=', '—');
+            })
+            ->when($search, function ($query, $term) {
                 $term = strtolower($term);
 
                 $query->where(function ($q) use ($term) {
