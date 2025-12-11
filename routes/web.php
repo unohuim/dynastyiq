@@ -6,17 +6,6 @@ use Laravel\Socialite\Facades\Socialite;
 use App\Http\Middleware\GlobalFreshInstallGuard;
 use App\Models\Organization;
 use App\Http\Controllers\PlayerStatsController;
-use App\Http\Controllers\StatsController;
-
-// Admin controllers
-use App\Http\Controllers\Admin\DashboardController;
-use App\Http\Controllers\Admin\InitializationController;
-use App\Http\Controllers\Admin\ImportsController;
-use App\Http\Controllers\Admin\PlayerTriageController;
-use App\Http\Controllers\Admin\SchedulerController;
-use App\Http\Controllers\Admin\AdminPlayersController;
-
-// Domain controllers
 use App\Http\Controllers\PlayByPlayController;
 use App\Http\Controllers\PlayerImportController;
 use App\Http\Controllers\PlayerRankingController;
@@ -134,9 +123,23 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->middleware('auth')
             ->group(function () {
 
-                // NEW JSON ENDPOINT REQUIRED BY ALPINE
-                Route::get('/players', [AdminPlayersController::class, 'index'])
-                    ->name('admin.api.players');
+                Route::get('/members', [CommunityMemberController::class, 'index'])
+                    ->name('communities.members.index');
+                Route::post('/members', [CommunityMemberController::class, 'store'])
+                    ->name('communities.members.store');
+                Route::put('/members/{membership}', [CommunityMemberController::class, 'update'])
+                    ->name('communities.members.update');
+                Route::delete('/members/{membership}', [CommunityMemberController::class, 'destroy'])
+                    ->name('communities.members.destroy');
+
+                Route::get('/tiers', [CommunityTierController::class, 'index'])
+                    ->name('communities.tiers.index');
+                Route::post('/tiers', [CommunityTierController::class, 'store'])
+                    ->name('communities.tiers.store');
+                Route::put('/tiers/{membershipTier}', [CommunityTierController::class, 'update'])
+                    ->name('communities.tiers.update');
+                Route::delete('/tiers/{membershipTier}', [CommunityTierController::class, 'destroy'])
+                    ->name('communities.tiers.destroy');
             });
 
         // Player + import tools
