@@ -3,11 +3,12 @@
 >
     <div
         class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6"
-        x-data="adminHub({
-            imports: @json($imports),
-            initialized: {{ $initialized ? 'true' : 'false' }}
-        })"
-        x-init="init()"
+        x-data="adminHub()"
+        x-init="
+            imports = @js($imports);
+            initialization.initialized = {{ $initialized ? 'true' : 'false' }};
+            init();
+        "
         x-cloak
     >
         <div class="bg-white shadow rounded-lg">
