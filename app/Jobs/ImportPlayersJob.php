@@ -27,6 +27,14 @@ class ImportPlayersJob implements ShouldQueue
     protected string $teamAbbrev;
 
     /**
+     * Teams that have relocated and the first season their new abbrev applies.
+     * Format: ['OLD' => ['new' => 'NEW', 'effective' => 'YYYYYYYY']]
+     */
+    private const RELOCATIONS = [
+        'ARI' => ['new' => 'UTA', 'effective' => '20252026'],
+    ];
+
+    /**
      * Create a new job instance.
      *
      * @param string $teamAbbrev The NHL team abbreviation (e.g., TOR, BOS)
@@ -126,5 +134,17 @@ class ImportPlayersJob implements ShouldQueue
                 ImportNHLPlayerJob::dispatch($player['id'], $isProspect);
             }
         }
+    }
+
+
+    private function resolveTeamForSeason(string $team, string $seasonId): string
+    {
+        if (isset(self::RELOCATIONS[$team])) {
+            if ($seasonId >= self::RELOCATIONS[$team]['effective']) {
+                return self::RELOCATIONS[$team]['new'];
+            }
+        }
+    
+        return $team;
     }
 }
