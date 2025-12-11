@@ -70,16 +70,17 @@
                                     <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Name</th>
                                     <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Position</th>
                                     <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Team</th>
+                                    <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Age</th>
                                     <th class="px-4 py-2 text-right text-xs font-semibold text-gray-600">Actions</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-200 bg-white">
                                 <tr x-show="players.loading">
-                                    <td class="px-4 py-4 text-sm text-gray-500" colspan="4">Loading players...</td>
+                                    <td class="px-4 py-4 text-sm text-gray-500" colspan="5">Loading players...</td>
                                 </tr>
                                 <template x-if="!players.loading && players.items.length === 0">
                                     <tr>
-                                        <td class="px-4 py-4 text-sm text-gray-500" colspan="4">No players found.</td>
+                                        <td class="px-4 py-4 text-sm text-gray-500" colspan="5">No players found.</td>
                                     </tr>
                                 </template>
                                 <template x-for="player in players.items" :key="player.id">
@@ -87,6 +88,7 @@
                                         <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.full_name"></td>
                                         <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
                                         <td class="px-4 py-3 text-sm text-gray-600" x-text="player.team_abbrev || '—'"></td>
+                                        <td class="px-4 py-3 text-sm text-gray-600" x-text="player.age"></td>
                                         <td class="px-4 py-3 text-sm text-gray-400 text-right">Actions</td>
                                     </tr>
                                 </template>

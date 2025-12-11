@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -111,15 +110,11 @@ class Player extends Model
 
 
 
-    /**
-     * Compute the player's age in whole years.
-     *
-     * @return int
-     */
-    public function age(): int
+    public function getAgeAttribute(): ?int
     {
-        return Carbon::parse($this->dob)
-                     ->diffInYears(now());
+        return $this->birthdate
+            ? \Carbon\Carbon::parse($this->birthdate)->age
+            : null;
     }
 
     /**
