@@ -59,8 +59,18 @@
                             class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
                             placeholder="Filter by name"
                             x-model="players.filter"
-                            x-on:input="filterPlayers()"
+                            x-on:input.debounce.300ms="filterPlayers()"
                         />
+
+                        <label class="inline-flex items-center space-x-2 text-sm text-gray-700">
+                            <input
+                                type="checkbox"
+                                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500"
+                                x-model="players.allPlayers"
+                                x-on:change="filterPlayers()"
+                            />
+                            <span>All Players</span>
+                        </label>
                     </div>
 
                     <div class="overflow-x-auto border border-gray-200 rounded-lg">
