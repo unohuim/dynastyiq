@@ -170,7 +170,7 @@ class ImportPlayersJob implements ShouldQueue
                 
                 ImportStreamEvent::dispatch(
                     'nhl',
-                    "Importing (from ImportPlayersJob): {$fullName}, {$position} - {$this->teamAbbrev}",
+                    "Importing {$fullName} - {$this->teamAbbrev}, {$position}",
                     'started'
                 );
 
