@@ -42,11 +42,11 @@ class ImportNHLPlayerJob implements ShouldQueue
      */
     public function handle(): void
     {
-        $player = Player::find($this->playerId);
+        //$player = Player::find($this->playerId);
 
-        $fullName = $player?->full_name ?? "Player {$this->playerId}";
-        $position = $player?->position ?? 'N/A';
-        $teamAbbrev = $player?->team_abbrev ?? 'N/A';
+        // $fullName = $player?->full_name ?? "Player {$this->playerId}";
+        // $position = $player?->position ?? 'N/A';
+        // $teamAbbrev = $player?->team_abbrev ?? 'N/A';
 
         // ImportStreamEvent::dispatch(
         //     'nhl',
