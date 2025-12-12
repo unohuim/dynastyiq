@@ -4,8 +4,9 @@ export default function adminHub(options = {}) {
     const playersAvailable = Boolean(options.hasPlayers);
 
     return {
-        activeTab: playersAvailable ? 'players' : 'imports',
+        activeTab: playersAvailable ? 'nhl' : 'fantrax',
         imports: options.imports ?? [],
+        activeSource: playersAvailable ? 'nhl' : 'fantrax',
         hasPlayers: playersAvailable,
 
         streams: {},
@@ -18,7 +19,10 @@ export default function adminHub(options = {}) {
             total: 0,
             lastPage: 1,
             filter: '',
-            allPlayers: false,
+            toggle: {
+                nhl: false,
+                fantrax: true,
+            },
             loading: false,
         },
 
@@ -32,13 +36,18 @@ export default function adminHub(options = {}) {
          * --------------------------- */
 
         setTab(tab) {
-            if (tab === 'players' && !this.hasPlayers) {
+            if (tab === 'nhl' && !this.hasPlayers) {
                 return;
             }
 
             this.activeTab = tab;
 
-            if (tab === 'players' && this.hasPlayers) {
+            if (tab === 'nhl' || tab === 'fantrax') {
+                this.activeSource = tab;
+                this.players.page = 1;
+            }
+
+            if ((tab === 'nhl' && this.hasPlayers) || tab === 'fantrax') {
                 this.loadPlayers();
             }
         },
@@ -54,8 +63,16 @@ export default function adminHub(options = {}) {
                 const params = new URLSearchParams({
                     page: this.players.page,
                     per_page: this.players.perPage,
-                    all_players: this.players.allPlayers ? '1' : '0',
+                    source: this.activeSource,
                 });
+
+                const toggle = this.players.toggle?.[this.activeSource];
+
+                if (this.activeSource === 'nhl') {
+                    params.set('all_players', toggle ? '1' : '0');
+                } else {
+                    params.set('nhl_matched', toggle ? '1' : '0');
+                }
 
                 if (this.players.filter.trim()) {
                     params.set('search', this.players.filter.trim());
@@ -242,13 +259,14 @@ export default function adminHub(options = {}) {
                 const prev = this.hasPlayers;
                 this.hasPlayers = available;
 
-                if (available && (!prev || this.activeTab === 'players')) {
+                if (available && (!prev || this.activeTab === 'nhl')) {
                     this.players.items = payload.data ?? [];
                     this.players.total = total;
                 }
 
-                if (!available) {
-                    this.activeTab = 'imports';
+                if (!available && this.activeTab === 'nhl') {
+                    this.activeTab = 'fantrax';
+                    this.activeSource = 'fantrax';
                 }
             } catch (e) {
                 console.error(e);
