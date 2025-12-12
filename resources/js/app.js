@@ -62,8 +62,11 @@ window.adminInitialization = ({ initialized, endpoints }) => ({
     failed: 0,
     pollHandle: null,
     statusLabel: 'Initializing... ',
-    bootstrap() {
+    init() {
         this.toggleImports(false);
+    },
+    bootstrap() {
+        this.init();
     },
     async startInitialization() {
         if (this.initializing || this.initialized) {
