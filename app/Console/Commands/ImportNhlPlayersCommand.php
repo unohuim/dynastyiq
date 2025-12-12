@@ -24,7 +24,7 @@ class ImportNhlPlayersCommand extends Command
         }
 
         foreach ($this->teams() as $abbrev) {
-            ImportPlayersJob::dispatch($abbrev);
+            ImportPlayersJob::dispatch($abbrev, (string)\Illuminate\Support\Str::uuid());
         }
 
         $this->info('Dispatched ImportPlayersJob for all teams.');
