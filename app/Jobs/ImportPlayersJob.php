@@ -148,7 +148,7 @@ class ImportPlayersJob implements ShouldQueue
                 $dedupeKey = "nhl-import:{$this->importRunId}:player:{$playerId}";
 
                 // add() returns false if this player was already seen in this run
-                if (! Cache::add($dedupeKey, true, now()->addHours(2))) {
+                if (! Cache::add($dedupeKey, true, 3500)) {
                     continue;
                 }
 
