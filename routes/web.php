@@ -182,12 +182,6 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::get('/api/players', [\App\Http\Controllers\Admin\AdminPlayersController::class, 'index'])
                     ->name('admin.api.players');
 
-                // Initialization
-                Route::get('/initialize', [\App\Http\Controllers\Admin\InitializationController::class, 'index'])
-                    ->name('admin.initialize.index');
-                Route::post('/initialize', [\App\Http\Controllers\Admin\InitializationController::class, 'run'])
-                    ->name('admin.initialize.run');
-
                 // Imports
                 Route::get('/imports', [\App\Http\Controllers\Admin\ImportsController::class, 'index'])
                     ->name('admin.imports');
