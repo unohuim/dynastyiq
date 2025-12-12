@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Events\PlayersAvailable;
 use App\Models\ImportRun;
+use App\Models\Player;
 use App\Support\ImportBroadcast;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
@@ -33,10 +35,16 @@ class RunImportCommandJob implements ShouldQueue
     public function handle(): void
     {
         $broadcast = new ImportBroadcast($this->source ?: $this->command, $this->batchId);
+        $shouldDetectPlayers = $this->isNhlPlayersImport();
+        $playersExistedBefore = $shouldDetectPlayers ? Player::query()->exists() : false;
 
         try {
             $broadcast->started();
             Artisan::call($this->command, $this->options, $broadcast->output());
+
+            if ($shouldDetectPlayers && ! $playersExistedBefore && Player::query()->exists()) {
+                PlayersAvailable::dispatch(Player::query()->count());
+            }
 
             ImportRun::create([
                 'source' => $this->source ?: $this->command,
@@ -49,5 +57,16 @@ class RunImportCommandJob implements ShouldQueue
             $broadcast->failed($throwable);
             throw $throwable;
         }
+    }
+
+    private function isNhlPlayersImport(): bool
+    {
+        if ($this->command !== 'nhl:import') {
+            return false;
+        }
+
+        $flag = $this->options['--players'] ?? $this->options['players'] ?? false;
+
+        return filter_var($flag, FILTER_VALIDATE_BOOLEAN) !== false || $flag === true;
     }
 }
