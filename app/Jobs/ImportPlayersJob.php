@@ -4,18 +4,19 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Jobs\ImportNHLPlayerJob;
+use App\Events\ImportStreamEvent;
 use App\Traits\HasAPITrait;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use App\Events\ImportStreamEvent;
 
 /**
- * Dispatches individual NHL player import jobs for a given team
- * across both the current and previous seasons, as well as team prospects.
+ * Dispatches unique NHL player import jobs for a given team.
+ *
+ * Players may appear across multiple seasons or sources (prospects),
+ * but each player is dispatched exactly once per job run.
  */
 class ImportPlayersJob implements ShouldQueue
 {
@@ -28,50 +29,49 @@ class ImportPlayersJob implements ShouldQueue
     protected string $teamAbbrev;
 
     /**
+     * Track player IDs already dispatched during this job run.
+     *
+     * @var array<int, true>
+     */
+    protected array $dispatchedPlayerIds = [];
+
+    /**
      * Teams that have relocated and the first season their new abbrev applies.
-     * Format: ['OLD' => ['new' => 'NEW', 'effective' => 'YYYYYYYY']]
+     *
+     * @var array<string, array{new: string, effective: string}>
      */
     private const RELOCATIONS = [
         'ARI' => ['new' => 'UTA', 'effective' => '20252026'],
     ];
 
-    /**
-     * Create a new job instance.
-     *
-     * @param string $teamAbbrev The NHL team abbreviation (e.g., TOR, BOS)
-     */
     public function __construct(string $teamAbbrev)
     {
         $this->teamAbbrev = $teamAbbrev;
     }
 
-    /**
-     * Execute the job.
-     *
-     * @return void
-     */
     public function handle(): void
     {
-        ImportStreamEvent::dispatch('nhl', "Importing players for team {$this->teamAbbrev}", 'started');
+        ImportStreamEvent::dispatch(
+            'nhl',
+            "Importing players for team {$this->teamAbbrev}",
+            'started'
+        );
 
         [$currentSeason, $previousSeason] = $this->getSeasonIds();
 
         $this->importSeasonRoster($currentSeason);
         $this->importSeasonRoster($previousSeason);
         $this->importProspects();
-
     }
 
     /**
-     * Determine current and previous season IDs.
-     *
      * @return array{string, string}
      */
     protected function getSeasonIds(): array
     {
-        $current = current_season_id(); // uses your global helper
+        $current = current_season_id();
+
         $year1 = substr($current, 0, 4);
-        $year2 = substr($current, 4, 4);
 
         return [
             $current,
@@ -79,22 +79,6 @@ class ImportPlayersJob implements ShouldQueue
         ];
     }
 
-    /**
-     * Get the current season ID string.
-     *
-     * @return string
-     */
-    protected function getCurrentSeasonId(): string
-    {
-        return $this->getSeasonIds()[0];
-    }
-
-    /**
-     * Import NHL players for the specified season.
-     *
-     * @param string $seasonId
-     * @return void
-     */
     protected function importSeasonRoster(string $seasonId): void
     {
         $team = $this->resolveTeamForSeason($this->teamAbbrev, $seasonId);
@@ -104,84 +88,92 @@ class ImportPlayersJob implements ShouldQueue
             "Fetching roster for {$team} season {$seasonId}",
             'started'
         );
-    
-        $endpoint = $seasonId === $this->getCurrentSeasonId()
+
+        $endpoint = $seasonId === $this->getSeasonIds()[0]
             ? 'roster_current'
             : 'roster_season';
-    
+
         $params = ['teamAbbrev' => $team];
-    
+
         if ($endpoint === 'roster_season') {
             $params['seasonId'] = $seasonId;
         }
-    
+
         try {
             $players = $this->getAPIData('nhl', $endpoint, $params);
         } catch (\Illuminate\Http\Client\RequestException $e) {
             if ($e->response && $e->response->status() === 404) {
-                // Tell the stream / batch what happened, but do NOT fail the entire import
-                info("Skipping roster import for {$this->teamAbbrev} season {$seasonId} — API returned 404");
+                info("Skipping roster import for {$team} season {$seasonId} — API returned 404");
                 return;
             }
-    
+
             throw $e;
         }
 
         $this->dispatchGroupedPlayers($players);
     }
 
-
-    /**
-     * Import all prospects for the current team.
-     *
-     * @return void
-     */
     protected function importProspects(): void
     {
-        ImportStreamEvent::dispatch('nhl', "Fetching prospects for {$this->teamAbbrev}", 'started');
+        ImportStreamEvent::dispatch(
+            'nhl',
+            "Fetching prospects for {$this->teamAbbrev}",
+            'started'
+        );
 
-        $prospects = $this->getAPIData('nhl', 'prospects', ['teamAbbrev' => $this->teamAbbrev]);
+        $prospects = $this->getAPIData(
+            'nhl',
+            'prospects',
+            ['teamAbbrev' => $this->teamAbbrev]
+        );
 
-        $this->dispatchGroupedPlayers($prospects, isProspect: true);
+        $this->dispatchGroupedPlayers($prospects, true);
     }
 
     /**
-     * Dispatch individual player import jobs by group (F/D/G).
+     * Dispatch unique player import jobs by position group.
      *
      * @param array<string, mixed> $data
      * @param bool $isProspect
-     * @return void
      */
     protected function dispatchGroupedPlayers(array $data, bool $isProspect = false): void
     {
         foreach (['forwards', 'defensemen', 'goalies'] as $group) {
             foreach ($data[$group] ?? [] as $player) {
+                $playerId = $player['id'] ?? null;
 
+                if (! $playerId || isset($this->dispatchedPlayerIds[$playerId])) {
+                    continue;
+                }
 
-                $fullName = $player ? $player['firstName']['default'] . " " . $player['lastName']['default'] : "Player {$player['id']} ";
-                $position = $player ? $player['positionCode'] : "";
-                // $teamAbbrev = $player??  'N/A';
-        
+                $this->dispatchedPlayerIds[$playerId] = true;
+
+                $fullName = ($player['firstName']['default'] ?? 'Player')
+                    . ' '
+                    . ($player['lastName']['default'] ?? $playerId);
+
+                $position = $player['positionCode'] ?? '';
+
                 ImportStreamEvent::dispatch(
                     'nhl',
                     "Importing {$fullName} {$position}",
                     'started'
                 );
-                
-                ImportNHLPlayerJob::dispatch($player['id'], $isProspect);
+
+                ImportNHLPlayerJob::dispatch($playerId, $isProspect);
             }
         }
     }
 
-
-    private function resolveTeamForSeason(string $team, string $seasonId): string
+    protected function resolveTeamForSeason(string $team, string $seasonId): string
     {
-        if (isset(self::RELOCATIONS[$team])) {
-            if ($seasonId >= self::RELOCATIONS[$team]['effective']) {
-                return self::RELOCATIONS[$team]['new'];
-            }
+        if (
+            isset(self::RELOCATIONS[$team]) &&
+            $seasonId >= self::RELOCATIONS[$team]['effective']
+        ) {
+            return self::RELOCATIONS[$team]['new'];
         }
-    
+
         return $team;
     }
 }
