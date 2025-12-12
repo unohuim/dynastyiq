@@ -22,10 +22,14 @@ export default function adminHub(options = {}) {
             loading: false,
         },
 
-        async init() {
-            this.listenForImportEvents();
+        init() {
+            this.registerImportListeners();
             this.setTab(this.activeTab);
         },
+
+        /* -----------------------------
+         * Tabs
+         * --------------------------- */
 
         setTab(tab) {
             if (tab === 'players' && !this.hasPlayers) {
@@ -35,11 +39,13 @@ export default function adminHub(options = {}) {
             this.activeTab = tab;
 
             if (tab === 'players' && this.hasPlayers) {
-                return this.loadPlayers();
+                this.loadPlayers();
             }
-
-            return undefined;
         },
+
+        /* -----------------------------
+         * Players
+         * --------------------------- */
 
         async loadPlayers() {
             this.players.loading = true;
@@ -55,31 +61,30 @@ export default function adminHub(options = {}) {
                     params.set('search', this.players.filter.trim());
                 }
 
-                const response = await fetch(`/admin/api/players?${params.toString()}`, {
+                const response = await fetch(`/admin/api/players?${params}`, {
                     headers: { Accept: 'application/json' },
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Failed to load players: ${response.status}`);
+                    throw new Error(`Failed to load players (${response.status})`);
                 }
 
                 const payload = await response.json();
-                const meta    = payload.meta ?? {};
+                const meta = payload.meta ?? {};
 
-                this.players.items    = payload.data || [];
-                this.players.total    = meta.total ?? this.players.items.length;
-                this.players.perPage  = meta.per_page ?? this.players.perPage;
-                this.players.page     = meta.current_page ?? this.players.page;
-                this.players.lastPage = meta.last_page ?? Math.max(1, Math.ceil(this.players.total / this.players.perPage));
-
-            } catch (error) {
-                console.error(error);
-
-                this.players.items    = [];
-                this.players.total    = 0;
-                this.players.page     = 1;
+                this.players.items = payload.data ?? [];
+                this.players.total = meta.total ?? 0;
+                this.players.page = meta.current_page ?? 1;
+                this.players.perPage = meta.per_page ?? this.players.perPage;
+                this.players.lastPage =
+                    meta.last_page ??
+                    Math.max(1, Math.ceil(this.players.total / this.players.perPage));
+            } catch (e) {
+                console.error(e);
+                this.players.items = [];
+                this.players.total = 0;
+                this.players.page = 1;
                 this.players.lastPage = 1;
-
             } finally {
                 this.players.loading = false;
             }
@@ -87,14 +92,14 @@ export default function adminHub(options = {}) {
 
         nextPage() {
             if (this.players.page < this.players.lastPage) {
-                this.players.page += 1;
+                this.players.page++;
                 this.loadPlayers();
             }
         },
 
         previousPage() {
             if (this.players.page > 1) {
-                this.players.page -= 1;
+                this.players.page--;
                 this.loadPlayers();
             }
         },
@@ -104,44 +109,45 @@ export default function adminHub(options = {}) {
             this.loadPlayers();
         },
 
-        listenForImportEvents() {
-            if (!window.Echo) {
+        /* -----------------------------
+         * Imports / Streams
+         * --------------------------- */
+
+        registerImportListeners() {
+            if (!window.Echo || importListenersRegistered) {
                 return;
             }
 
-            window.Echo.private('admin.imports')
-                .listen(
-                    '.admin.import.output',
-                    (payload) => {
-                        const key = payload.source;
-                        this.ensureStream(key);
+            importListenersRegistered = true;
 
-                        const stream = this.streams[key];
-                        stream.open = true;
+            window.Echo
+                .private('admin.imports')
+                .listen('.admin.import.output', (payload) => {
+                    const key = payload.source;
+                    this.ensureStream(key);
 
-                        if (payload.message?.trim()) {
-                            stream.messages = [
-                                {
-                                    message: payload.message,
-                                    status: payload.status,
-                                    timestamp: payload.timestamp,
-                                },
-                                ...stream.messages,
-                            ];
-                        }
+                    const stream = this.streams[key];
+                    stream.open = true;
 
-                        if (payload.status === 'started') {
-                            stream.running = true;
-                            this.importsBusy = true;
-                        }
-
-                        if (payload.status === 'finished' || payload.status === 'failed') {
-                            stream.running = false;
-                            this.refreshImportMeta(key);
-                            this.importsBusy = this.isAnyImportRunning();
-                        }
+                    if (payload.message?.trim()) {
+                        stream.messages.unshift({
+                            message: payload.message,
+                            status: payload.status,
+                            timestamp: payload.timestamp,
+                        });
                     }
-                )
+
+                    if (payload.status === 'started') {
+                        stream.running = true;
+                        this.importsBusy = true;
+                    }
+
+                    if (payload.status === 'finished' || payload.status === 'failed') {
+                        stream.running = false;
+                        this.refreshImportMeta(key);
+                        this.importsBusy = this.isAnyImportRunning();
+                    }
+                })
                 .listen('.players.available', () => {
                     this.refreshPlayersAvailability();
                 });
@@ -163,7 +169,7 @@ export default function adminHub(options = {}) {
         },
 
         isAnyImportRunning() {
-            return Object.values(this.streams).some((stream) => stream.running);
+            return Object.values(this.streams).some((s) => s.running);
         },
 
         async startImport(key) {
@@ -171,51 +177,52 @@ export default function adminHub(options = {}) {
                 return;
             }
 
-            const importConfig = this.imports.find((item) => item.key === key);
-            if (!importConfig?.run_url) {
+            const config = this.imports.find((i) => i.key === key);
+            if (!config?.run_url) {
                 return;
             }
 
             this.importsBusy = true;
             this.ensureStream(key);
-            this.streams[key].messages = [];
-            this.streams[key].open = true;
-            this.streams[key].running = true;
+
+            const stream = this.streams[key];
+            stream.messages = [];
+            stream.open = true;
+            stream.running = true;
 
             try {
-                const response = await fetch(importConfig.run_url, {
+                const response = await fetch(config.run_url, {
                     method: 'POST',
                     headers: {
                         Accept: 'application/json',
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document
                             .querySelector('meta[name="csrf-token"]')
-                            .getAttribute('content'),
+                            ?.getAttribute('content'),
                     },
                 });
 
                 if (!response.ok) {
-                    throw new Error('Unable to start import');
+                    throw new Error('Failed to start import');
                 }
-            } catch (error) {
-                this.streams[key].messages.push({
-                    message: error.message,
+            } catch (e) {
+                stream.messages.unshift({
+                    message: e.message,
                     status: 'failed',
                     timestamp: new Date().toISOString(),
                 });
-                this.streams[key].running = false;
+
+                stream.running = false;
                 this.importsBusy = this.isAnyImportRunning();
             }
         },
 
         refreshImportMeta(key) {
-            const now = new Date();
-            this.imports = this.imports.map((item) => {
-                if (item.key === key) {
-                    return { ...item, last_run: now.toISOString() };
-                }
-                return item;
-            });
+            const now = new Date().toISOString();
+
+            this.imports = this.imports.map((item) =>
+                item.key === key ? { ...item, last_run: now } : item
+            );
         },
 
         async refreshPlayersAvailability() {
@@ -229,25 +236,22 @@ export default function adminHub(options = {}) {
                 }
 
                 const payload = await response.json();
-                const total = payload.meta?.total ?? payload.data?.length ?? 0;
-                const playersNowAvailable = total > 0;
+                const total = payload.meta?.total ?? 0;
+                const available = total > 0;
 
-                const previousState = this.hasPlayers;
-                this.hasPlayers = playersNowAvailable;
+                const prev = this.hasPlayers;
+                this.hasPlayers = available;
 
-                if (this.hasPlayers && (this.activeTab === 'players' || !previousState)) {
-                    this.players.page = payload.meta?.current_page ?? 1;
-                    this.players.perPage = payload.meta?.per_page ?? this.players.perPage;
-                    this.players.lastPage = payload.meta?.last_page ?? this.players.lastPage;
-                    this.players.total = total;
+                if (available && (!prev || this.activeTab === 'players')) {
                     this.players.items = payload.data ?? [];
+                    this.players.total = total;
                 }
 
-                if (!previousState && !this.hasPlayers) {
+                if (!available) {
                     this.activeTab = 'imports';
                 }
-            } catch (error) {
-                console.error(error);
+            } catch (e) {
+                console.error(e);
             }
         },
     };
