@@ -11,12 +11,13 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
 
 /**
- * Dispatches unique NHL player import jobs for a given team.
+ * Orchestrates a single NHL player import run for a team.
  *
  * Players may appear across multiple seasons or sources (prospects),
- * but each player is dispatched exactly once per job run.
+ * but each player is dispatched exactly once per import run.
  */
 class ImportPlayersJob implements ShouldQueue
 {
@@ -29,11 +30,9 @@ class ImportPlayersJob implements ShouldQueue
     protected string $teamAbbrev;
 
     /**
-     * Track player IDs already dispatched during this job run.
-     *
-     * @var array<int, true>
+     * Unique identifier for this import run.
      */
-    protected array $dispatchedPlayerIds = [];
+    protected string $importRunId;
 
     /**
      * Teams that have relocated and the first season their new abbrev applies.
@@ -44,9 +43,10 @@ class ImportPlayersJob implements ShouldQueue
         'ARI' => ['new' => 'UTA', 'effective' => '20252026'],
     ];
 
-    public function __construct(string $teamAbbrev)
+    public function __construct(string $teamAbbrev, string $importRunId)
     {
         $this->teamAbbrev = $teamAbbrev;
+        $this->importRunId = $importRunId;
     }
 
     public function handle(): void
@@ -70,7 +70,6 @@ class ImportPlayersJob implements ShouldQueue
     protected function getSeasonIds(): array
     {
         $current = current_season_id();
-
         $year1 = substr($current, 0, 4);
 
         return [
@@ -142,15 +141,20 @@ class ImportPlayersJob implements ShouldQueue
             foreach ($data[$group] ?? [] as $player) {
                 $playerId = $player['id'] ?? null;
 
-                if (! $playerId || isset($this->dispatchedPlayerIds[$playerId])) {
+                if (! $playerId) {
                     continue;
                 }
 
-                $this->dispatchedPlayerIds[$playerId] = true;
+                $dedupeKey = "nhl-import:{$this->importRunId}:player:{$playerId}";
+
+                // add() returns false if this player was already seen in this run
+                if (! Cache::add($dedupeKey, true, now()->addHours(2))) {
+                    continue;
+                }
 
                 $fullName = ($player['firstName']['default'] ?? 'Player')
                     . ' '
-                    . ($player['lastName']['default'] ?? $playerId);
+                    . ($player['lastName']['default'] ?? (string) $playerId);
 
                 $position = $player['positionCode'] ?? '';
 
@@ -160,7 +164,10 @@ class ImportPlayersJob implements ShouldQueue
                     'started'
                 );
 
-                ImportNHLPlayerJob::dispatch($playerId, $isProspect);
+                ImportNHLPlayerJob::dispatch(
+                    $playerId,
+                    $isProspect
+                );
             }
         }
     }
