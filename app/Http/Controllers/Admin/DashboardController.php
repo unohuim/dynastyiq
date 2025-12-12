@@ -40,6 +40,7 @@ class DashboardController extends Controller
 
         $unmatchedPlayersCount = FantraxPlayer::query()->whereNull('player_id')->count();
         $hasPlayers = Player::query()->exists();
+        $hasFantraxPlayers = FantraxPlayer::query()->exists();
 
         $events = collect(Schedule::events())->map(function ($event) {
             return [
@@ -55,6 +56,7 @@ class DashboardController extends Controller
             'unmatchedPlayersCount' => $unmatchedPlayersCount,
             'events' => $events,
             'hasPlayers' => $hasPlayers,
+            'hasFantraxPlayers' => $hasFantraxPlayers,
         ]);
     }
 

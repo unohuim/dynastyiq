@@ -10,5 +10,6 @@
         'unmatchedPlayersCount' => $unmatchedPlayersCount,
         'events' => $events,
         'hasPlayers' => $hasPlayers,
+        'hasFantraxPlayers' => $hasFantraxPlayers,
     ])
 </x-app-layout>
