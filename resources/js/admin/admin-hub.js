@@ -119,38 +119,46 @@ export default function adminHub(options = {}) {
                 return;
             }
 
-            window.Echo.private('admin.imports').listen(
-                '.admin.import.output',
-                (payload) => {
-                    const key = payload.source;
-                    this.ensureStream(key);
+            window.Echo.private('admin.imports')
+                .listen(
+                    '.admin.import.output',
+                    (payload) => {
+                        const key = payload.source;
+                        this.ensureStream(key);
 
-                    const stream = this.streams[key];
-                    stream.open = true;
+                        const stream = this.streams[key];
+                        stream.open = true;
 
-                    if (payload.message?.trim()) {
-                        stream.messages = [
-                            {
-                                message: payload.message,
-                                status: payload.status,
-                                timestamp: payload.timestamp,
-                            },
-                            ...stream.messages,
-                        ];
+                        if (payload.message?.trim()) {
+                            stream.messages = [
+                                {
+                                    message: payload.message,
+                                    status: payload.status,
+                                    timestamp: payload.timestamp,
+                                },
+                                ...stream.messages,
+                            ];
+                        }
+
+                        if (payload.status === 'started') {
+                            stream.running = true;
+                            this.importsBusy = true;
+                        }
+
+                        if (payload.status === 'finished' || payload.status === 'failed') {
+                            stream.running = false;
+                            this.refreshImportMeta(key);
+                            this.importsBusy = this.isAnyImportRunning();
+                        }
+                    }
+                )
+                .listen('.players.available', () => {
+                    if (!window.Livewire) {
+                        return;
                     }
 
-                    if (payload.status === 'started') {
-                        stream.running = true;
-                        this.importsBusy = true;
-                    }
-
-                    if (payload.status === 'finished' || payload.status === 'failed') {
-                        stream.running = false;
-                        this.refreshImportMeta(key);
-                        this.importsBusy = this.isAnyImportRunning();
-                    }
-                }
-            );
+                    window.Livewire.all().forEach((component) => component.call('$refresh'));
+                });
         },
 
         ensureStream(key) {
