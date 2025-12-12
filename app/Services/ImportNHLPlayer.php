@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Events\ImportStreamEvent;
 use App\Models\Player;
 use App\Models\Stat;
 use App\Traits\HasAPITrait;
@@ -49,13 +48,6 @@ class ImportNHLPlayer
         $player->hero_image_url        = $data['heroImage'] ?? null;
 
         $player->save();
-
-
-        ImportStreamEvent::dispatch(
-            'nhl',
-            "Importing {$player->full_name}, {$player->position} – {$player->teamAbbrev}",
-            'started'
-        );
 
         $this->importStats($player, $data['seasonTotals'] ?? []);
     }
