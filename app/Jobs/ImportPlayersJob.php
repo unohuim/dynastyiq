@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Jobs\ImportNHLPlayerJob;
+use App\Events\ImportStreamEvent;
 use App\Traits\HasAPITrait;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -51,11 +52,15 @@ class ImportPlayersJob implements ShouldQueue
      */
     public function handle(): void
     {
+        ImportStreamEvent::dispatch('nhl', "Starting player import for team {$this->teamAbbrev}", 'started');
+
         [$currentSeason, $previousSeason] = $this->getSeasonIds();
 
         $this->importSeasonRoster($currentSeason);
         $this->importSeasonRoster($previousSeason);
         $this->importProspects();
+
+        ImportStreamEvent::dispatch('nhl', "Finished player import for team {$this->teamAbbrev}", 'finished');
     }
 
     /**
@@ -94,6 +99,12 @@ class ImportPlayersJob implements ShouldQueue
     protected function importSeasonRoster(string $seasonId): void
     {
         $team = $this->resolveTeamForSeason($this->teamAbbrev, $seasonId);
+
+        ImportStreamEvent::dispatch(
+            'nhl',
+            "Fetching roster for {$team} season {$seasonId}",
+            'started'
+        );
     
         $endpoint = $seasonId === $this->getCurrentSeasonId()
             ? 'roster_current'
@@ -116,8 +127,14 @@ class ImportPlayersJob implements ShouldQueue
     
             throw $e;
         }
-    
+
         $this->dispatchGroupedPlayers($players);
+
+        ImportStreamEvent::dispatch(
+            'nhl',
+            "Dispatched roster player imports for {$team} season {$seasonId}",
+            'finished'
+        );
     }
 
 
@@ -128,9 +145,13 @@ class ImportPlayersJob implements ShouldQueue
      */
     protected function importProspects(): void
     {
+        ImportStreamEvent::dispatch('nhl', "Fetching prospects for {$this->teamAbbrev}", 'started');
+
         $prospects = $this->getAPIData('nhl', 'prospects', ['teamAbbrev' => $this->teamAbbrev]);
 
         $this->dispatchGroupedPlayers($prospects, isProspect: true);
+
+        ImportStreamEvent::dispatch('nhl', "Dispatched prospect imports for {$this->teamAbbrev}", 'finished');
     }
 
     /**
