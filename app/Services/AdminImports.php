@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Jobs\RunImportCommandJob;
-use Illuminate\Bus\PendingBatch;
+use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 
 class AdminImports
@@ -20,16 +20,35 @@ class AdminImports
         ]);
     }
 
-    public function dispatch(string $key): PendingBatch
+    public function dispatch(string $key): Batch
     {
-        $source = $this->sources()->firstWhere('key', $key);
-        abort_unless($source, 404);
+        $sources = $this->sources()->keyBy('key');
 
-        return Bus::batch([
-            new RunImportCommandJob($source['command'], $source['options'] ?? [], $source['key']),
-        ])->name("manual-{$key}-import")
+        abort_unless($sources->has('nhl') && $sources->has('fantrax') && $sources->has('contracts'), 404);
+
+        $players = Bus::batch([
+            new RunImportCommandJob($sources['nhl']['command'], $sources['nhl']['options'] ?? [], $sources['nhl']['key']),
+        ])->name('manual-nhl-import')
             ->allowFailures()
             ->onQueue('default')
+            ->then(function (Batch $batch) use ($sources) {
+                Bus::batch([
+                    new RunImportCommandJob($sources['fantrax']['command'], $sources['fantrax']['options'] ?? [], $sources['fantrax']['key']),
+                ])->name('manual-fantrax-import')
+                    ->allowFailures()
+                    ->onQueue('default')
+                    ->then(function (Batch $fantraxBatch) use ($sources) {
+                        Bus::batch([
+                            new RunImportCommandJob($sources['contracts']['command'], $sources['contracts']['options'] ?? [], $sources['contracts']['key']),
+                        ])->name('manual-contracts-import')
+                            ->allowFailures()
+                            ->onQueue('default')
+                            ->dispatch();
+                    })
+                    ->dispatch();
+            })
             ->dispatch();
+
+        return $players;
     }
 }
