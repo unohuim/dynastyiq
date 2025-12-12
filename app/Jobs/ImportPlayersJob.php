@@ -162,10 +162,10 @@ class ImportPlayersJob implements ShouldQueue
 
                 // add() returns false if this player was already seen in this run
                 if (! Cache::add($dedupeKey, true, 3500)) {
-                    \Log::info('Failed to add cache', ['player'=>$fullName]);
+                    //\Log::info('Failed to add cache', ['player'=>$fullName]);
                     continue;
                 }
-                \Log::info('Added cache', ['player'=>$fullName]);
+                //\Log::info('Added cache', ['player'=>$fullName]);
 
                 
                 ImportStreamEvent::dispatch(
