@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use App\Events\ImportStreamEvent;
 
 /**
  * Dispatches individual NHL player import jobs for a given team
@@ -156,6 +157,18 @@ class ImportPlayersJob implements ShouldQueue
     {
         foreach (['forwards', 'defensemen', 'goalies'] as $group) {
             foreach ($data[$group] ?? [] as $player) {
+
+
+                $fullName = $player ?? $player['firstName']['default'] . " " . $player['lastName']['default'] : "Player {$player['id']} ";
+                $position = $player ?? $player['positionCode'] : "";
+                // $teamAbbrev = $player??  'N/A';
+        
+                ImportStreamEvent::dispatch(
+                    'nhl',
+                    "Importing {$fullName} {$position}",
+                    'started'
+                );
+                
                 ImportNHLPlayerJob::dispatch($player['id'], $isProspect);
             }
         }
