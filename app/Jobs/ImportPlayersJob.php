@@ -145,21 +145,23 @@ class ImportPlayersJob implements ShouldQueue
                     continue;
                 }
 
-                $dedupeKey = "nhl-import:{$this->importRunId}:player:{$playerId}";
-
-                // add() returns false if this player was already seen in this run
-                if (! Cache::add($dedupeKey, true, 3500)) {
-                    \Log::info('Failed to add cache', ['key'=>$dedupeKey]);
-                    continue;
-                }
-                \Log::info('Added cache', ['key'=>$dedupeKey]);
-
                 $fullName = ($player['firstName']['default'] ?? 'Player')
                     . ' '
                     . ($player['lastName']['default'] ?? (string) $playerId);
 
                 $position = $player['positionCode'] ?? '';
 
+                
+                $dedupeKey = "nhl-import:{$this->importRunId}:player:{$playerId}";
+
+                // add() returns false if this player was already seen in this run
+                if (! Cache::add($dedupeKey, true, 3500)) {
+                    \Log::info('Failed to add cache', ['player'=>$fullName]);
+                    continue;
+                }
+                \Log::info('Added cache', ['player'=>fullName]);
+
+                
                 ImportStreamEvent::dispatch(
                     'nhl',
                     "Importing {$fullName}, {$position} - {$this->teamAbbrev}",
