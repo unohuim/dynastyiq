@@ -1,3 +1,5 @@
+let importListenersRegistered = false;
+
 export default function adminHub(options = {}) {
     const playersAvailable = Boolean(options.hasPlayers);
 
