@@ -37,8 +37,10 @@ class ImportFantraxPlayerJob implements ShouldQueue
     public function handle(): void
     {
         $fantraxId = $this->entry['fantraxId'] ?? 'unknown';
+        $fantraxName = $this->entry['name'] ?? 'no-name';
 
-        ImportStreamEvent::dispatch('fantrax', "Importing Fantrax player {$fantraxId}", 'started');
+        ImportStreamEvent::dispatch('fantrax', "Importing Fantrax player {$fantraxId} -  {$fantraxName}", 'started');
+        
 
         try {
             (new ImportFantraxPlayer())->syncOne($this->entry);
