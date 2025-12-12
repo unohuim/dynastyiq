@@ -23,16 +23,18 @@
                     title="Initialization"
                     title-class="text-lg font-semibold"
                     is-accordian="true"
-                    x-data="adminInitialization({
-                        initialized: {{ $initialized ? 'true' : 'false' }},
-                        endpoints: {
-                            start: '{{ route('admin.initialize.run') }}',
-                            status: '{{ route('admin.initialize.index') }}',
-                        }
-                    })"
-                    x-init="bootstrap()"
                 >
-                    <div class="space-y-4">
+                    <div
+                        class="space-y-4"
+                        x-data="adminInitialization({
+                            initialized: {{ $initialized ? 'true' : 'false' }},
+                            endpoints: {
+                                start: '{{ route('admin.initialize.run') }}',
+                                status: '{{ route('admin.initialize.index') }}',
+                            }
+                        })"
+                        x-init="init()"
+                    >
                         <div class="flex items-start justify-between">
                             <div>
                                 <div class="text-gray-800 font-semibold" x-show="!initialized">Bring platform online</div>
