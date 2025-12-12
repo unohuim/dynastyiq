@@ -3,7 +3,11 @@
 >
     <div
         class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6"
-        x-data="adminHub({ imports: @js($imports), hasPlayers: {{ $hasPlayers ? 'true' : 'false' }} })"
+        x-data="adminHub({
+            imports: @js($imports),
+            hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
+            hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
+        })"
         x-init="init()"
         x-cloak
     >
@@ -19,14 +23,16 @@
                         NHL
                     </button>
                 </template>
-                <button
-                    type="button"
-                    class="pb-3 text-sm font-semibold border-b-2"
-                    @click="setTab('fantrax')"
-                    :class="activeTab === 'fantrax' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                >
-                    Fantrax
-                </button>
+                <template x-if="hasFantrax">
+                    <button
+                        type="button"
+                        class="pb-3 text-sm font-semibold border-b-2"
+                        @click="setTab('fantrax')"
+                        :class="activeTab === 'fantrax' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                    >
+                        Fantrax
+                    </button>
+                </template>
                 <button
                     type="button"
                     class="pb-3 text-sm font-semibold border-b-2"

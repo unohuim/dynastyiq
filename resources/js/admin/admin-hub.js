@@ -1,13 +1,18 @@
 let importListenersRegistered = false;
 
 export default function adminHub(options = {}) {
-    const playersAvailable = Boolean(options.hasPlayers);
+    const nhlAvailable = Boolean(options.hasPlayers);
+    const fantraxAvailable = Boolean(options.hasFantrax);
+
+    const initialTab = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'imports';
+    const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
 
     return {
-        activeTab: playersAvailable ? 'nhl' : 'fantrax',
+        activeTab: initialTab,
         imports: options.imports ?? [],
-        activeSource: playersAvailable ? 'nhl' : 'fantrax',
-        hasPlayers: playersAvailable,
+        activeSource: initialSource,
+        hasPlayers: nhlAvailable,
+        hasFantrax: fantraxAvailable,
 
         streams: {},
         importsBusy: false,
@@ -40,6 +45,10 @@ export default function adminHub(options = {}) {
                 return;
             }
 
+            if (tab === 'fantrax' && !this.hasFantrax) {
+                return;
+            }
+
             this.activeTab = tab;
 
             if (tab === 'nhl' || tab === 'fantrax') {
@@ -47,7 +56,10 @@ export default function adminHub(options = {}) {
                 this.players.page = 1;
             }
 
-            if ((tab === 'nhl' && this.hasPlayers) || tab === 'fantrax') {
+            if (
+                (tab === 'nhl' && this.hasPlayers) ||
+                (tab === 'fantrax' && this.hasFantrax)
+            ) {
                 this.loadPlayers();
             }
         },
@@ -57,6 +69,18 @@ export default function adminHub(options = {}) {
          * --------------------------- */
 
         async loadPlayers() {
+            if (
+                (this.activeSource === 'nhl' && !this.hasPlayers) ||
+                (this.activeSource === 'fantrax' && !this.hasFantrax)
+            ) {
+                this.players.items = [];
+                this.players.total = 0;
+                this.players.page = 1;
+                this.players.lastPage = 1;
+
+                return;
+            }
+
             this.players.loading = true;
 
             try {
@@ -244,32 +268,65 @@ export default function adminHub(options = {}) {
 
         async refreshPlayersAvailability() {
             try {
-                const response = await fetch('/admin/api/players?per_page=1', {
+                const [nhlAvailable, fantraxAvailable] = await Promise.all([
+                    this.sourceHasPlayers('nhl'),
+                    this.sourceHasPlayers('fantrax'),
+                ]);
+
+                const prevNhl = this.hasPlayers;
+                const prevFantrax = this.hasFantrax;
+
+                this.hasPlayers = nhlAvailable;
+                this.hasFantrax = fantraxAvailable;
+
+                if (this.activeTab === 'nhl' && !nhlAvailable) {
+                    if (fantraxAvailable) {
+                        this.activeTab = 'fantrax';
+                        this.activeSource = 'fantrax';
+                        this.players.page = 1;
+                        this.loadPlayers();
+                    } else {
+                        this.activeTab = 'imports';
+                    }
+                } else if (this.activeTab === 'fantrax' && !fantraxAvailable) {
+                    if (nhlAvailable) {
+                        this.activeTab = 'nhl';
+                        this.activeSource = 'nhl';
+                        this.players.page = 1;
+                        this.loadPlayers();
+                    } else {
+                        this.activeTab = 'imports';
+                    }
+                } else if (this.activeTab === 'nhl' && nhlAvailable && !prevNhl) {
+                    this.players.page = 1;
+                    this.loadPlayers();
+                } else if (this.activeTab === 'fantrax' && fantraxAvailable && !prevFantrax) {
+                    this.players.page = 1;
+                    this.loadPlayers();
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        },
+
+        async sourceHasPlayers(source) {
+            try {
+                const params = new URLSearchParams({ per_page: 1, source });
+                const response = await fetch(`/admin/api/players?${params.toString()}`, {
                     headers: { Accept: 'application/json' },
                 });
 
                 if (!response.ok) {
-                    return;
+                    return false;
                 }
 
                 const payload = await response.json();
                 const total = payload.meta?.total ?? 0;
-                const available = total > 0;
 
-                const prev = this.hasPlayers;
-                this.hasPlayers = available;
-
-                if (available && (!prev || this.activeTab === 'nhl')) {
-                    this.players.items = payload.data ?? [];
-                    this.players.total = total;
-                }
-
-                if (!available && this.activeTab === 'nhl') {
-                    this.activeTab = 'fantrax';
-                    this.activeSource = 'fantrax';
-                }
+                return total > 0;
             } catch (e) {
                 console.error(e);
+                return false;
             }
         },
     };
