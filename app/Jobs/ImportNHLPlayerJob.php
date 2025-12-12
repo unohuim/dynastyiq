@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Classes\ImportNHLPlayer;
+use App\Events\ImportStreamEvent;
 use App\Traits\HasAPITrait;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -40,7 +41,11 @@ class ImportNHLPlayerJob implements ShouldQueue
      */
     public function handle(): void
     {
+        ImportStreamEvent::dispatch('nhl', "Importing player {$this->playerId}", 'started');
+
         (new ImportNHLPlayer())->import($this->playerId, $this->isProspect);
+
+        ImportStreamEvent::dispatch('nhl', "Finished importing player {$this->playerId}", 'finished');
     }
 
 

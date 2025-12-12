@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use Illuminate\Bus\Batchable;
 use App\Services\ImportCapWagesPlayer;
+use App\Events\ImportStreamEvent;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Foundation\Queue\Queueable;
@@ -34,6 +35,8 @@ class ImportCapWagesPlayerJob implements ShouldQueue
 
     public function handle(): void
     {
+        ImportStreamEvent::dispatch('capwages', "Importing CapWages player {$this->slug}", 'started');
+
         try {
             (new ImportCapWagesPlayer())->syncBySlug($this->slug, $this->all);
         } catch (PlayerNotFoundException $e) {
@@ -52,6 +55,8 @@ class ImportCapWagesPlayerJob implements ShouldQueue
             Log::error("Unexpected error importing player {$this->slug}: " . $e->getMessage());
             throw $e;
         }
+
+        ImportStreamEvent::dispatch('capwages', "Finished importing CapWages player {$this->slug}", 'finished');
     }
 
     public function tags(): array

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\ImportFantraxPlayer;
+use App\Events\ImportStreamEvent;
 use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -35,6 +36,10 @@ class ImportFantraxPlayerJob implements ShouldQueue
 
     public function handle(): void
     {
+        $fantraxId = $this->entry['fantraxId'] ?? 'unknown';
+
+        ImportStreamEvent::dispatch('fantrax', "Importing Fantrax player {$fantraxId}", 'started');
+
         try {
             (new ImportFantraxPlayer())->syncOne($this->entry);
         } catch (\Throwable $e) {
@@ -45,6 +50,8 @@ class ImportFantraxPlayerJob implements ShouldQueue
             ]);
             throw $e;
         }
+
+        ImportStreamEvent::dispatch('fantrax', "Finished importing Fantrax player {$fantraxId}", 'finished');
     }
 
     public function tags(): array

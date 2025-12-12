@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Services\ImportCapWages;
 use App\Jobs\ImportCapWagesPlayerJob;
+use App\Events\ImportStreamEvent;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -34,6 +35,8 @@ class ImportCapWagesJob implements ShouldQueue
 
     public function handle(): void
     {
+        ImportStreamEvent::dispatch('capwages', "Fetching CapWages page {$this->page}", 'started');
+
         try {
             $service  = new ImportCapWages();
             $response = $service->fetchPlayersPage($this->page, $this->perPage);
@@ -41,7 +44,9 @@ class ImportCapWagesJob implements ShouldQueue
             foreach ($response['data'] ?? [] as $playerInfo) {
                 $slug = $playerInfo['slug'] ?? null;
                 if ($slug) {
+                    ImportStreamEvent::dispatch('capwages', "Dispatching CapWages player {$slug}", 'started');
                     ImportCapWagesPlayerJob::dispatch($slug, $this->all);
+                    ImportStreamEvent::dispatch('capwages', "Dispatched CapWages player {$slug}", 'finished');
                 }
             }
         } catch (\Throwable $e) {
@@ -53,6 +58,8 @@ class ImportCapWagesJob implements ShouldQueue
             ]);
             throw $e;
         }
+
+        ImportStreamEvent::dispatch('capwages', "Finished CapWages page {$this->page}", 'finished');
     }
 
     public function tags(): array
