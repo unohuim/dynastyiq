@@ -159,8 +159,8 @@ class ImportPlayersJob implements ShouldQueue
             foreach ($data[$group] ?? [] as $player) {
 
 
-                $fullName = $player ?? $player['firstName']['default'] . " " . $player['lastName']['default'] : "Player {$player['id']} ";
-                $position = $player ?? $player['positionCode'] : "";
+                $fullName = $player ? $player['firstName']['default'] . " " . $player['lastName']['default'] : "Player {$player['id']} ";
+                $position = $player ? $player['positionCode'] : "";
                 // $teamAbbrev = $player??  'N/A';
         
                 ImportStreamEvent::dispatch(
