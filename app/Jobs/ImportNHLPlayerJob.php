@@ -48,11 +48,11 @@ class ImportNHLPlayerJob implements ShouldQueue
         $position = $player?->position ?? 'N/A';
         $teamAbbrev = $player?->team_abbrev ?? 'N/A';
 
-        ImportStreamEvent::dispatch(
-            'nhl',
-            "Importing {$fullName}, {$position} – {$teamAbbrev}",
-            'started'
-        );
+        // ImportStreamEvent::dispatch(
+        //     'nhl',
+        //     "Importing {$fullName}, {$position} – {$teamAbbrev}",
+        //     'started'
+        // );
 
         (new ImportNHLPlayer())->import($this->playerId, $this->isProspect);
     }
