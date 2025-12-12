@@ -44,9 +44,8 @@ class ImportCapWagesJob implements ShouldQueue
             foreach ($response['data'] ?? [] as $playerInfo) {
                 $slug = $playerInfo['slug'] ?? null;
                 if ($slug) {
-                    ImportStreamEvent::dispatch('capwages', "Dispatching CapWages player {$slug}", 'started');
+                    ImportStreamEvent::dispatch('capwages', "Importing CapWages player {$slug}", 'started');
                     ImportCapWagesPlayerJob::dispatch($slug, $this->all);
-                    ImportStreamEvent::dispatch('capwages', "Dispatched CapWages player {$slug}", 'finished');
                 }
             }
         } catch (\Throwable $e) {
@@ -58,8 +57,6 @@ class ImportCapWagesJob implements ShouldQueue
             ]);
             throw $e;
         }
-
-        ImportStreamEvent::dispatch('capwages', "Finished CapWages page {$this->page}", 'finished');
     }
 
     public function tags(): array

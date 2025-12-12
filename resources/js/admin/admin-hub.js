@@ -127,11 +127,17 @@ export default function adminHub(options = {}) {
 
                     const stream = this.streams[key];
                     stream.open = true;
-                    stream.messages.push({
-                        message: payload.message,
-                        status: payload.status,
-                        timestamp: payload.timestamp,
-                    });
+
+                    if (payload.message?.trim()) {
+                        stream.messages = [
+                            {
+                                message: payload.message,
+                                status: payload.status,
+                                timestamp: payload.timestamp,
+                            },
+                            ...stream.messages,
+                        ];
+                    }
 
                     if (payload.status === 'started') {
                         stream.running = true;

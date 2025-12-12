@@ -17,12 +17,12 @@ class ImportBroadcast
 
     public function started(): void
     {
-        broadcast(new ImportStreamEvent($this->source, 'Starting import...', 'started', $this->batchId));
+        broadcast(new ImportStreamEvent($this->source, 'Importing data...', 'started', $this->batchId));
     }
 
     public function finished(): void
     {
-        broadcast(new ImportStreamEvent($this->source, 'Import completed', 'finished', $this->batchId));
+        broadcast(new ImportStreamEvent($this->source, '', 'finished', $this->batchId));
     }
 
     public function failed(Throwable $throwable): void
