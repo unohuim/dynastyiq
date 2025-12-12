@@ -7,7 +7,6 @@ use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
 use App\Models\Player;
 use App\Services\AdminImports;
-use App\Services\PlatformState;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schedule;
@@ -15,7 +14,7 @@ use Illuminate\Support\Str;
 
 class DashboardController extends Controller
 {
-    public function __construct(private AdminImports $imports, private PlatformState $platformState)
+    public function __construct(private AdminImports $imports)
     {
     }
 
@@ -24,10 +23,6 @@ class DashboardController extends Controller
         if ($request->wantsJson() && $request->query('section') === 'players') {
             return $this->players($request);
         }
-
-        $seeded = $this->platformState->seeded();
-        $initialized = $this->platformState->initialized();
-        $upToDate = $this->platformState->upToDate();
 
         $imports = $this->imports->sources()->map(function (array $source) {
             $lastRun = ImportRun::query()
@@ -44,6 +39,7 @@ class DashboardController extends Controller
         });
 
         $unmatchedPlayersCount = FantraxPlayer::query()->whereNull('player_id')->count();
+        $hasPlayers = Player::query()->exists();
 
         $events = collect(Schedule::events())->map(function ($event) {
             return [
@@ -55,12 +51,10 @@ class DashboardController extends Controller
         });
 
         return view('admin.dashboard', [
-            'seeded' => $seeded,
-            'initialized' => $initialized,
-            'upToDate' => $upToDate,
             'imports' => $imports,
             'unmatchedPlayersCount' => $unmatchedPlayersCount,
             'events' => $events,
+            'hasPlayers' => $hasPlayers,
         ]);
     }
 

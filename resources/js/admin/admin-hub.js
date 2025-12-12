@@ -1,8 +1,10 @@
 export default function adminHub(options = {}) {
+    const playersAvailable = Boolean(options.hasPlayers);
+
     return {
-        activeTab: 'players',
+        activeTab: playersAvailable ? 'players' : 'imports',
         imports: options.imports ?? [],
-        initialization: { initialized: options.initialized, initializing: false },
+        hasPlayers: playersAvailable,
 
         streams: {},
         importsBusy: false,
@@ -19,26 +21,18 @@ export default function adminHub(options = {}) {
         },
 
         async init() {
-            this.initialization.initialized = Boolean(this.initialization.initialized);
-            this.bindBatchEvents();
             this.listenForImportEvents();
-
-            window.addEventListener('admin:init-started', () => {
-                this.initialization.initializing = true;
-            });
-
-            window.addEventListener('admin:init-finished', () => {
-                this.initialization.initializing = false;
-                this.initialization.initialized = true;
-            });
-
-            this.setTab('players');
+            this.setTab(this.activeTab);
         },
 
         setTab(tab) {
+            if (tab === 'players' && !this.hasPlayers) {
+                return;
+            }
+
             this.activeTab = tab;
 
-            if (tab === 'players') {
+            if (tab === 'players' && this.hasPlayers) {
                 return this.loadPlayers();
             }
 
@@ -108,12 +102,6 @@ export default function adminHub(options = {}) {
             this.loadPlayers();
         },
 
-        bindBatchEvents() {
-            window.addEventListener('admin-batch:state', (event) => {
-                this.importsBusy = Boolean(event.detail?.active);
-            });
-        },
-
         listenForImportEvents() {
             if (!window.Echo) {
                 return;
@@ -153,11 +141,7 @@ export default function adminHub(options = {}) {
                     }
                 )
                 .listen('.players.available', () => {
-                    if (!window.Livewire) {
-                        return;
-                    }
-
-                    window.Livewire.all().forEach((component) => component.call('$refresh'));
+                    this.refreshPlayersAvailability();
                 });
         },
 
@@ -230,6 +214,39 @@ export default function adminHub(options = {}) {
                 }
                 return item;
             });
+        },
+
+        async refreshPlayersAvailability() {
+            try {
+                const response = await fetch('/admin/api/players?per_page=1', {
+                    headers: { Accept: 'application/json' },
+                });
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const payload = await response.json();
+                const total = payload.meta?.total ?? payload.data?.length ?? 0;
+                const playersNowAvailable = total > 0;
+
+                const previousState = this.hasPlayers;
+                this.hasPlayers = playersNowAvailable;
+
+                if (this.hasPlayers && (this.activeTab === 'players' || !previousState)) {
+                    this.players.page = payload.meta?.current_page ?? 1;
+                    this.players.perPage = payload.meta?.per_page ?? this.players.perPage;
+                    this.players.lastPage = payload.meta?.last_page ?? this.players.lastPage;
+                    this.players.total = total;
+                    this.players.items = payload.data ?? [];
+                }
+
+                if (!previousState && !this.hasPlayers) {
+                    this.activeTab = 'imports';
+                }
+            } catch (error) {
+                console.error(error);
+            }
         },
     };
 }
