@@ -56,7 +56,6 @@ class ImportCapWagesPlayerJob implements ShouldQueue
             throw $e;
         }
 
-        ImportStreamEvent::dispatch('capwages', "Finished importing CapWages player {$this->slug}", 'finished');
     }
 
     public function tags(): array

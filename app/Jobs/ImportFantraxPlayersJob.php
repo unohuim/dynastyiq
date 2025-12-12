@@ -32,12 +32,10 @@ class ImportFantraxPlayersJob implements ShouldQueue
      */
     public function handle(): void
     {
-        ImportStreamEvent::dispatch('fantrax', 'Starting Fantrax players import', 'started');
+        ImportStreamEvent::dispatch('fantrax', 'Importing Fantrax players', 'started');
 
         // Delegate to the ImportFantraxPlayers class
         (new ImportFantraxPlayers())->import();
-
-        ImportStreamEvent::dispatch('fantrax', 'Finished Fantrax players import', 'finished');
     }
 
 

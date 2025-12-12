@@ -52,7 +52,7 @@ class ImportPlayersJob implements ShouldQueue
      */
     public function handle(): void
     {
-        ImportStreamEvent::dispatch('nhl', "Starting player import for team {$this->teamAbbrev}", 'started');
+        ImportStreamEvent::dispatch('nhl', "Importing players for team {$this->teamAbbrev}", 'started');
 
         [$currentSeason, $previousSeason] = $this->getSeasonIds();
 
@@ -60,7 +60,6 @@ class ImportPlayersJob implements ShouldQueue
         $this->importSeasonRoster($previousSeason);
         $this->importProspects();
 
-        ImportStreamEvent::dispatch('nhl', "Finished player import for team {$this->teamAbbrev}", 'finished');
     }
 
     /**
@@ -129,12 +128,6 @@ class ImportPlayersJob implements ShouldQueue
         }
 
         $this->dispatchGroupedPlayers($players);
-
-        ImportStreamEvent::dispatch(
-            'nhl',
-            "Dispatched roster player imports for {$team} season {$seasonId}",
-            'finished'
-        );
     }
 
 
@@ -150,8 +143,6 @@ class ImportPlayersJob implements ShouldQueue
         $prospects = $this->getAPIData('nhl', 'prospects', ['teamAbbrev' => $this->teamAbbrev]);
 
         $this->dispatchGroupedPlayers($prospects, isProspect: true);
-
-        ImportStreamEvent::dispatch('nhl', "Dispatched prospect imports for {$this->teamAbbrev}", 'finished');
     }
 
     /**

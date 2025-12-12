@@ -166,7 +166,7 @@
                                             <div class="text-gray-400">Awaiting output...</div>
                                         </template>
                                         <template x-for="(entry, idx) in streams['{{ $import['key'] }}']?.messages" :key="idx">
-                                            <div class="whitespace-pre-wrap" x-text="`[${entry.status}] ${entry.message}`"></div>
+                                            <div class="whitespace-pre-wrap" x-text="entry.message"></div>
                                         </template>
                                     </div>
                                 </div>

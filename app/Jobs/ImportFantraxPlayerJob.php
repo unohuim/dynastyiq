@@ -50,8 +50,6 @@ class ImportFantraxPlayerJob implements ShouldQueue
             ]);
             throw $e;
         }
-
-        ImportStreamEvent::dispatch('fantrax', "Finished importing Fantrax player {$fantraxId}", 'finished');
     }
 
     public function tags(): array
