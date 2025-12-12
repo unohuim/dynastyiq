@@ -159,12 +159,12 @@ class ImportPlayersJob implements ShouldQueue
                     \Log::info('Failed to add cache', ['player'=>$fullName]);
                     continue;
                 }
-                \Log::info('Added cache', ['player'=>fullName]);
+                \Log::info('Added cache', ['player'=>$fullName]);
 
                 
                 ImportStreamEvent::dispatch(
                     'nhl',
-                    "Importing {$fullName}, {$position} - {$this->teamAbbrev}",
+                    "Importing (from ImportPlayersJob): {$fullName}, {$position} - {$this->teamAbbrev}",
                     'started'
                 );
 
