@@ -93,20 +93,33 @@ class ImportPlayersJob implements ShouldQueue
      */
     protected function importSeasonRoster(string $seasonId): void
     {
+        $team = $this->resolveTeamForSeason($this->teamAbbrev, $seasonId);
+    
         $endpoint = $seasonId === $this->getCurrentSeasonId()
             ? 'roster_current'
             : 'roster_season';
-
-        $params = ['teamAbbrev' => $this->teamAbbrev];
-
+    
+        $params = ['teamAbbrev' => $team];
+    
         if ($endpoint === 'roster_season') {
             $params['seasonId'] = $seasonId;
         }
-
-        $players = $this->getAPIData('nhl', $endpoint, $params);
-
+    
+        try {
+            $players = $this->getAPIData('nhl', $endpoint, $params);
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            if ($e->response && $e->response->status() === 404) {
+                // Tell the stream / batch what happened, but do NOT fail the entire import
+                info("Skipping roster import for {$this->teamAbbrev} season {$seasonId} — API returned 404");
+                return;
+            }
+    
+            throw $e;
+        }
+    
         $this->dispatchGroupedPlayers($players);
     }
+
 
     /**
      * Import all prospects for the current team.
