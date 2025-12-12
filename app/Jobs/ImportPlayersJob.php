@@ -51,6 +51,12 @@ class ImportPlayersJob implements ShouldQueue
 
     public function handle(): void
     {
+        \Log::info('ImportPlayersJob started', [
+            'team' => $this->teamAbbrev,
+            'run'  => $this->importRunId,
+            'job'  => spl_object_id($this),
+        ]);
+        
         ImportStreamEvent::dispatch(
             'nhl',
             "Importing players for team {$this->teamAbbrev}",
