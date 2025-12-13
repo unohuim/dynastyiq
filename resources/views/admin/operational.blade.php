@@ -162,11 +162,10 @@
                 <div x-show="activeTab === 'imports'" x-cloak class="space-y-5">
                     <div class="flex items-center justify-between">
                         <div>
-                            <div class="text-lg font-semibold text-gray-800">Data Imports</div>
-                            <p class="text-sm text-gray-600">Run imports without leaving the page. Output streams in real time.</p>
-                        </div>
-                        <div class="text-xs text-gray-600" x-show="importsBusy">Imports running...</div>
+                        <div class="text-lg font-semibold text-gray-800">Data Imports</div>
+                        <p class="text-sm text-gray-600">Run imports without leaving the page. Output streams in real time.</p>
                     </div>
+                </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         @foreach($imports as $import)
@@ -179,7 +178,7 @@
                                     <x-primary-button
                                         type="button"
                                         x-on:click="startImport('{{ $import['key'] }}')"
-                                        x-bind:disabled="importsBusy || (streams['{{ $import['key'] }}']?.running ?? false)"
+                                        x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
                                     >
                                         Run Now
                                     </x-primary-button>

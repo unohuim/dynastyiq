@@ -6,6 +6,7 @@ namespace App\Jobs;
 
 use App\Events\PlayersAvailable;
 use App\Models\ImportRun;
+use App\Models\FantraxPlayer;
 use App\Models\Player;
 use App\Support\ImportBroadcast;
 use Illuminate\Bus\Batchable;
@@ -36,14 +37,24 @@ class RunImportCommandJob implements ShouldQueue
     {
         $broadcast = new ImportBroadcast($this->source ?: $this->command, $this->batchId);
         $shouldDetectPlayers = $this->isNhlPlayersImport();
+        $shouldDetectFantraxPlayers = $this->isFantraxPlayersImport();
         $playersExistedBefore = $shouldDetectPlayers ? Player::query()->exists() : false;
+        $fantraxPlayersExistedBefore = $shouldDetectFantraxPlayers ? FantraxPlayer::query()->exists() : false;
 
         try {
             $broadcast->started();
             Artisan::call($this->command, $this->options, $broadcast->output());
 
             if ($shouldDetectPlayers && ! $playersExistedBefore && Player::query()->exists()) {
-                PlayersAvailable::dispatch(Player::query()->count());
+                PlayersAvailable::dispatch('nhl', Player::query()->count());
+            }
+
+            if (
+                $shouldDetectFantraxPlayers &&
+                ! $fantraxPlayersExistedBefore &&
+                FantraxPlayer::query()->exists()
+            ) {
+                PlayersAvailable::dispatch('fantrax', FantraxPlayer::query()->count());
             }
 
             ImportRun::create([
@@ -62,6 +73,17 @@ class RunImportCommandJob implements ShouldQueue
     private function isNhlPlayersImport(): bool
     {
         if ($this->command !== 'nhl:import') {
+            return false;
+        }
+
+        $flag = $this->options['--players'] ?? $this->options['players'] ?? false;
+
+        return filter_var($flag, FILTER_VALIDATE_BOOLEAN) !== false || $flag === true;
+    }
+
+    private function isFantraxPlayersImport(): bool
+    {
+        if ($this->command !== 'fx:import') {
             return false;
         }
 
