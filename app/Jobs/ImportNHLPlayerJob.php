@@ -58,7 +58,9 @@ class ImportNHLPlayerJob implements ShouldQueue
         // );
         (new ImportNHLPlayer())->import($this->playerId, $this->isProspect);
 
+        \Log::info('nhl avail check');
         if (! $playersExistedBefore && Player::query()->exists()) {
+            \Log::info('nhl players in db');
             PlayersAvailable::dispatch('nhl', Player::query()->count());
         }
     }
