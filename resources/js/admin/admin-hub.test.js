@@ -9,6 +9,12 @@ describe('admin-hub import listeners', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         global.window = {};
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ data: [], meta: { total: 0 } }),
+            })
+        );
     });
 
     it('registers Echo listeners only once even if adminHub is initialized multiple times', async () => {
@@ -62,39 +68,31 @@ describe('admin-hub import listeners', () => {
         expect(instanceA.streams.nhl.messages).toHaveLength(2);
     });
 
-    it('tracks importsBusy around started and finished events', async () => {
-        let outputHandler;
-
-        const listener = {
-            listen: vi.fn((event, handler) => {
-                if (event === '.admin.import.output') {
-                    outputHandler = handler;
-                }
-                return listener;
-            }),
-        };
-
-        window.Echo = { private: () => listener };
-
+    it('updates availability and switches to newly available tab when current tab is invalid', async () => {
         const adminHub = await loadAdminHub();
-        const instance = adminHub();
-        instance.registerImportListeners();
+        const instance = adminHub({ hasPlayers: false, hasFantrax: false });
+        instance.activeTab = 'nhl';
+        instance.activeSource = 'nhl';
+        instance.players.page = 3;
 
-        const started = {
-            source: 'nhl',
-            message: 'Import started',
-            status: 'started',
-            timestamp: '2025-10-01T12:00:00Z',
-        };
+        instance.handlePlayersAvailable('fantrax');
 
-        const finished = { ...started, status: 'finished', message: 'Done' };
+        expect(instance.hasFantrax).toBe(true);
+        expect(instance.activeTab).toBe('fantrax');
+        expect(instance.activeSource).toBe('fantrax');
+        expect(instance.players.page).toBe(1);
+    });
 
-        outputHandler?.call(instance, started);
-        expect(instance.importsBusy).toBe(true);
-        expect(instance.streams.nhl.running).toBe(true);
+    it('loads players immediately when availability arrives for the active tab', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ hasPlayers: false });
+        instance.loadPlayers = vi.fn();
+        instance.activeTab = 'nhl';
+        instance.activeSource = 'nhl';
 
-        outputHandler?.call(instance, finished);
-        expect(instance.importsBusy).toBe(false);
-        expect(instance.streams.nhl.running).toBe(false);
+        instance.handlePlayersAvailable('nhl');
+
+        expect(instance.hasPlayers).toBe(true);
+        expect(instance.loadPlayers).toHaveBeenCalledTimes(1);
     });
 });

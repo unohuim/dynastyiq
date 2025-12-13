@@ -15,7 +15,6 @@ export default function adminHub(options = {}) {
         hasFantrax: fantraxAvailable,
 
         streams: {},
-        importsBusy: false,
 
         players: {
             items: [],
@@ -180,17 +179,15 @@ export default function adminHub(options = {}) {
 
                     if (payload.status === 'started') {
                         stream.running = true;
-                        this.importsBusy = true;
                     }
 
                     if (payload.status === 'finished' || payload.status === 'failed') {
                         stream.running = false;
                         this.refreshImportMeta(key);
-                        this.importsBusy = this.isAnyImportRunning();
                     }
                 })
-                .listen('.players.available', () => {
-                    this.refreshPlayersAvailability();
+                .listen('.players.available', (payload) => {
+                    this.handlePlayersAvailable(payload?.source);
                 });
         },
 
@@ -209,21 +206,12 @@ export default function adminHub(options = {}) {
             this.streams[key].open = !this.streams[key].open;
         },
 
-        isAnyImportRunning() {
-            return Object.values(this.streams).some((s) => s.running);
-        },
-
         async startImport(key) {
-            if (this.importsBusy) {
-                return;
-            }
-
             const config = this.imports.find((i) => i.key === key);
             if (!config?.run_url) {
                 return;
             }
 
-            this.importsBusy = true;
             this.ensureStream(key);
 
             const stream = this.streams[key];
@@ -254,7 +242,6 @@ export default function adminHub(options = {}) {
                 });
 
                 stream.running = false;
-                this.importsBusy = this.isAnyImportRunning();
             }
         },
 
@@ -266,67 +253,46 @@ export default function adminHub(options = {}) {
             );
         },
 
-        async refreshPlayersAvailability() {
-            try {
-                const [nhlAvailable, fantraxAvailable] = await Promise.all([
-                    this.sourceHasPlayers('nhl'),
-                    this.sourceHasPlayers('fantrax'),
-                ]);
-
-                const prevNhl = this.hasPlayers;
-                const prevFantrax = this.hasFantrax;
-
-                this.hasPlayers = nhlAvailable;
-                this.hasFantrax = fantraxAvailable;
-
-                if (this.activeTab === 'nhl' && !nhlAvailable) {
-                    if (fantraxAvailable) {
-                        this.activeTab = 'fantrax';
-                        this.activeSource = 'fantrax';
-                        this.players.page = 1;
-                        this.loadPlayers();
-                    } else {
-                        this.activeTab = 'imports';
-                    }
-                } else if (this.activeTab === 'fantrax' && !fantraxAvailable) {
-                    if (nhlAvailable) {
-                        this.activeTab = 'nhl';
-                        this.activeSource = 'nhl';
-                        this.players.page = 1;
-                        this.loadPlayers();
-                    } else {
-                        this.activeTab = 'imports';
-                    }
-                } else if (this.activeTab === 'nhl' && nhlAvailable && !prevNhl) {
-                    this.players.page = 1;
-                    this.loadPlayers();
-                } else if (this.activeTab === 'fantrax' && fantraxAvailable && !prevFantrax) {
-                    this.players.page = 1;
-                    this.loadPlayers();
-                }
-            } catch (e) {
-                console.error(e);
+        handlePlayersAvailable(source) {
+            if (!source) {
+                return;
             }
-        },
 
-        async sourceHasPlayers(source) {
-            try {
-                const params = new URLSearchParams({ per_page: 1, source });
-                const response = await fetch(`/admin/api/players?${params.toString()}`, {
-                    headers: { Accept: 'application/json' },
-                });
+            const wasNhlAvailable = this.hasPlayers;
+            const wasFantraxAvailable = this.hasFantrax;
 
-                if (!response.ok) {
-                    return false;
+            if (source === 'nhl') {
+                this.hasPlayers = true;
+            }
+
+            if (source === 'fantrax') {
+                this.hasFantrax = true;
+            }
+
+            const tabUnavailable =
+                (this.activeTab === 'nhl' && !this.hasPlayers) ||
+                (this.activeTab === 'fantrax' && !this.hasFantrax);
+
+            if (tabUnavailable) {
+                this.activeTab = source;
+                this.activeSource = source;
+                this.players.page = 1;
+            }
+
+            const isPlayersTab = this.activeTab === 'nhl' || this.activeTab === 'fantrax';
+
+            if (
+                isPlayersTab &&
+                ((source === 'nhl' && !wasNhlAvailable) ||
+                    (source === 'fantrax' && !wasFantraxAvailable) ||
+                    tabUnavailable)
+            ) {
+                if (this.activeSource !== source) {
+                    this.activeSource = source;
+                    this.players.page = 1;
                 }
 
-                const payload = await response.json();
-                const total = payload.meta?.total ?? 0;
-
-                return total > 0;
-            } catch (e) {
-                console.error(e);
-                return false;
+                this.loadPlayers();
             }
         },
     };

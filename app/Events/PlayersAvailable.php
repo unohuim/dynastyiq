@@ -16,7 +16,7 @@ class PlayersAvailable implements ShouldBroadcastNow
     use InteractsWithSockets;
     use SerializesModels;
 
-    public function __construct(public int $count)
+    public function __construct(public string $source, public int $count = 0)
     {
     }
 
@@ -38,6 +38,7 @@ class PlayersAvailable implements ShouldBroadcastNow
         return [
             'timestamp' => now()->toIso8601String(),
             'players_count' => $this->count,
+            'source' => $this->source,
         ];
     }
 }
