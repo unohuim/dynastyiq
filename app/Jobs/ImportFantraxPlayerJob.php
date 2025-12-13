@@ -50,7 +50,7 @@ class ImportFantraxPlayerJob implements ShouldQueue
             (new ImportFantraxPlayer())->syncOne($this->entry);
 
             if (! $fantraxPlayersExistedBefore && FantraxPlayer::query()->exists()) {
-                PlayersAvailable::dispatch('fantrax', FantraxPlayer::query()->count());
+                broadcast(new PlayersAvailable('fantrax', FantraxPlayer::query()->count()));
             }
         } catch (\Throwable $e) {
             Log::error('[Fantrax] ImportFantraxPlayerJob failed', [
