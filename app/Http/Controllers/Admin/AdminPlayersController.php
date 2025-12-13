@@ -35,10 +35,8 @@ class AdminPlayersController extends Controller
                     $query->whereNotNull('fantrax_players.player_id');
                 }, function ($query) {
                     $query->whereNull('fantrax_players.player_id')
-                        ->where(function ($builder) {
-                            $builder->whereNull('fantrax_players.team')
-                                ->orWhereIn('fantrax_players.team', ['NA', 'N/A', '(N/A)']);
-                        });
+                        ->whereNotNull('fantrax_players.team')
+                        ->whereNotIn('fantrax_players.team', ['NA', 'N/A', '(N/A)']);
                 })
                 ->when($search, function ($query, $term) {
                     $term = strtolower($term);
