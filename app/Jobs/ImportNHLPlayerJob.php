@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Classes\ImportNHLPlayer;
+use App\Events\PlayersAvailable;
 //use App\Events\ImportStreamEvent;
 use App\Models\Player;
 use App\Traits\HasAPITrait;
@@ -42,6 +43,8 @@ class ImportNHLPlayerJob implements ShouldQueue
      */
     public function handle(): void
     {
+        $playersExistedBefore = Player::query()->exists();
+
         //$player = Player::find($this->playerId);
 
         // $fullName = $player?->full_name ?? "Player {$this->playerId}";
@@ -53,8 +56,11 @@ class ImportNHLPlayerJob implements ShouldQueue
         //     "Importing {$fullName}, {$position} – {$teamAbbrev}",
         //     'started'
         // );
-
         (new ImportNHLPlayer())->import($this->playerId, $this->isProspect);
+
+        if (! $playersExistedBefore && Player::query()->exists()) {
+            PlayersAvailable::dispatch('nhl', Player::query()->count());
+        }
     }
 
 
