@@ -66,19 +66,31 @@
                     </div>
 
                     <div class="flex items-center gap-3">
-                        <input
-                            type="text"
-                            class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
-                            placeholder="Filter by name"
-                            x-model="players.filter"
-                            x-on:input.debounce.300ms="filterPlayers()"
-                        />
+                        <template x-if="activeSource === 'nhl'">
+                            <input
+                                type="text"
+                                class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="Filter by name"
+                                x-model="roster.nhl.filter"
+                                x-on:input.debounce.300ms="filterPlayers()"
+                            />
+                        </template>
+
+                        <template x-if="activeSource === 'fantrax'">
+                            <input
+                                type="text"
+                                class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
+                                placeholder="Filter by name"
+                                x-model="roster.fantrax.filter"
+                                x-on:input.debounce.300ms="filterPlayers()"
+                            />
+                        </template>
 
                         <label class="inline-flex items-center space-x-2 text-sm text-gray-700">
                             <input
                                 type="checkbox"
                                 class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500"
-                                x-model="players.toggle[activeSource]"
+                                x-model="roster[activeSource].toggle"
                                 x-on:change="filterPlayers()"
                             />
                             <span x-text="activeSource === 'fantrax' ? 'NHL Matched' : 'All Players'"></span>
@@ -107,16 +119,16 @@
                                 </template>
                             </thead>
                             <tbody class="divide-y divide-gray-200 bg-white">
-                                <tr x-show="players.loading">
+                                <tr x-show="roster[activeSource].loading">
                                     <td class="px-4 py-4 text-sm text-gray-500" :colspan="activeSource === 'nhl' ? 5 : 4">Loading players...</td>
                                 </tr>
-                                <template x-if="!players.loading && players.items.length === 0">
+                                <template x-if="!roster[activeSource].loading && roster[activeSource].items.length === 0">
                                     <tr>
                                         <td class="px-4 py-4 text-sm text-gray-500" :colspan="activeSource === 'nhl' ? 5 : 4">No players found.</td>
                                     </tr>
                                 </template>
                                 <template x-if="activeSource === 'nhl'">
-                                    <template x-for="player in players.items" :key="player.id">
+                                    <template x-for="player in roster[activeSource].items" :key="player.id">
                                         <tr class="hover:bg-gray-50">
                                             <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.full_name"></td>
                                             <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
@@ -127,7 +139,7 @@
                                     </template>
                                 </template>
                                 <template x-if="activeSource === 'fantrax'">
-                                    <template x-for="player in players.items" :key="player.id">
+                                    <template x-for="player in roster[activeSource].items" :key="player.id">
                                         <tr class="hover:bg-gray-50">
                                             <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.name"></td>
                                             <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
@@ -142,14 +154,14 @@
 
                     <div class="flex items-center justify-between text-sm text-gray-700">
                         <div>
-                            Page <span x-text="players.page"></span>
+                            Page <span x-text="roster[activeSource].page"></span>
                             of
-                            <span x-text="Math.max(1, Math.ceil(players.total / players.perPage))"></span>
-                            — <span x-text="players.total"></span> players
+                            <span x-text="Math.max(1, Math.ceil(roster[activeSource].total / roster[activeSource].perPage))"></span>
+                            — <span x-text="roster[activeSource].total"></span> players
                         </div>
                         <div class="space-x-2">
-                            <x-secondary-button type="button" x-on:click="previousPage()" x-bind:disabled="players.page <= 1">Previous</x-secondary-button>
-                            <x-secondary-button type="button" x-on:click="nextPage()" x-bind:disabled="players.page >= Math.ceil(players.total / players.perPage)">Next</x-secondary-button>
+                            <x-secondary-button type="button" x-on:click="previousPage()" x-bind:disabled="roster[activeSource].page <= 1">Previous</x-secondary-button>
+                            <x-secondary-button type="button" x-on:click="nextPage()" x-bind:disabled="roster[activeSource].page >= Math.ceil(roster[activeSource].total / roster[activeSource].perPage)">Next</x-secondary-button>
                         </div>
                     </div>
                 </div>
