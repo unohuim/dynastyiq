@@ -16,18 +16,27 @@ export default function adminHub(options = {}) {
 
         streams: {},
 
-        players: {
-            items: [],
-            page: 1,
-            perPage: 25,
-            total: 0,
-            lastPage: 1,
-            filter: '',
-            toggle: {
-                nhl: false,
-                fantrax: true,
+        roster: {
+            nhl: {
+                items: [],
+                page: 1,
+                perPage: 25,
+                total: 0,
+                lastPage: 1,
+                filter: '',
+                toggle: false,
+                loading: false,
             },
-            loading: false,
+            fantrax: {
+                items: [],
+                page: 1,
+                perPage: 25,
+                total: 0,
+                lastPage: 1,
+                filter: '',
+                toggle: true,
+                loading: false,
+            },
         },
 
         init() {
@@ -52,7 +61,6 @@ export default function adminHub(options = {}) {
 
             if (tab === 'nhl' || tab === 'fantrax') {
                 this.activeSource = tab;
-                this.players.page = 1;
             }
 
             if (
@@ -68,37 +76,40 @@ export default function adminHub(options = {}) {
          * --------------------------- */
 
         async loadPlayers() {
+            const source = this.activeSource;
+            const state = this.roster[source];
+
             if (
-                (this.activeSource === 'nhl' && !this.hasPlayers) ||
-                (this.activeSource === 'fantrax' && !this.hasFantrax)
+                (source === 'nhl' && !this.hasPlayers) ||
+                (source === 'fantrax' && !this.hasFantrax)
             ) {
-                this.players.items = [];
-                this.players.total = 0;
-                this.players.page = 1;
-                this.players.lastPage = 1;
+                state.items = [];
+                state.total = 0;
+                state.page = 1;
+                state.lastPage = 1;
 
                 return;
             }
 
-            this.players.loading = true;
+            state.loading = true;
 
             try {
                 const params = new URLSearchParams({
-                    page: this.players.page,
-                    per_page: this.players.perPage,
-                    source: this.activeSource,
+                    page: state.page,
+                    per_page: state.perPage,
+                    source,
                 });
 
-                const toggle = this.players.toggle?.[this.activeSource];
+                const toggle = state.toggle;
 
-                if (this.activeSource === 'nhl') {
+                if (source === 'nhl') {
                     params.set('all_players', toggle ? '1' : '0');
                 } else {
                     params.set('nhl_matched', toggle ? '1' : '0');
                 }
 
-                if (this.players.filter.trim()) {
-                    params.set('search', this.players.filter.trim());
+                if (state.filter.trim()) {
+                    params.set('search', state.filter.trim());
                 }
 
                 const response = await fetch(`/admin/api/players?${params}`, {
@@ -112,40 +123,44 @@ export default function adminHub(options = {}) {
                 const payload = await response.json();
                 const meta = payload.meta ?? {};
 
-                this.players.items = payload.data ?? [];
-                this.players.total = meta.total ?? 0;
-                this.players.page = meta.current_page ?? 1;
-                this.players.perPage = meta.per_page ?? this.players.perPage;
-                this.players.lastPage =
-                    meta.last_page ??
-                    Math.max(1, Math.ceil(this.players.total / this.players.perPage));
+                state.items = payload.data ?? [];
+                state.total = meta.total ?? 0;
+                state.page = meta.current_page ?? state.page;
+                state.perPage = meta.per_page ?? state.perPage;
+                state.lastPage =
+                    meta.last_page ?? Math.max(1, Math.ceil(state.total / state.perPage));
             } catch (e) {
                 console.error(e);
-                this.players.items = [];
-                this.players.total = 0;
-                this.players.page = 1;
-                this.players.lastPage = 1;
+                state.items = [];
+                state.total = 0;
+                state.page = 1;
+                state.lastPage = 1;
             } finally {
-                this.players.loading = false;
+                state.loading = false;
             }
         },
 
         nextPage() {
-            if (this.players.page < this.players.lastPage) {
-                this.players.page++;
+            const state = this.roster[this.activeSource];
+
+            if (state.page < state.lastPage) {
+                state.page++;
                 this.loadPlayers();
             }
         },
 
         previousPage() {
-            if (this.players.page > 1) {
-                this.players.page--;
+            const state = this.roster[this.activeSource];
+
+            if (state.page > 1) {
+                state.page--;
                 this.loadPlayers();
             }
         },
 
         filterPlayers() {
-            this.players.page = 1;
+            const state = this.roster[this.activeSource];
+            state.page = 1;
             this.loadPlayers();
         },
 
@@ -276,7 +291,7 @@ export default function adminHub(options = {}) {
             if (tabUnavailable) {
                 this.activeTab = source;
                 this.activeSource = source;
-                this.players.page = 1;
+                this.roster[source].page = 1;
             }
 
             const isPlayersTab = this.activeTab === 'nhl' || this.activeTab === 'fantrax';
@@ -289,7 +304,7 @@ export default function adminHub(options = {}) {
             ) {
                 if (this.activeSource !== source) {
                     this.activeSource = source;
-                    this.players.page = 1;
+                    this.roster[source].page = 1;
                 }
 
                 this.loadPlayers();
