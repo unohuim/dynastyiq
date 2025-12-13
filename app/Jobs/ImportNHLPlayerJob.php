@@ -61,7 +61,7 @@ class ImportNHLPlayerJob implements ShouldQueue
         \Log::info('nhl avail check');
         if (! $playersExistedBefore && Player::query()->exists()) {
             \Log::info('nhl players in db');
-            PlayersAvailable::dispatch('nhl', Player::query()->count());
+            broadcast(new PlayersAvailable('nhl', Player::query()->count()));
         }
     }
 
