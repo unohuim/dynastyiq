@@ -17,7 +17,8 @@ return new class extends Migration
                   $table->foreignId('player_id')
                       ->nullable()
                       ->constrained()
-                      ->nullOnDelete();
+                      ->nullOnDelete()
+                      ->unique();
 
                   $table->string('fantrax_id')->unique();
                   $table->unsignedInteger('statsinc_id')->nullable();
