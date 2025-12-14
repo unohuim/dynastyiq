@@ -28,7 +28,7 @@
       {{-- Discord CTA --}}
       <div class="mt-6">
         <a
-          href="{{ config('services.discord.invite_url') }}"
+          href="{{ config('services.discord.invite') }}"
           target="_blank"
           class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-lg hover:bg-indigo-500 transition"
         >
