@@ -4,10 +4,8 @@ namespace App\Services;
 
 use App\Models\Contract;
 use App\Models\FantraxPlayer;
-use App\Models\PlayByPlay;
 use App\Models\Player;
 use App\Models\User;
-use Illuminate\Support\Carbon;
 
 class PlatformState
 {
@@ -26,18 +24,6 @@ class PlatformState
 
     public function upToDate(): bool
     {
-        if (! $this->initialized()) {
-            return false;
-        }
-
-        $latest = PlayByPlay::query()->max('game_date');
-        if ($latest === null) {
-            return false;
-        }
-
-        $season = current_season_id();
-        $postSeasonEnd = postseason_end_date($season);
-
-        return Carbon::parse($latest)->greaterThanOrEqualTo($postSeasonEnd);
+        return $this->initialized();
     }
 }

@@ -12,14 +12,20 @@
                         <div class="bg-white p-6 shadow sm:rounded-lg">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <div class="font-semibold">{{ $record['platform'] }} — {{ $record['name'] }}</div>
-                                    <div class="text-sm text-gray-600">Suggested: {{ $record['suggested']->name ?? 'None' }}</div>
+                                    <div class="font-semibold">{{ $record['platform'] }} — {{ $record['platform_player']->name }}</div>
+                                    @php
+                                        $suggested = $record['suggested_nhl_player'];
+                                        $suggestedName = $suggested?->full_name ?? trim(($suggested?->first_name ?? '') . ' ' . ($suggested?->last_name ?? ''));
+                                    @endphp
+                                    <div class="text-sm text-gray-600">Suggested: {{ $suggestedName !== '' ? $suggestedName : 'No suggested match' }}</div>
                                 </div>
                                 <div class="space-x-2">
                                     <form method="POST" action="{{ route('admin.player-triage.link', ['platform' => $record['platform'], 'id' => $record['id']]) }}" class="inline">
                                         @csrf
-                                        <input type="hidden" name="player_id" value="{{ $record['suggested']->id ?? '' }}">
-                                        <x-primary-button {{ empty($record['suggested']) ? 'disabled' : '' }}>Link</x-primary-button>
+                                        <input type="hidden" name="player_id" value="{{ $suggested->id ?? '' }}">
+                                        <x-primary-button :disabled="empty($suggested)">
+                                            Accept Match
+                                        </x-primary-button>
                                     </form>
                                     <form method="POST" action="{{ route('admin.player-triage.variant', ['platform' => $record['platform'], 'id' => $record['id']]) }}" class="inline-flex items-center space-x-2">
                                         @csrf

@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -111,15 +110,26 @@ class Player extends Model
 
 
 
-    /**
-     * Compute the player's age in whole years.
-     *
-     * @return int
-     */
-    public function age(): int
+    public function getAgeAttribute(): ?int
     {
-        return Carbon::parse($this->dob)
-                     ->diffInYears(now());
+        return $this->dob
+            ? \Carbon\Carbon::parse($this->dob)->age
+            : null;
+    }
+
+    public function setMetaAttribute($value): void
+    {
+        if ($value === null) {
+            $this->attributes['meta'] = null;
+            return;
+        }
+
+        if (is_string($value)) {
+            $this->attributes['meta'] = $value;
+            return;
+        }
+
+        $this->attributes['meta'] = json_encode($value, JSON_THROW_ON_ERROR);
     }
 
     /**

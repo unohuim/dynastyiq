@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Jobs\RunImportCommandJob;
-use Illuminate\Bus\PendingBatch;
+use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 
 class AdminImports
@@ -17,18 +17,18 @@ class AdminImports
             ['key' => 'nhl', 'label' => 'NHL Players', 'command' => 'nhl:import', 'options' => ['--players' => true]],
             ['key' => 'fantrax', 'label' => 'Fantrax Players', 'command' => 'fx:import', 'options' => ['--players' => true]],
             ['key' => 'contracts', 'label' => 'Contracts', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
-            ['key' => 'pbp', 'label' => 'Play-by-Play', 'command' => 'nhl:process', 'options' => []],
         ]);
     }
 
-    public function dispatch(string $key): PendingBatch
+    public function dispatch(string $key): Batch
     {
-        $source = $this->sources()->firstWhere('key', $key);
+        $source = $this->sources()->keyBy('key')->get($key);
+
         abort_unless($source, 404);
 
         return Bus::batch([
             new RunImportCommandJob($source['command'], $source['options'] ?? [], $source['key']),
-        ])->name("manual-{$key}-import")
+        ])->name("manual-{$source['key']}-import")
             ->allowFailures()
             ->onQueue('default')
             ->dispatch();

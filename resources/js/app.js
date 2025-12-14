@@ -8,6 +8,9 @@ import './leagues-hub.js';
 import './community-hub.js';
 import './components/community-members-store';
 import { registerToastStack } from './components/toast-stack';
+import adminHub from './admin/admin-hub';
+window.adminHub = adminHub;
+
 
 // import "./components/RangeSlider/range-slider.css";
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";

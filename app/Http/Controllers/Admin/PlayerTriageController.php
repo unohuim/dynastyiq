@@ -21,16 +21,11 @@ class PlayerTriageController extends Controller
             ->limit(50)
             ->get()
             ->map(function (FantraxPlayer $player) {
-                $candidate = Player::query()
-                    ->where('name', $player->name)
-                    ->orWhere('full_name', $player->name)
-                    ->first();
-
                 return [
                     'id' => $player->id,
                     'platform' => 'fantrax',
-                    'name' => $player->name,
-                    'suggested' => $candidate,
+                    'platform_player' => $player,
+                    'suggested_nhl_player' => $this->suggestNhlPlayer($player->name),
                 ];
             });
 
@@ -69,5 +64,38 @@ class PlayerTriageController extends Controller
     {
         // No-op placeholder for defer; simply acknowledges the record
         return Redirect::to(URL::route('admin.player-triage'))->with('status', 'Deferred');
+    }
+
+    private function suggestNhlPlayer(?string $platformPlayerName): ?Player
+    {
+        if (empty($platformPlayerName)) {
+            return null;
+        }
+
+        $exactFullNameMatch = Player::query()
+            ->where('full_name', $platformPlayerName)
+            ->first();
+
+        if ($exactFullNameMatch) {
+            return $exactFullNameMatch;
+        }
+
+        $lastCommaPosition = strrpos($platformPlayerName, ',');
+
+        if ($lastCommaPosition === false) {
+            return null;
+        }
+
+        $firstName = trim(substr($platformPlayerName, 0, $lastCommaPosition));
+        $lastName = trim(substr($platformPlayerName, $lastCommaPosition + 1));
+
+        if ($firstName === '' || $lastName === '') {
+            return null;
+        }
+
+        return Player::query()
+            ->where('first_name', $firstName)
+            ->where('last_name', $lastName)
+            ->first();
     }
 }

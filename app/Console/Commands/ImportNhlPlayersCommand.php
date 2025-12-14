@@ -24,7 +24,7 @@ class ImportNhlPlayersCommand extends Command
         }
 
         foreach ($this->teams() as $abbrev) {
-            ImportPlayersJob::dispatch($abbrev);
+            ImportPlayersJob::dispatch($abbrev, (string)\Illuminate\Support\Str::uuid());
         }
 
         $this->info('Dispatched ImportPlayersJob for all teams.');
@@ -39,7 +39,7 @@ class ImportNhlPlayersCommand extends Command
         return [
             'ANA','ARI','BOS','BUF','CGY','CAR','CHI','COL','CBJ','DAL','DET','EDM',
             'FLA','LAK','MIN','MTL','NSH','NJD','NYI','NYR','OTT','PHI','PIT','SJS',
-            'SEA','STL','TBL','TOR','VAN','VGK','WSH','WPG',
+            'SEA','STL','TBL', 'UTA','TOR','VAN','VGK','WSH','WPG',
         ];
     }
 }

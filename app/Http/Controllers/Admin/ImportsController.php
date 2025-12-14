@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ImportRun;
 use App\Services\AdminImports;
-use App\Services\PlatformState;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Bus;
@@ -15,7 +14,7 @@ use Illuminate\Support\Facades\URL;
 
 class ImportsController extends Controller
 {
-    public function __construct(private PlatformState $platformState, private AdminImports $imports)
+    public function __construct(private AdminImports $imports)
     {
     }
 
@@ -46,18 +45,30 @@ class ImportsController extends Controller
         return view('admin.imports', ['imports' => $imports]);
     }
 
-    public function run(Request $request, string $key): RedirectResponse
+    public function run(Request $request, string $key)
     {
-        abort_unless($this->platformState->initialized(), 403);
         $batch = $this->imports->dispatch($key);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'batch_id' => $batch->id,
+                'started_at' => now()->toIso8601String(),
+            ]);
+        }
 
         return Redirect::to(URL::route('admin.imports', ['batch_id' => $batch->id]));
     }
 
-    public function retry(Request $request, string $key): RedirectResponse
+    public function retry(Request $request, string $key)
     {
-        abort_unless($this->platformState->initialized(), 403);
         $batch = $this->imports->dispatch($key);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'batch_id' => $batch->id,
+                'started_at' => now()->toIso8601String(),
+            ]);
+        }
 
         return Redirect::to(URL::route('admin.imports', ['batch_id' => $batch->id]));
     }

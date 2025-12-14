@@ -3,15 +3,14 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Contract;
 use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
-use App\Models\NhlGame;
 use App\Models\Player;
-use App\Models\User;
 use App\Services\AdminImports;
-use Illuminate\Support\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Str;
 
 class DashboardController extends Controller
 {
@@ -19,19 +18,11 @@ class DashboardController extends Controller
     {
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        $seeded = User::query()->count() > 0;
-
-        $initialized = $seeded
-            && Player::query()->count() > 0
-            && FantraxPlayer::query()->count() > 0
-            && Contract::query()->count() > 0;
-
-        $latestGameDate = NhlGame::query()->max('game_date');
-        $latestGameDate = $latestGameDate ? Carbon::parse($latestGameDate) : null;
-        $upToDate = $initialized
-            && optional($latestGameDate)?->greaterThanOrEqualTo(currentSeasonEndDate());
+        if ($request->wantsJson() && $request->query('section') === 'players') {
+            return $this->players($request);
+        }
 
         $imports = $this->imports->sources()->map(function (array $source) {
             $lastRun = ImportRun::query()
@@ -42,11 +33,14 @@ class DashboardController extends Controller
             return [
                 'key' => $source['key'],
                 'label' => $source['label'],
-                'last_run' => $lastRun?->ran_at,
+                'last_run' => $lastRun?->ran_at?->toDateTimeString(),
+                'run_url' => route('admin.imports.run', ['key' => $source['key']]),
             ];
         });
 
         $unmatchedPlayersCount = FantraxPlayer::query()->whereNull('player_id')->count();
+        $hasPlayers = Player::query()->exists();
+        $hasFantraxPlayers = FantraxPlayer::query()->exists();
 
         $events = collect(Schedule::events())->map(function ($event) {
             return [
@@ -58,12 +52,62 @@ class DashboardController extends Controller
         });
 
         return view('admin.dashboard', [
-            'seeded' => $seeded,
-            'initialized' => $initialized,
-            'upToDate' => $upToDate,
             'imports' => $imports,
             'unmatchedPlayersCount' => $unmatchedPlayersCount,
             'events' => $events,
+            'hasPlayers' => $hasPlayers,
+            'hasFantraxPlayers' => $hasFantraxPlayers,
+        ]);
+    }
+
+    protected function players(Request $request): JsonResponse
+    {
+        $perPage = (int) $request->integer('per_page', 25);
+        $perPage = max(5, min($perPage, 100));
+
+        $page = (int) $request->integer('page', 1);
+        $page = max($page, 1);
+
+        $filter = Str::of($request->string('filter')->toString())->trim();
+
+        $query = Player::query();
+
+        if ($filter->isNotEmpty()) {
+            $term = '%' . $filter . '%';
+            $query->where(function ($builder) use ($term) {
+                $builder
+                    ->where('full_name', 'like', $term)
+                    ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", [$term])
+                    ->orWhere('first_name', 'like', $term)
+                    ->orWhere('last_name', 'like', $term);
+            });
+        }
+
+        $total = $query->count();
+        $offset = ($page - 1) * $perPage;
+
+        $players = $query
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->offset($offset)
+            ->limit($perPage)
+            ->get([
+                'id',
+                'first_name',
+                'last_name',
+                'full_name',
+                'position',
+                'team_abbrev',
+            ]);
+
+        return response()->json([
+            'data' => $players,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'has_more' => ($offset + $perPage) < $total,
+            ],
         ]);
     }
 }

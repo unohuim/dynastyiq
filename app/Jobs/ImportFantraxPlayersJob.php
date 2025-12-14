@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\ImportFantraxPlayers;
+use App\Events\ImportStreamEvent;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -31,6 +32,8 @@ class ImportFantraxPlayersJob implements ShouldQueue
      */
     public function handle(): void
     {
+        ImportStreamEvent::dispatch('fantrax', 'Importing Fantrax players', 'started');
+
         // Delegate to the ImportFantraxPlayers class
         (new ImportFantraxPlayers())->import();
     }
