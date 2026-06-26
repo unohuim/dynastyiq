@@ -17,6 +17,11 @@ class ImportNHLPlayer
 {
     use HasAPITrait;
 
+    public function __construct(
+        private readonly PlayerIdentityResolver $identityResolver,
+    ) {
+    }
+
     /**
      * Import a player from the NHL API and persist their data.
      *
@@ -29,10 +34,13 @@ class ImportNHLPlayer
             'playerId' => $playerId,
         ]);
 
-        $player = Player::firstOrNew([
+        $identity = $this->identityResolver->upsertNhlIdentity($data);
+
+        $player = $identity->player ?? Player::firstOrNew([
             'nhl_id' => $data['playerId'],
         ]);
 
+        $player->nhl_id                = $data['playerId'];
         $player->nhl_team_id           = $data['currentTeamId'] ?? null;
         $player->team_abbrev           = $data['currentTeamAbbrev'] ?? null;
         $player->first_name            = $data['firstName']['default'] ?? '';
@@ -48,6 +56,8 @@ class ImportNHLPlayer
         $player->hero_image_url        = $data['heroImage'] ?? null;
 
         $player->save();
+
+        $this->identityResolver->linkIdentityToPlayer($identity, $player);
 
         $this->importStats($player, $data['seasonTotals'] ?? []);
     }

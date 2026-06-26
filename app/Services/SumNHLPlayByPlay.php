@@ -199,7 +199,7 @@ class SumNHLPlayByPlay
                 $pksog_p = $this->pct($pkg, $pksog);
 
                 if (!ImportNHLPlayer::playerExists((string)$playerId)) {
-                    (new ImportNHLPlayer())->import((string)$playerId);
+                    app(ImportNHLPlayer::class)->import((string)$playerId);
                 }
 
                 $summary = [

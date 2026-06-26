@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+LOG_FILE="ci.output"
+: > "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 require_cmd() {
   local cmd="$1"
+
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "ERROR: Required command not found on PATH: ${cmd}"
     exit 1
@@ -31,8 +36,8 @@ php artisan key:generate --env=ci --force
 chmod -R 777 storage bootstrap/cache 2>/dev/null || true
 
 # --- Guardrails (fail fast) ---
-#bash scripts/ci/blade-guardrails.sh
-#bash scripts/ci/js-syntax-guardrails.sh
+# bash scripts/ci/blade-guardrails.sh
+# bash scripts/ci/js-syntax-guardrails.sh
 
 # --- Frontend build ---
 if [ -f package-lock.json ]; then
@@ -40,6 +45,7 @@ if [ -f package-lock.json ]; then
 else
   npm install
 fi
+
 npm run build
 
 # --- DB migrate only if CI env declares a DB connection ---
@@ -48,4 +54,4 @@ if grep -qE '^\s*DB_CONNECTION=' .env.ci; then
 fi
 
 # --- Run tests ---
-php artisan test --env=ci
+php artisan test

@@ -63,6 +63,7 @@ Migrations remain the **sole source of truth**.
 - platform_player_ids
 - platform_roster_memberships
 - platform_teams
+- player_external_identities
 - player_imports
 - player_rankings
 - players
@@ -1547,6 +1548,47 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `id`
+
+---
+
+## player_external_identities
+
+**Organization-owned:** No
+**Purpose:** Provider-sourced player identity records used to match external APIs to canonical DynastyIQ players.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| player_id | bigint | Yes | FK -> players.id (SET NULL) |
+| provider | string | No | External provider key |
+| provider_player_id | string | No | Durable provider player ID |
+| provider_slug | string | Yes | Provider slug or URL-safe identifier |
+| display_name | string | Yes | Provider display name |
+| normalized_name | string | Yes | Normalized matching name |
+| first_name | string | Yes | Provider first name |
+| last_name | string | Yes | Provider last name |
+| birthdate | date | Yes | Provider date of birth |
+| position | string | Yes | Provider position |
+| team | string | Yes | Provider team abbreviation or label |
+| raw_payload | json | Yes | Raw provider payload used for audit/rematching |
+| match_status | string | No | Defaults to `unmatched` |
+| match_confidence | unsignedTinyInteger | Yes | Resolver confidence from 0 to 100 |
+| unmatched_reason | string | Yes | Reason an identity is not matched |
+| first_seen_at | timestamp | Yes | First observed timestamp |
+| last_seen_at | timestamp | Yes | Most recent observed timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(provider, provider_player_id)`
+- Index: `player_id`
+- Index: `normalized_name`
+- Index: `(provider, match_status)`
+- Implicit (FK index): `player_id`
 
 ---
 

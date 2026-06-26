@@ -19,6 +19,7 @@ Before proposing a plan or writing any files, Codex MUST read and treat the foll
 - docs/testing/testing-standards.yaml
 - docs/architecture/README.yaml
 - docs/ARCHITECTURE_INVENTORY.md
+- docs/pr-plans/current_pr.md, when present
 
 ### Architecture (Primary Source of Truth)
 
@@ -63,6 +64,15 @@ Existing deviations in `docs/ui_backlog.md` do not permit new deviations.
 - diq-bot/package-lock.json
 
 If conflicts are detected between authoritative sources, work MUST pause and be escalated to the human.
+
+### Active PR Plan
+
+- `docs/pr-plans/current_pr.md` is the active working PR plan when present.
+- Codex MUST read it before proposing a plan or editing files.
+- The current PR plan is working context, not permanent architecture authority.
+- Durable decisions from the current PR plan MUST be promoted to the canonical docs they affect, such as `docs/architecture/**/*.yaml`, `docs/ENUMS.md`, `docs/DB_SCHEMA.md`, or `docs/CONVENTIONS.md`.
+- Candidate future PR plans live under `docs/pr-plans/backlog/`.
+- Completed, closed, or abandoned PR plans should be snapshotted under `docs/pr-plans/archive/`.
 
 ---
 

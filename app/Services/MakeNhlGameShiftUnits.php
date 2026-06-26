@@ -322,7 +322,7 @@ class MakeNhlGameShiftUnits
         foreach ($playerNhlIds as $nhlId) {
             $player = Player::where('nhl_id', $nhlId)->first();
             if (!$player && class_exists(\App\Services\ImportNHLPlayer::class)) {
-                $importer = new \App\Services\ImportNHLPlayer();
+                $importer = app(\App\Services\ImportNHLPlayer::class);
                 $importer->import($nhlId);
                 $player = Player::where('nhl_id', $nhlId)->first();
             }

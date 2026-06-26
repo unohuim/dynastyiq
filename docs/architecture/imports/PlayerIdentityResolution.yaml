@@ -1,0 +1,36 @@
+name: Player Identity Resolution
+type: Import Identity Pattern
+location:
+  - app/Models/PlayerExternalIdentity.php
+  - app/Services/PlayerIdentityNormalizer.php
+  - app/Services/PlayerIdentityResolver.php
+  - database/migrations/*_create_player_external_identities_table.php
+purpose: Preserve provider-sourced hockey player identities separately from canonical players so imports can be idempotent, auditable, and expandable across NHL, Fantrax, CapWages, and future providers.
+when_to_use:
+  - Importing player records from an external provider.
+  - Matching imported provider player IDs to canonical DynastyIQ players.
+  - Reviewing unmatched, candidate, conflicting, or ignored provider identities.
+when_not_to_use:
+  - Storing canonical DynastyIQ player attributes that belong on players.
+  - Storing league roster membership or fantasy-team assignment records.
+  - Replacing provider-specific import tables that own provider-only payload semantics.
+rules:
+  - Provider player identities must be upserted before an import creates or updates a canonical player.
+  - NHL is an authority provider and may create canonical players during import.
+  - Non-authority providers must not create canonical players without an approved resolver rule or human match.
+  - Provider identity rows must keep raw provider payloads for audit and future rematching.
+  - Matching status and unmatched reason values must remain aligned with docs/ENUMS.md.
+  - A matched identity must reference exactly one canonical player.
+  - A canonical player may have many provider identities, but a provider and provider_player_id pair must be unique.
+  - Normalized identity fields are matching aids and must not overwrite provider raw payloads.
+public_interface:
+  - PlayerExternalIdentity
+  - Player::externalIdentities()
+  - PlayerIdentityNormalizer::normalizeName()
+  - PlayerIdentityResolver::upsertNhlIdentity()
+  - PlayerIdentityResolver::linkIdentityToPlayer()
+  - PlayerIdentityResolver::statusCountsByProvider()
+example_usage: |
+  $identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);
+  $player = Player::firstOrNew(['nhl_id' => $payload['playerId']]);
+  app(PlayerIdentityResolver::class)->linkIdentityToPlayer($identity, $player);

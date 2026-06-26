@@ -643,6 +643,42 @@ if ($repo->claim($gameId, 'pbp')) {
 
 ---
 
+### Player Identity Resolution
+
+**Name:** Player Identity Resolution  
+**Type:** Import Identity Pattern  
+**Location:**
+- `app/Models/PlayerExternalIdentity.php`
+- `app/Services/PlayerIdentityNormalizer.php`
+- `app/Services/PlayerIdentityResolver.php`
+- `database/migrations/*_create_player_external_identities_table.php`
+
+**Purpose:**  
+Preserve provider-sourced hockey player identities separately from canonical players so imports can be idempotent, auditable, and expandable across NHL, Fantrax, CapWages, and future providers.
+
+**When to Use:**  
+Importing provider player records or resolving provider IDs to canonical DynastyIQ players.
+
+**When Not to Use:**  
+Storing canonical player attributes, fantasy roster membership, or provider-only import payload semantics owned by another table.
+
+**Public Interface:**
+- `PlayerExternalIdentity`
+- `Player::externalIdentities()`
+- `PlayerIdentityNormalizer::normalizeName()`
+- `PlayerIdentityResolver::upsertNhlIdentity()`
+- `PlayerIdentityResolver::linkIdentityToPlayer()`
+- `PlayerIdentityResolver::statusCountsByProvider()`
+
+**Example Usage:**
+```php
+$identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);
+$player = Player::firstOrNew(['nhl_id' => $payload['playerId']]);
+app(PlayerIdentityResolver::class)->linkIdentityToPlayer($identity, $player);
+```
+
+---
+
 ## Platform Integrations
 
 ### Fantrax User Connection

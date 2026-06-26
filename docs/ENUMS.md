@@ -331,6 +331,84 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+## Player Identity Resolution
+
+### Player External Identity Provider
+
+**Name:** External player identity provider  
+**Storage location(s):** `player_external_identities.provider` (string column)  
+**Allowed values:**
+
+- `nhl`
+- `fantrax`
+- `capwages`
+- `eliteprospects`
+
+**Semantic meaning:**
+
+- `nhl`: NHL API player identity.
+- `fantrax`: Fantrax API player identity.
+- `capwages`: CapWages API player identity.
+- `eliteprospects`: EliteProspects API player identity.
+
+**Notes:**
+
+- The column is not database constrained.
+- NHL is the initial authority provider allowed to create canonical `players` rows during import.
+
+### Player External Identity Match Status
+
+**Name:** External player identity match status  
+**Storage location(s):** `player_external_identities.match_status` (string column)  
+**Allowed values:**
+
+- `matched`
+- `candidate`
+- `unmatched`
+- `ignored`
+- `conflict`
+
+**Semantic meaning:**
+
+- `matched`: Identity is linked to one canonical player.
+- `candidate`: Identity has one or more possible canonical player matches that require review or a later resolver pass.
+- `unmatched`: Identity has no canonical player match yet.
+- `ignored`: Identity should not participate in matching.
+- `conflict`: Identity matched ambiguously or disagrees with an existing link.
+
+**Notes:**
+
+- The column is not database constrained.
+- Default value is `unmatched`.
+- `matched` identities must have a `player_id`.
+
+### Player External Identity Unmatched Reason
+
+**Name:** External player identity unmatched reason  
+**Storage location(s):** `player_external_identities.unmatched_reason` (nullable string column)  
+**Allowed values currently used by code:**
+
+- `no_canonical_player`
+- `missing_provider_player_id`
+- `insufficient_identity_data`
+- `multiple_candidates`
+- `provider_payload_missing_name`
+
+**Semantic meaning:**
+
+- `no_canonical_player`: No canonical player exists for a non-authority provider identity.
+- `missing_provider_player_id`: Provider payload did not include a durable player ID.
+- `insufficient_identity_data`: Provider payload lacks enough matching fields.
+- `multiple_candidates`: More than one plausible canonical player exists.
+- `provider_payload_missing_name`: Provider payload lacks usable name fields.
+
+**Notes:**
+
+- The column is not database constrained.
+- The value is nullable for matched and ignored identities.
+
+---
+
 ## Stats & Rankings
 
 ### Visibility

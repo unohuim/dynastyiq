@@ -11,6 +11,7 @@ use App\Models\RankingProfile;
 use App\Models\Stat;
 use App\Models\Contract;
 use App\Models\NhlUnit;
+use App\Models\PlayerExternalIdentity;
 
 class Player extends Model
 {
@@ -74,6 +75,16 @@ class Player extends Model
     public function stats(): HasMany
     {
         return $this->hasMany(Stat::class);
+    }
+
+    /**
+     * Provider identities linked to this canonical player.
+     *
+     * @return HasMany<PlayerExternalIdentity>
+     */
+    public function externalIdentities(): HasMany
+    {
+        return $this->hasMany(PlayerExternalIdentity::class);
     }
 
     /**
