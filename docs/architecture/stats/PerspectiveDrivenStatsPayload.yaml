@@ -1,0 +1,37 @@
+name: Perspective-Driven Stats Payload
+type: Read Model / UI Contract
+location:
+  - app/Models/Perspective.php
+  - app/Http/Controllers/StatsController.php
+  - app/Http/Controllers/PlayerStatsController.php
+  - app/Http/Controllers/PerspectiveController.php
+  - resources/views/stats-view.blade.php
+  - resources/views/player-stats-view.blade.php
+  - resources/js/components/StatsPage/
+  - resources/js/components/PlayerStatsPage/
+purpose: Drive stats tables and cards from saved perspective settings, including visible columns, filters, sort state, and display mode.
+when_to_use:
+  - Stats pages.
+  - Player stats pages.
+  - Saved custom views.
+  - API payloads that represent user-selected stat views.
+when_not_to_use:
+  - One-off admin reports.
+  - Import pipelines.
+  - Persistence that should be normalized into first-class tables.
+rules:
+  - Perspective visibility must use Perspective::forUser().
+  - Perspective settings are the UI contract for stats views.
+  - Enum-like perspective values must reference docs/ENUMS.md rather than being duplicated here.
+public_interface:
+  - Perspective::forUser()
+  - stats.payload
+  - api.stats
+  - api.player-stats
+  - PerspectiveController
+example_usage: |
+  $perspectives = Perspective::query()
+      ->forUser($request->user())
+      ->orderBy('name')
+      ->get();
+

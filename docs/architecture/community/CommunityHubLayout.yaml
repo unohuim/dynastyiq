@@ -1,0 +1,29 @@
+name: Community Hub Layout
+type: UI Layout Pattern
+location:
+  - app/View/Components/CommunityHubLayout.php
+  - resources/views/components/community-hub-layout.blade.php
+  - resources/views/layouts/community-hub.blade.php
+  - resources/js/components/CommunityHubLayout.js
+  - resources/js/community-hub.js
+purpose: Provide the shared community hub shell, layout, and progressive enhancement behavior.
+when_to_use:
+  - Community pages that share hub navigation.
+  - Pages that require organization context in the community hub.
+  - Community page chrome reuse.
+when_not_to_use:
+  - Global app navigation.
+  - Standalone admin pages.
+  - Non-community public pages.
+rules:
+  - Community hub pages should use the shared layout instead of page-local shell duplication.
+  - Community layout behavior must remain scoped to community pages.
+  - New or materially touched community UI must also comply with docs/UI_DESIGN.md.
+public_interface:
+  - <x-community-hub-layout>
+  - resources/js/community-hub.js
+example_usage: |
+  <x-community-hub-layout :organization="$organization">
+      ...
+  </x-community-hub-layout>
+

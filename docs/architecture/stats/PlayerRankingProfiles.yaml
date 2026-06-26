@@ -1,0 +1,34 @@
+name: Player Ranking Profiles
+type: Domain Pattern
+location:
+  - app/Models/RankingProfile.php
+  - app/Models/PlayerRanking.php
+  - app/Http/Controllers/PlayerRankingController.php
+  - app/Http/Controllers/PlayerRankingSetController.php
+  - app/Livewire/PlayerRankingsTable.php
+  - resources/views/player/rankings.blade.php
+purpose: Store and render player ranking sets independent from raw NHL stats imports.
+when_to_use:
+  - Manual ranking creation.
+  - Ranking upload.
+  - User-facing ranking views.
+when_not_to_use:
+  - Replacing source player identity.
+  - Replacing NHL stats.
+  - Replacing Fantrax roster data.
+rules:
+  - Ranking profiles group ranking records.
+  - Rankings must reference canonical player records.
+  - Ranking behavior must remain separate from source stat import behavior.
+public_interface:
+  - player.rankings.index
+  - player.rankings.upload
+  - player.rankings.manual
+  - RankingProfile
+  - PlayerRanking
+example_usage: |
+  $profile->rankings()->create([
+      'player_id' => $player->id,
+      'rank' => 1,
+  ]);
+

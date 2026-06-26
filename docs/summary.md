@@ -1,0 +1,15 @@
+# DynastyIQ Application Summary
+
+DynastyIQ is a Laravel-based fantasy hockey platform for dynasty league managers, commissioners, and creators. The application combines NHL data ingestion, fantasy league integration, community management, and Discord automation into a single product aimed at helping users evaluate players, manage leagues, and serve fantasy hockey communities.
+
+At its core, DynastyIQ imports and normalizes NHL player, game, play-by-play, shift, boxscore, contract, and season-summary data. Background jobs and console commands discover NHL games, run staged imports, build shift units, connect events to units, and aggregate game and season statistics. That data powers public and authenticated stats experiences, including player stat tables, sortable/sliceable perspectives, player rankings, stats-unit views, contract context, availability filters, and league-aware fantasy analysis.
+
+The fantasy league side is centered on Fantrax. Users can connect Fantrax credentials, import their leagues and teams, view league rosters, map platform players to DynastyIQ players, and filter statistics by player availability across their connected leagues. The platform also includes admin tooling for player imports, Fantrax syncs, NHL import orchestration, CapWages imports, player triage, scheduler visibility, and operational dashboards.
+
+DynastyIQ also acts as a community hub. Organizations represent fantasy communities and can link Fantrax leagues, Discord servers, and Patreon creator accounts. Community features include enabled organization settings, member and tier management, Patreon OAuth connection, Patreon webhook handling, membership sync, and membership event tracking. This supports commissioner tools, creator tools, protected community access, and member administration.
+
+Discord is a first-class integration. The Laravel app supports Discord OAuth login, Discord server attachment, member-joined webhooks, and APIs that expose linked Fantrax/team data to the bot. The separate `diq-bot` Node package registers a Discord user context command, DMs shared Fantrax team information, assigns or removes a `Fantrax` role based on linkage status, and listens to Laravel Reverb/Pusher events for real-time Fantrax link updates.
+
+Technically, the app uses Laravel 12, Jetstream, Fortify, Sanctum, Livewire, Horizon, Reverb, Socialite, Alpine, Tailwind, Vite, Pest, and Vitest. The frontend is mostly Blade plus Alpine/JavaScript components for stats pages, community views, league panels, admin screens, toast notifications, and responsive search/table behavior. The domain model is broad, with users, organizations, roles, players, stats, NHL games, units, platform leagues, platform teams, memberships, provider accounts, Discord servers, integration secrets, and import progress all persisted through Eloquent models and migrations.
+
+In short, DynastyIQ is a fantasy hockey intelligence and community operations platform. It is not just a stats site: it is built to connect real NHL data, dynasty fantasy decision-making, Fantrax league context, Discord community workflows, and Patreon-backed creator/member management.

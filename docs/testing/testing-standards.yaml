@@ -1,0 +1,212 @@
+version: 1
+id: testing-standards
+purpose: >
+  Single Source of Truth for automated test completeness and sufficiency.
+  These rules are written for AI agents and are non-negotiable unless an explicit
+  repository document contradicts them and is cited.
+scope:
+  applies_to:
+    - all PR test work
+    - all test audits triggered by standards changes
+    - Laravel Pest feature and unit tests
+    - JavaScript component tests under resources/js
+  non_goals:
+    - writing production code
+    - refactoring non-test files unless explicitly instructed
+    - changing routes, controllers, models, services, or views unless required to make tests deterministic and correct
+agent_contract:
+  hard_rules:
+    - tests_only: true
+    - applies_only_to_test_authoring_or_test_audit_tasks: true
+    - no_planning_in_output: true
+    - no_partial_completion: true
+    - no_early_exit_phrases:
+        - "awaiting review"
+        - "ready for review"
+        - "hand off"
+      allowed_only_if:
+        - all_completion_gates_passed: true
+    - deterministic_only:
+        forbid:
+          - real_time_clock
+          - randomness_without_seed
+          - external_network_calls
+          - background_jobs_without_sync_or_assertion
+          - flaky timing assertions
+          - dependency_on_remote_nhl_fantrax_discord_or_patreon_services
+    - read_docs_first:
+        required_paths:
+          - "AGENTS.md"
+          - "docs/**/*.md"
+          - "docs/**/*.yaml"
+        rule: >
+          Agent MUST read all docs above BEFORE editing any test file.
+          If docs conflict with this YAML, agent must cite the exact doc and section,
+          ask exactly ONE clarifying question, then stop.
+    - coding_standards:
+        php:
+          psr_12: true
+          strict_types: true
+          framework: "pest"
+        javascript:
+          deterministic_modules: true
+          no_external_network_calls: true
+        tests:
+          no_global_state: true
+          one_cohesive_suite_per_file: true
+          full_file_outputs_only: true
+          no_diffs_or_snippets: true
+  compliance_language:
+    - "MUST"
+    - "MUST NOT"
+    - "BLOCKING"
+    - "INCOMPLETE"
+test_authoring_policy:
+  allowed_test_file_paths:
+    - "tests/Feature/**"
+    - "tests/Unit/**"
+    - "resources/js/**/*.test.js"
+    - "resources/js/**/__tests__/**/*.js"
+  file_output_constraints:
+    - output_entire_file_contents_for_each_changed_test_file: true
+    - do_not_split_files_into_segments: true
+    - keep_test_files_cohesive_by_behavior_or_component: true
+redundancy_policy:
+  default_rule: >
+    Avoid redundant echo tests that repeat GET payload assertions without introducing
+    a distinct behavior.
+  explicit_exceptions_where_repetition_is_required:
+    - authorization_matrices
+    - organization_scope_matrices
+    - provider_webhook_signature_or_status_matrices
+    - import_status_transition_matrices
+  conflict_resolver: >
+    Authorization, organization-scope, provider-webhook, and import-transition
+    coverage override the no-redundant-echo-tests rule. If a test seems repetitive
+    but is part of one of those matrices, it is REQUIRED and not considered redundant.
+quantitative_enforcement_gates:
+  per_file_test_count_gate:
+    min_it_tests_per_file: 20
+    blocking: true
+    exception_policy: >
+      If another repository doc explicitly forbids or narrows this requirement,
+      the agent must cite that doc, ask exactly ONE clarifying question during the
+      acknowledgment step, and stop.
+  endpoint_verb_auth_scope_matrix_gate:
+    required: true
+    blocking: true
+    matrix_cells_must_include_test_names: true
+    dimensions:
+      coverage_dimensions:
+        - guest_blocked_where_applicable
+        - authenticated_without_permission_blocked_where_applicable
+        - authenticated_with_permission_allowed_where_applicable
+        - organization_scope_blocked_where_applicable
+        - owner_or_member_scope_allowed_where_applicable
+  frontend_component_contract_gate:
+    required_for_resources_js_changes: true
+    blocking: true
+    expectations:
+      - state_transitions_are_asserted
+      - DOM_or_payload_contracts_are_asserted_when_exposed
+      - no_external_network_calls
+      - no_time_or_randomness_without_control
+acknowledgment_gate:
+  required: true
+  response_before_any_edit:
+    format: "checklist"
+    checklist_items_must_include:
+      - "ACK docs read first (AGENTS.md, docs/**/*.md, docs/**/*.yaml)"
+      - "ACK tests-only scope for test authoring or test audit tasks"
+      - "ACK deterministic-only rule"
+      - "ACK Pest for PHP tests"
+      - "ACK PSR-12 + strict_types for PHP tests"
+      - "ACK frontend component tests must remain deterministic"
+      - "ACK full-file outputs only for changed test files"
+      - "ACK no global state"
+      - "ACK authorization/scope per-endpoint tests required even if repetitive"
+      - "ACK >=20 it(...) tests per modified or created test file unless a cited repo doc conflicts"
+      - "ACK endpoint x verb auth/scope checklist must be output and mapped to test names where applicable"
+      - "ACK completion gates: may not stop early"
+    clarifying_questions:
+      allowed_count: 1
+      only_if_unclear_or_conflicting: true
+    refusal_rule: >
+      Agent MUST refuse to edit test files until the checklist is fully acknowledged.
+coverage_framework:
+  categories:
+    A: "Request validation (422/403/404 etc.)"
+    B: "Normalization/defaulting behavior (request input to stored value)"
+    C: "Persistence or database contract (stored fields match expected representation)"
+    D: "API contract (response keys and values)"
+    E: "Read contract via HTTP (GET/SHOW/INDEX)"
+    F: "Event, queue, or broadcast contract where behavior emits asynchronous work"
+    G: "Frontend state and DOM contract where behavior is implemented in resources/js"
+  end_to_end_requirement:
+    rule: >
+      For EVERY behavior that affects externally visible data through API returns or UI
+      consumption, at least ONE end-to-end test MUST flow:
+      REQUEST (store/update/action) -> DB ASSERTIONS -> READ VIA HTTP (show/index/payload) ASSERTIONS.
+    anti_echo_rule: >
+      Read contract tests MUST NOT be satisfied solely by seeding database rows and asserting
+      that GET echoes them. At least ONE read test MUST be driven by store/update/action
+      inputs for each surfaced or changed field set.
+    redundancy_exception: "Auth, organization-scope, provider-webhook, and import-transition matrices override anti-echo restrictions."
+deliverable_contract:
+  codex_output_order_must_be:
+    - "Files changed/created (exact paths)"
+    - "Finalized Minimum Coverage Matrix (COVERED / NOT COVERED)"
+    - "Numbered requirements checklist (SATISFIED / UNSATISFIED)"
+    - "Endpoint x Verb Auth/Scope checklist where applicable (every cell mapped to test names; otherwise INCOMPLETE)"
+    - "Frontend component contract checklist where applicable"
+    - "Per-file test count report (each file's it(...) count; any <20 => INCOMPLETE unless cited exception applies)"
+  stop_rule: "Then STOP. No extra commentary."
+completion_gate:
+  blocking_conditions:
+    - any_minimum_coverage_matrix_entry_not_covered
+    - any_numbered_requirement_unsatisfied
+    - endpoint_verb_auth_scope_matrix_missing_applicable_cells_or_missing_test_names
+    - frontend_component_contract_missing_when_resources_js_changes_are_in_scope
+    - any_modified_or_created_test_file_has_fewer_than_min_it_tests_without_cited_exception
+  incomplete_format:
+    must_output:
+      - "INCOMPLETE: <short reason>"
+      - "Exactly what remains and where it should be added"
+  forbidden_completion_behavior:
+    - "Do not claim completion while any blocking condition remains"
+audit_workflow_template:
+  trigger_conditions:
+    - "docs/**/*.yaml changed"
+    - "docs/**/*.md changed that affects testing standards"
+    - "AGENTS.md changed in a way that affects testing standards"
+  branch_naming:
+    pattern: "ai/test-audits/{identifier}"
+    identifier_guidance:
+      - "date-yyyymmdd"
+      - "short-hash-of-standards-change"
+  audit_steps:
+    - "Parse docs/yaml as authoritative testing contracts"
+    - "Enumerate tests impacted by changed contracts"
+    - "Open new branch per pattern when explicitly instructed"
+    - "Update only test files to satisfy contracts"
+    - "Ensure all gates pass conceptually before reporting"
+  non_goals:
+    - "Do not change production code unless absolutely necessary for deterministic tests; if required, stop and request explicit permission"
+pr_templates:
+  required_fields_for_pr_yaml:
+    - pr_id
+    - pr_name
+    - goal
+    - endpoints_in_scope
+    - permissions
+    - organization_scope_rules
+    - behaviors_and_decisions
+    - out_of_scope
+    - minimum_coverage_matrix_ids
+    - numbered_requirements
+pr_example_reference:
+  file: "docs/testing/pr-example.yaml"
+  note: >
+    PR-specific testing YAML files should be created only when requested.
+    They should follow required_fields_for_pr_yaml and use this standards file
+    as the enforcement layer.

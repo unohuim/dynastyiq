@@ -1,0 +1,26 @@
+name: Platform State Service
+type: Support Service
+location:
+  - app/Services/PlatformState.php
+  - app/Models/PlatformLeague.php
+  - app/Models/PlatformTeam.php
+purpose: Provide reusable platform integration state checks and display helpers.
+when_to_use:
+  - Rendering connection state.
+  - Choosing behavior based on an external platform link.
+  - Checking seeded or initialized platform state.
+when_not_to_use:
+  - Executing sync jobs.
+  - Storing provider credentials.
+  - Replacing platform models.
+rules:
+  - PlatformState exposes state checks only.
+  - Sync behavior remains in platform sync services and jobs.
+  - Credential storage remains provider-specific.
+public_interface:
+  - PlatformState::seeded()
+  - PlatformState::initialized()
+  - PlatformState::upToDate()
+example_usage: |
+  $state = app(PlatformState::class);
+

@@ -1,0 +1,30 @@
+name: Static Markdown Content
+type: Public Content Pattern
+location:
+  - resources/markdown/policy.md
+  - resources/markdown/terms.md
+  - resources/markdown/discord-join-welcome.md
+  - resources/markdown/discord-user-teams.md
+  - resources/views/policy.blade.php
+  - resources/views/terms.blade.php
+purpose: Keep static public or Discord-facing copy in repository-managed markdown files.
+when_to_use:
+  - Terms content.
+  - Policy content.
+  - Discord help copy.
+  - Similar repo-owned static content.
+when_not_to_use:
+  - Authenticated app pages.
+  - Provider-synced content.
+  - Future /learn/{slug} marketing pages until that route and content system exists.
+rules:
+  - Static markdown content must remain repository-managed.
+  - Static markdown must not become a database-backed CMS by accident.
+  - Public marketing pages under /learn/{slug} require the separate future marketing page pattern.
+public_interface:
+  - resources/markdown/
+  - resources/views/policy.blade.php
+  - resources/views/terms.blade.php
+example_usage: |
+  resources/markdown/terms.md
+

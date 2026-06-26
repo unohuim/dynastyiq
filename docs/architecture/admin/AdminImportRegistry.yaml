@@ -1,0 +1,29 @@
+name: Admin Import Registry
+type: Admin Service Pattern
+location:
+  - app/Services/AdminImports.php
+  - app/Http/Controllers/Admin/ImportsController.php
+  - app/Jobs/RunImportCommandJob.php
+  - resources/views/admin/imports.blade.php
+  - resources/js/admin/admin-hub.js
+purpose: Define manually runnable import sources and dispatch them as queue batches from the admin UI.
+when_to_use:
+  - Adding an admin-triggered import command.
+  - Running a manual admin import.
+  - Listing supported manual import sources.
+when_not_to_use:
+  - NHL stage orchestration.
+  - Non-admin user imports.
+rules:
+  - Manual import sources must be registered in AdminImports.
+  - Admin import dispatch must use queued batch execution.
+  - Import keys must remain aligned with docs/ENUMS.md when enum-like.
+public_interface:
+  - AdminImports::sources()
+  - AdminImports::dispatch()
+  - admin.imports
+  - admin.imports.run
+  - admin.imports.retry
+example_usage: |
+  $batch = app(AdminImports::class)->dispatch('fantrax');
+

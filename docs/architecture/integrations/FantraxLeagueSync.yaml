@@ -1,0 +1,37 @@
+name: Fantrax League Sync
+type: External Platform Sync Pattern
+location:
+  - app/Services/FantraxLeagueService.php
+  - app/Services/SyncFantraxLeague.php
+  - app/Services/ImportFantraxLeagues.php
+  - app/Services/ImportFantraxPlayers.php
+  - app/Jobs/SyncFantraxLeagueJob.php
+  - app/Jobs/SyncFantraxTeamJob.php
+  - app/Models/PlatformLeague.php
+  - app/Models/PlatformTeam.php
+  - app/Models/PlatformRosterMembership.php
+  - app/Models/PlatformPlayerId.php
+purpose: Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
+when_to_use:
+  - Syncing Fantrax leagues.
+  - Updating Fantrax rosters.
+  - Resolving Fantrax player identity.
+  - Rendering league availability.
+when_not_to_use:
+  - NHL source-of-truth stats imports.
+  - Patreon membership syncing.
+rules:
+  - Fantrax-specific data must map into platform-neutral models when it powers app features.
+  - Roster sync must preserve canonical player identity links through platform player IDs.
+  - Fantrax enum-like values must remain documented in docs/ENUMS.md.
+public_interface:
+  - SyncFantraxLeagueJob
+  - SyncFantraxTeamJob
+  - FantraxLeagueService
+  - PlatformLeague
+  - PlatformTeam
+  - PlatformRosterMembership
+  - PlatformPlayerId
+example_usage: |
+  dispatch(new SyncFantraxLeagueJob($platformLeague->id));
+

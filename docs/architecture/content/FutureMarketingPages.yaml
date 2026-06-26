@@ -1,0 +1,28 @@
+name: Future Marketing Pages
+type: Reserved Public Page Pattern
+location:
+  - docs/UI_DESIGN.md
+  - resources/content/marketing/
+purpose: Reserve a repo-managed markdown content model for public marketing pages under /learn/{slug}.
+when_to_use:
+  - Future SEO pages.
+  - Future education pages.
+  - Public pages that should be versioned with the app and not database-managed.
+when_not_to_use:
+  - Current static policy or terms markdown.
+  - Authenticated app content.
+  - A database-backed CMS.
+rules:
+  - Marketing pages must stay repo-managed.
+  - Marketing page slugs must be lowercase kebab-case.
+  - Marketing pages must live under /learn/{slug}.
+  - Marketing page UI must follow docs/UI_DESIGN.md.
+public_interface:
+  - /learn/{slug}
+  - resources/content/marketing/{slug}.md
+example_usage: |
+  ---
+  title: "Fantasy Hockey Draft Strategy"
+  slug: "fantasy-hockey-draft-strategy"
+  ---
+

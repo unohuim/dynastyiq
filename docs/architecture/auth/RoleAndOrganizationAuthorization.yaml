@@ -1,0 +1,34 @@
+name: Role and Organization Authorization
+type: Authorization Pattern
+location:
+  - app/Models/User.php
+  - app/Models/Role.php
+  - app/Models/RoleUser.php
+  - app/Http/Middleware/SuperAdminMiddleware.php
+  - app/Http/Middleware/AdminLifecycleMiddleware.php
+  - database/seeders/RoleSeeder.php
+purpose: Authorize users through global roles and organization-scoped role assignments.
+when_to_use:
+  - Admin route protection.
+  - Community administration.
+  - Organization settings.
+  - Role-aware UI visibility.
+when_not_to_use:
+  - Replacing backend policies.
+  - Bypassing route middleware.
+  - Encoding one-off UI-only access rules.
+rules:
+  - Backend authorization is authoritative.
+  - Organization-scoped role data must be checked for organization-specific administration.
+  - UI visibility must never be the only enforcement layer.
+  - Role names and permission-like values must remain aligned with docs/ENUMS.md when enum-like.
+public_interface:
+  - User::roles()
+  - User::organizations()
+  - admin.super middleware
+  - admin.lifecycle middleware
+example_usage: |
+  Route::middleware(['admin.super', 'admin.lifecycle'])->group(function () {
+      Route::get('/admin/imports', [ImportsController::class, 'index']);
+  });
+

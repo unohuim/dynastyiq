@@ -1,0 +1,28 @@
+name: Admin Player Triage
+type: Admin Workflow Pattern
+location:
+  - app/Http/Controllers/Admin/PlayerTriageController.php
+  - app/Http/Controllers/Admin/AdminPlayersController.php
+  - app/Models/Player.php
+  - app/Models/PlatformPlayerId.php
+  - resources/views/admin/player-triage.blade.php
+purpose: Resolve imported platform player identities against canonical application players.
+when_to_use:
+  - Linking uncertain platform players.
+  - Creating player identity variants.
+  - Deferring uncertain player identity matches.
+when_not_to_use:
+  - Normal player display.
+  - Automated NHL stat imports that do not require manual identity triage.
+rules:
+  - Triage actions must preserve canonical Player identity.
+  - Platform identity resolution must use PlatformPlayerId.
+  - Admin-only triage routes must remain protected by admin middleware.
+public_interface:
+  - admin.player-triage
+  - admin.player-triage.link
+  - admin.player-triage.variant
+  - admin.player-triage.defer
+example_usage: |
+  Route::post('/player-triage/{platform}/{id}/link', [PlayerTriageController::class, 'link']);
+

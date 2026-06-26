@@ -1,0 +1,28 @@
+name: Laravel Feature and Unit Tests
+type: Backend Test Pattern
+location:
+  - tests/
+  - tests/Pest.php
+  - docs/CONVENTIONS.md
+purpose: Validate backend behavior, routes, models, services, policies, and domain workflows.
+when_to_use:
+  - New backend behavior.
+  - Backend bug fixes.
+  - Authorization changes.
+  - Domain workflow changes.
+when_not_to_use:
+  - New PHPUnit-style test classes.
+  - JavaScript-only component behavior.
+rules:
+  - New backend tests must use Pest.
+  - Tests must assert intent and include negative cases for permissions.
+  - Test conventions remain canonical in docs/CONVENTIONS.md.
+public_interface:
+  - tests/Pest.php
+  - Pest it()
+  - Pest expect()
+  - Laravel test helpers
+example_usage: |
+  it('returns stats payload rows', function () {
+      $this->getJson(route('api.stats'))->assertOk();
+  });

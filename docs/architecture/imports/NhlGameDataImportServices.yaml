@@ -1,0 +1,36 @@
+name: NHL Game Data Import Services
+type: Domain Import Services
+location:
+  - app/Services/ImportNHLPlayByPlay.php
+  - app/Services/SumNHLPlayByPlay.php
+  - app/Services/ImportNhlShifts.php
+  - app/Services/ImportNhlBoxscore.php
+  - app/Services/MakeNhlGameShiftUnits.php
+  - app/Services/ConnectEventsToUnitShifts.php
+  - app/Services/SumNhlGameUnits.php
+  - app/Services/SumNhlSeasonStats.php
+purpose: Own the NHL data transformations used by queued import jobs and admin commands.
+when_to_use:
+  - Implementing a single NHL import stage.
+  - Changing a single NHL import transformation.
+  - Reusing an import transformation from a job or command.
+when_not_to_use:
+  - Coordinating stage order.
+  - Tracking import progress state.
+  - Discovering games.
+rules:
+  - Stage services own transformation behavior only.
+  - Stage ordering belongs to NhlImportOrchestrator.
+  - Progress persistence belongs to NhlImportProgressRepo.
+public_interface:
+  - ImportNHLPlayByPlay
+  - SumNHLPlayByPlay
+  - ImportNhlShifts
+  - ImportNhlBoxscore
+  - MakeNhlGameShiftUnits
+  - ConnectEventsToUnitShifts
+  - SumNhlGameUnits
+  - SumNhlSeasonStats
+example_usage: |
+  app(ImportNHLPlayByPlay::class)->import($gameId);
+

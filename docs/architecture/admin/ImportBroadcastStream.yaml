@@ -1,0 +1,30 @@
+name: Import Broadcast Stream
+type: Realtime Feedback Pattern
+location:
+  - app/Support/ImportBroadcast.php
+  - app/Events/ImportStreamEvent.php
+  - app/Models/ImportRun.php
+  - resources/js/admin/admin-hub.js
+purpose: Publish import progress and operational messages to admin UI consumers.
+when_to_use:
+  - Long-running import workflows that should surface progress without a manual refresh.
+  - Admin import command output.
+  - Import lifecycle status feedback.
+when_not_to_use:
+  - Domain events that should not be displayed as import-stream UI messages.
+  - Browser-only toast feedback.
+rules:
+  - Import stream events must be scoped to import feedback.
+  - Command output should pass through ImportBroadcast output handling when user-visible.
+  - Import status values must remain aligned with docs/ENUMS.md.
+public_interface:
+  - ImportBroadcast::started()
+  - ImportBroadcast::finished()
+  - ImportBroadcast::failed()
+  - ImportBroadcast::output()
+  - ImportStreamEvent
+  - ImportRun
+example_usage: |
+  $broadcast = new ImportBroadcast('fantrax', $batchId);
+  $broadcast->started();
+

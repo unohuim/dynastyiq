@@ -1,0 +1,27 @@
+name: Shot Geometry Service
+type: Domain Service
+location:
+  - app/Services/ShotGeometryService.php
+  - app/Console/Commands/BackfillShotGeometryCommand.php
+  - docs/shot_geometry_options.md
+purpose: Centralize shot-location and geometry calculations for imported NHL play-by-play data.
+when_to_use:
+  - Calculating shot geometry fields from NHL event data.
+  - Backfilling shot geometry fields.
+  - Changing shot attempt geometry rules.
+when_not_to_use:
+  - Presentation-only stat formatting.
+  - Player metadata imports.
+  - Fantrax platform data.
+rules:
+  - Shot geometry calculations must stay centralized in ShotGeometryService.
+  - Backfills must use the same service as import-time calculations.
+  - Geometry-related enum-like values must remain referenced from docs/ENUMS.md when applicable.
+public_interface:
+  - ShotGeometryService::isShotAttempt()
+  - ShotGeometryService::computeFromPlay()
+  - ShotGeometryService::computeFromContext()
+  - BackfillShotGeometryCommand
+example_usage: |
+  app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
+

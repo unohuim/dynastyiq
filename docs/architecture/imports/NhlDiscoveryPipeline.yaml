@@ -1,0 +1,30 @@
+name: NHL Discovery Pipeline
+type: Import Discovery Pattern
+location:
+  - app/Services/NhlDiscoverGames.php
+  - app/Services/NhlDiscovery.php
+  - app/Console/Commands/NhlDiscoverCommand.php
+  - app/Jobs/NhlDiscoveryJob.php
+  - app/Jobs/NhlDiscoverDayJob.php
+purpose: Discover NHL games for a date or season and seed downstream import progress rows.
+when_to_use:
+  - Finding NHL games before running staged imports.
+  - Seeding import progress rows for discovered games.
+  - Scheduling discovery jobs.
+when_not_to_use:
+  - Importing play-by-play.
+  - Importing shifts or boxscores.
+  - Summarizing already discovered games.
+rules:
+  - Discovery prepares work for the staged import pipeline.
+  - Discovery must not perform downstream stage transformations.
+  - Discovery output must remain compatible with NhlImportOrchestrator.
+public_interface:
+  - NhlDiscoverCommand
+  - NhlDiscoveryJob
+  - NhlDiscoverDayJob
+  - NhlDiscoverGames
+  - NhlDiscovery
+example_usage: |
+  php artisan nhl:discover --date=2026-01-15
+

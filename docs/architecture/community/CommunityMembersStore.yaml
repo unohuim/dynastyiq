@@ -1,0 +1,25 @@
+name: Community Members Store
+type: Frontend State Module
+location:
+  - resources/js/components/community-members-store.js
+  - resources/js/components/__tests__/community-members-store.test.js
+  - resources/views/communities/_desktop-memberships.blade.php
+purpose: Manage page-local member and tier UI state for community membership screens.
+when_to_use:
+  - Interactive community membership behavior.
+  - Interactive community tier behavior.
+  - Existing community member UI maintenance.
+when_not_to_use:
+  - Global app state.
+  - Backend authorization.
+  - Unrelated page modules.
+rules:
+  - State must remain page-local.
+  - Backend endpoints remain the source of truth for persistence.
+  - Store behavior should stay covered by JavaScript tests when modified.
+public_interface:
+  - resources/js/components/community-members-store.js
+  - community-members-store.test.js
+example_usage: |
+  The community hub mounts the members store for membership and tier UI behavior.
+

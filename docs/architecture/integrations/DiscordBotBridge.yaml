@@ -1,0 +1,28 @@
+name: Discord Bot Bridge
+type: Cross-Runtime Integration Pattern
+location:
+  - app/Events/BotFantraxLinked.php
+  - app/Http/Controllers/Api/DiscordWebhookController.php
+  - resources/js/echo.js
+  - diq-bot/bot.js
+  - diq-bot/features/user-teams.js
+  - diq-bot/features/assign-fantrax-roles.js
+purpose: Bridge Laravel domain events and HTTP APIs to the Discord bot process.
+when_to_use:
+  - Bot-facing user team lookup.
+  - Fantrax linked status checks.
+  - Bot role assignment events.
+when_not_to_use:
+  - Browser-only realtime UI.
+  - Backend-only sync logic.
+rules:
+  - The bot must consume Laravel-provided API and event contracts.
+  - Laravel remains the source of truth for user, team, and integration state.
+  - Bot-facing payload changes must preserve compatibility with diq-bot consumers.
+public_interface:
+  - /api/discord/users/{discord_id}
+  - /api/diq/is-fantrax
+  - BotFantraxLinked
+example_usage: |
+  event(new BotFantraxLinked($user));
+

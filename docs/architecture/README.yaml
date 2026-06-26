@@ -1,0 +1,42 @@
+name: Architecture Documentation System
+type: Architectural Documentation Standard
+location:
+  - docs/architecture/
+purpose: Define a strict, reviewable, and machine-readable system for documenting DynastyIQ architectural invariants and reusable patterns.
+when_to_use:
+  - Documenting any architectural concept, invariant, or reusable pattern in this repository.
+  - Adding a new reusable backend service, frontend component, integration pattern, or domain rule.
+  - Replacing broad prose in docs/ARCHITECTURE_INVENTORY.md with one focused architecture YAML file.
+when_not_to_use:
+  - Documenting implementation details that belong in code comments or tests.
+  - Explaining step-by-step workflows or tutorials.
+  - Duplicating schema columns, enum values, UI constraints, or development conventions from their canonical documents.
+rules:
+  - Architecture documentation is authoritative and describes invariants, not implementation trivia.
+  - Each architectural concept must be documented in exactly one YAML file.
+  - Files must be grouped by domain directory under docs/architecture/.
+  - Enum-like values remain canonical in docs/ENUMS.md and must not be duplicated.
+  - UI constraints remain canonical in docs/UI_DESIGN.md and must not be duplicated.
+  - Database schema remains canonical in migrations and inventoried in docs/DB_SCHEMA.md.
+  - Development conventions remain canonical in docs/CONVENTIONS.md.
+  - Conflicts resolve in order: docs/CONVENTIONS.md, docs/ENUMS.md, docs/UI_DESIGN.md for UI, architecture YAML, then code.
+  - All architecture YAML files must follow the canonical schema and key order.
+  - Required keys are name, type, location, purpose, when_to_use, when_not_to_use, rules, public_interface, and example_usage.
+  - Key order is fixed as name, type, location, purpose, when_to_use, when_not_to_use, rules, public_interface, example_usage.
+  - All schema keys are mandatory.
+  - Empty sections are forbidden.
+  - Lists must be explicit YAML lists.
+  - No prose or commentary is allowed outside the schema.
+  - PRs violating schema, authority rules, or documented invariants must be rejected.
+  - Entries must be short, precise, easy to diff, and focused on architectural behavior.
+public_interface:
+  - docs/architecture/**.yaml
+  - docs/architecture/README.yaml
+  - docs/ARCHITECTURE_INVENTORY.md
+example_usage: |
+  docs/architecture/
+    application/LaravelApplicationShell.yaml
+    integrations/FantraxLeagueSync.yaml
+    imports/NhlImportOrchestrator.yaml
+    ui/ToastStack.yaml
+

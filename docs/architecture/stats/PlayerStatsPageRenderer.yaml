@@ -1,0 +1,26 @@
+name: Player Stats Page Renderer
+type: Frontend UI Pattern
+location:
+  - resources/js/components/PlayerStatsPage/player-stats-page.js
+  - resources/js/components/PlayerStatsPage/player-stats-desktop.js
+  - resources/js/components/PlayerStatsPage/player-stats-mobile.js
+  - resources/js/components/PlayerStatsPage/player-stats-utils.js
+  - resources/js/components/PlayerStatsPage/ui/
+purpose: Render player-centered stats views with the same desktop and mobile split used by the main stats page.
+when_to_use:
+  - Player stats pages.
+  - Public player table surfaces.
+  - Existing PlayerStatsPage module maintenance.
+when_not_to_use:
+  - General stats pages that should use StatsPage.
+  - Admin imports or player triage.
+rules:
+  - PlayerStatsPage owns player-centered browser rendering.
+  - Shared behavior with StatsPage should be extracted only when it removes real duplication.
+  - New or materially touched rendering must comply with docs/UI_DESIGN.md where feasible.
+public_interface:
+  - PlayerStatsPage JavaScript module
+  - api.player-stats
+example_usage: |
+  The player stats page initializes the PlayerStatsPage renderer with API-backed rows.
+

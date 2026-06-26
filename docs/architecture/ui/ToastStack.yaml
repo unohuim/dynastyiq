@@ -1,0 +1,28 @@
+name: Toast Stack
+type: UI Feedback Component
+location:
+  - resources/js/components/toast-stack.js
+  - resources/js/components/toast-stack.test.js
+  - resources/views/partials/toast-container.blade.php
+purpose: Provide non-blocking page feedback for success, warning, and error messages.
+when_to_use:
+  - AJAX actions.
+  - Community mutations.
+  - Admin actions.
+  - UI flows that need transient feedback.
+when_not_to_use:
+  - Blocking confirmations.
+  - Form validation summaries.
+  - Persistent status panels.
+rules:
+  - Toasts are non-blocking feedback.
+  - Toast behavior must remain covered by component tests when modified.
+  - New toast usage must follow docs/UI_DESIGN.md feedback rules.
+public_interface:
+  - resources/js/components/toast-stack.js
+  - resources/views/partials/toast-container.blade.php
+example_usage: |
+  window.dispatchEvent(new CustomEvent('toast', {
+      detail: { type: 'success', message: 'Saved.' },
+  }));
+

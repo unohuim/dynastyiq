@@ -1,0 +1,25 @@
+name: Perspective Policy
+type: Authorization Policy
+location:
+  - app/Policies/PerspectivePolicy.php
+  - app/Models/Perspective.php
+  - app/Http/Controllers/PerspectiveController.php
+purpose: Control who can create, update, delete, and view user or organization-owned stats perspectives.
+when_to_use:
+  - Mutating saved perspective records.
+  - Checking non-public access to perspective records.
+  - Filtering visible perspectives for an authenticated or guest user.
+when_not_to_use:
+  - General route authorization outside the perspective domain.
+  - Replacing Perspective::forUser() visibility filtering.
+rules:
+  - Perspective mutation routes must use backend authorization.
+  - Perspective visibility must remain consistent with Perspective::forUser().
+  - UI controls may hide unavailable actions but must not be treated as authority.
+public_interface:
+  - PerspectivePolicy
+  - Perspective::forUser()
+  - PerspectiveController
+example_usage: |
+  $this->authorize('update', $perspective);
+

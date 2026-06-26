@@ -1,0 +1,27 @@
+name: Leagues Hub Layout
+type: UI Layout Pattern
+location:
+  - app/View/Components/LeaguesHubLayout.php
+  - resources/views/components/leagues-hub-layout.blade.php
+  - resources/js/components/LeaguesHubLayout.js
+  - resources/js/leagues-hub.js
+purpose: Provide a reusable shell for league hub pages and progressive enhancement behavior.
+when_to_use:
+  - League hub views.
+  - League pages that need shared page chrome.
+  - League pages that need shared JavaScript behavior.
+when_not_to_use:
+  - Community-only pages.
+  - Generic stats pages.
+rules:
+  - League hub pages should use the shared layout instead of duplicating shell markup.
+  - League hub behavior must remain scoped to league pages.
+  - New or materially touched league hub UI must comply with docs/UI_DESIGN.md where feasible.
+public_interface:
+  - <x-leagues-hub-layout>
+  - resources/js/leagues-hub.js
+example_usage: |
+  <x-leagues-hub-layout>
+      ...
+  </x-leagues-hub-layout>
+

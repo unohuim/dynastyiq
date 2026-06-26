@@ -1,0 +1,28 @@
+name: Laravel Application Shell
+type: Framework Pattern
+location:
+  - routes/web.php
+  - routes/api.php
+  - app/Http/Controllers/
+  - resources/views/
+  - resources/js/app.js
+purpose: Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, Tailwind, Livewire, queues, and Vite.
+when_to_use:
+  - Adding first-party HTTP routes.
+  - Adding controllers, request validation, policies, jobs, Blade views, or Vite-managed application JavaScript.
+when_not_to_use:
+  - Discord bot runtime code, which belongs under diq-bot/.
+  - External scripts that should remain outside Laravel.
+rules:
+  - Laravel routes own browser and API entrypoints.
+  - Blade views own server-rendered page shells.
+  - Vite-managed JavaScript owns browser-side behavior.
+  - Domain persistence and authorization stay in Laravel, not in the Discord bot runtime.
+public_interface:
+  - Laravel route definitions
+  - Blade views and components
+  - Vite-managed JavaScript entrypoints
+  - Laravel queues and jobs
+example_usage: |
+  Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
+
