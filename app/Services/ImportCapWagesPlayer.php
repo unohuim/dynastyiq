@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\Player;
 use App\Models\Contract;
 use App\Traits\HasAPITrait;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\PlayerNotFoundException;
 use App\Exceptions\CapWagesPlayerNotFoundException;
@@ -18,6 +19,11 @@ use App\Jobs\ImportNHLPlayerJob;
 class ImportCapWagesPlayer
 {
     use HasAPITrait;
+
+    public function __construct(
+        private readonly ?PlayerIdentityResolver $identityResolver = null,
+    ) {
+    }
 
     /**
      * Import contract data (including seasons) for a given player slug.
@@ -37,13 +43,16 @@ class ImportCapWagesPlayer
 
         $data  = $response['data'] ?? [];
         $nhlId = $data['nhlId'] ?? null;
+        $resolver = $this->identityResolver ?? app(PlayerIdentityResolver::class);
+        $identity = $resolver->upsertCapWagesIdentity($slug, $data);
+        $knownPlayer = $nhlId ? Player::where('nhl_id', $nhlId)->first() : null;
+        $identity = $resolver->resolveNonAuthorityIdentity($identity, $knownPlayer);
+        $player = $identity->player;
 
-        if (! $nhlId) {
+        if (! $nhlId && ! $player) {
             Log::warning("CapWages player slug {$slug} missing nhl_id");
             return;
         }
-
-        $player = Player::where('nhl_id', $nhlId)->first();
 
         if (! $player) {
             Log::warning("No local Player for NHL ID {$nhlId}", ['slug' => $slug, 'all' => $all]);
@@ -58,20 +67,36 @@ class ImportCapWagesPlayer
         }
 
         foreach ($data['contracts'] ?? [] as $entry) {
-            $contract = Contract::updateOrCreate(
-                [
-                    'player_id'     => $player->id,
-                    'signing_date'  => $entry['signingDate'],
+            $signingDate = isset($entry['signingDate'])
+                ? Carbon::parse((string) $entry['signingDate'])->toDateString()
+                : null;
+
+            $contractQuery = Contract::query()
+                ->where('player_id', $player->id)
+                ->where('contract_type', $entry['contractType']);
+
+            $contract = $contractQuery->get()
+                ->first(static function (Contract $contract) use ($signingDate): bool {
+                    if ($signingDate === null) {
+                        return $contract->signing_date === null;
+                    }
+
+                    return $contract->signing_date?->toDateString() === $signingDate;
+                }) ?? new Contract([
+                    'player_id' => $player->id,
                     'contract_type' => $entry['contractType'],
-                ],
-                [
-                    'contract_length' => $entry['contractLength'] ?? null,
-                    'contract_value'  => $entry['contractValue']  ?? null,
-                    'expiry_status'   => $entry['expiryStatus']   ?? null,
-                    'signing_team'    => $entry['signingTeam']    ?? null,
-                    'signed_by'       => $entry['signedBy']       ?? null,
-                ]
-            );
+                    'signing_date' => $signingDate,
+                ]);
+
+            $contract->fill([
+                'contract_length' => $entry['contractLength'] ?? null,
+                'contract_value'  => $entry['contractValue']  ?? null,
+                'expiry_status'   => $entry['expiryStatus']   ?? null,
+                'signing_team'    => $entry['signingTeam']    ?? null,
+                'signing_date'    => $signingDate,
+                'signed_by'       => $entry['signedBy']       ?? null,
+            ]);
+            $contract->save();
 
             foreach ($entry['seasons'] ?? [] as $seasonData) {
                 $rawSeason = (string) ($seasonData['season'] ?? '');

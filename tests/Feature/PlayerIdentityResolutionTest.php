@@ -5,8 +5,13 @@ declare(strict_types=1);
 use App\Classes\ImportNHLPlayer as LegacyImportNHLPlayer;
 use App\DTO\PlayerIdentityMatchResult;
 use App\Jobs\ImportNHLPlayerJob;
+use App\Models\Contract;
+use App\Models\ContractSeason;
+use App\Models\FantraxPlayer;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Services\ImportCapWagesPlayer;
+use App\Services\ImportFantraxPlayer;
 use App\Services\ImportNHLPlayer;
 use App\Services\PlayerIdentityNormalizer;
 use App\Services\PlayerIdentityResolver;
@@ -51,6 +56,71 @@ beforeEach(function () {
     $this->fakeNhlLanding = function (array $payload, string $playerId = '8478402'): void {
         Http::fake([
             "https://api-web.nhle.com/v1/player/{$playerId}/landing" => Http::response($payload),
+        ]);
+    };
+
+    $this->makePlayer = static function (array $overrides = []): Player {
+        return Player::create(array_merge([
+            'nhl_id' => null,
+            'first_name' => 'Test',
+            'last_name' => 'Player',
+            'full_name' => 'Test Player',
+            'dob' => '1990-01-01',
+            'position' => 'C',
+            'team_abbrev' => 'ANA',
+            'current_league_abbrev' => 'NHL',
+        ], $overrides));
+    };
+
+    $this->fantraxEntry = static function (array $overrides = []): array {
+        return array_merge([
+            'fantraxId' => 'fantrax-1',
+            'name' => 'Player, Test',
+            'team' => 'ANA',
+            'position' => 'C',
+            'birthDate' => '1990-01-01',
+        ], $overrides);
+    };
+
+    $this->capWagesPayload = static function (array $overrides = []): array {
+        return array_replace_recursive([
+            'nhlId' => 123456,
+            'name' => 'Test Player',
+            'birthDate' => '1990-01-01',
+            'position' => 'C',
+            'team' => 'ANA',
+            'contracts' => [
+                [
+                    'signingDate' => '2026-07-01',
+                    'contractType' => 'Standard',
+                    'contractLength' => '2 years',
+                    'contractValue' => 2000000,
+                    'expiryStatus' => 'UFA',
+                    'signingTeam' => 'ANA',
+                    'signedBy' => 'Club',
+                    'seasons' => [
+                        [
+                            'season' => '2026-27',
+                            'clause' => null,
+                            'capHit' => 1000000,
+                            'aav' => 1000000,
+                            'performanceBonuses' => 0,
+                            'signingBonuses' => 0,
+                            'baseSalary' => 1000000,
+                            'totalSalary' => 1000000,
+                            'minorsSalary' => 100000,
+                        ],
+                    ],
+                ],
+            ],
+        ], $overrides);
+    };
+
+    $this->fakeCapWagesPlayer = static function (string $slug, array $payload): void {
+        Http::fake([
+            "https://capwages.com/api/gateway/v1/players/{$slug}" => Http::response([
+                'data' => $payload,
+            ]),
         ]);
     };
 });
@@ -226,7 +296,19 @@ it('throws when an nhl identity payload misses the provider player id', function
         'firstName' => ['default' => 'Missing'],
         'lastName' => ['default' => 'Identifier'],
     ]);
-})->throws(InvalidArgumentException::class);
+})->throws(\InvalidArgumentException::class);
+
+it('rejects matched identity results without a canonical player reference', function () {
+    new PlayerIdentityMatchResult(PlayerExternalIdentity::STATUS_MATCHED);
+})->throws(\InvalidArgumentException::class);
+
+it('rejects undocumented identity match statuses', function () {
+    new PlayerIdentityMatchResult('review-needed');
+})->throws(\InvalidArgumentException::class);
+
+it('rejects identity match confidence outside the percentage range', function () {
+    PlayerIdentityMatchResult::matched(123, 101);
+})->throws(\InvalidArgumentException::class);
 
 it('keeps the prospect flag when importing a prospect', function () {
     ($this->fakeNhlLanding)(($this->nhlPayload)());
@@ -281,4 +363,152 @@ it('queued nhl player job uses the identity workflow', function () {
 
     expect(Player::query()->count())->toBe(1);
     expect(PlayerExternalIdentity::query()->count())->toBe(1);
+});
+
+it('fantrax import upserts an external identity', function () {
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)());
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->provider)->toBe(PlayerExternalIdentity::PROVIDER_FANTRAX);
+    expect($identity->provider_player_id)->toBe('fantrax-1');
+    expect($identity->raw_payload['name'])->toBe('Player, Test');
+    expect(FantraxPlayer::query()->count())->toBe(1);
+});
+
+it('fantrax known provider id links to an existing canonical player', function () {
+    $player = ($this->makePlayer)();
+    FantraxPlayer::create([
+        'fantrax_id' => 'fantrax-1',
+        'player_id' => $player->id,
+        'name' => 'Player, Test',
+    ]);
+
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)(['birthDate' => null]));
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->player_id)->toBe($player->id);
+    expect(FantraxPlayer::first()->player_id)->toBe($player->id);
+});
+
+it('fantrax exact normalized name and birthdate auto-links', function () {
+    $player = ($this->makePlayer)();
+
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)());
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->match_confidence)->toBe(95);
+    expect($identity->player_id)->toBe($player->id);
+});
+
+it('fantrax ambiguous names become candidates', function () {
+    ($this->makePlayer)(['dob' => '1990-01-01']);
+    ($this->makePlayer)(['dob' => '1991-01-01']);
+
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)(['birthDate' => null]));
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_CANDIDATE);
+    expect($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES);
+    expect($identity->player_id)->toBeNull();
+});
+
+it('fantrax insufficient name data remains unmatched with a reason', function () {
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)(['name' => '']));
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_UNMATCHED);
+    expect($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_PROVIDER_PAYLOAD_MISSING_NAME);
+    expect(FantraxPlayer::first()->player_id)->toBeNull();
+});
+
+it('fantrax import remains idempotent for identity and legacy player rows', function () {
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)());
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)(['team' => 'BOS']));
+
+    expect(PlayerExternalIdentity::query()->count())->toBe(1);
+    expect(FantraxPlayer::query()->count())->toBe(1);
+    expect(PlayerExternalIdentity::first()->team)->toBe('BOS');
+});
+
+it('capwages import upserts an external identity before contract writes', function () {
+    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)());
+
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->provider)->toBe(PlayerExternalIdentity::PROVIDER_CAPWAGES);
+    expect($identity->provider_player_id)->toBe('123456');
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_UNMATCHED);
+    expect(Contract::query()->count())->toBe(0);
+});
+
+it('capwages unresolved identity does not write contracts', function () {
+    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)());
+
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+
+    expect(PlayerExternalIdentity::first()->player_id)->toBeNull();
+    expect(Contract::query()->count())->toBe(0);
+    expect(ContractSeason::query()->count())->toBe(0);
+});
+
+it('capwages matched identity applies contract data to the linked canonical player', function () {
+    $player = ($this->makePlayer)(['nhl_id' => 123456]);
+    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)());
+
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->player_id)->toBe($player->id);
+    expect(Contract::query()->count())->toBe(1);
+    expect(ContractSeason::query()->count())->toBe(1);
+});
+
+it('capwages import remains idempotent for identities contracts and seasons', function () {
+    ($this->makePlayer)(['nhl_id' => 123456]);
+    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)());
+
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+
+    expect(PlayerExternalIdentity::query()->count())->toBe(1);
+    expect(Contract::query()->count())->toBe(1);
+    expect(ContractSeason::query()->count())->toBe(1);
+});
+
+it('provider audit counts include every documented identity status', function () {
+    foreach ([
+        PlayerExternalIdentity::STATUS_MATCHED,
+        PlayerExternalIdentity::STATUS_CANDIDATE,
+        PlayerExternalIdentity::STATUS_UNMATCHED,
+        PlayerExternalIdentity::STATUS_IGNORED,
+        PlayerExternalIdentity::STATUS_CONFLICT,
+    ] as $status) {
+        PlayerExternalIdentity::create([
+            'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+            'provider_player_id' => "fantrax-{$status}",
+            'match_status' => $status,
+            'player_id' => $status === PlayerExternalIdentity::STATUS_MATCHED
+                ? ($this->makePlayer)(['nhl_id' => 900001])->id
+                : null,
+        ]);
+    }
+
+    $counts = app(PlayerIdentityResolver::class)->statusCountsByProvider();
+
+    expect($counts[PlayerExternalIdentity::PROVIDER_FANTRAX][PlayerExternalIdentity::STATUS_MATCHED])->toBe(1);
+    expect($counts[PlayerExternalIdentity::PROVIDER_FANTRAX][PlayerExternalIdentity::STATUS_CANDIDATE])->toBe(1);
+    expect($counts[PlayerExternalIdentity::PROVIDER_FANTRAX][PlayerExternalIdentity::STATUS_UNMATCHED])->toBe(1);
+    expect($counts[PlayerExternalIdentity::PROVIDER_FANTRAX][PlayerExternalIdentity::STATUS_IGNORED])->toBe(1);
+    expect($counts[PlayerExternalIdentity::PROVIDER_FANTRAX][PlayerExternalIdentity::STATUS_CONFLICT])->toBe(1);
 });

@@ -62,7 +62,7 @@ computing gzip size...
 public/build/manifest.json              0.27 kB │ gzip:  0.14 kB
 public/build/assets/app-DYiQHYgi.css  101.08 kB │ gzip: 15.93 kB
 public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
-✓ built in 640ms
+✓ built in 632ms
 
    INFO  Nothing to migrate.  
 
@@ -70,7 +70,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
 \
 
    PASS  Tests\Unit\NhlImportProgressRepoTest
-  ✓ mark stale running to error updates old rows                         0.10s  
+  ✓ mark stale running to error updates old rows                         0.12s  
 
    PASS  Tests\Unit\Patreon\MembershipSyncServiceTest
   ✓ logs events when membership changes                                  0.01s  
@@ -80,10 +80,10 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
    PASS  Tests\Unit\Patreon\PatreonSyncServiceTest
   ✓ refresh account token skips when not expired                         0.01s  
   ✓ refresh account token updates when near expiry                       0.01s  
-  ✓ refresh account token ignores when missing refresh token             0.01s  
+  ✓ refresh account token ignores when missing refresh token
   ✓ call patreon retries after unauthorized and refreshes                0.01s  
   ✓ display name resolution prefers identity then campaign
-  ✓ map status maps known values and defaults active
+  ✓ map status maps known values and defaults active                     0.01s  
   ✓ resolve member profile prefers existing external id and email linka… 0.01s  
   ✓ resolve member profile attaches external id from email and sets avatar
   ✓ sync members skips when no tiers available                           0.01s  
@@ -93,9 +93,9 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ patreon identity composes display fields                             0.01s  
 
    PASS  Tests\Unit\Patreon\TierMapperTest
-  ✓ throws when title missing
-  ✓ preserves diq owned tier metadata when mapping
-  ✓ reuses existing free tier and sets provider data
+  ✓ throws when title missing                                            0.01s  
+  ✓ preserves diq owned tier metadata when mapping                       0.01s  
+  ✓ reuses existing free tier and sets provider data                     0.01s  
   ✓ matches diq owned tier by name without changing paid amount          0.01s  
 
    WARN  Tests\Feature\ApiTokenPermissionsTest
@@ -208,11 +208,25 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ it reports status counts by provider
   ✓ it allows unmatched identity reasons to be persisted
   ✓ it throws when an nhl identity payload misses the provider player id
+  ✓ it rejects matched identity results without a canonical player reference
+  ✓ it rejects undocumented identity match statuses
+  ✓ it rejects identity match confidence outside the percentage range
   ✓ it keeps the prospect flag when importing a prospect                 0.01s  
   ✓ it updates current league from prospect stats                        0.01s  
-  ✓ it service playerExists returns true after import
+  ✓ it service playerExists returns true after import                    0.01s  
   ✓ it legacy import wrapper delegates to the identity workflow          0.01s  
   ✓ it queued nhl player job uses the identity workflow                  0.01s  
+  ✓ it fantrax import upserts an external identity                       0.01s  
+  ✓ it fantrax known provider id links to an existing canonical player   0.01s  
+  ✓ it fantrax exact normalized name and birthdate auto-links            0.01s  
+  ✓ it fantrax ambiguous names become candidates                         0.01s  
+  ✓ it fantrax insufficient name data remains unmatched with a reason    0.01s  
+  ✓ it fantrax import remains idempotent for identity and legacy player… 0.01s  
+  ✓ it capwages import upserts an external identity before contract wri… 0.01s  
+  ✓ it capwages unresolved identity does not write contracts             0.01s  
+  ✓ it capwages matched identity applies contract data to the linked ca… 0.01s  
+  ✓ it capwages import remains idempotent for identities contracts and…  0.01s  
+  ✓ it provider audit counts include every documented identity status    0.01s  
 
    PASS  Tests\Feature\PlayersAvailableEventTest
   ✓ it broadcasts when the first nhl player is imported                  0.01s  
@@ -247,6 +261,6 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ it deletes preferences when value is null or empty                   0.01s  
   ✓ it only mutates preferences for the authenticated user               0.01s  
 
-  Tests:    7 skipped, 111 passed (365 assertions)
-  Duration: 1.26s
+  Tests:    7 skipped, 125 passed (406 assertions)
+  Duration: 1.38s
 

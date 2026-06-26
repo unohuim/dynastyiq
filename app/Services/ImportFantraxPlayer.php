@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\FantraxPlayer;
-use App\Models\Player;
+use App\Models\PlayerExternalIdentity;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -13,6 +13,11 @@ use Illuminate\Support\Facades\Log;
  */
 class ImportFantraxPlayer
 {
+    public function __construct(
+        private readonly ?PlayerIdentityResolver $identityResolver = null,
+    ) {
+    }
+
     /**
      * Process a single Fantrax entry.
      *
@@ -20,8 +25,7 @@ class ImportFantraxPlayer
      */
     public function syncOne(array $entry): void
     {
-        // Minimal validation
-        if (empty($entry['fantraxId']) || empty($entry['name'])) {
+        if (empty($entry['fantraxId'])) {
             Log::warning('[Fantrax] Skipping entry; missing required fields', [
                 'fantraxId' => $entry['fantraxId'] ?? null,
                 'name'      => $entry['name'] ?? null,
@@ -30,27 +34,26 @@ class ImportFantraxPlayer
         }
 
         $existing = FantraxPlayer::where('fantrax_id', $entry['fantraxId'])->first();
+        $resolver = $this->identityResolver ?? app(PlayerIdentityResolver::class);
+        $identity = $resolver->upsertFantraxIdentity($entry);
+        $knownPlayer = $existing?->player;
+        $identity = $resolver->resolveNonAuthorityIdentity($identity, $knownPlayer);
 
-        // Do not reassign if already linked
-        $player = null;
-        $pid    = $existing?->player_id;
+        $pid = $identity->match_status === PlayerExternalIdentity::STATUS_MATCHED
+            ? $identity->player_id
+            : null;
 
-        if ($pid === null) {
-            $player = $this->resolvePlayer($entry);
-            $pid    = $player?->id;
+        if ($pid !== null) {
+            $claimed = FantraxPlayer::where('player_id', $pid)
+                ->where('fantrax_id', '!=', $entry['fantraxId'])
+                ->exists();
 
-            if ($pid !== null) {
-                $claimed = FantraxPlayer::where('player_id', $pid)
-                    ->where('fantrax_id', '!=', $entry['fantraxId'])
-                    ->exists();
-
-                if ($claimed) {
-                    Log::warning('[Fantrax] Player already linked to another Fantrax record', [
-                        'fantraxId' => $entry['fantraxId'],
-                        'playerId'  => $pid,
-                    ]);
-                    $pid = null;
-                }
+            if ($claimed) {
+                Log::warning('[Fantrax] Player already linked to another Fantrax record', [
+                    'fantraxId' => $entry['fantraxId'],
+                    'playerId'  => $pid,
+                ]);
+                $pid = null;
             }
         }
 
@@ -71,30 +74,5 @@ class ImportFantraxPlayer
         if ($pid === null && (($entry['team'] ?? null) !== '(N/A)')) {
             Log::info('[Fantrax] Upserted FantraxPlayer without link', ['name' => $entry['name'] ?? null]);
         }
-    }
-
-    /**
-     * Attempt to resolve a Player by fantrax_id and exact full name.
-     *
-     * @param array<string,mixed> $entry
-     * @return Player|null
-     */
-    private function resolvePlayer(array $entry): ?Player
-    {
-        // Parse "Last, First"
-        [$last, $first] = array_map(
-            static fn ($p) => trim((string)$p),
-            explode(',', (string)($entry['name'] ?? '')) + [1 => '']
-        );
-
-        if ($last === '' || $first === '') {
-            return null;
-        }
-
-        $fullName = strtolower(trim($first . ' ' . $last));
-
-        return Player::query()
-            ->whereRaw('lower(full_name) = ?', [$fullName])
-            ->first();
     }
 }

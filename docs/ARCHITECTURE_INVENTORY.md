@@ -667,6 +667,9 @@ Storing canonical player attributes, fantasy roster membership, or provider-only
 - `Player::externalIdentities()`
 - `PlayerIdentityNormalizer::normalizeName()`
 - `PlayerIdentityResolver::upsertNhlIdentity()`
+- `PlayerIdentityResolver::upsertFantraxIdentity()`
+- `PlayerIdentityResolver::upsertCapWagesIdentity()`
+- `PlayerIdentityResolver::resolveNonAuthorityIdentity()`
 - `PlayerIdentityResolver::linkIdentityToPlayer()`
 - `PlayerIdentityResolver::statusCountsByProvider()`
 

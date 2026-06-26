@@ -18,6 +18,8 @@ rules:
   - Provider player identities must be upserted before an import creates or updates a canonical player.
   - NHL is an authority provider and may create canonical players during import.
   - Non-authority providers must not create canonical players without an approved resolver rule or human match.
+  - Non-authority provider imports may auto-link only when an existing provider link or exact normalized name plus birthdate identifies one canonical player.
+  - Ambiguous or name-only non-authority matches must remain candidate identities rather than mutating canonical player data.
   - Provider identity rows must keep raw provider payloads for audit and future rematching.
   - Matching status and unmatched reason values must remain aligned with docs/ENUMS.md.
   - A matched identity must reference exactly one canonical player.
@@ -28,6 +30,9 @@ public_interface:
   - Player::externalIdentities()
   - PlayerIdentityNormalizer::normalizeName()
   - PlayerIdentityResolver::upsertNhlIdentity()
+  - PlayerIdentityResolver::upsertFantraxIdentity()
+  - PlayerIdentityResolver::upsertCapWagesIdentity()
+  - PlayerIdentityResolver::resolveNonAuthorityIdentity()
   - PlayerIdentityResolver::linkIdentityToPlayer()
   - PlayerIdentityResolver::statusCountsByProvider()
 example_usage: |

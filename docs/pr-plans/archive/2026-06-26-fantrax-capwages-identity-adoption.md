@@ -1,6 +1,12 @@
+---
+pr_id: 2
+pr_name: pr2
+status: Archived
+---
+
 # Fantrax and CapWages Identity Adoption PR Plan
 
-Status: Backlog
+Status: Archived
 Source: Multi-provider player import review
 Target branch: staging
 Created: 2026-06-26
@@ -47,15 +53,15 @@ This PR should use the `PlayerIdentityResolution` abstraction created by the fou
 
 ## Implementation Plan
 
-1. Remove or quarantine debug-stop behavior from Fantrax import paths.
-2. Map Fantrax player payloads into external identity records.
-3. Run resolver for each Fantrax identity.
-4. Auto-link Fantrax identities only when confidence is high.
-5. Convert ambiguous Fantrax matches into candidate records or candidate status.
-6. Map CapWages player payloads into external identity records.
-7. Run resolver before contract writes.
-8. Apply contract data only to resolved canonical players.
-9. Add provider-level identity audit reporting.
+1. Implemented for review: Remove or quarantine debug-stop behavior from Fantrax import paths.
+2. Implemented for review: Map Fantrax player payloads into external identity records.
+3. Implemented for review: Run resolver for each Fantrax identity.
+4. Implemented for review: Auto-link Fantrax identities only when confidence is high.
+5. Implemented for review: Convert ambiguous Fantrax matches into candidate records or candidate status.
+6. Implemented for review: Map CapWages player payloads into external identity records.
+7. Implemented for review: Run resolver before contract writes.
+8. Implemented for review: Apply contract data only to resolved canonical players.
+9. Implemented for review: Add provider-level identity audit reporting.
 
 ## Test Plan
 
@@ -75,11 +81,11 @@ This PR should use the `PlayerIdentityResolution` abstraction created by the fou
 - Fantrax is a fantasy-platform authority, not a canonical hockey identity authority.
 - CapWages is a contract authority, not a canonical hockey identity authority.
 - Fantrax and CapWages should enrich canonical players only after identity resolution.
+- Low-confidence and ambiguous matches are represented with `candidate` identity status and reason metadata, not a separate candidates table in this PR.
+- Existing provider links resolve with confidence `100`; exact normalized name plus birthdate resolves with confidence `95`; name-only matches remain candidates.
 
 ## Open Questions
 
-- Should low-confidence candidates be stored in a separate candidates table or represented only through identity status and metadata?
-- What confidence threshold should Fantrax and CapWages use for automatic linking?
 - Which unmatched reason codes are required for useful review of the current 7300 unmatched players?
 
 ## Deferred Work
@@ -87,4 +93,3 @@ This PR should use the `PlayerIdentityResolution` abstraction created by the fou
 - Manual triage UI improvements.
 - Bulk approve/reject workflows for candidate matches.
 - EliteProspects enrichment for the long-tail unmatched pool.
-

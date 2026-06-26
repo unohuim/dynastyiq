@@ -1,0 +1,61 @@
+version: 1
+name: PR Plan Workflow
+purpose: Define repository-local command aliases, metadata, ID assignment, archiving, and promotion rules for PR plan files.
+authority:
+  referenced_by: AGENTS.md
+  applies_to:
+    - docs/pr-plans/current_pr.md
+    - docs/pr-plans/backlog/*.md
+    - docs/pr-plans/archive/*.md
+metadata:
+  format: yaml_front_matter
+  required_fields:
+    pr_id: integer
+    pr_name: string
+    status: string
+  status_values:
+    - Active
+    - Backlog
+    - Archived
+aliases:
+  archive_pr_and_next:
+    triggers:
+      - archive pr and next
+      - archive pr and promote next
+    steps:
+      - read_current_pr
+      - scan_pr_ids
+      - reject_duplicate_pr_ids
+      - archive_current_pr
+      - promote_next_backlog_pr
+    limits:
+      - Do not modify code, tests, dependencies, migrations, or non-PR-plan documentation.
+      - Do not run tests, CI, imports, syncs, queues, schedulers, bots, migrations, or seeders.
+id_assignment:
+  scan_paths:
+    - docs/pr-plans/current_pr.md
+    - docs/pr-plans/backlog/*.md
+    - docs/pr-plans/archive/*.md
+  before_assigning_new_id:
+    - Read all PR plans in scan_paths.
+    - Extract every numeric pr_id from YAML front matter.
+    - Stop and ask one clarifying question if duplicate pr_id values already exist.
+  next_id_rule: Assign max(existing pr_id) + 1.
+  pr_name_rule: Default to "pr<pr_id>" unless the human explicitly provides another string.
+selection:
+  next_pr_rule: Select the backlog PR plan with the lowest numeric pr_id.
+  ambiguity_rule: Stop and ask one clarifying question if no backlog PR has a numeric pr_id.
+  duplicate_rule: Stop and ask one clarifying question if multiple backlog PR plans share the same lowest pr_id.
+archive:
+  source: docs/pr-plans/current_pr.md
+  destination: docs/pr-plans/archive/YYYY-MM-DD-<slug>.md
+  metadata_updates:
+    status: Archived
+    last_updated: today
+promote:
+  source: lowest-pr_id backlog PR plan
+  destination: docs/pr-plans/current_pr.md
+  metadata_updates:
+    status: Active
+    last_updated: today
+  backlog_policy: Remove the promoted backlog file after copying it to current_pr.md.

@@ -1,6 +1,12 @@
+---
+pr_id: 1
+pr_name: pr1
+status: Archived
+---
+
 # Player Identity Resolution Foundation PR Plan
 
-Status: Backlog
+Status: Archived
 Source: Multi-provider player import review
 Target branch: staging
 Created: 2026-06-26
@@ -25,7 +31,7 @@ Introduce the shared player identity foundation required for reliable NHL, Fantr
 - CapWages importer adoption of the identity workflow.
 - EliteProspects integration.
 - Full admin triage redesign.
-- Removing legacy columns such as `players.nhl_player_id`.
+- Removing legacy columns such as `players.nhl_id`.
 - Reworking unrelated NHL game/stats import stages.
 
 ## Architecture Impact
@@ -79,14 +85,14 @@ These values must be documented in `docs/ENUMS.md` before use.
 
 ## Implementation Plan
 
-1. Document the `PlayerIdentityResolution` architecture.
-2. Add the additive migration for external player identities.
-3. Add the `PlayerExternalIdentity` model.
-4. Add `PlayerIdentityNormalizer` for name and provider-field normalization.
-5. Add `PlayerIdentityResolver` with conservative result objects.
-6. Refactor NHL player import so every NHL player payload upserts an external identity.
-7. Preserve NHL authority behavior: linked NHL identities update canonical players; new NHL identities may create canonical players.
-8. Add an audit/query method for provider identity counts by status.
+1. Implemented for review: Document the `PlayerIdentityResolution` architecture.
+2. Implemented for review: Add the additive migration for external player identities.
+3. Implemented for review: Add the `PlayerExternalIdentity` model.
+4. Implemented for review: Add `PlayerIdentityNormalizer` for name and provider-field normalization.
+5. Implemented for review: Add `PlayerIdentityResolver` with conservative result objects.
+6. Implemented for review: Refactor NHL player import so every NHL player payload upserts an external identity.
+7. Implemented for review: Preserve NHL authority behavior: linked NHL identities update canonical players; new NHL identities may create canonical players.
+8. Implemented for review: Add an audit/query method for provider identity counts by status.
 
 ## Test Plan
 
@@ -103,12 +109,13 @@ These values must be documented in `docs/ENUMS.md` before use.
 - NHL remains an authority source for active NHL player identity.
 - Non-authority providers should not freely create canonical players in this first PR.
 - Legacy player fields stay in place during the transition.
+- `provider`, `match_status`, and `unmatched_reason` are string-backed documented values instead of database enums.
+- `provider_player_id` uniqueness is scoped to provider.
+- Raw provider payloads are preserved for audit and future rematching.
 
 ## Open Questions
 
-- Should `provider` be a database enum or string-backed documented value?
-- Should raw payloads be stored indefinitely or pruned after successful normalization?
-- Should `provider_player_id` uniqueness be global per provider or include `provider_slug` fallback rules?
+- Should raw payload retention later get a pruning policy after the rematching workflow stabilizes?
 
 ## Deferred Work
 
@@ -117,3 +124,7 @@ These values must be documented in `docs/ENUMS.md` before use.
 - Candidate and conflict triage UI.
 - EliteProspects provider integration.
 
+## Archive Notes
+
+- Archive this file to `docs/pr-plans/archive/YYYY-MM-DD-player-identity-resolution-foundation.md` when the PR is merged, closed, or abandoned.
+- After archiving, promote the next selected backlog plan into `docs/pr-plans/current_pr.md`.

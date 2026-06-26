@@ -69,6 +69,7 @@ If conflicts are detected between authoritative sources, work MUST pause and be 
 
 - `docs/pr-plans/current_pr.md` is the active working PR plan when present.
 - Codex MUST read it before proposing a plan or editing files.
+- PR-plan aliases, metadata, ID assignment, archiving, and promotion are governed by `docs/pr-plans/pr-workflow.yaml`.
 - The current PR plan is working context, not permanent architecture authority.
 - Durable decisions from the current PR plan MUST be promoted to the canonical docs they affect, such as `docs/architecture/**/*.yaml`, `docs/ENUMS.md`, `docs/DB_SCHEMA.md`, or `docs/CONVENTIONS.md`.
 - Candidate future PR plans live under `docs/pr-plans/backlog/`.
