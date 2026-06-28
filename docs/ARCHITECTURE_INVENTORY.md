@@ -649,6 +649,10 @@ if ($repo->claim($gameId, 'pbp')) {
 **Type:** Import Identity Pattern  
 **Location:**
 - `app/Models/PlayerExternalIdentity.php`
+- `app/Events/PlayerExternalIdentityLinked.php`
+- `app/Jobs/ImportNhlDraftPicksJob.php`
+- `app/Jobs/RefreshCapWagesContractsForIdentityJob.php`
+- `app/Listeners/QueueCapWagesContractRefresh.php`
 - `app/Services/PlayerIdentityNormalizer.php`
 - `app/Services/PlayerIdentityResolver.php`
 - `database/migrations/*_create_player_external_identities_table.php`
@@ -667,10 +671,14 @@ Storing canonical player attributes, fantasy roster membership, or provider-only
 - `Player::externalIdentities()`
 - `PlayerIdentityNormalizer::normalizeName()`
 - `PlayerIdentityResolver::upsertNhlIdentity()`
+- `PlayerIdentityResolver::upsertNhlDraftIdentity()`
+- `ImportNhlDraftPicksJob`
 - `PlayerIdentityResolver::upsertFantraxIdentity()`
 - `PlayerIdentityResolver::upsertCapWagesIdentity()`
 - `PlayerIdentityResolver::resolveNonAuthorityIdentity()`
 - `PlayerIdentityResolver::linkIdentityToPlayer()`
+- `PlayerExternalIdentityLinked`
+- `RefreshCapWagesContractsForIdentityJob`
 - `PlayerIdentityResolver::statusCountsByProvider()`
 
 **Example Usage:**
@@ -678,6 +686,105 @@ Storing canonical player attributes, fantasy roster membership, or provider-only
 $identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);
 $player = Player::firstOrNew(['nhl_id' => $payload['playerId']]);
 app(PlayerIdentityResolver::class)->linkIdentityToPlayer($identity, $player);
+```
+
+---
+
+### CapWages Player Profiles
+
+**Name:** CapWages Player Profiles
+**Type:** Provider Detail Import Pattern
+**Location:**
+- `app/Models/CapWagesPlayer.php`
+- `app/Console/Commands/EmptyCapWagesCommand.php`
+- `app/Services/ImportCapWagesPlayer.php`
+- `database/migrations/*_create_capwages_players_table.php`
+
+**Purpose:**
+Store CapWages-owned player profile details separately from provider identity matching and canonical player contracts.
+
+**When to Use:**
+Persisting or refreshing CapWages player detail payload fields before or after canonical player linkage.
+
+**When Not to Use:**
+Storing canonical player attributes, identity match state, or materialized contract rows before a player link exists.
+
+**Rules:**
+CapWages identity/profile import eligibility requires a payable non-buyout contract season at least as recent as the current calendar-year season key; buyout or dead-cap-only rows do not qualify retired/inactive players.
+CapWages list imports crawl pages sequentially with no fixed delay after successful pages; 403 responses trigger backoff.
+CapWages player detail 5xx responses and connection failures are recorded and skipped so one provider-side player failure does not fail the whole page import.
+Admin import progress bars read processed/total counters from `import_runs` instead of parsing terminal output.
+
+**Public Interface:**
+- `CapWagesPlayer`
+- `cap:empty`
+- `ImportCapWagesPlayer::syncBySlug()`
+- `ImportCapWagesPlayer::refreshContractsForLinkedIdentity()`
+
+**Example Usage:**
+```php
+app(ImportCapWagesPlayer::class)->syncBySlug($slug, false);
+```
+
+---
+
+### NHL Team Reference Data
+
+**Name:** NHL Team Reference Data
+**Type:** Import Reference Data Pattern
+**Location:**
+- `app/Models/NhlTeam.php`
+- `app/Services/ImportNhlTeams.php`
+- `app/Services/NhlTeamReference.php`
+- `database/migrations/*_create_nhl_teams_table.php`
+
+**Purpose:**
+Store NHL-owned team identifiers and names so provider imports can normalize team evidence to NHL abbreviations.
+
+**When to Use:**
+Importing NHL team reference data or comparing provider team strings to canonical player team abbreviations.
+
+**When Not to Use:**
+Roster membership, standings, franchise history, or season-specific team state.
+
+**Public Interface:**
+- `NhlTeam`
+- `ImportNhlTeams::sync()`
+- `NhlTeamReference::normalizeToAbbrev()`
+- `NhlTeamReference::idForAbbrev()`
+
+**Example Usage:**
+```php
+$abbrev = app(NhlTeamReference::class)->normalizeToAbbrev('Toronto Maple Leafs');
+```
+
+---
+
+### NHL Player Transactions
+
+**Name:** NHL Player Transactions
+**Type:** Import History Pattern
+**Location:**
+- `app/Models/NhlPlayerTransaction.php`
+- `app/Services/ImportCapWagesPlayer.php`
+- `database/migrations/*_create_nhl_player_transactions_table.php`
+
+**Purpose:**
+Store real hockey player movement history separately from fantasy roster transactions.
+
+**When to Use:**
+Persisting provider-sourced NHL-domain player acquisition or movement events.
+
+**When Not to Use:**
+Fantasy roster adds, drops, trades, waivers, or league-specific transactions.
+
+**Public Interface:**
+- `NhlPlayerTransaction`
+- `ImportCapWagesPlayer::syncBySlug()`
+
+**Example Usage:**
+```php
+NhlPlayerTransaction::query()->where('player_id', $player->id)->get();
 ```
 
 ---
@@ -936,7 +1043,7 @@ $batch = app(AdminImports::class)->dispatch('fantrax');
 - `resources/js/admin/admin-hub.js`
 
 **Purpose:**  
-Publish import progress and operational messages to admin UI consumers.
+Publish import progress and operational messages to admin UI consumers, and persist admin import lifecycle timing through ImportRun.
 
 **When to Use:**  
 Long-running import workflows that should surface progress without requiring a manual refresh.
@@ -963,29 +1070,30 @@ $broadcast->started();
 **Type:** Admin Workflow Pattern  
 **Location:**
 - `app/Http/Controllers/Admin/PlayerTriageController.php`
-- `app/Http/Controllers/Admin/AdminPlayersController.php`
 - `app/Models/Player.php`
-- `app/Models/PlatformPlayerId.php`
+- `app/Models/PlayerExternalIdentity.php`
 - `resources/views/admin/player-triage.blade.php`
 
 **Purpose:**  
-Resolve imported platform player identities against canonical application players.
+Resolve imported provider player identities against canonical application players through a manual admin inbox.
 
 **When to Use:**  
-Linking, variant creation, or deferring uncertain player identity matches.
+Reviewing low-confidence unmatched, candidate, or conflicting provider identities by default; filtering external identities by source provider for missing canonical links or source-to-source coverage through canonical player links; displaying or applying current resolver recommendations; linking matching-source identities to covered canonical players; manually linking an identity to a canonical player; or ignoring/deferring an identity that should not be linked yet.
 
 **When Not to Use:**  
-Normal player display or automated NHL stat imports that do not require manual identity triage.
+Normal player display, legacy platform identity workflows, bulk triage, or automated NHL stat imports that do not require manual identity triage.
 
 **Public Interface:**
 - `admin.player-triage`
 - `admin.player-triage.link`
-- `admin.player-triage.variant`
+- `admin.player-triage.link-matching-source`
+- `admin.player-triage.resolve`
+- `admin.player-triage.ignore`
 - `admin.player-triage.defer`
 
 **Example Usage:**
 ```php
-Route::post('/player-triage/{platform}/{id}/link', [PlayerTriageController::class, 'link']);
+Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController::class, 'link']);
 ```
 
 ---

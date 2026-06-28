@@ -49,7 +49,29 @@ fi
 npm run build
 
 # --- DB migrate only if CI env declares a DB connection ---
-if grep -qE '^\s*DB_CONNECTION=' .env.ci; then
+if grep -qE '^\s*DB_CONNECTION=pgsql\s*$' .env.ci; then
+  if ! grep -qE '^\s*DB_HOST=' .env.ci && [ -z "${DB_HOST:-}" ]; then
+    export DB_HOST="127.0.0.1"
+  fi
+
+  if ! grep -qE '^\s*DB_PORT=' .env.ci && [ -z "${DB_PORT:-}" ]; then
+    export DB_PORT="5432"
+  fi
+
+  if ! grep -qE '^\s*DB_DATABASE=' .env.ci && [ -z "${DB_DATABASE:-}" ]; then
+    export DB_DATABASE="testing"
+  fi
+
+  if ! grep -qE '^\s*DB_USERNAME=' .env.ci && [ -z "${DB_USERNAME:-}" ]; then
+    export DB_USERNAME="$(id -un)"
+  fi
+
+  if ! grep -qE '^\s*DB_PASSWORD=' .env.ci && [ -z "${DB_PASSWORD:-}" ]; then
+    export DB_PASSWORD=""
+  fi
+
+  php artisan migrate --env=ci --force
+elif grep -qE '^\s*DB_CONNECTION=' .env.ci; then
   php artisan migrate --env=ci --force
 fi
 

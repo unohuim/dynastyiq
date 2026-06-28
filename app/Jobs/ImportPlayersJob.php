@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Classes\ImportNHLPlayer;
 use App\Events\ImportStreamEvent;
+use App\Events\PlayersAvailable;
+use App\Models\ImportRun;
+use App\Models\Player;
+use App\Services\PlayerIdentityNormalizer;
 use App\Traits\HasAPITrait;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -43,8 +48,11 @@ class ImportPlayersJob implements ShouldQueue
         'ARI' => ['new' => 'UTA', 'effective' => '20252026'],
     ];
 
-    public function __construct(string $teamAbbrev, string $importRunId)
-    {
+    public function __construct(
+        string $teamAbbrev,
+        string $importRunId,
+        private ?int $adminImportRunId = null,
+    ) {
         $this->teamAbbrev = $teamAbbrev;
         $this->importRunId = $importRunId;
     }
@@ -56,7 +64,7 @@ class ImportPlayersJob implements ShouldQueue
             'run'  => $this->importRunId,
             'job'  => spl_object_id($this),
         ]);
-        
+
         ImportStreamEvent::dispatch(
             'nhl',
             "Importing players for team {$this->teamAbbrev}",
@@ -143,21 +151,22 @@ class ImportPlayersJob implements ShouldQueue
      */
     protected function dispatchGroupedPlayers(array $data, bool $isProspect = false): void
     {
+        $normalizer = app(PlayerIdentityNormalizer::class);
+
         foreach (['forwards', 'defensemen', 'goalies'] as $group) {
             foreach ($data[$group] ?? [] as $player) {
                 $playerId = $player['id'] ?? null;
-
-                if (! $playerId) {
-                    continue;
-                }
-
                 $fullName = ($player['firstName']['default'] ?? 'Player')
                     . ' '
                     . ($player['lastName']['default'] ?? (string) $playerId);
 
                 $position = $player['positionCode'] ?? '';
+                $this->rememberPlayerFingerprint($fullName, $position, $normalizer);
 
-                
+                if (! $playerId) {
+                    continue;
+                }
+
                 $dedupeKey = "nhl-import:{$this->importRunId}:player:{$playerId}";
 
                 // add() returns false if this player was already seen in this run
@@ -167,19 +176,108 @@ class ImportPlayersJob implements ShouldQueue
                 }
                 //\Log::info('Added cache', ['player'=>$fullName]);
 
-                
                 ImportStreamEvent::dispatch(
                     'nhl',
                     "Importing {$fullName} - {$this->teamAbbrev}, {$position}",
                     'started'
                 );
 
-                ImportNHLPlayerJob::dispatch(
-                    $playerId,
-                    $isProspect
-                );
+                if ($this->adminImportRunId !== null) {
+                    $this->incrementProgressTotal();
+                    $this->importPlayerInline((string) $playerId, $isProspect);
+                    continue;
+                }
+
+                ImportNHLPlayerJob::dispatch((string) $playerId, $isProspect);
             }
         }
+    }
+
+    private function importPlayerInline(string $playerId, bool $isProspect): void
+    {
+        $playersExistedBefore = Player::query()->exists();
+
+        try {
+            (new ImportNHLPlayer())->import($playerId, $isProspect);
+            $this->recordProcessedRecord('successful');
+        } catch (\Throwable $throwable) {
+            $this->recordProcessedRecord('failed');
+            throw $throwable;
+        }
+
+        if (! $playersExistedBefore && Player::query()->exists()) {
+            PlayersAvailable::dispatch('nhl', Player::query()->count());
+        }
+    }
+
+    private function incrementProgressTotal(): void
+    {
+        if ($this->adminImportRunId === null) {
+            return;
+        }
+
+        ImportRun::query()
+            ->find($this->adminImportRunId)
+            ?->incrementProgressTotal(label: 'NHL player records');
+
+        $this->broadcastProgress();
+    }
+
+    private function recordProcessedRecord(string $result): void
+    {
+        if ($this->adminImportRunId === null) {
+            return;
+        }
+
+        ImportRun::query()
+            ->find($this->adminImportRunId)
+            ?->recordProcessed($result);
+
+        $this->broadcastProgress();
+    }
+
+    private function broadcastProgress(): void
+    {
+        ImportStreamEvent::dispatch(
+            'nhl',
+            "Processed NHL player records for {$this->teamAbbrev}",
+            'progress'
+        );
+    }
+
+    private function rememberPlayerFingerprint(
+        string $fullName,
+        ?string $position,
+        PlayerIdentityNormalizer $normalizer,
+    ): void {
+        $normalizedName = $normalizer->normalizeName($fullName);
+        $positionType = $this->positionType($position);
+
+        if ($normalizedName === null || $positionType === null) {
+            return;
+        }
+
+        Cache::put($this->fingerprintKey($normalizedName, $positionType), true, 3500);
+    }
+
+    private function fingerprintKey(string $normalizedName, string $positionType): string
+    {
+        return 'nhl-import:'
+            . $this->importRunId
+            . ':fingerprint:'
+            . sha1($normalizedName . '|' . $positionType);
+    }
+
+    private function positionType(?string $position): ?string
+    {
+        $position = mb_strtoupper(trim((string) $position));
+
+        return match ($position) {
+            'G' => 'G',
+            'D', 'LD', 'RD' => 'D',
+            'F', 'C', 'L', 'R', 'LW', 'RW' => 'F',
+            default => null,
+        };
     }
 
     protected function resolveTeamForSeason(string $team, string $seasonId): string

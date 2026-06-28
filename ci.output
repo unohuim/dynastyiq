@@ -56,13 +56,13 @@ transforming...
 Browserslist: browsers data (caniuse-lite) is 16 months old. Please run:
   npx update-browserslist-db@latest
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
-✓ 73 modules transformed.
+✓ 74 modules transformed.
 rendering chunks...
 computing gzip size...
 public/build/manifest.json              0.27 kB │ gzip:  0.14 kB
-public/build/assets/app-DYiQHYgi.css  101.08 kB │ gzip: 15.93 kB
-public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
-✓ built in 632ms
+public/build/assets/app-Bx5Fsm6v.css  102.70 kB │ gzip: 16.28 kB
+public/build/assets/app-Blw9TOlb.js   215.55 kB │ gzip: 69.32 kB
+✓ built in 574ms
 
    INFO  Nothing to migrate.  
 
@@ -70,7 +70,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
 \
 
    PASS  Tests\Unit\NhlImportProgressRepoTest
-  ✓ mark stale running to error updates old rows                         0.12s  
+  ✓ mark stale running to error updates old rows                         0.11s  
 
    PASS  Tests\Unit\Patreon\MembershipSyncServiceTest
   ✓ logs events when membership changes                                  0.01s  
@@ -83,8 +83,8 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ refresh account token ignores when missing refresh token
   ✓ call patreon retries after unauthorized and refreshes                0.01s  
   ✓ display name resolution prefers identity then campaign
-  ✓ map status maps known values and defaults active                     0.01s  
-  ✓ resolve member profile prefers existing external id and email linka… 0.01s  
+  ✓ map status maps known values and defaults active
+  ✓ resolve member profile prefers existing external id and email linkage
   ✓ resolve member profile attaches external id from email and sets avatar
   ✓ sync members skips when no tiers available                           0.01s  
   ✓ sync members skips when attributes missing
@@ -94,15 +94,69 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
 
    PASS  Tests\Unit\Patreon\TierMapperTest
   ✓ throws when title missing                                            0.01s  
-  ✓ preserves diq owned tier metadata when mapping                       0.01s  
-  ✓ reuses existing free tier and sets provider data                     0.01s  
+  ✓ preserves diq owned tier metadata when mapping
+  ✓ reuses existing free tier and sets provider data
   ✓ matches diq owned tier by name without changing paid amount          0.01s  
 
+   PASS  Tests\Feature\AdminControlPanelTriageTest
+  ✓ it blocks guests from the player triage inbox                        0.01s  
+  ✓ it blocks authenticated non-admin users from the player triage inbo… 0.01s  
+  ✓ it allows super admins to view the player triage inbox               0.01s  
+  ✓ it shows unresolved identity statuses in the default inbox           0.01s  
+  ✓ it hides high confidence resolver recommendations from the default…  0.01s  
+  ✓ it shows high confidence resolver recommendations when all identiti… 0.01s  
+  ✓ it hides matched and ignored identities from the default inbox       0.01s  
+  ✓ it can include resolved identities with the resolved filter          0.01s  
+  ✓ it can filter directly to matched identities                         0.01s  
+  ✓ it filters identities by provider                                    0.01s  
+  ✓ it shows source options from existing external identity providers    0.01s  
+  ✓ it filters source identities to rows without canonical records       0.01s  
+  ✓ it filters source identities to rows with canonical records when ma… 0.01s  
+  ✓ it filters source identities missing a matching source identity      0.01s  
+  ✓ it shows coverage state instead of resolver recommendation in sourc… 0.01s  
+  ✓ it shows matching source suggestions in source matching detail mode  0.01s  
+  ✓ it limits matching source suggestions to unlinked exact normalized…  0.01s  
+  ✓ it allows matching source search to find unlinked compatible positi… 0.01s  
+  ✓ it links a matching source identity to the selected source canonica… 0.01s  
+  ✓ it returns linked matching source identity details as json           0.01s  
+  ✓ it creates a canonical prospect player from an external identity an… 0.01s  
+  ✓ it shows matched source details instead of matching source search w… 0.01s  
+  ✓ it filters source identities missing a matching source when search…  0.01s  
+  ✓ it filters source identities that have a matching source identity    0.01s  
+  ✓ it filters identities by display name search                         0.01s  
+  ✓ it filters identities by provider player id search                   0.01s  
+  ✓ it filters identities by unmatched reason                            0.01s  
+  ✓ it shows selected identity details in the review pane                0.01s  
+  ✓ it shows linked external sources for a selected canonical-linked id… 0.01s  
+  ✓ it shows linked identities as player records without source action…  0.01s  
+  ✓ it shows player dob when a selected identity is linked               0.01s  
+  ✓ it shows last contract summary when a linked player has capwages co… 0.01s  
+  ✓ it shows suggested external matches when no canonical candidate exi… 0.01s  
+  ✓ it shows suggested external matches alongside canonical candidates…  0.01s  
+  ✓ it shows current resolver recommendation confidence instead of stal… 0.01s  
+  ✓ it shows an empty inbox state when no identities match filters       0.01s  
+  ✓ it shows suggested player matches for normalized identity names      0.01s  
+  ✓ it orders same-name suggestions by matching birthdate first          0.01s  
+  ✓ it searches canonical players manually by name                       0.01s  
+  ✓ it manual player search excludes players already linked to the sele… 0.01s  
+  ✓ it manual player search filters results by selected identity positi… 0.01s  
+  ✓ it searches canonical players manually by nhl id                     0.01s  
+  ✓ it requires a canonical player when linking an identity              0.01s  
+  ✓ it blocks guests from applying resolver recommendations              0.01s  
+  ✓ it links an identity to a selected canonical player                  0.01s  
+  ✓ it links a suggested external source to the selected identity canon… 0.01s  
+  ✓ it applies the current resolver recommendation to an identity        0.01s  
+  ✓ it marks an identity as ignored                                      0.01s  
+  ✓ it defers an identity without changing its match state               0.01s  
+  ✓ it blocks guests from the imports page                               0.01s  
+  ✓ it blocks authenticated non-admin users from the imports page        0.01s  
+  ✓ it shows current import workflow buttons to super admins             0.01s  
+
    WARN  Tests\Feature\ApiTokenPermissionsTest
-  - api token permissions can be updated → API support is not enabled.   0.01s  
+  - api token permissions can be updated → API support is not enabled.   0.02s  
 
    PASS  Tests\Feature\AuthenticationTest
-  ✓ login screen can be rendered                                         0.02s  
+  ✓ login screen can be rendered                                         0.01s  
   ✓ users can authenticate using the login screen                        0.01s  
   ✓ users cannot authenticate with invalid password                      0.01s  
 
@@ -136,7 +190,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
 
    WARN  Tests\Feature\EmailVerificationTest
   - email verification screen can be rendered → Email verification not…  0.01s  
-  - email can be verified → Email verification not enabled.              0.01s  
+  - email can be verified → Email verification not enabled.
   - email can not verified with invalid hash → Email verification not enabled.
 
    PASS  Tests\Feature\FantraxUserControllerTest
@@ -188,7 +242,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
    PASS  Tests\Feature\PatreonWebhookControllerTest
   ✓ guard rejects invalid signature                                      0.01s  
   ✓ guard accepts valid signature and triggers sync                      0.01s  
-  ✓ guard requires signature when secret configured
+  ✓ guard requires signature when secret configured                      0.01s  
   ✓ returns no content when no matching account                          0.01s  
   ✓ handle webhook updates account and records event                     0.01s  
 
@@ -196,6 +250,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ it upserts an nhl external identity when importing an nhl player     0.01s  
   ✓ it does not duplicate an nhl identity when reimporting the same pla… 0.01s  
   ✓ it creates a canonical player for a new nhl authority identity       0.01s  
+  ✓ it resolves canonical nhl team id from abbrev when player landing o… 0.01s  
   ✓ it links the nhl identity to the created canonical player            0.01s  
   ✓ it updates a linked canonical player on reimport                     0.01s  
   ✓ it preserves the raw nhl payload on the identity                     0.01s  
@@ -217,19 +272,59 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ it legacy import wrapper delegates to the identity workflow          0.01s  
   ✓ it queued nhl player job uses the identity workflow                  0.01s  
   ✓ it fantrax import upserts an external identity                       0.01s  
+  ✓ it fantrax import skips team aggregate rows before identity upsert
+  ✓ it fantrax import skips rows with team aggregate position markers
   ✓ it fantrax known provider id links to an existing canonical player   0.01s  
   ✓ it fantrax exact normalized name and birthdate auto-links            0.01s  
-  ✓ it fantrax ambiguous names become candidates                         0.01s  
+  ✓ it fantrax ambiguous threshold-passing names become conflicts        0.01s  
+  ✓ it fantrax exact normalized name only remains a candidate below the… 0.01s  
+  ✓ it fantrax exact normalized name plus position type auto-links at t… 0.01s  
+  ✓ it nhl provider identities auto-link at the name plus position type threshold when resolver scoring is used
+  ✓ it fantrax exact normalized name plus position and team auto-links…  0.01s  
+  ✓ it fantrax supporting evidence can disambiguate one threshold-passi… 0.01s  
+  ✓ it fantrax ignores wrong position type candidates when deciding mul… 0.01s  
+  ✓ it fantrax still conflicts when multiple same position type candida… 0.01s  
+  ✓ it capwages name-only provider identities auto-link at the lower pr… 0.01s  
+  ✓ it capwages ignores wrong position type candidates when deciding mu… 0.01s  
+  ✓ it capwages exact normalized name plus position type persists an au… 0.01s  
+  ✓ it imports nhl team references from the nhl stats endpoint
+  ✓ it nhl team import updates duplicate abbrev rows from the stats end… 0.01s  
+  ✓ it nhl player import command dispatches team jobs from nhl team ref… 0.01s  
+  ✓ it nhl draft import ignores player ids and creates one draft-only p… 0.01s  
+  ✓ it nhl draft import skips name position fingerprints already discov… 0.01s  
+  ✓ it nhl draft import creates a minimal canonical prospect for picks…  0.01s  
+  ✓ it nhl player import job discovers roster and prospect players once… 0.01s  
+  ✓ it capwages full team names normalize through nhl teams for name pl… 0.01s  
+  ✓ it capwages nested personal info birthdate contributes plus plus sc… 0.01s  
   ✓ it fantrax insufficient name data remains unmatched with a reason    0.01s  
   ✓ it fantrax import remains idempotent for identity and legacy player… 0.01s  
-  ✓ it capwages import upserts an external identity before contract wri… 0.01s  
-  ✓ it capwages unresolved identity does not write contracts             0.01s  
+  ✓ it capwages import creates a canonical non-prospect player for elig… 0.01s  
+  ✓ it capwages-created canonical players keep capwages profile context  0.01s  
+  ✓ it capwages import skips identities with no contract seasons
+  ✓ it capwages import preserves provider access failures instead of labeling them not found
+  ✓ it capwages import skips identities whose latest contract season is before the current season key
+  ✓ it capwages import ignores current season buyout rows when deciding… 0.01s  
+  ✓ it capwages import allows identities whose latest contract season m… 0.01s  
+  ✓ it capwages import stores provider profile data for eligible identi… 0.01s  
+  ✓ it dispatches an identity linked event when an identity player link changes
+  ✓ it does not dispatch an identity linked event when the identity remains on the same player
+  ✓ it queues capwages contract refresh when a capwages identity is lin… 0.01s  
+  ✓ it uses cached capwages profile payload without queueing refresh wh… 0.01s  
+  ✓ it does not queue capwages contract refresh for non-capwages linked… 0.01s  
+  ✓ it refreshes capwages detail and materializes contracts after a del… 0.01s  
+  ✓ it uses cached capwages payload when refresh detail is blocked by t… 0.01s  
+  ✓ it keeps capwages contract refresh jobs unique per identity
+  ✓ it skips capwages contract refresh when the identity no longer exists
   ✓ it capwages matched identity applies contract data to the linked ca… 0.01s  
   ✓ it capwages import remains idempotent for identities contracts and…  0.01s  
+  ✓ it capwages import uses cached raw payload before fetching detail    0.01s  
+  ✓ it capwages page import dispatches the next page without delay afte… 0.01s  
+  ✓ it capwages page import skips player detail server errors and conti… 0.01s  
+  ✓ it capwages page import skips player detail connection failures and… 0.01s  
   ✓ it provider audit counts include every documented identity status    0.01s  
 
    PASS  Tests\Feature\PlayersAvailableEventTest
-  ✓ it broadcasts when the first nhl player is imported                  0.01s  
+  ✓ it broadcasts when the first nhl player is imported                  0.02s  
   ✓ it broadcasts when the first fantrax player is imported              0.01s  
 
    PASS  Tests\Feature\ProfileInformationTest
@@ -244,7 +339,7 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
    PASS  Tests\Feature\TwoFactorAuthenticationSettingsTest
   ✓ two factor authentication can be enabled                             0.02s  
   ✓ recovery codes can be regenerated                                    0.04s  
-  ✓ two factor authentication can be disabled                            0.02s  
+  ✓ two factor authentication can be disabled                            0.03s  
 
    PASS  Tests\Feature\UpdatePasswordTest
   ✓ password can be updated                                              0.01s  
@@ -261,6 +356,6 @@ public/build/assets/app-OPkjm4dy.js   206.96 kB │ gzip: 67.11 kB
   ✓ it deletes preferences when value is null or empty                   0.01s  
   ✓ it only mutates preferences for the authenticated user               0.01s  
 
-  Tests:    7 skipped, 125 passed (406 assertions)
-  Duration: 1.38s
+  Tests:    7 skipped, 218 passed (791 assertions)
+  Duration: 2.09s
 

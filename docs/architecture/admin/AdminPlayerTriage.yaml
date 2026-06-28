@@ -2,27 +2,58 @@ name: Admin Player Triage
 type: Admin Workflow Pattern
 location:
   - app/Http/Controllers/Admin/PlayerTriageController.php
-  - app/Http/Controllers/Admin/AdminPlayersController.php
+  - resources/views/admin/operational.blade.php
   - app/Models/Player.php
-  - app/Models/PlatformPlayerId.php
+  - app/Models/PlayerExternalIdentity.php
   - resources/views/admin/player-triage.blade.php
-purpose: Resolve imported platform player identities against canonical application players.
+purpose: Resolve imported provider player identities against canonical application players through a manual admin inbox.
 when_to_use:
-  - Linking uncertain platform players.
-  - Creating player identity variants.
-  - Deferring uncertain player identity matches.
+  - Reviewing unmatched, candidate, or conflicting provider player identities.
+  - Manually linking a provider identity to a canonical player.
+  - Ignoring or deferring a provider identity that should not be linked yet.
 when_not_to_use:
   - Normal player display.
   - Automated NHL stat imports that do not require manual identity triage.
 rules:
   - Triage actions must preserve canonical Player identity.
-  - Platform identity resolution must use PlatformPlayerId.
+  - Triage must use PlayerExternalIdentity as the provider identity record.
+  - Manual triage must not use legacy PlatformPlayerId workflows for this domain.
+  - Bulk triage actions must not be introduced without explicit approval.
+  - Manual triage may create a minimal canonical Player from a provider identity when a real player has no NHL API-backed canonical record.
+  - Canonical players created from provider identities must keep nhl_id null, should be marked as prospects when appropriate, and must link through player_external_identities.player_id.
+  - The triage UI may display current resolver recommendations without mutating identity state on GET requests.
+  - The detail pane must not expose generic manual action buttons; linking must happen through explicit player or source-record link actions.
+  - Canonical player suggestions should only be shown for identities that are not already linked to a canonical player.
+  - Linked identity detail should render from the player record perspective, not the selected provider identity perspective.
+  - Linked identity detail should show a user-facing player record label, DOB, team, position, NHL ID, status, and prospect state when available.
+  - Linked identity detail may show a compact current contract summary near the player name when the canonical player has CapWages contract data.
+  - The detail panel should show linked external identities that share the selected identity's player_id, regardless of source-filter perspective.
+  - The detail panel may show suggested unlinked external matches as evidence even when canonical candidates exist.
+  - Suggested external matches must not be directly linked until the selected identity has a canonical player_id.
+  - Once the selected identity has a canonical player_id, admins may link suggested external matches to that same canonical player.
+  - When no canonical candidate exists for an unlinked identity, suggested unlinked external matches may also be selected during canonical player creation.
+  - Manual canonical player search should exclude players already linked to the selected identity's provider and should filter by compatible position type when the selected identity has a usable position.
+  - The triage inbox may filter by external identity source provider and, when selected alone, should show that provider's identities without canonical player links.
+  - When a matching source provider is selected, the triage inbox should compare linked source identities through canonical player_id and show identities with or without any matching-source identity based on the matched filter.
+  - When a matching source provider is selected, list rows should display source coverage state rather than resolver recommendation state.
+  - When a matching source provider is selected for an unlinked selected identity, the detail panel should show matching-source identity suggestions and link actions instead of canonical player suggestions.
+  - When a selected identity is already linked to a canonical player, matching-source comparisons should still render the player record view and show linked external sources for that player.
+  - When an unlinked selected identity has a matching-source identity that shares its player_id, the detail panel should show the matched identity instead of search or suggestions.
+  - Source-to-source link actions should support AJAX updates that preserve the selected source perspective without a full page refresh.
+  - Matching-source suggestions must only include unlinked identities from the matching source with the same normalized name and compatible position type as the selected source identity.
+  - Matching-source search results must query player_external_identities for unlinked identities from the matching source and allow normalized-name variants while preserving compatible position type constraints.
+  - The default triage inbox should focus on identities with current resolver confidence below 75 percent or no confidence; explicit filters may include higher-confidence recommendations.
+  - The admin control panel may embed the full triage inbox, but the standalone triage route must remain available and protected.
+  - The admin control panel top-level tabs should expose only Triage and Data Imports unless a new admin information architecture is explicitly approved.
   - Admin-only triage routes must remain protected by admin middleware.
 public_interface:
   - admin.player-triage
   - admin.player-triage.link
-  - admin.player-triage.variant
+  - admin.player-triage.link-matching-source
+  - admin.player-triage.link-external-source
+  - admin.player-triage.create-canonical
+  - admin.player-triage.resolve
+  - admin.player-triage.ignore
   - admin.player-triage.defer
 example_usage: |
-  Route::post('/player-triage/{platform}/{id}/link', [PlayerTriageController::class, 'link']);
-
+  Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController::class, 'link']);

@@ -225,6 +225,46 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### Admin Import Run Status
+
+**Name:** Admin import run status
+**Storage location(s):** `import_runs.status` (string column)
+**Allowed values:**
+
+- `working`
+- `completed`
+- `failed`
+
+**Semantic meaning:**
+
+- `working`: Admin-triggered import has started and has not reached a terminal state.
+- `completed`: Admin-triggered import work finished successfully.
+- `failed`: Admin-triggered import work failed and records `error_message`.
+
+**Notes:**
+
+- Existing import run rows default to `completed` when the lifecycle migration is applied.
+
+---
+
+### NHL Player Transaction Source
+
+**Name:** NHL player transaction source
+**Storage location(s):** `nhl_player_transactions.source` (string column)
+**Allowed values:**
+
+- `capwages`
+
+**Semantic meaning:**
+
+- `capwages`: Real hockey player acquisition history sourced from CapWages player detail payloads.
+
+**Notes:**
+
+- Fantasy roster transaction sources do not belong in this enum.
+
+---
+
 ## Fantasy Platforms
 
 ### Platform
@@ -340,6 +380,7 @@ Do not introduce new enum values without updating this document.
 **Allowed values:**
 
 - `nhl`
+- `nhl_draft`
 - `fantrax`
 - `capwages`
 - `eliteprospects`
@@ -347,6 +388,7 @@ Do not introduce new enum values without updating this document.
 **Semantic meaning:**
 
 - `nhl`: NHL API player identity.
+- `nhl_draft`: NHL draft-pick identity for drafted players that do not yet have an NHL player id.
 - `fantrax`: Fantrax API player identity.
 - `capwages`: CapWages API player identity.
 - `eliteprospects`: EliteProspects API player identity.
@@ -355,6 +397,7 @@ Do not introduce new enum values without updating this document.
 
 - The column is not database constrained.
 - NHL is the initial authority provider allowed to create canonical `players` rows during import.
+- NHL draft identities may create minimal canonical prospect `players` rows with `nhl_id = NULL` when the draft pick payload has no usable NHL player id.
 
 ### Player External Identity Match Status
 

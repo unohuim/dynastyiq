@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\DTO\PlayerIdentityMatchResult;
+use App\Events\PlayerExternalIdentityLinked;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use Illuminate\Support\Carbon;
@@ -16,8 +17,24 @@ use InvalidArgumentException;
  */
 class PlayerIdentityResolver
 {
+    private const SCORE_NAME_ONLY = 75;
+    private const SCORE_NAME_PLUS = 85;
+    private const SCORE_NAME_PLUS_PLUS = 95;
+
+    /**
+     * Minimum score required for automatic linking by provider.
+     *
+     * @var array<string,int>
+     */
+    private const PROVIDER_AUTO_LINK_THRESHOLDS = [
+        PlayerExternalIdentity::PROVIDER_NHL => self::SCORE_NAME_PLUS,
+        PlayerExternalIdentity::PROVIDER_FANTRAX => self::SCORE_NAME_PLUS,
+        PlayerExternalIdentity::PROVIDER_CAPWAGES => self::SCORE_NAME_ONLY,
+    ];
+
     public function __construct(
         private readonly PlayerIdentityNormalizer $normalizer,
+        private readonly NhlTeamReference $teams,
     ) {
     }
 
@@ -65,6 +82,40 @@ class PlayerIdentityResolver
         $identity->save();
 
         return $identity;
+    }
+
+    /**
+     * Upsert an NHL draft identity for a drafted player without an NHL player id.
+     *
+     * @param array<string,mixed> $payload
+     */
+    public function upsertNhlDraftIdentity(string $providerPlayerId, array $payload): PlayerExternalIdentity
+    {
+        $displayName = trim((string)($payload['display_name'] ?? $payload['name'] ?? $payload['playerName'] ?? ''));
+
+        if ($displayName === '') {
+            throw new InvalidArgumentException('NHL draft identity payload is missing a player name.');
+        }
+
+        $firstName = $this->draftNamePart($payload['first_name'] ?? $payload['firstName'] ?? null);
+        $lastName = $this->draftNamePart($payload['last_name'] ?? $payload['lastName'] ?? null);
+
+        return $this->upsertProviderIdentity(
+            PlayerExternalIdentity::PROVIDER_NHL_DRAFT,
+            $providerPlayerId,
+            [
+                'provider_slug' => $providerPlayerId,
+                'display_name' => $displayName,
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'birthdate' => $payload['birthdate'] ?? $payload['birthDate'] ?? null,
+                'position' => $payload['position'] ?? $payload['positionCode'] ?? null,
+                'team' => $this->teams->normalizeToAbbrev(
+                    $payload['team'] ?? $payload['teamAbbrev'] ?? $payload['triCode'] ?? null,
+                ),
+                'raw_payload' => $payload,
+            ],
+        );
     }
 
     /**
@@ -130,9 +181,11 @@ class PlayerIdentityResolver
                 'display_name' => $displayName,
                 'first_name' => $firstName,
                 'last_name' => $lastName,
-                'birthdate' => $payload['birthDate'] ?? $payload['dob'] ?? null,
+                'birthdate' => $this->capWagesBirthdate($payload),
                 'position' => $payload['position'] ?? null,
-                'team' => $payload['team'] ?? $payload['currentTeamAbbrev'] ?? null,
+                'team' => $this->teams->normalizeToAbbrev(
+                    $payload['team'] ?? $payload['currentTeamAbbrev'] ?? null,
+                ),
                 'raw_payload' => $payload,
             ],
         );
@@ -149,46 +202,64 @@ class PlayerIdentityResolver
             return $this->linkIdentityToPlayer($identity, $knownPlayer);
         }
 
+        return $this->applyMatchResult($identity, $this->previewNonAuthorityIdentity($identity));
+    }
+
+    /**
+     * Preview the current resolver decision without mutating the identity row.
+     */
+    public function previewNonAuthorityIdentity(PlayerExternalIdentity $identity): PlayerIdentityMatchResult
+    {
         if ($identity->player_id !== null) {
-            return $this->applyMatchResult(
-                $identity,
-                PlayerIdentityMatchResult::matched((int)$identity->player_id),
-            );
+            return PlayerIdentityMatchResult::matched((int)$identity->player_id);
         }
 
         if ($identity->normalized_name === null) {
-            return $this->applyMatchResult(
-                $identity,
-                PlayerIdentityMatchResult::unmatched(PlayerExternalIdentity::REASON_PROVIDER_PAYLOAD_MISSING_NAME),
+            return PlayerIdentityMatchResult::unmatched(PlayerExternalIdentity::REASON_PROVIDER_PAYLOAD_MISSING_NAME);
+        }
+
+        $candidateScores = $this->scoredCandidatesForIdentity($identity);
+
+        if ($candidateScores->isEmpty()) {
+            return PlayerIdentityMatchResult::unmatched(PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER);
+        }
+
+        $threshold = $this->autoLinkThresholdForProvider($identity->provider);
+        $qualifiedCandidates = $candidateScores
+            ->filter(static fn (array $candidate) => $candidate['score'] >= $threshold)
+            ->values();
+
+        if ($qualifiedCandidates->count() === 1) {
+            $qualifiedCandidate = $qualifiedCandidates->first();
+
+            return PlayerIdentityMatchResult::matched(
+                (int)$qualifiedCandidate['player']->id,
+                $qualifiedCandidate['score'],
             );
         }
 
-        $candidates = $this->candidatePlayersForIdentity($identity);
-
-        if ($candidates->isEmpty()) {
-            return $this->applyMatchResult(
-                $identity,
-                PlayerIdentityMatchResult::unmatched(PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER),
+        if ($qualifiedCandidates->count() > 1) {
+            return new PlayerIdentityMatchResult(
+                PlayerExternalIdentity::STATUS_CONFLICT,
+                null,
+                $qualifiedCandidates->max('score'),
+                PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES,
             );
         }
 
-        if ($candidates->count() > 1) {
-            return $this->applyMatchResult(
-                $identity,
-                PlayerIdentityMatchResult::candidate(PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES, 50),
+        $bestCandidate = $candidateScores->first();
+
+        if ($candidateScores->count() > 1) {
+            return PlayerIdentityMatchResult::candidate(
+                PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES,
+                $bestCandidate['score'],
             );
         }
 
-        $candidate = $candidates->first();
-
-        if ($identity->birthdate === null) {
-            return $this->applyMatchResult(
-                $identity,
-                PlayerIdentityMatchResult::candidate(PlayerExternalIdentity::REASON_INSUFFICIENT_IDENTITY_DATA, 75),
-            );
-        }
-
-        return $this->linkIdentityToPlayer($identity, $candidate, 95);
+        return PlayerIdentityMatchResult::candidate(
+            PlayerExternalIdentity::REASON_INSUFFICIENT_IDENTITY_DATA,
+            $bestCandidate['score'],
+        );
     }
 
     /**
@@ -199,10 +270,17 @@ class PlayerIdentityResolver
         Player $player,
         int $confidence = 100,
     ): PlayerExternalIdentity {
+        $previousPlayerId = $identity->player_id === null ? null : (int)$identity->player_id;
+        $playerId = (int)$player->id;
+
         $this->applyMatchResult(
             $identity,
-            PlayerIdentityMatchResult::matched((int)$player->id, $confidence),
+            PlayerIdentityMatchResult::matched($playerId, $confidence),
         );
+
+        if ($previousPlayerId !== $playerId) {
+            PlayerExternalIdentityLinked::dispatch($identity, $previousPlayerId, $playerId);
+        }
 
         return $identity;
     }
@@ -310,19 +388,151 @@ class PlayerIdentityResolver
     }
 
     /**
-     * Find canonical players that match identity name and optional birthdate.
+     * Score canonical players that match identity name.
      *
-     * @return Collection<int,Player>
+     * @return Collection<int,array{player:Player,score:int}>
      */
-    private function candidatePlayersForIdentity(PlayerExternalIdentity $identity): Collection
+    private function scoredCandidatesForIdentity(PlayerExternalIdentity $identity): Collection
     {
         return Player::query()
-            ->when(
-                $identity->birthdate !== null,
-                fn ($query) => $query->whereDate('dob', $identity->birthdate),
-            )
             ->get()
             ->filter(fn (Player $player) => $this->normalizer->normalizeName($player->full_name) === $identity->normalized_name)
+            ->filter(fn (Player $player) => $this->positionTypesAreCompatible($identity, $player))
+            ->map(fn (Player $player) => [
+                'player' => $player,
+                'score' => $this->scoreCandidate($identity, $player),
+            ])
+            ->sortByDesc('score')
             ->values();
+    }
+
+    /**
+     * Score matching evidence for one canonical player candidate.
+     */
+    private function scoreCandidate(PlayerExternalIdentity $identity, Player $player): int
+    {
+        if ($this->birthdateMatches($identity, $player)) {
+            return self::SCORE_NAME_PLUS_PLUS;
+        }
+
+        $contextMatches = 0;
+
+        if ($this->positionMatches($identity, $player)) {
+            $contextMatches++;
+        }
+
+        if ($this->teamMatches($identity, $player)) {
+            $contextMatches++;
+        }
+
+        if ($contextMatches >= 2) {
+            return self::SCORE_NAME_PLUS_PLUS;
+        }
+
+        if ($contextMatches === 1) {
+            return self::SCORE_NAME_PLUS;
+        }
+
+        return self::SCORE_NAME_ONLY;
+    }
+
+    /**
+     * Resolve the minimum automatic-link confidence for a provider.
+     */
+    private function autoLinkThresholdForProvider(string $provider): int
+    {
+        return self::PROVIDER_AUTO_LINK_THRESHOLDS[$provider] ?? 100;
+    }
+
+    /**
+     * Determine whether identity and canonical player birthdates match.
+     */
+    private function birthdateMatches(PlayerExternalIdentity $identity, Player $player): bool
+    {
+        if ($identity->birthdate === null || $player->dob === null) {
+            return false;
+        }
+
+        return $identity->birthdate->toDateString() === Carbon::parse($player->dob)->toDateString();
+    }
+
+    /**
+     * Determine whether identity and canonical player position types match.
+     */
+    private function positionMatches(PlayerExternalIdentity $identity, Player $player): bool
+    {
+        $identityPositionType = $this->positionType($identity->position);
+        $playerPositionType = $this->positionType($player->position);
+
+        if ($identityPositionType === null || $playerPositionType === null) {
+            return false;
+        }
+
+        return $identityPositionType === $playerPositionType;
+    }
+
+    /**
+     * Determine whether a canonical player is viable for this identity by position type.
+     */
+    private function positionTypesAreCompatible(PlayerExternalIdentity $identity, Player $player): bool
+    {
+        $identityPositionType = $this->positionType($identity->position);
+        $playerPositionType = $this->positionType($player->position);
+
+        if ($identityPositionType === null || $playerPositionType === null) {
+            return true;
+        }
+
+        return $identityPositionType === $playerPositionType;
+    }
+
+    /**
+     * Normalize detailed hockey positions to matching position type.
+     */
+    private function positionType(?string $position): ?string
+    {
+        $position = mb_strtoupper(trim((string) $position));
+
+        return match ($position) {
+            'G' => 'G',
+            'D', 'LD', 'RD' => 'D',
+            'F', 'C', 'L', 'R', 'LW', 'RW' => 'F',
+            default => null,
+        };
+    }
+
+    /**
+     * Determine whether identity and canonical player teams match.
+     */
+    private function teamMatches(PlayerExternalIdentity $identity, Player $player): bool
+    {
+        if ($identity->team === null || $player->team_abbrev === null) {
+            return false;
+        }
+
+        return mb_strtoupper(trim($identity->team)) === mb_strtoupper(trim($player->team_abbrev));
+    }
+
+    /**
+     * Extract CapWages birthdate from current and legacy payload shapes.
+     *
+     * @param array<string,mixed> $payload
+     */
+    private function capWagesBirthdate(array $payload): mixed
+    {
+        $personalInfo = is_array($payload['personalInfo'] ?? null) ? $payload['personalInfo'] : [];
+
+        return $personalInfo['birthDate'] ?? $payload['birthDate'] ?? $payload['dob'] ?? null;
+    }
+
+    private function draftNamePart(mixed $value): ?string
+    {
+        if (is_array($value)) {
+            $value = $value['default'] ?? null;
+        }
+
+        $name = trim((string) $value);
+
+        return $name === '' ? null : $name;
     }
 }

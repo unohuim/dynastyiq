@@ -19,6 +19,7 @@ class ImportNHLPlayer
 
     public function __construct(
         private readonly PlayerIdentityResolver $identityResolver,
+        private readonly NhlTeamReference $teams,
     ) {
     }
 
@@ -35,14 +36,17 @@ class ImportNHLPlayer
         ]);
 
         $identity = $this->identityResolver->upsertNhlIdentity($data);
+        $this->teams->upsertFromPlayerPayload($data);
 
         $player = $identity->player ?? Player::firstOrNew([
             'nhl_id' => $data['playerId'],
         ]);
 
+        $teamAbbrev = $data['currentTeamAbbrev'] ?? null;
+
         $player->nhl_id                = $data['playerId'];
-        $player->nhl_team_id           = $data['currentTeamId'] ?? null;
-        $player->team_abbrev           = $data['currentTeamAbbrev'] ?? null;
+        $player->nhl_team_id           = $data['currentTeamId'] ?? $this->teams->idForAbbrev($teamAbbrev);
+        $player->team_abbrev           = $teamAbbrev;
         $player->first_name            = $data['firstName']['default'] ?? '';
         $player->last_name             = $data['lastName']['default'] ?? '';
         $player->full_name             = trim($player->first_name . ' ' . $player->last_name);

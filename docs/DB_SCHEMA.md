@@ -24,6 +24,7 @@ Migrations remain the **sole source of truth**.
 
 - cache
 - cache_locks
+- capwages_players
 - contract_seasons
 - contracts
 - discord_commands
@@ -47,8 +48,10 @@ Migrations remain the **sole source of truth**.
 - nhl_game_summaries
 - nhl_games
 - nhl_import_progress
+- nhl_player_transactions
 - nhl_season_stats
 - nhl_shifts
+- nhl_teams
 - nhl_unit_game_summaries
 - nhl_unit_players
 - nhl_unit_shifts
@@ -116,6 +119,59 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `key`
+
+---
+
+## capwages_players
+
+**Organization-owned:** No
+**Purpose:** CapWages-owned player profile data linked to provider identity records.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| player_external_identity_id | bigint | Yes | FK -> player_external_identities.id (SET NULL) |
+| player_id | bigint | Yes | FK -> players.id (SET NULL) |
+| slug | string | No | Unique CapWages player slug |
+| name | string | Yes | CapWages display name |
+| team | string | Yes | CapWages team name |
+| position | string(20) | Yes | CapWages position |
+| league_status | string(40) | Yes | CapWages league status |
+| nhl_id | unsignedBigInteger | Yes | NHL player id from CapWages |
+| jersey_number | unsignedSmallInteger | Yes | Jersey number |
+| birth_date | date | Yes | Birth date |
+| birth_place | string | Yes | Birth place |
+| nationality | string(40) | Yes | Nationality |
+| hand | string(40) | Yes | Shoots/catches hand |
+| height_imperial | string(40) | Yes | Height label |
+| height_cm | unsignedSmallInteger | Yes | Height in centimeters |
+| weight_imperial | string(40) | Yes | Weight label |
+| weight_kg | unsignedSmallInteger | Yes | Weight in kilograms |
+| acquisition_method | string(80) | Yes | Acquisition method |
+| acquisition_details | text | Yes | Acquisition details |
+| acquisition_year | unsignedSmallInteger | Yes | Acquisition year |
+| acquisition_round | unsignedTinyInteger | Yes | Acquisition round |
+| acquisition_overall_pick | unsignedSmallInteger | Yes | Acquisition overall pick |
+| acquisition_draft_team | string(40) | Yes | Draft team abbreviation |
+| elc_signing_age | unsignedTinyInteger | Yes | Entry-level contract signing age |
+| waivers_eligibility_age | unsignedTinyInteger | Yes | Waivers eligibility age |
+| api_last_updated | timestamp | Yes | CapWages API last-updated timestamp |
+| raw_payload | json | Yes | Raw CapWages detail payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `slug`
+- Index: `nhl_id`
+- Index: `player_external_identity_id`
+- Index: `player_id`
+- Index: `(league_status, team, position)`
+- Implicit (FK index): `player_external_identity_id`
+- Implicit (FK index): `player_id`
 
 ---
 
@@ -359,7 +415,7 @@ Migrations remain the **sole source of truth**.
 ## import_runs
 
 **Organization-owned:** No
-**Purpose:** Lightweight tracking for completed import runs by source.
+**Purpose:** Lifecycle tracking for admin-triggered import runs by source.
 
 ### Columns
 
@@ -367,8 +423,22 @@ Migrations remain the **sole source of truth**.
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
 | source | string | No | Import source key |
-| ran_at | timestamp | No | Run timestamp |
+| status | string | No | Import lifecycle status: `working`, `completed`, or `failed` |
+| command | string | Yes | Artisan command name |
+| options | json | Yes | Command options payload |
+| ran_at | timestamp | No | Legacy run timestamp; initialized at start and updated to terminal timestamp |
 | batch_id | string | Yes | Optional batch identifier |
+| started_at | timestamp | Yes | Import start timestamp |
+| finished_at | timestamp | Yes | Import finish timestamp |
+| duration_seconds | integer | Yes | Total runtime in seconds |
+| total_records | integer | Yes | Estimated total records for progress UI |
+| processed_records | integer | No | Records attempted or processed by the import |
+| successful_records | integer | No | Records processed without provider/job exception |
+| failed_records | integer | No | Records skipped due to provider or connection failures |
+| skipped_records | integer | No | Records skipped due to local import conditions |
+| progress_label | string | Yes | User-facing label for the progress unit |
+| error_message | text | Yes | Failure message when status is failed |
+| meta | json | Yes | Additional import metadata, including `work_batch_id` for child import batches |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
@@ -1101,6 +1171,73 @@ Migrations remain the **sole source of truth**.
 ### Notes
 
 - The down migration currently calls `Schema::dropIfExists('shifts')`; migrations remain the source of truth, but the created table is `nhl_shifts`.
+
+---
+
+## nhl_teams
+
+**Organization-owned:** No
+**Purpose:** NHL-owned team reference data used to normalize provider team strings to NHL abbreviations.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_id | unsignedInteger | No | Unique NHL team id |
+| abbrev | string(10) | No | Unique NHL team abbreviation |
+| full_name | string | Yes | NHL full team name |
+| common_name | string | Yes | NHL common/team name |
+| place_name | string | Yes | NHL place/city name |
+| raw_payload | json | Yes | Raw NHL team reference payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `nhl_id`
+- Unique: `abbrev`
+- Index: `full_name`
+- Index: `common_name`
+- Index: `place_name`
+
+---
+
+## nhl_player_transactions
+
+**Organization-owned:** No
+**Purpose:** Real hockey player movement history sourced from NHL-domain providers.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| player_id | bigint | Yes | FK -> players.id (SET NULL) |
+| player_external_identity_id | bigint | Yes | FK -> player_external_identities.id (SET NULL) |
+| source | string(40) | No | Provider source key |
+| source_key | string | No | Unique deterministic source key |
+| source_transaction_id | string | Yes | Provider transaction id when available |
+| transaction_date | date | Yes | Transaction date when available |
+| transaction_type | string(80) | Yes | Provider transaction type |
+| description | text | Yes | Transaction description |
+| from_team | string | Yes | Origin team when cleanly available |
+| to_team | string | Yes | Destination team when cleanly available |
+| raw_payload | json | Yes | Raw provider transaction payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `source_key`
+- Index: `player_id`
+- Index: `player_external_identity_id`
+- Index: `(source, transaction_date)`
+- Index: `(source, transaction_type)`
+- Implicit (FK index): `player_id`
+- Implicit (FK index): `player_external_identity_id`
 
 ---
 

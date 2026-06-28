@@ -1,6 +1,4 @@
-<div
-    class="py-12"
->
+<div class="py-12">
     <div
         class="max-w-7xl mx-auto sm:px-6 lg:px-8 space-y-6"
         x-data="adminHub({
@@ -13,33 +11,13 @@
     >
         <div class="bg-white shadow rounded-lg">
             <div class="border-b px-6 pt-4 flex items-center space-x-4">
-                <template x-if="hasPlayers">
-                    <button
-                        type="button"
-                        class="pb-3 text-sm font-semibold border-b-2"
-                        @click="setTab('nhl')"
-                        :class="activeTab === 'nhl' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                    >
-                        NHL
-                    </button>
-                </template>
-                <template x-if="hasFantrax">
-                    <button
-                        type="button"
-                        class="pb-3 text-sm font-semibold border-b-2"
-                        @click="setTab('fantrax')"
-                        :class="activeTab === 'fantrax' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                    >
-                        Fantrax
-                    </button>
-                </template>
                 <button
                     type="button"
                     class="pb-3 text-sm font-semibold border-b-2"
-                    @click="setTab('pbp')"
-                    :class="activeTab === 'pbp' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                    @click="setTab('triage')"
+                    :class="activeTab === 'triage' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
-                    PBP
+                    Triage
                 </button>
                 <button
                     type="button"
@@ -52,140 +30,21 @@
             </div>
 
             <div class="p-6">
-                <div x-show="activeTab === 'nhl' || activeTab === 'fantrax'" x-cloak class="space-y-4">
-                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                        <div>
-                            <div class="text-lg font-semibold text-gray-800" x-text="activeSource === 'fantrax' ? 'Fantrax Players' : 'NHL Players'"></div>
-                            <p class="text-sm text-gray-600">Read-only view with future action hooks.</p>
-                        </div>
-                        <div class="text-sm text-gray-700 flex items-center space-x-2">
-                            <span>{{ $unmatchedPlayersCount }} unmatched players</span>
-                            <span class="text-gray-400">•</span>
-                            <a href="{{ route('admin.player-triage') }}" class="text-indigo-600 font-semibold">Player Triage</a>
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                        <template x-if="activeSource === 'nhl'">
-                            <input
-                                type="text"
-                                class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
-                                placeholder="Filter by name"
-                                x-model="roster.nhl.filter"
-                                x-on:input.debounce.300ms="filterPlayers()"
-                            />
-                        </template>
-
-                        <template x-if="activeSource === 'fantrax'">
-                            <input
-                                type="text"
-                                class="w-full md:w-80 rounded-md border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
-                                placeholder="Filter by name"
-                                x-model="roster.fantrax.filter"
-                                x-on:input.debounce.300ms="filterPlayers()"
-                            />
-                        </template>
-
-                        <label class="inline-flex items-center space-x-2 text-sm text-gray-700">
-                            <input
-                                type="checkbox"
-                                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500"
-                                x-model="roster[activeSource].toggle"
-                                x-on:change="filterPlayers()"
-                            />
-                            <span x-text="activeSource === 'fantrax' ? 'NHL Matched' : 'All Players'"></span>
-                        </label>
-                    </div>
-
-                    <div class="overflow-x-auto border border-gray-200 rounded-lg">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <template x-if="activeSource === 'nhl'">
-                                    <tr>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Name</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Position</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Team</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Age</th>
-                                        <th class="px-4 py-2 text-right text-xs font-semibold text-gray-600">Actions</th>
-                                    </tr>
-                                </template>
-                                <template x-if="activeSource === 'fantrax'">
-                                    <tr>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Name</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Pos</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Team</th>
-                                        <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600">Match</th>
-                                    </tr>
-                                </template>
-                            </thead>
-                            <tbody class="divide-y divide-gray-200 bg-white">
-                                <tr x-show="roster[activeSource].loading">
-                                    <td class="px-4 py-4 text-sm text-gray-500" :colspan="activeSource === 'nhl' ? 5 : 4">Loading players...</td>
-                                </tr>
-                                <template x-if="!roster[activeSource].loading && roster[activeSource].items.length === 0">
-                                    <tr>
-                                        <td class="px-4 py-4 text-sm text-gray-500" :colspan="activeSource === 'nhl' ? 5 : 4">No players found.</td>
-                                    </tr>
-                                </template>
-                                <template x-if="activeSource === 'nhl'">
-                                    <template x-for="player in roster[activeSource].items" :key="player.id">
-                                        <tr class="hover:bg-gray-50">
-                                            <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.full_name"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.team_abbrev || '—'"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.age ?? '—'"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-400 text-right">Actions</td>
-                                        </tr>
-                                    </template>
-                                </template>
-                                <template x-if="activeSource === 'fantrax'">
-                                    <template x-for="player in roster[activeSource].items" :key="player.id">
-                                        <tr class="hover:bg-gray-50">
-                                            <td class="px-4 py-3 text-sm font-medium text-gray-800" x-text="player.name"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.position || '—'"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.team || '—'"></td>
-                                            <td class="px-4 py-3 text-sm text-gray-600" x-text="player.match || '—'"></td>
-                                        </tr>
-                                    </template>
-                                </template>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="flex items-center justify-between text-sm text-gray-700">
-                        <div>
-                            Page <span x-text="roster[activeSource].page"></span>
-                            of
-                            <span x-text="Math.max(1, Math.ceil(roster[activeSource].total / roster[activeSource].perPage))"></span>
-                            — <span x-text="roster[activeSource].total"></span> players
-                        </div>
-                        <div class="space-x-2">
-                            <x-secondary-button type="button" x-on:click="previousPage()" x-bind:disabled="roster[activeSource].page <= 1">Previous</x-secondary-button>
-                            <x-secondary-button type="button" x-on:click="nextPage()" x-bind:disabled="roster[activeSource].page >= Math.ceil(roster[activeSource].total / roster[activeSource].perPage)">Next</x-secondary-button>
-                        </div>
-                    </div>
+                <div x-show="activeTab === 'triage'" x-cloak>
+                    @include('admin.player-triage', array_merge($triage, ['embedded' => true]))
                 </div>
 
-                <div x-show="activeTab === 'pbp'" x-cloak class="space-y-3">
-                    <div class="text-lg font-semibold text-gray-800">Play-by-Play</div>
-                    <p class="text-sm text-gray-600">Coming soon.</p>
-                </div>
-
-                <div x-show="activeTab === 'imports'" x-cloak class="space-y-5">
-                    <div class="flex items-center justify-between">
-                        <div>
-                        <div class="text-lg font-semibold text-gray-800">Data Imports</div>
-                        <p class="text-sm text-gray-600">Run imports without leaving the page. Output streams in real time.</p>
-                    </div>
-                </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div x-show="activeTab === 'imports'" x-cloak>
+                    <div class="space-y-4">
                         @foreach($imports as $import)
-                            <div class="border rounded-lg p-4 space-y-3">
-                                <div class="flex items-start justify-between">
-                                    <div>
+                            <div class="border rounded-lg p-4 space-y-4">
+                                <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div class="min-w-0">
                                         <div class="font-semibold text-gray-800">{{ $import['label'] }}</div>
-                                        <div class="text-sm text-gray-600">Last run: {{ $import['last_run'] ?? 'N/A' }}</div>
+                                        <div class="text-sm text-gray-600">
+                                            Last run:
+                                            <span x-text="formatLastRun('{{ $import['key'] }}')"></span>
+                                        </div>
                                     </div>
                                     <x-primary-button
                                         type="button"
@@ -195,6 +54,25 @@
                                         Run Now
                                     </x-primary-button>
                                 </div>
+
+                                <div
+                                    class="space-y-2"
+                                    x-show="shouldShowImportProgress('{{ $import['key'] }}')"
+                                    x-cloak
+                                >
+                                    <div class="flex items-center justify-between gap-3 text-xs text-gray-600">
+                                        <span x-text="importProgressText('{{ $import['key'] }}')"></span>
+                                        <span x-text="`${importProgressPercentage('{{ $import['key'] }}')}%`"></span>
+                                    </div>
+                                    <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+                                        <div
+                                            class="h-full rounded-full bg-indigo-600 transition-all duration-300"
+                                            x-bind:style="`width: ${importProgressPercentage('{{ $import['key'] }}')}%`"
+                                        ></div>
+                                    </div>
+                                    <div class="text-xs text-gray-500" x-text="importProgressDetailText('{{ $import['key'] }}')"></div>
+                                </div>
+
                                 <div class="space-y-2">
                                     <button
                                         type="button"
@@ -220,20 +98,6 @@
                     </div>
                 </div>
             </div>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <x-card-section title="Scheduler" title-class="text-lg font-semibold" is-accordian="true">
-                <div class="space-y-2">
-                    @foreach($events as $event)
-                        <div class="border rounded-lg p-4">
-                            <div class="font-semibold">{{ $event['command'] }}</div>
-                            <div class="text-sm text-gray-600">Cron: {{ $event['expression'] }}</div>
-                            <div class="text-sm text-gray-600">Last run: {{ $event['last'] ?? 'Unknown' }}</div>
-                        </div>
-                    @endforeach
-                </div>
-            </x-card-section>
         </div>
     </div>
 </div>

@@ -207,7 +207,6 @@ Existing deviations are legacy debt. They are not automatic blockers for unrelat
 - `resources/views/communities/_desktop.blade.php`
 - `resources/views/communities/leagues/show.blade.php`
 - `resources/views/leagues/_panel.blade.php`
-- `resources/views/admin/imports.blade.php`
 - `resources/views/admin/operational.blade.php`
 - `resources/views/dashboard.blade.php`
 - `resources/views/components/card-section.blade.php`

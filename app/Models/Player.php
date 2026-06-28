@@ -23,6 +23,16 @@ class Player extends Model
     protected $guarded = [];
 
     /**
+     * Attribute casts.
+     *
+     * @var array<string,string>
+     */
+    protected $casts = [
+        'is_goalie' => 'boolean',
+        'is_prospect' => 'boolean',
+    ];
+
+    /**
      * The user's “current” ranking for this player (latest in their default profile).
      *
      * @return HasOne<PlayerRanking>

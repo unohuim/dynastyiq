@@ -2,6 +2,10 @@ name: Player Identity Resolution
 type: Import Identity Pattern
 location:
   - app/Models/PlayerExternalIdentity.php
+  - app/Events/PlayerExternalIdentityLinked.php
+  - app/Jobs/ImportNhlDraftPicksJob.php
+  - app/Jobs/RefreshCapWagesContractsForIdentityJob.php
+  - app/Listeners/QueueCapWagesContractRefresh.php
   - app/Services/PlayerIdentityNormalizer.php
   - app/Services/PlayerIdentityResolver.php
   - database/migrations/*_create_player_external_identities_table.php
@@ -17,10 +21,27 @@ when_not_to_use:
 rules:
   - Provider player identities must be upserted before an import creates or updates a canonical player.
   - NHL is an authority provider and may create canonical players during import.
+  - NHL roster and prospect discovery must remember run-level normalized-name plus position-type fingerprints so later draft discovery can avoid duplicate canonical player creation without per-pick database checks.
+  - NHL draft discovery must be dispatched only after the roster and prospect discovery batch completes for the same import run.
+  - NHL draft identities may create minimal canonical prospect players with nhl_id null when no matching roster or prospect fingerprint was seen in the same import run.
   - Non-authority providers must not create canonical players without an approved resolver rule or human match.
-  - Non-authority provider imports may auto-link only when an existing provider link or exact normalized name plus birthdate identifies one canonical player.
-  - Ambiguous or name-only non-authority matches must remain candidate identities rather than mutating canonical player data.
+  - Non-authority provider imports may auto-link only when an existing provider link, known durable ID, or provider-specific evidence score identifies exactly one canonical player at or above the provider threshold.
+  - Provider evidence scoring must treat exact normalized name as 75, exact normalized name plus one strong context match as 85, and exact normalized name plus birthdate or two strong context matches as 95.
+  - Strong context matches currently include position type and team abbreviation.
+  - Provider team strings should be normalized through NHL team reference data before being stored as matching evidence.
+  - Position type matching must compare goalies as G, defense as D, and L/C/R/LW/RW/F as F.
+  - When both the provider identity and canonical player have known position types, candidates with different position types must not count as viable candidates.
+  - Provider auto-link thresholds are NHL 85, Fantrax 85, and CapWages 75.
+  - Name-only matches below the provider threshold must remain candidate identities rather than mutating canonical player data.
+  - Multiple candidates at or above the provider threshold must become conflict identities rather than auto-linking.
   - Provider identity rows must keep raw provider payloads for audit and future rematching.
+  - Provider aggregate rows, such as Fantrax team total entries, must be skipped before identity upsert.
+  - CapWages identities must only be upserted from detail payloads whose maximum parsed contract season key is at least the season key derived from the current calendar year.
+  - CapWages identities with an importable current-or-future contract season may create non-prospect canonical players with nhl_id null only when resolver evidence finds no canonical player.
+  - CapWages profile details belong in capwages_players, not on player_external_identities.
+  - CapWages contract rows and contract season rows must only be materialized after a CapWages identity has a non-null player_id.
+  - PlayerIdentityResolver::linkIdentityToPlayer() must dispatch PlayerExternalIdentityLinked when an identity transitions to a different player_id.
+  - CapWages must respond to PlayerExternalIdentityLinked by queuing RefreshCapWagesContractsForIdentityJob, which re-fetches CapWages detail before writing contracts.
   - Matching status and unmatched reason values must remain aligned with docs/ENUMS.md.
   - A matched identity must reference exactly one canonical player.
   - A canonical player may have many provider identities, but a provider and provider_player_id pair must be unique.
@@ -30,10 +51,14 @@ public_interface:
   - Player::externalIdentities()
   - PlayerIdentityNormalizer::normalizeName()
   - PlayerIdentityResolver::upsertNhlIdentity()
+  - PlayerIdentityResolver::upsertNhlDraftIdentity()
+  - ImportNhlDraftPicksJob
   - PlayerIdentityResolver::upsertFantraxIdentity()
   - PlayerIdentityResolver::upsertCapWagesIdentity()
   - PlayerIdentityResolver::resolveNonAuthorityIdentity()
   - PlayerIdentityResolver::linkIdentityToPlayer()
+  - PlayerExternalIdentityLinked
+  - RefreshCapWagesContractsForIdentityJob
   - PlayerIdentityResolver::statusCountsByProvider()
 example_usage: |
   $identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);

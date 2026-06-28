@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Events\PlayerExternalIdentityLinked;
+use App\Listeners\QueueCapWagesContractRefresh;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
@@ -44,6 +46,8 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(function (\SocialiteProviders\Manager\SocialiteWasCalled $event) {
             $event->extendSocialite('discord', \SocialiteProviders\Discord\Provider::class);
         });
+
+        Event::listen(PlayerExternalIdentityLinked::class, QueueCapWagesContractRefresh::class);
 
 
 

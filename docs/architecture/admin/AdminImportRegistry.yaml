@@ -17,13 +17,18 @@ when_not_to_use:
 rules:
   - Manual import sources must be registered in AdminImports.
   - Admin import dispatch must use queued batch execution.
+  - Admin import run progress should be read from import_runs progress fields rather than parsing command output.
+  - NHL, Fantrax, and CapWages admin imports should update import_runs progress totals and processed counts when run from the admin panel.
+  - Fantrax admin imports should process player records in bounded sequential chunk jobs so resolver work does not exceed queue worker timeouts.
+  - Empty commands for provider-owned imports must delete only provider-owned imported records and must preserve canonical players.
+  - Imports with dynamic discovery may increase total_records during the run as records become known.
   - Import keys must remain aligned with docs/ENUMS.md when enum-like.
 public_interface:
   - AdminImports::sources()
   - AdminImports::dispatch()
   - admin.imports
   - admin.imports.run
+  - admin.imports.status
   - admin.imports.retry
 example_usage: |
   $batch = app(AdminImports::class)->dispatch('fantrax');
-

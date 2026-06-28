@@ -1,0 +1,36 @@
+name: NHL Team Reference Data
+type: Import Reference Data Pattern
+location:
+  - app/Models/NhlTeam.php
+  - app/Services/ImportNhlTeams.php
+  - app/Services/NhlTeamReference.php
+  - database/migrations/*_create_nhl_teams_table.php
+purpose: Store NHL-owned team identifiers and names so provider imports can normalize team evidence to NHL abbreviations.
+when_to_use:
+  - Importing NHL team reference rows from the NHL stats API.
+  - Normalizing provider team strings such as full team names to NHL abbreviations.
+  - Comparing provider identity team evidence to canonical player team abbreviations.
+when_not_to_use:
+  - Replacing canonical player team fields.
+  - Storing roster membership, standings, franchise history, or season-specific team state.
+  - Treating team names as enum-like values outside the database reference table.
+rules:
+  - NHL team reference data must be imported from the NHL stats API namespace.
+  - nhl_teams.abbrev must be the operational unique lookup key for import dispatch and provider team normalization.
+  - nhl_teams.nhl_id and nhl_teams.abbrev must be unique stable lookup keys.
+  - NHL player import commands must sync nhl_teams before dispatching per-team player discovery jobs.
+  - Per-team NHL player discovery should read team abbreviations from nhl_teams instead of hardcoded team lists or standings payloads.
+  - Provider identity resolution should normalize provider team strings through NhlTeamReference before comparing to players.team_abbrev.
+  - Canonical player writes should resolve players.nhl_team_id from the normalized team abbreviation when the source payload does not provide an explicit NHL team id.
+  - NHL player imports may opportunistically upsert team reference data from player landing payloads.
+  - NHL team reference data must not overwrite provider raw payloads or canonical player attributes.
+public_interface:
+  - NhlTeam
+  - ImportNhlTeams::sync()
+  - NhlTeamReference::upsertFromStatsPayload()
+  - NhlTeamReference::upsertFromPlayerPayload()
+  - NhlTeamReference::normalizeToAbbrev()
+  - NhlTeamReference::idForAbbrev()
+example_usage: |
+  app(ImportNhlTeams::class)->sync();
+  $abbrev = app(NhlTeamReference::class)->normalizeToAbbrev('Toronto Maple Leafs');

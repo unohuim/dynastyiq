@@ -7,9 +7,8 @@
 
     @include('admin.operational', [
         'imports' => $imports,
-        'unmatchedPlayersCount' => $unmatchedPlayersCount,
-        'events' => $events,
         'hasPlayers' => $hasPlayers,
         'hasFantraxPlayers' => $hasFantraxPlayers,
+        'triage' => $triage,
     ])
 </x-app-layout>

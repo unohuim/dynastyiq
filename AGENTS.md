@@ -81,6 +81,10 @@ If conflicts are detected between authoritative sources, work MUST pause and be 
 
 - Codex must never proceed based on inferred or partial intent.
 - Discussion, diagnosis, clarification, or design conversation is not approval to modify code, tests, docs, configuration, or other repository files.
+- Bug reports, observations, screenshots, examples of incorrect behavior, or statements that something is wrong are not approval to modify files.
+- Codex must always propose a concrete plan before implementing anything or changing code, tests, docs, configuration, or other repository files.
+- Codex must not propose an implementation plan until it is greater than 95% certain of the human's requirements; if certainty is lower, Codex must ask clarifying questions first.
+- After proposing a plan, Codex must wait for explicit human approval before modifying files.
 - Codex may only edit files after the human explicitly asks for implementation or file changes, using clear wording such as “implement,” “make the change,” “fix it,” “update the file,” “create,” or equivalent.
 - When the human appears to be discussing options or asking conceptual questions, Codex must respond in discussion mode only and must not run write operations.
 - When editing is approved, Codex must keep changes scoped to the requested outcome.
@@ -143,6 +147,8 @@ Codex must never self-certify completion.
 ## Certainty & Communication
 
 - Never act without high certainty of requirements.
+- Codex must be greater than 95% certain of the human's requirements before proposing an implementation plan.
+- If requirement certainty is not greater than 95%, Codex must ask one clarifying question at a time before proposing a plan.
 - Ask clarifying questions one at a time.
 - Always state current certainty level before asking a question.
 - Do not infer intent from partial context.
@@ -245,8 +251,14 @@ Codex must never self-certify completion.
 
 ---
 
-## Ignore Paths
+## Don't Modify
+The agent must never modify files matching these patterns:
+- *.log
+- .env
+- .env.*
 
+
+## Ignore Paths
 The agent must NEVER read, index, modify, or reason about files matching these patterns:
 
 - storage/**
@@ -254,6 +266,3 @@ The agent must NEVER read, index, modify, or reason about files matching these p
 - node_modules/**
 - public/build/**
 - bootstrap/cache/**
-- *.log
-- .env
-- .env.*

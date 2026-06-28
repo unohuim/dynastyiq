@@ -55,10 +55,30 @@ return [
             'roster_current' => '/roster/{teamAbbrev}/current',
             'roster_season'  => '/roster/{teamAbbrev}/{seasonId}',
             'prospects'      => '/prospects/{teamAbbrev}',
+            'draft_picks'    => '/draft/picks/{year}/all',
             'standings_now'  => '/standings/now',
             'pbp'            => '/gamecenter/{gameId}/play-by-play',
             'boxscore'       => '/gamecenter/{gameId}/boxscore',
             'dailyscores'    => '/score/{date}',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | NHL Stats API Configuration
+    |--------------------------------------------------------------------------
+    |
+    | The NHL stats API is a separate namespace from the web API above.
+    |
+    */
+    'nhl_stats' => [
+        'base'      => env('NHL_STATS_BASE_URL', 'https://api.nhle.com/stats/rest/en'),
+        'auth'      => [
+            'in'   => 'none',
+        ],
+        'endpoints' => [
+            'teams' => '/team',
+            'team'  => '/team/id/{teamId}',
         ],
     ],
 

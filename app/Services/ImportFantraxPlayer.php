@@ -23,14 +23,23 @@ class ImportFantraxPlayer
      *
      * @param array<string,mixed> $entry
      */
-    public function syncOne(array $entry): void
+    public function syncOne(array $entry): string
     {
         if (empty($entry['fantraxId'])) {
             Log::warning('[Fantrax] Skipping entry; missing required fields', [
                 'fantraxId' => $entry['fantraxId'] ?? null,
                 'name'      => $entry['name'] ?? null,
             ]);
-            return;
+            return 'skipped';
+        }
+
+        if ($this->isTeamAggregateEntry($entry)) {
+            Log::info('[Fantrax] Skipping team aggregate entry', [
+                'fantraxId' => $entry['fantraxId'] ?? null,
+                'name' => $entry['name'] ?? null,
+                'position' => $entry['position'] ?? null,
+            ]);
+            return 'skipped';
         }
 
         $existing = FantraxPlayer::where('fantrax_id', $entry['fantraxId'])->first();
@@ -74,5 +83,21 @@ class ImportFantraxPlayer
         if ($pid === null && (($entry['team'] ?? null) !== '(N/A)')) {
             Log::info('[Fantrax] Upserted FantraxPlayer without link', ['name' => $entry['name'] ?? null]);
         }
+
+        return 'successful';
+    }
+
+    /**
+     * Determine whether a Fantrax row represents a team total rather than a player.
+     *
+     * @param array<string,mixed> $entry
+     */
+    private function isTeamAggregateEntry(array $entry): bool
+    {
+        $name = mb_strtolower(trim((string) ($entry['name'] ?? '')));
+        $position = mb_strtolower(trim((string) ($entry['position'] ?? '')));
+        $shortName = mb_strtolower(trim((string) ($entry['shortName'] ?? '')));
+
+        return $name === 'team' || $position === 'tm' || $shortName === 'tm';
     }
 }

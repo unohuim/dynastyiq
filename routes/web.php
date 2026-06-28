@@ -187,6 +187,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.imports');
                 Route::post('/imports/{key}/run', [\App\Http\Controllers\Admin\ImportsController::class, 'run'])
                     ->name('admin.imports.run');
+                Route::get('/imports/{key}/status', [\App\Http\Controllers\Admin\ImportsController::class, 'status'])
+                    ->name('admin.imports.status');
                 Route::post('/imports/{key}/retry', [\App\Http\Controllers\Admin\ImportsController::class, 'retry'])
                     ->name('admin.imports.retry');
 
@@ -194,11 +196,19 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])
                     ->name('admin.player-triage');
 
-                Route::post('/player-triage/{platform}/{id}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
+                Route::post('/player-triage/identities/{identity}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
                     ->name('admin.player-triage.link');
-                Route::post('/player-triage/{platform}/{id}/variant', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'addVariant'])
-                    ->name('admin.player-triage.variant');
-                Route::post('/player-triage/{platform}/{id}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
+                Route::post('/player-triage/identities/{identity}/link-matching-source', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'linkMatchingSource'])
+                    ->name('admin.player-triage.link-matching-source');
+                Route::post('/player-triage/identities/{identity}/link-external-source', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'linkExternalSource'])
+                    ->name('admin.player-triage.link-external-source');
+                Route::post('/player-triage/identities/{identity}/create-canonical', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'createCanonical'])
+                    ->name('admin.player-triage.create-canonical');
+                Route::post('/player-triage/identities/{identity}/resolve', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'resolve'])
+                    ->name('admin.player-triage.resolve');
+                Route::post('/player-triage/identities/{identity}/ignore', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'ignore'])
+                    ->name('admin.player-triage.ignore');
+                Route::post('/player-triage/identities/{identity}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
                     ->name('admin.player-triage.defer');
 
                 // Scheduler

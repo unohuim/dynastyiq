@@ -28,14 +28,16 @@ class RunImportCommandJob implements ShouldQueue
     public function __construct(
         public string $command,
         array $options = [],
-        public string $source = ''
+        public string $source = '',
+        public ?int $importRunId = null,
     ) {
         $this->options = $options;
     }
 
     public function handle(): void
     {
-        $broadcast = new ImportBroadcast($this->source ?: $this->command, $this->batchId);
+        $source = $this->source ?: $this->command;
+        $broadcast = new ImportBroadcast($source, $this->batchId);
         $shouldDetectPlayers = $this->isNhlPlayersImport();
         $shouldDetectFantraxPlayers = $this->isFantraxPlayersImport();
         $playersExistedBefore = $shouldDetectPlayers ? Player::query()->exists() : false;
@@ -43,7 +45,20 @@ class RunImportCommandJob implements ShouldQueue
 
         try {
             $broadcast->started();
-            Artisan::call($this->command, $this->options, $broadcast->output());
+            $options = $this->options;
+
+            if ($this->importRunId !== null) {
+                $options['--import-run-id'] = $this->importRunId;
+            }
+
+            $exitCode = Artisan::call($this->command, $options, $broadcast->output());
+
+            if ($exitCode !== 0) {
+                $message = "Import command {$this->command} failed with exit code {$exitCode}.";
+                $this->importRun()?->markFailed($message);
+                $broadcast->failed(new \RuntimeException($message));
+                return;
+            }
 
             if ($shouldDetectPlayers && ! $playersExistedBefore && Player::query()->exists()) {
                 PlayersAvailable::dispatch('nhl', Player::query()->count());
@@ -56,15 +71,8 @@ class RunImportCommandJob implements ShouldQueue
             ) {
                 PlayersAvailable::dispatch('fantrax', FantraxPlayer::query()->count());
             }
-
-            ImportRun::create([
-                'source' => $this->source ?: $this->command,
-                'ran_at' => now(),
-                'batch_id' => $this->batchId,
-            ]);
-
-            $broadcast->finished();
         } catch (Throwable $throwable) {
+            $this->importRun()?->markFailed($throwable);
             $broadcast->failed($throwable);
             throw $throwable;
         }
@@ -90,5 +98,14 @@ class RunImportCommandJob implements ShouldQueue
         $flag = $this->options['--players'] ?? $this->options['players'] ?? false;
 
         return filter_var($flag, FILTER_VALIDATE_BOOLEAN) !== false || $flag === true;
+    }
+
+    private function importRun(): ?ImportRun
+    {
+        if ($this->importRunId === null) {
+            return null;
+        }
+
+        return ImportRun::query()->find($this->importRunId);
     }
 }

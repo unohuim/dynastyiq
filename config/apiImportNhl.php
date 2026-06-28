@@ -34,5 +34,6 @@ return [
     'max_shift_units_seconds'       => env('MAX_SHIFT_UNITS_SECONDS', 7200),
     'max_connect_events_seconds'    => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
     'max_sum_game_units_seconds'    => env('MAX_SUM_GAME_UNITS_SECONDS', 7200),
+    'draft_years_back'              => (int) env('NHL_DRAFT_YEARS_BACK', 8),
 
 ];
