@@ -72,9 +72,25 @@ class PlayerTriageController extends Controller
     /**
      * Render the manual triage inbox.
      */
-    public function index(Request $request): View
+    public function index(Request $request): View|JsonResponse
     {
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request);
+        }
+
         return view('admin.player-triage-page', $this->viewData($request));
+    }
+
+    /**
+     * Return selected identity detail JSON without rebuilding the full triage page.
+     */
+    public function detail(Request $request, PlayerExternalIdentity $identity): JsonResponse
+    {
+        $identity->load('player');
+
+        return response()->json([
+            'detail' => $this->detailPayloadForIdentity($request, $identity),
+        ]);
     }
 
     /**
@@ -132,7 +148,22 @@ class PlayerTriageController extends Controller
         return [
             'candidatePlayers' => $candidatePlayers,
             'currentContract' => $currentContract,
+            'detailPayload' => $this->detailPayload(
+                $request,
+                $selectedIdentity,
+                $recommendations[$selectedIdentity?->id] ?? null,
+                $filters,
+                $candidatePlayers,
+                $playerSearchResults,
+                $matchingSourceCandidates,
+                $matchingSourceSearchResults,
+                $selectedMatchingSourceIdentity,
+                $linkedSourceIdentities,
+                $suggestedExternalMatches,
+                $currentContract,
+            ),
             'filters' => $filters,
+            'inboxPayload' => $this->inboxPayload($request, $identities, $recommendations, $filters, $selectedIdentity, $inboxCount),
             'identities' => $identities,
             'inboxCount' => $inboxCount,
             'linkedSourceIdentities' => $linkedSourceIdentities,
@@ -150,9 +181,227 @@ class PlayerTriageController extends Controller
     }
 
     /**
+     * Build the JSON payload owned by the browser-side triage inbox.
+     *
+     * @param Collection<int,PlayerExternalIdentity> $identities
+     * @param array<int,\App\DTO\PlayerIdentityMatchResult> $recommendations
+     * @param array<string,mixed> $filters
+     * @return array<string,mixed>
+     */
+    private function inboxPayload(
+        Request $request,
+        Collection $identities,
+        array $recommendations,
+        array $filters,
+        ?PlayerExternalIdentity $selectedIdentity,
+        int $totalCount,
+    ): array {
+        return [
+            'identities' => $identities
+                ->map(fn (PlayerExternalIdentity $identity) => $this->inboxIdentityPayload(
+                    $request,
+                    $identity,
+                    $recommendations[$identity->id] ?? null,
+                    $filters,
+                    $selectedIdentity,
+                ))
+                ->values(),
+            'meta' => [
+                'count' => $identities->count(),
+                'loaded_count' => $identities->count(),
+                'total_count' => $totalCount,
+                'selected_identity_id' => $selectedIdentity?->id,
+                'uses_source_coverage' => (bool) ($filters['source'] && $filters['matching_source']),
+            ],
+        ];
+    }
+
+    /**
+     * Build one browser-owned inbox row payload.
+     *
+     * @param array<string,mixed> $filters
+     * @return array<string,mixed>
+     */
+    private function inboxIdentityPayload(
+        Request $request,
+        PlayerExternalIdentity $identity,
+        mixed $recommendation,
+        array $filters,
+        ?PlayerExternalIdentity $selectedIdentity,
+    ): array {
+        $usesSourceCoverage = $filters['source'] && $filters['matching_source'];
+        $coverageLabel = $usesSourceCoverage
+            ? ($filters['matched'] ? 'has '.$filters['matching_source'] : 'missing '.$filters['matching_source'])
+            : null;
+        $query = array_merge($request->query(), ['identity' => $identity->id]);
+        $detailQuery = $request->query();
+        unset($detailQuery['identity']);
+
+        return [
+            'id' => $identity->id,
+            'display_name' => $identity->display_name,
+            'provider' => $identity->provider,
+            'provider_player_id' => $identity->provider_player_id,
+            'provider_slug' => $identity->provider_slug,
+            'team' => $identity->team,
+            'position' => $identity->position,
+            'match_status' => $identity->match_status,
+            'match_confidence' => $identity->match_confidence,
+            'unmatched_reason' => $identity->unmatched_reason,
+            'recommendation' => [
+                'status' => $recommendation?->status,
+                'confidence' => $recommendation?->confidence,
+            ],
+            'coverage' => [
+                'active' => (bool) $usesSourceCoverage,
+                'label' => $coverageLabel,
+                'matched' => (bool) $filters['matched'],
+            ],
+            'selected' => $selectedIdentity?->id === $identity->id,
+            'detail_url' => URL::route('admin.player-triage.detail', array_merge(
+                ['identity' => $identity],
+                $detailQuery,
+            )),
+            'href' => URL::route('admin.player-triage', $query),
+        ];
+    }
+
+    /**
+     * Build selected identity detail JSON for the dedicated detail endpoint.
+     *
+     * @return array<string,mixed>
+     */
+    private function detailPayloadForIdentity(Request $request, PlayerExternalIdentity $identity): array
+    {
+        $providers = $this->providerOptions();
+        $filters = $this->filtersFromRequest($request, $providers);
+        $recommendations = $this->recommendationsForIdentities(collect([$identity]), $identity);
+        $candidatePlayers = $this->candidatePlayers($identity);
+        $playerSearchResults = $this->playerSearchResults($request, $identity);
+        $matchingSourceCandidates = $this->matchingSourceCandidates($identity, $filters);
+        $matchingSourceSearchResults = $this->matchingSourceSearchResults($request, $filters, $identity);
+        $selectedMatchingSourceIdentity = $this->selectedMatchingSourceIdentity($identity, $filters);
+        $linkedSourceIdentities = $this->linkedSourceIdentities($identity);
+        $suggestedExternalMatches = $this->suggestedExternalMatches($identity);
+        $currentContract = $identity->player
+            ? $this->currentContractForIdentity($identity)
+            : null;
+
+        return $this->detailPayload(
+            $request,
+            $identity,
+            $recommendations[$identity->id] ?? null,
+            $filters,
+            $candidatePlayers,
+            $playerSearchResults,
+            $matchingSourceCandidates,
+            $matchingSourceSearchResults,
+            $selectedMatchingSourceIdentity,
+            $linkedSourceIdentities,
+            $suggestedExternalMatches,
+            $currentContract,
+        );
+    }
+
+    /**
+     * Build the JSON payload owned by the browser-side triage detail panel.
+     *
+     * @param array<string,mixed> $filters
+     * @param Collection<int,Player> $candidatePlayers
+     * @param Collection<int,Player> $playerSearchResults
+     * @param Collection<int,PlayerExternalIdentity> $matchingSourceCandidates
+     * @param Collection<int,PlayerExternalIdentity> $matchingSourceSearchResults
+     * @param Collection<int,PlayerExternalIdentity> $linkedSourceIdentities
+     * @param Collection<int,PlayerExternalIdentity> $suggestedExternalMatches
+     * @return array<string,mixed>
+     */
+    private function detailPayload(
+        Request $request,
+        ?PlayerExternalIdentity $identity,
+        mixed $recommendation,
+        array $filters,
+        Collection $candidatePlayers,
+        Collection $playerSearchResults,
+        Collection $matchingSourceCandidates,
+        Collection $matchingSourceSearchResults,
+        ?PlayerExternalIdentity $selectedMatchingSourceIdentity,
+        Collection $linkedSourceIdentities,
+        Collection $suggestedExternalMatches,
+        ?Contract $currentContract,
+    ): array {
+        if ($identity === null) {
+            return [
+                'selected_identity' => null,
+                'meta' => [
+                    'empty_message' => 'Select an identity from the inbox to review match details.',
+                ],
+            ];
+        }
+
+        $usesSourceCoverage = $filters['source'] && $filters['matching_source'];
+        $hasMatchingSourceIdentity = $selectedMatchingSourceIdentity !== null;
+        $coverageLabel = $usesSourceCoverage
+            ? ($hasMatchingSourceIdentity ? 'has '.$filters['matching_source'] : 'missing '.$filters['matching_source'])
+            : null;
+
+        return [
+            'selected_identity' => $this->externalIdentityPayload($identity),
+            'player' => $identity->player ? $this->playerPayload($identity->player) : null,
+            'current_contract' => $this->contractPayload($currentContract),
+            'recommendation' => [
+                'status' => $recommendation?->status,
+                'confidence' => $recommendation?->confidence,
+            ],
+            'coverage' => [
+                'active' => (bool) $usesSourceCoverage,
+                'label' => $coverageLabel,
+                'matched' => $hasMatchingSourceIdentity,
+                'source' => $filters['source'],
+                'matching_source' => $filters['matching_source'],
+            ],
+            'linked_sources' => $linkedSourceIdentities
+                ->map(fn (PlayerExternalIdentity $linkedIdentity) => $this->externalIdentityPayload($linkedIdentity))
+                ->values(),
+            'candidate_players' => $candidatePlayers
+                ->map(fn (Player $player) => $this->playerPayload($player))
+                ->values(),
+            'player_search_results' => $playerSearchResults
+                ->map(fn (Player $player) => $this->playerPayload($player))
+                ->values(),
+            'suggested_external_matches' => $suggestedExternalMatches
+                ->map(fn (PlayerExternalIdentity $externalIdentity) => $this->externalIdentityPayload($externalIdentity))
+                ->values(),
+            'matching_source_identity' => $selectedMatchingSourceIdentity
+                ? $this->externalIdentityPayload($selectedMatchingSourceIdentity)
+                : null,
+            'matching_source_candidates' => $matchingSourceCandidates
+                ->map(fn (PlayerExternalIdentity $matchingIdentity) => $this->externalIdentityPayload($matchingIdentity))
+                ->values(),
+            'matching_source_search_results' => $matchingSourceSearchResults
+                ->map(fn (PlayerExternalIdentity $matchingIdentity) => $this->externalIdentityPayload($matchingIdentity))
+                ->values(),
+            'actions' => [
+                'link_player' => URL::route('admin.player-triage.link', $identity),
+                'link_matching_source' => URL::route('admin.player-triage.link-matching-source', $identity),
+                'link_external_source' => URL::route('admin.player-triage.link-external-source', $identity),
+                'create_canonical' => URL::route('admin.player-triage.create-canonical', $identity),
+            ],
+            'queries' => [
+                'current' => $request->query(),
+                'player_search_action' => URL::route('admin.player-triage', array_merge($request->query(), [
+                    'identity' => $identity->id,
+                ])),
+                'matching_source_search_action' => URL::route('admin.player-triage', array_merge($request->query(), [
+                    'identity' => $identity->id,
+                ])),
+            ],
+        ];
+    }
+
+    /**
      * Link an external identity to the selected canonical player.
      */
-    public function link(Request $request, PlayerExternalIdentity $identity): RedirectResponse
+    public function link(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
         $data = $request->validate([
             'player_id' => ['required', 'integer', 'exists:players,id'],
@@ -160,6 +409,11 @@ class PlayerTriageController extends Controller
 
         $player = Player::findOrFail((int) $data['player_id']);
         $this->resolver->linkIdentityToPlayer($identity, $player);
+        $identity->refresh();
+
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, 'Identity linked');
+        }
 
         return $this->redirectToSelected($identity)->with('status', 'Identity linked');
     }
@@ -190,8 +444,7 @@ class PlayerTriageController extends Controller
         $matchingIdentity->refresh();
 
         if ($request->expectsJson()) {
-            return response()->json([
-                'message' => 'Matching source linked',
+            return $this->triageJsonResponse($request, $identity->refresh(), 'Matching source linked', [
                 'matched_identity' => $this->externalIdentityPayload($matchingIdentity),
                 'linked_identities' => $this->linkedSourceIdentities($identity)
                     ->map(fn (PlayerExternalIdentity $linkedIdentity) => $this->externalIdentityPayload($linkedIdentity))
@@ -205,13 +458,19 @@ class PlayerTriageController extends Controller
     /**
      * Link another external identity to the selected identity's canonical player.
      */
-    public function linkExternalSource(Request $request, PlayerExternalIdentity $identity): RedirectResponse
+    public function linkExternalSource(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
         $data = $request->validate([
             'external_identity_id' => ['required', 'integer', 'exists:player_external_identities,id'],
         ]);
 
         if ($identity->player_id === null) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Link the selected identity to a canonical player first',
+                ], 422);
+            }
+
             return $this->redirectToSelected($identity)->with('status', 'Link the selected identity to a canonical player first');
         }
 
@@ -220,10 +479,23 @@ class PlayerTriageController extends Controller
         $allowedIds = $this->suggestedExternalMatches($identity)->pluck('id');
 
         if (! $allowedIds->contains($externalIdentity->id)) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'External source is not a suggested match',
+                ], 422);
+            }
+
             return $this->redirectToSelected($identity)->with('status', 'External source is not a suggested match');
         }
 
         $this->resolver->linkIdentityToPlayer($externalIdentity, $player);
+        $identity->refresh();
+
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, 'External source linked', [
+                'linked_identity' => $this->externalIdentityPayload($externalIdentity->refresh()),
+            ]);
+        }
 
         return $this->redirectToSelected($identity)->with('status', 'External source linked');
     }
@@ -231,20 +503,25 @@ class PlayerTriageController extends Controller
     /**
      * Apply the current resolver recommendation to one provider identity.
      */
-    public function resolve(PlayerExternalIdentity $identity): RedirectResponse
+    public function resolve(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
         $identity = $this->resolver->resolveNonAuthorityIdentity($identity);
+        $message = "Resolver applied: {$identity->match_status}";
+
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, $message);
+        }
 
         return $this->redirectToSelected($identity)->with(
             'status',
-            "Resolver applied: {$identity->match_status}",
+            $message,
         );
     }
 
     /**
      * Mark an identity as ignored so it leaves the default triage inbox.
      */
-    public function ignore(PlayerExternalIdentity $identity): RedirectResponse
+    public function ignore(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
         $identity->update([
             'player_id' => null,
@@ -252,6 +529,11 @@ class PlayerTriageController extends Controller
             'match_confidence' => null,
             'unmatched_reason' => null,
         ]);
+        $identity->refresh();
+
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, 'Identity ignored');
+        }
 
         return $this->redirectToSelected($identity)->with('status', 'Identity ignored');
     }
@@ -259,15 +541,19 @@ class PlayerTriageController extends Controller
     /**
      * Keep an identity unresolved without changing its current match state.
      */
-    public function defer(PlayerExternalIdentity $identity): RedirectResponse
+    public function defer(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, 'Identity left in triage');
+        }
+
         return $this->redirectToSelected($identity)->with('status', 'Identity left in triage');
     }
 
     /**
      * Create a minimal canonical player from an external identity.
      */
-    public function createCanonical(Request $request, PlayerExternalIdentity $identity): RedirectResponse
+    public function createCanonical(Request $request, PlayerExternalIdentity $identity): RedirectResponse|JsonResponse
     {
         $data = $request->validate([
             'external_identity_ids' => ['array'],
@@ -275,10 +561,22 @@ class PlayerTriageController extends Controller
         ]);
 
         if ($identity->player_id !== null) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Identity already linked',
+                ], 422);
+            }
+
             return $this->redirectToSelected($identity)->with('status', 'Identity already linked');
         }
 
         if ($this->candidatePlayers($identity)->isNotEmpty()) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'message' => 'Review canonical candidates before creating a new player',
+                ], 422);
+            }
+
             return $this->redirectToSelected($identity)->with('status', 'Review canonical candidates before creating a new player');
         }
 
@@ -313,8 +611,51 @@ class PlayerTriageController extends Controller
                 ),
             );
         }
+        $identity->refresh();
+
+        if ($request->expectsJson()) {
+            return $this->triageJsonResponse($request, $identity, 'Canonical player created', [
+                'player' => $this->playerPayload($player),
+            ]);
+        }
 
         return $this->redirectToSelected($identity)->with('status', 'Canonical player created');
+    }
+
+    /**
+     * Build the JSON contract used by the progressive triage page module.
+     *
+     * @param array<string,mixed> $extra
+     */
+    private function triageJsonResponse(
+        Request $request,
+        ?PlayerExternalIdentity $selectedIdentity = null,
+        ?string $message = null,
+        array $extra = [],
+    ): JsonResponse {
+        if ($selectedIdentity !== null) {
+            $request->query->set('identity', $selectedIdentity->id);
+        }
+
+        $data = $this->viewData($request);
+        $selected = $data['selectedIdentity'];
+
+        return response()->json(array_merge([
+            'message' => $message,
+            'detail' => $data['detailPayload'],
+            'html' => view('admin.player-triage', array_merge($data, [
+                'embedded' => $request->boolean('admin_panel'),
+            ]))->render(),
+            'inbox' => $data['inboxPayload'],
+            'meta' => [
+                'inbox_count' => $data['inboxCount'],
+                'selected_identity_id' => $selected?->id,
+                'filters' => $data['filters'],
+            ],
+            'selected_identity' => $selected instanceof PlayerExternalIdentity
+                ? $this->externalIdentityPayload($selected)
+                : null,
+        ], $extra));
     }
 
     /**
@@ -325,6 +666,7 @@ class PlayerTriageController extends Controller
      *     provider: string|null,
      *     source: string|null,
      *     matching_source: string|null,
+     *     triage_state: string,
      *     matched: bool,
      *     reason: string|null,
      *     search: string|null,
@@ -345,26 +687,39 @@ class PlayerTriageController extends Controller
         $matchingSource = in_array($request->query('matching_source'), $providers, true)
             ? (string) $request->query('matching_source')
             : null;
+        $requestedTriageState = in_array($request->query('triage_state'), ['unmatched', 'matched', 'all'], true)
+            ? (string) $request->query('triage_state')
+            : null;
+        $triageState = $requestedTriageState
+            ?? ($includeResolved ? 'all' : ($request->boolean('matched') ? 'matched' : 'unmatched'));
+        $matched = $triageState === 'matched';
         $usesSourceComparison = $source !== null && $matchingSource !== null;
-        $usesSourceMatchedFilter = $source !== null && $matchingSource === null && $request->boolean('matched');
         $usesSourceFilter = $source !== null;
+        $statuses = $requestedStatuses;
+
+        if ($statuses === []) {
+            if ($triageState === 'matched' && ! $usesSourceFilter) {
+                $statuses = [PlayerExternalIdentity::STATUS_MATCHED];
+            } elseif ($triageState === 'all' || $usesSourceFilter || $usesSourceComparison) {
+                $statuses = self::ALL_STATUSES;
+            } else {
+                $statuses = self::DEFAULT_INBOX_STATUSES;
+            }
+        }
 
         return [
-            'statuses' => $requestedStatuses !== []
-                ? $requestedStatuses
-                : ($includeResolved || $usesSourceFilter || $usesSourceComparison || $usesSourceMatchedFilter
-                    ? self::ALL_STATUSES
-                    : self::DEFAULT_INBOX_STATUSES),
+            'statuses' => $statuses,
             'provider' => in_array($request->query('provider'), self::ALL_PROVIDERS, true)
                 ? (string) $request->query('provider')
                 : null,
             'source' => $source,
             'matching_source' => $matchingSource,
-            'matched' => $request->boolean('matched'),
+            'triage_state' => $triageState,
+            'matched' => $matched,
             'reason' => trim((string) $request->query('reason')) ?: null,
             'search' => trim((string) $request->query('search')) ?: null,
-            'include_resolved' => $includeResolved,
-            'low_confidence_only' => $source === null && $requestedStatuses === [] && ! $includeResolved,
+            'include_resolved' => $triageState === 'all',
+            'low_confidence_only' => $source === null && $requestedStatuses === [] && $triageState === 'unmatched',
         ];
     }
 
@@ -386,6 +741,10 @@ class PlayerTriageController extends Controller
                 $query->where('provider', $provider);
 
                 if ($filters['matching_source'] === null) {
+                    if ($filters['triage_state'] === 'all') {
+                        return;
+                    }
+
                     if ($filters['matched']) {
                         $query->whereNotNull('player_id');
                         return;
@@ -400,6 +759,10 @@ class PlayerTriageController extends Controller
                     ->where('provider', $filters['matching_source'])
                     ->whereNotNull('player_id')
                     ->select('player_id');
+
+                if ($filters['triage_state'] === 'all') {
+                    return;
+                }
 
                 if ($filters['matched']) {
                     $query->whereIn('player_id', $matchingPlayerIds);
@@ -482,9 +845,9 @@ class PlayerTriageController extends Controller
             ->select(['id', 'full_name', 'first_name', 'last_name', 'dob', 'position', 'team_abbrev', 'nhl_id'])
             ->when(
                 $identity->birthdate !== null,
-                static fn (Builder $query) => $query->orderByRaw(
+                fn (Builder $query) => $query->orderByRaw(
                     'CASE WHEN dob = ? THEN 0 ELSE 1 END',
-                    [$identity->birthdate->toDateString()],
+                    [$this->dateString($identity->birthdate)],
                 ),
             )
             ->get()
@@ -676,7 +1039,7 @@ class PlayerTriageController extends Controller
     {
         [$firstName, $lastName] = $this->namePartsForPlayer($identity);
         $positionType = $this->identityPositionType($identity->position);
-        $birthdate = $identity->birthdate?->toDateString()
+        $birthdate = $this->dateString($identity->birthdate)
             ?? $this->capWagesBirthdateForIdentities($linkedIdentities ?? collect([$identity]));
 
         return [
@@ -724,7 +1087,7 @@ class PlayerTriageController extends Controller
             ->orderBy('id')
             ->first(['birth_date']);
 
-        return $capWagesPlayer?->birth_date?->toDateString();
+        return $this->dateString($capWagesPlayer?->birth_date);
     }
 
     /**
@@ -761,18 +1124,90 @@ class PlayerTriageController extends Controller
     /**
      * Build a compact identity payload for AJAX UI updates.
      *
-     * @return array<string,string|null>
+     * @return array<string,mixed>
      */
     private function externalIdentityPayload(PlayerExternalIdentity $identity): array
     {
         return [
+            'id' => $identity->id,
             'display_name' => $identity->display_name,
+            'normalized_name' => $identity->normalized_name,
+            'birthdate' => $this->dateString($identity->birthdate),
             'provider' => $identity->provider,
             'provider_player_id' => $identity->provider_player_id,
+            'provider_slug' => $identity->provider_slug,
             'team' => $identity->team,
             'position' => $identity->position,
             'match_status' => $identity->match_status,
+            'match_confidence' => $identity->match_confidence,
+            'unmatched_reason' => $identity->unmatched_reason,
+            'player_id' => $identity->player_id,
+            'raw_payload' => $identity->raw_payload,
         ];
+    }
+
+    /**
+     * Build a compact canonical player payload for AJAX action responses.
+     *
+     * @return array<string,mixed>
+     */
+    private function playerPayload(Player $player): array
+    {
+        return [
+            'id' => $player->id,
+            'full_name' => $player->full_name,
+            'dob' => $this->dateString($player->dob),
+            'position' => $player->position,
+            'team_abbrev' => $player->team_abbrev,
+            'nhl_id' => $player->nhl_id,
+            'status' => $player->status,
+            'is_prospect' => (bool) $player->is_prospect,
+        ];
+    }
+
+    /**
+     * Build a compact current contract summary for the detail panel.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function contractPayload(?Contract $contract): ?array
+    {
+        if ($contract === null) {
+            return null;
+        }
+
+        $lastSeason = $contract->seasons
+            ->sortByDesc('season_key')
+            ->first();
+
+        return [
+            'contract_type' => $contract->contract_type,
+            'contract_length' => $contract->contract_length,
+            'contract_value' => $contract->contract_value,
+            'last_season_label' => $lastSeason?->label,
+        ];
+    }
+
+    /**
+     * Normalize date-like values that may arrive as casts or raw strings.
+     */
+    private function dateString(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        $text = trim((string) $value);
+
+        if ($text === '') {
+            return null;
+        }
+
+        return mb_substr($text, 0, 10);
     }
 
     /**

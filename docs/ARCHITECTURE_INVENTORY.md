@@ -1073,20 +1073,28 @@ $broadcast->started();
 - `app/Models/Player.php`
 - `app/Models/PlayerExternalIdentity.php`
 - `resources/views/admin/player-triage.blade.php`
+- `resources/js/admin/player-triage.js`
+- `resources/js/admin/player-triage-inbox.js`
+- `resources/js/admin/player-triage-detail.js`
 
 **Purpose:**  
 Resolve imported provider player identities against canonical application players through a manual admin inbox.
 
 **When to Use:**  
-Reviewing low-confidence unmatched, candidate, or conflicting provider identities by default; filtering external identities by source provider for missing canonical links or source-to-source coverage through canonical player links; displaying or applying current resolver recommendations; linking matching-source identities to covered canonical players; manually linking an identity to a canonical player; or ignoring/deferring an identity that should not be linked yet.
+Reviewing low-confidence unmatched, candidate, or conflicting provider identities by default; filtering external identities by source provider for missing canonical links or source-to-source coverage through canonical player links; switching between unmatched, matched, and all triage states; displaying or applying current resolver recommendations; linking matching-source identities to covered canonical players; manually linking an identity to a canonical player; or ignoring/deferring an identity that should not be linked yet.
+
+The browser-side inbox owns the currently loaded identity JSON and filters that loaded payload locally for player search input while preserving SearchField focus. Its count display distinguishes total matching identities from the browser-loaded slice when server payloads are capped. It also owns inbox loading, loaded, empty, and error rendering from page-level events. The browser-side detail panel owns selected identity detail JSON and renders loading, loaded, empty, and error states from page-level events; it may show an immediate selected-identity preview header before full detail JSON resolves and receives full detail data from a dedicated web-authenticated admin JSON route.
 
 **When Not to Use:**  
 Normal player display, legacy platform identity workflows, bulk triage, or automated NHL stat imports that do not require manual identity triage.
 
 **Public Interface:**
 - `admin.player-triage`
+- `admin.player-triage.detail`
 - `admin.player-triage.link`
 - `admin.player-triage.link-matching-source`
+- `admin.player-triage.link-external-source`
+- `admin.player-triage.create-canonical`
 - `admin.player-triage.resolve`
 - `admin.player-triage.ignore`
 - `admin.player-triage.defer`
@@ -1124,6 +1132,66 @@ Backend-only changes with no user-facing UI impact.
 **Example Usage:**
 ```text
 New interactive pages must use the page module contract unless an approved exception is documented.
+```
+
+---
+
+### Search Field
+
+**Name:** Search Field
+**Type:** Frontend Component
+**Location:**
+- `resources/js/components/SearchField/search-field.js`
+
+**Purpose:**
+Provide a reusable Tailwind-styled search input enhancement for page-local modules.
+
+**When to Use:**
+Debounced search inputs that should emit page-local JavaScript events with clear, loading, disabled, and error states.
+
+**When Not to Use:**
+Domain-specific API calls, URL state, rendering, or app-wide frontend state.
+
+**Public Interface:**
+- `SearchField`
+- `mountSearchFields()`
+- `search-field:change`
+
+**Example Usage:**
+```blade
+<div data-search-field data-search-field-name="search">
+    <input name="search" />
+</div>
+```
+
+---
+
+### Select Field
+
+**Name:** Select Field
+**Type:** Frontend Component
+**Location:**
+- `resources/js/components/SelectField/select-field.js`
+
+**Purpose:**
+Provide a reusable Tailwind-styled native select enhancement for page-local modules.
+
+**When to Use:**
+Native select controls that should emit page-local JavaScript events with `name`, `value`, `label`, `scope`, and `id` metadata.
+
+**When Not to Use:**
+Searchable option pickers, custom menu behavior, domain-specific filtering, API calls, URL state, or app-wide frontend state.
+
+**Public Interface:**
+- `SelectField`
+- `mountSelectFields()`
+- `select-field:change`
+
+**Example Usage:**
+```blade
+<div data-select-field data-select-field-name="source">
+    <select name="source"></select>
+</div>
 ```
 
 ---

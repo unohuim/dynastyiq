@@ -6,6 +6,10 @@ location:
   - app/Models/Player.php
   - app/Models/PlayerExternalIdentity.php
   - resources/views/admin/player-triage.blade.php
+  - resources/js/admin/player-triage.js
+  - resources/js/admin/player-triage-inbox.js
+  - resources/js/admin/player-triage-detail.js
+  - resources/js/components/SelectField/select-field.js
 purpose: Resolve imported provider player identities against canonical application players through a manual admin inbox.
 when_to_use:
   - Reviewing unmatched, candidate, or conflicting provider player identities.
@@ -34,12 +38,24 @@ rules:
   - When no canonical candidate exists for an unlinked identity, suggested unlinked external matches may also be selected during canonical player creation.
   - Manual canonical player search should exclude players already linked to the selected identity's provider and should filter by compatible position type when the selected identity has a usable position.
   - The triage inbox may filter by external identity source provider and, when selected alone, should show that provider's identities without canonical player links.
-  - When a matching source provider is selected, the triage inbox should compare linked source identities through canonical player_id and show identities with or without any matching-source identity based on the matched filter.
+  - The triage inbox status filter should use an unmatched, matched, and all triage-state segment; unmatched is the default state.
+  - When a matching source provider is selected, the triage inbox should compare linked source identities through canonical player_id and show identities with, without, or regardless of any matching-source identity based on the triage-state segment.
   - When a matching source provider is selected, list rows should display source coverage state rather than resolver recommendation state.
   - When a matching source provider is selected for an unlinked selected identity, the detail panel should show matching-source identity suggestions and link actions instead of canonical player suggestions.
   - When a selected identity is already linked to a canonical player, matching-source comparisons should still render the player record view and show linked external sources for that player.
   - When an unlinked selected identity has a matching-source identity that shares its player_id, the detail panel should show the matched identity instead of search or suggestions.
   - Source-to-source link actions should support AJAX updates that preserve the selected source perspective without a full page refresh.
+  - Selected identity detail loading should use a dedicated web-authenticated admin JSON route instead of the full triage page refresh route.
+  - The triage inbox should own its currently loaded identity JSON in the browser and filter that loaded payload locally for player search input.
+  - Triage inbox JSON should distinguish total matching identities from the browser-loaded identity slice when payloads are capped.
+  - The triage inbox should own loaded, loading, empty, and error rendering states for inbox refreshes.
+  - Browser-owned triage inbox filtering must not replace the SearchField DOM or steal focus from the active input.
+  - The triage inbox module must not query Laravel directly; page-level modules coordinate server refreshes and emit inbox loading, loaded, and error events.
+  - Triage filter selects may use the generic SelectField component, but SelectField must emit only generic select-field events; the page module owns conversion into triage refreshes and inbox-loaded events.
+  - The triage detail panel should own its selected identity detail JSON in the browser and render loading, loaded, empty, and error states from page-level events.
+  - The triage detail panel may render an immediate preview header from the selected inbox identity event while full detail JSON is loading.
+  - The triage detail panel module must not query Laravel directly; the page module coordinates selected identity detail requests and emits detail loading, loaded, and error events.
+  - Detail loading feedback belongs to the detail panel, not to the reusable SearchField component or the inbox component.
   - Matching-source suggestions must only include unlinked identities from the matching source with the same normalized name and compatible position type as the selected source identity.
   - Matching-source search results must query player_external_identities for unlinked identities from the matching source and allow normalized-name variants while preserving compatible position type constraints.
   - The default triage inbox should focus on identities with current resolver confidence below 75 percent or no confidence; explicit filters may include higher-confidence recommendations.
@@ -48,6 +64,7 @@ rules:
   - Admin-only triage routes must remain protected by admin middleware.
 public_interface:
   - admin.player-triage
+  - admin.player-triage.detail
   - admin.player-triage.link
   - admin.player-triage.link-matching-source
   - admin.player-triage.link-external-source

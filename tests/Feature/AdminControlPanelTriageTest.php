@@ -71,6 +71,22 @@ it('blocks authenticated non-admin users from the player triage inbox', function
         ->assertForbidden();
 });
 
+it('blocks guests from the player triage detail json endpoint', function () {
+    $identity = ($this->makeIdentity)();
+
+    $this->getJson(route('admin.player-triage.detail', $identity))
+        ->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from the player triage detail json endpoint', function () {
+    $identity = ($this->makeIdentity)();
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->getJson(route('admin.player-triage.detail', $identity))
+        ->assertForbidden();
+});
+
 it('allows super admins to view the player triage inbox', function () {
     $identity = ($this->makeIdentity)();
 
@@ -218,6 +234,25 @@ it('can filter directly to matched identities', function () {
         ->assertDontSee('Candidate Player');
 });
 
+it('can filter directly to matched identities with the triage state segment', function () {
+    ($this->makeIdentity)([
+        'provider_player_id' => 'segment-candidate-1',
+        'display_name' => 'Segment Candidate Player',
+        'match_status' => PlayerExternalIdentity::STATUS_CANDIDATE,
+    ]);
+    ($this->makeIdentity)([
+        'provider_player_id' => 'segment-matched-1',
+        'display_name' => 'Segment Matched Player',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.player-triage', ['triage_state' => 'matched']))
+        ->assertOk()
+        ->assertSee('Segment Matched Player')
+        ->assertDontSee('Segment Candidate Player');
+});
+
 it('filters identities by provider', function () {
     ($this->makeIdentity)([
         'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
@@ -319,6 +354,31 @@ it('filters source identities to rows with canonical records when matched is sel
         ->assertSee('Linked CapWages Player')
         ->assertDontSee('Open CapWages Player')
         ->assertDontSee('Linked Fantrax Source Player');
+});
+
+it('can show all source identities with the triage state segment', function () {
+    ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'capwages-segment-open',
+        'display_name' => 'Segment Open CapWages Player',
+        'player_id' => null,
+    ]);
+    ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'capwages-segment-linked',
+        'display_name' => 'Segment Linked CapWages Player',
+        'player_id' => ($this->makePlayer)()->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.player-triage', [
+            'source' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+            'triage_state' => 'all',
+        ]))
+        ->assertOk()
+        ->assertSee('Segment Open CapWages Player')
+        ->assertSee('Segment Linked CapWages Player');
 });
 
 it('filters source identities missing a matching source identity', function () {
@@ -1466,6 +1526,281 @@ it('defers an identity without changing its match state', function () {
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_CONFLICT);
     expect($identity->match_confidence)->toBe(25);
     expect($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES);
+});
+
+it('returns a JSON triage fragment for the inbox', function () {
+    $identity = ($this->makeIdentity)([
+        'display_name' => 'Json Fragment Player',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
+        ->assertOk()
+        ->assertJsonPath('meta.selected_identity_id', $identity->id)
+        ->assertJsonPath('selected_identity.display_name', 'Json Fragment Player')
+        ->assertJsonPath('meta.inbox_count', 1)
+        ->assertJsonPath('inbox.identities.0.detail_url', route('admin.player-triage.detail', $identity))
+        ->assertJsonPath('inbox.meta.loaded_count', 1)
+        ->assertJsonPath('inbox.meta.total_count', 1)
+        ->assertJson(fn ($json) => $json
+            ->has('html')
+            ->where('message', null)
+            ->etc());
+});
+
+it('returns loaded and total counts when the JSON inbox payload is capped', function () {
+    foreach (range(1, 80) as $index) {
+        ($this->makeIdentity)([
+            'provider_player_id' => "json-count-{$index}",
+            'provider_slug' => "json-count-{$index}",
+            'display_name' => "Json Count Player {$index}",
+            'normalized_name' => "json count player {$index}",
+        ]);
+    }
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['include_resolved' => 1]))
+        ->assertOk()
+        ->assertJsonPath('inbox.meta.loaded_count', 75)
+        ->assertJsonPath('inbox.meta.total_count', 80);
+});
+
+it('returns source comparison JSON when linked player dates are raw strings', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Fantrax Date Player',
+        'first_name' => 'Fantrax',
+        'last_name' => 'Date',
+        'dob' => '1994-04-14',
+        'position' => 'C',
+        'team_abbrev' => 'TOR',
+    ]);
+    $identity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-date-player',
+        'display_name' => 'Fantrax Date Player',
+        'normalized_name' => 'fantrax date player',
+        'position' => 'C',
+        'team' => 'TOR',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'capwages-date-option',
+        'display_name' => 'CapWages Date Option',
+        'normalized_name' => 'capwages date option',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', [
+            'source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+            'matching_source' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+            'identity' => $identity->id,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('detail.player.dob', '1994-04-14')
+        ->assertJsonPath('detail.selected_identity.id', $identity->id);
+});
+
+it('returns detail-only json for a selected triage identity', function () {
+    $identity = ($this->makeIdentity)([
+        'display_name' => 'Detail Only Player',
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage.detail', $identity))
+        ->assertOk()
+        ->assertJsonPath('detail.selected_identity.id', $identity->id)
+        ->assertJsonPath('detail.selected_identity.display_name', 'Detail Only Player');
+
+    $payload = $response->json();
+
+    expect(array_key_exists('html', $payload))->toBeFalse()
+        ->and(array_key_exists('inbox', $payload))->toBeFalse();
+});
+
+it('filters the JSON triage fragment by search term', function () {
+    ($this->makeIdentity)([
+        'provider_player_id' => 'json-search-visible',
+        'display_name' => 'Visible Json Player',
+        'normalized_name' => 'visible json player',
+    ]);
+    ($this->makeIdentity)([
+        'provider_player_id' => 'json-search-hidden',
+        'display_name' => 'Hidden Json Player',
+        'normalized_name' => 'hidden json player',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['search' => 'visible']))
+        ->assertOk()
+        ->assertJsonPath('meta.inbox_count', 1)
+        ->assertSee('Visible Json Player')
+        ->assertDontSee('Hidden Json Player');
+});
+
+it('returns JSON when linking a canonical player', function () {
+    $identity = ($this->makeIdentity)([
+        'display_name' => 'Json Link Player',
+        'match_status' => PlayerExternalIdentity::STATUS_CANDIDATE,
+    ]);
+    $player = ($this->makePlayer)([
+        'full_name' => 'Json Link Player',
+        'first_name' => 'Json',
+        'last_name' => 'Link',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.link', $identity), ['player_id' => $player->id])
+        ->assertOk()
+        ->assertJsonPath('message', 'Identity linked')
+        ->assertJsonPath('meta.selected_identity_id', $identity->id)
+        ->assertJsonPath('selected_identity.player_id', $player->id)
+        ->assertSee('Player Record');
+
+    expect($identity->refresh()->player_id)->toBe($player->id);
+});
+
+it('returns JSON validation errors when linking without a canonical player', function () {
+    $identity = ($this->makeIdentity)();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.link', $identity), [])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('player_id');
+});
+
+it('returns JSON when linking a suggested external source', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Json External Player',
+        'first_name' => 'Json',
+        'last_name' => 'External',
+    ]);
+    $identity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'json-capwages-external-link',
+        'display_name' => 'Json External Player',
+        'normalized_name' => 'json external player',
+        'position' => 'C',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $externalMatch = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'json-fantrax-external-link',
+        'display_name' => 'Json External Player',
+        'normalized_name' => 'json external player',
+        'position' => 'LW',
+        'player_id' => null,
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.link-external-source', $identity), [
+            'external_identity_id' => $externalMatch->id,
+        ])
+        ->assertOk()
+        ->assertJsonPath('message', 'External source linked')
+        ->assertJsonPath('linked_identity.id', $externalMatch->id)
+        ->assertSee('Linked External Sources');
+
+    expect($externalMatch->refresh()->player_id)->toBe($player->id);
+});
+
+it('returns JSON errors when external source linking has no canonical player', function () {
+    $identity = ($this->makeIdentity)(['player_id' => null]);
+    $externalMatch = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'json-external-no-player',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.link-external-source', $identity), [
+            'external_identity_id' => $externalMatch->id,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Link the selected identity to a canonical player first');
+});
+
+it('returns JSON when applying resolver recommendations', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Json Resolver Match',
+        'first_name' => 'Json',
+        'last_name' => 'Resolver',
+        'position' => 'C',
+        'team_abbrev' => 'ANA',
+    ]);
+    $identity = ($this->makeIdentity)([
+        'provider_player_id' => 'json-resolver-match',
+        'display_name' => 'Json Resolver Match',
+        'normalized_name' => 'json resolver match',
+        'birthdate' => null,
+        'position' => 'R',
+        'team' => null,
+        'match_status' => PlayerExternalIdentity::STATUS_CANDIDATE,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.resolve', $identity))
+        ->assertOk()
+        ->assertJsonPath('message', 'Resolver applied: matched')
+        ->assertJsonPath('selected_identity.player_id', $player->id);
+
+    expect($identity->refresh()->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+});
+
+it('returns JSON when ignoring an identity', function () {
+    $identity = ($this->makeIdentity)([
+        'player_id' => ($this->makePlayer)()->id,
+        'match_status' => PlayerExternalIdentity::STATUS_CANDIDATE,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.ignore', $identity))
+        ->assertOk()
+        ->assertJsonPath('message', 'Identity ignored')
+        ->assertJsonPath('selected_identity.match_status', PlayerExternalIdentity::STATUS_IGNORED);
+
+    expect($identity->refresh()->player_id)->toBeNull();
+});
+
+it('returns JSON when deferring an identity without changing state', function () {
+    $identity = ($this->makeIdentity)([
+        'match_status' => PlayerExternalIdentity::STATUS_CONFLICT,
+        'match_confidence' => 25,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.defer', $identity))
+        ->assertOk()
+        ->assertJsonPath('message', 'Identity left in triage')
+        ->assertJsonPath('selected_identity.match_status', PlayerExternalIdentity::STATUS_CONFLICT);
+
+    expect($identity->refresh()->match_confidence)->toBe(25);
+});
+
+it('returns JSON when creating a canonical player', function () {
+    $identity = ($this->makeIdentity)([
+        'display_name' => 'Json Created Prospect',
+        'normalized_name' => 'json created prospect',
+        'first_name' => 'Json',
+        'last_name' => 'Prospect',
+        'birthdate' => null,
+        'position' => 'C',
+        'team' => 'ANA',
+        'player_id' => null,
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.player-triage.create-canonical', $identity))
+        ->assertOk()
+        ->assertJsonPath('message', 'Canonical player created')
+        ->assertJsonPath('player.full_name', 'Json Created Prospect')
+        ->assertJsonPath('selected_identity.match_status', PlayerExternalIdentity::STATUS_MATCHED);
+
+    expect($identity->refresh()->player_id)->not->toBeNull();
 });
 
 it('blocks guests from the imports page', function () {

@@ -195,6 +195,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])
                     ->name('admin.player-triage');
+                Route::get('/player-triage/identities/{identity}/detail', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'detail'])
+                    ->name('admin.player-triage.detail');
 
                 Route::post('/player-triage/identities/{identity}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
                     ->name('admin.player-triage.link');
