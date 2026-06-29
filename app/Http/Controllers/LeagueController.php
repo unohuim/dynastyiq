@@ -193,6 +193,7 @@ final class LeagueController extends Controller
                         'players.pos_type',
                         'players.dob',
                         'players.team_abbrev',
+                        'players.head_shot_url',
                         'players.is_goalie',
                         'players.status'
                     )->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at']);
@@ -267,6 +268,7 @@ final class LeagueController extends Controller
                                 'age'           => $p->age(),
                                 'pos_type'      => (string) ($p->pos_type ?? ''),
                                 'team_abbrev'   => (string) ($p->team_abbrev ?? ''),
+                                'avatar_url'    => (string) ($p->head_shot_url ?? ''),
                                 'is_goalie'     => (bool) $p->is_goalie,
                                 'status'        => (string) $p->status,
                                 'roster_slot'   => $displaySlot,

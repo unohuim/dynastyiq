@@ -19,6 +19,7 @@ use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\ContractSeason;
 use App\Models\FantraxPlayer;
+use App\Models\NhlPlayerTransaction;
 use App\Models\NhlTeam;
 use App\Models\PlatformLeague;
 use App\Models\Player;
@@ -1468,6 +1469,424 @@ it('capwages import stores provider profile data for eligible identities', funct
     expect($capWagesPlayer->api_last_updated?->toISOString())->toBe('2026-06-01T12:00:00.000000Z');
     expect($capWagesPlayer->raw_payload['name'])->toBe('CapWages Profile Player');
     expect($capWagesPlayer->raw_payload['acquisition']['year'])->toBe('Undrafted');
+});
+
+it('capwages import extracts transaction dates from acquisition prose', function () {
+    $examples = [
+        [
+            'slug' => 'signed-free-agent',
+            'method' => 'Signed',
+            'details' => 'Signed as a free agent on July 1, 2024',
+            'expectedDate' => '2024-07-01',
+        ],
+        [
+            'slug' => 'trade-short-month-comma',
+            'method' => 'Trade',
+            'details' => 'Acquired from NYI in exchange for Bo Horvat on Jan. 30, 2023.',
+            'expectedDate' => '2023-01-30',
+        ],
+        [
+            'slug' => 'trade-short-month-no-comma',
+            'method' => 'Trade',
+            'details' => 'The New Jersey Devils acquired the player on Mar. 07 2025',
+            'expectedDate' => '2025-03-07',
+        ],
+        [
+            'slug' => 'trade-full-month',
+            'method' => 'Trade',
+            'details' => 'From Carolina in exchange for picks on April 30, 2019',
+            'expectedDate' => '2019-04-30',
+        ],
+        [
+            'slug' => 'trade-numeric-short-year',
+            'method' => 'Trade',
+            'details' => 'Acquired from Tampa Bay in exchange for a pick, 8/14/19',
+            'expectedDate' => '2019-08-14',
+        ],
+        [
+            'slug' => 'trade-numeric-full-year',
+            'method' => 'Trade',
+            'details' => 'Acquired from Tampa Bay in exchange for a pick, 08/14/2019',
+            'expectedDate' => '2019-08-14',
+        ],
+    ];
+
+    foreach ($examples as $example) {
+        ($this->fakeCapWagesPlayer)($example['slug'], ($this->capWagesPayload)([
+            'name' => 'CapWages ' . $example['slug'],
+            'acquisition' => [
+                'method' => $example['method'],
+                'details' => $example['details'],
+                'year' => 2020,
+                'round' => 1,
+                'overallPick' => 1,
+                'draftTeam' => 'ANA',
+            ],
+        ]));
+
+        (new ImportCapWagesPlayer())->syncBySlug($example['slug'], false);
+
+        $transaction = NhlPlayerTransaction::query()
+            ->where('source', NhlPlayerTransaction::SOURCE_CAPWAGES)
+            ->where('description', $example['details'])
+            ->first();
+
+        expect($transaction)->not->toBeNull();
+        expect($transaction->transaction_date?->toDateString())->toBe($example['expectedDate']);
+    }
+});
+
+it('capwages import leaves draft acquisition transaction dates empty', function () {
+    ($this->fakeCapWagesPlayer)('draft-date-skip', ($this->capWagesPayload)([
+        'acquisition' => [
+            'method' => 'Draft',
+            'details' => '2020 Round 7, #190 Overall',
+            'year' => 2020,
+            'round' => 7,
+            'overallPick' => 190,
+            'draftTeam' => 'ANA',
+        ],
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('draft-date-skip', false);
+
+    $transaction = NhlPlayerTransaction::query()->first();
+
+    expect($transaction)->not->toBeNull();
+    expect($transaction->transaction_date)->toBeNull();
+});
+
+it('capwages import leaves transaction dates empty when acquisition prose has no explicit date', function () {
+    ($this->fakeCapWagesPlayer)('undated-trade', ($this->capWagesPayload)([
+        'acquisition' => [
+            'method' => 'Trade',
+            'details' => 'Acquired from Anaheim in exchange for future considerations',
+            'year' => 2020,
+            'round' => 7,
+            'overallPick' => 190,
+            'draftTeam' => 'ANA',
+        ],
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('undated-trade', false);
+
+    $transaction = NhlPlayerTransaction::query()->first();
+
+    expect($transaction)->not->toBeNull();
+    expect($transaction->transaction_date)->toBeNull();
+});
+
+it('public transactions page renders the javascript mount shell', function () {
+    $this->get(route('transactions.index'))
+        ->assertOk()
+        ->assertSee('data-transactions-page', false)
+        ->assertSee(route('transactions.payload'), false);
+});
+
+it('transactions payload exposes canonical player avatar data', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Avatar Player',
+        'first_name' => 'Avatar',
+        'last_name' => 'Player',
+        'head_shot_url' => 'https://example.test/avatar.png',
+        'position' => 'LW',
+        'team_abbrev' => 'FLA',
+    ]);
+
+    NhlPlayerTransaction::create([
+        'player_id' => $player->id,
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:payload-avatar',
+        'transaction_date' => '2024-07-01',
+        'transaction_type' => 'signed',
+        'description' => 'Signed as a free agent on July 1, 2024',
+        'to_team' => 'FLA',
+        'raw_payload' => ['slug' => 'avatar-player'],
+    ]);
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonPath('transactions.0.player.name', 'Avatar Player')
+        ->assertJsonPath('transactions.0.player.avatarUrl', 'https://example.test/avatar.png')
+        ->assertJsonPath('transactions.0.player.initials', 'AP')
+        ->assertJsonPath('transactions.0.player.contractSummary', null)
+        ->assertJsonPath('transactions.0.date', '2024-07-01')
+        ->assertJsonPath('transactions.0.typeLabel', 'Signed');
+});
+
+it('transactions payload exposes canonical player current contract summary', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Contract Player',
+        'first_name' => 'Contract',
+        'last_name' => 'Player',
+    ]);
+    $contract = Contract::create([
+        'player_id' => $player->id,
+        'contract_type' => 'Standard',
+        'contract_length' => '4 years',
+        'contract_value' => 21800000,
+        'expiry_status' => 'UFA',
+        'signing_team' => 'FLA',
+        'signing_date' => '2027-07-01',
+        'signed_by' => 'Club',
+    ]);
+
+    foreach ([20232024, 20242025, 20252026, 20262027] as $seasonKey) {
+        $contract->seasons()->create([
+            'season_key' => $seasonKey,
+            'label' => sprintf('%d-%02d', intdiv($seasonKey, 10000), $seasonKey % 100),
+            'cap_hit' => 5450000,
+            'aav' => 5450000,
+            'base_salary' => 5450000,
+        ]);
+    }
+
+    NhlPlayerTransaction::create([
+        'player_id' => $player->id,
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:payload-contract-summary',
+        'transaction_date' => '2027-07-01',
+        'transaction_type' => 'signed',
+        'description' => 'Signed as a free agent on July 1, 2027',
+        'to_team' => 'FLA',
+        'raw_payload' => ['slug' => 'contract-player'],
+    ]);
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonPath('transactions.0.player.contractSummary', '$5.45M x 2 yrs (2027)');
+});
+
+it('signed transactions payload uses the linked players latest canonical contract summary', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Latest Contract Player',
+        'first_name' => 'Latest',
+        'last_name' => 'Contract',
+    ]);
+    $oldContract = Contract::create([
+        'player_id' => $player->id,
+        'contract_type' => 'Standard',
+        'contract_length' => '1 year',
+        'contract_value' => 1000000,
+        'expiry_status' => 'UFA',
+        'signing_team' => 'LAK',
+        'signing_date' => '2024-07-01',
+        'signed_by' => 'Club',
+    ]);
+    $oldContract->seasons()->create([
+        'season_key' => 20242025,
+        'label' => '2024-25',
+        'cap_hit' => 1000000,
+        'aav' => 1000000,
+        'base_salary' => 1000000,
+    ]);
+
+    $latestContract = Contract::create([
+        'player_id' => $player->id,
+        'contract_type' => 'Standard',
+        'contract_length' => '4 years',
+        'contract_value' => 21800000,
+        'expiry_status' => 'UFA',
+        'signing_team' => 'LAK',
+        'signing_date' => '2026-06-27',
+        'signed_by' => 'Club',
+    ]);
+
+    foreach ([20262027, 20272028, 20282029, 20292030] as $seasonKey) {
+        $latestContract->seasons()->create([
+            'season_key' => $seasonKey,
+            'label' => sprintf('%d-%02d', intdiv($seasonKey, 10000), $seasonKey % 100),
+            'cap_hit' => 5450000,
+            'aav' => 5450000,
+            'base_salary' => 5450000,
+        ]);
+    }
+
+    NhlPlayerTransaction::create([
+        'player_id' => $player->id,
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:signed-older-acquisition-newer-contract',
+        'transaction_date' => '2024-07-01',
+        'transaction_type' => 'signed',
+        'description' => 'Signed as a free agent on July 1, 2024',
+        'to_team' => 'LAK',
+        'raw_payload' => ['slug' => 'latest-contract-player'],
+    ]);
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonPath('transactions.0.player.contractSummary', '$5.45M x 4 yrs (2030)');
+});
+
+it('transactions payload sorts dated rows newest first before undated rows by default', function () {
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:sort-old',
+        'transaction_date' => '2023-01-30',
+        'transaction_type' => 'trade',
+        'description' => 'Old trade',
+        'raw_payload' => ['slug' => 'old-trade'],
+    ]);
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:sort-null',
+        'transaction_date' => null,
+        'transaction_type' => 'draft',
+        'description' => 'Undated draft',
+        'raw_payload' => ['slug' => 'undated-draft'],
+    ]);
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:sort-new',
+        'transaction_date' => '2025-03-07',
+        'transaction_type' => 'trade',
+        'description' => 'New trade',
+        'raw_payload' => ['slug' => 'new-trade'],
+    ]);
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonPath('transactions.0.description', 'New trade')
+        ->assertJsonPath('transactions.1.description', 'Old trade')
+        ->assertJsonPath('transactions.2.description', 'Undated draft');
+});
+
+it('transactions payload sorts dated rows oldest first when requested', function () {
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:asc-new',
+        'transaction_date' => '2025-03-07',
+        'transaction_type' => 'trade',
+        'description' => 'New trade',
+        'raw_payload' => ['slug' => 'new-trade'],
+    ]);
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:asc-old',
+        'transaction_date' => '2023-01-30',
+        'transaction_type' => 'trade',
+        'description' => 'Old trade',
+        'raw_payload' => ['slug' => 'old-trade'],
+    ]);
+
+    $this->getJson(route('transactions.payload', ['sort' => 'date_asc']))
+        ->assertOk()
+        ->assertJsonPath('transactions.0.description', 'Old trade')
+        ->assertJsonPath('transactions.1.description', 'New trade');
+});
+
+it('transactions payload filters by transaction type', function () {
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:type-trade',
+        'transaction_date' => '2025-03-07',
+        'transaction_type' => 'trade',
+        'description' => 'Trade row',
+        'raw_payload' => ['slug' => 'trade-row'],
+    ]);
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:type-waivers',
+        'transaction_date' => '2025-01-31',
+        'transaction_type' => 'waivers',
+        'description' => 'Waivers row',
+        'raw_payload' => ['slug' => 'waivers-row'],
+    ]);
+
+    $this->getJson(route('transactions.payload', ['type' => 'waivers']))
+        ->assertOk()
+        ->assertJsonCount(1, 'transactions')
+        ->assertJsonPath('transactions.0.description', 'Waivers row')
+        ->assertJsonPath('filters.applied.type', 'waivers');
+});
+
+it('transactions payload excludes draft drafted and transfer transaction types', function () {
+    foreach (['draft', 'drafted', 'transfer', 'trade'] as $type) {
+        NhlPlayerTransaction::create([
+            'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+            'source_key' => 'capwages:hidden-' . $type,
+            'transaction_date' => '2025-03-07',
+            'transaction_type' => $type,
+            'description' => $type . ' row',
+            'raw_payload' => ['slug' => $type . '-row'],
+        ]);
+    }
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonCount(1, 'transactions')
+        ->assertJsonPath('transactions.0.description', 'trade row');
+});
+
+it('transactions payload type options exclude draft drafted and transfer values', function () {
+    foreach (['draft', 'drafted', 'transfer', 'signed'] as $type) {
+        NhlPlayerTransaction::create([
+            'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+            'source_key' => 'capwages:filter-hidden-' . $type,
+            'transaction_date' => '2025-03-07',
+            'transaction_type' => $type,
+            'description' => $type . ' row',
+            'raw_payload' => ['slug' => $type . '-row'],
+        ]);
+    }
+
+    $this->getJson(route('transactions.payload'))
+        ->assertOk()
+        ->assertJsonCount(1, 'filters.types')
+        ->assertJsonPath('filters.types.0.value', 'signed');
+});
+
+it('transactions payload searches player names descriptions and unlinked identity names', function () {
+    $player = ($this->makePlayer)([
+        'full_name' => 'Searchable Player',
+        'first_name' => 'Searchable',
+        'last_name' => 'Player',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'identity-search',
+        'display_name' => 'Identity Match',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    NhlPlayerTransaction::create([
+        'player_id' => $player->id,
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:search-player',
+        'transaction_date' => '2025-03-07',
+        'transaction_type' => 'trade',
+        'description' => 'General row',
+        'raw_payload' => ['slug' => 'searchable-player'],
+    ]);
+    NhlPlayerTransaction::create([
+        'player_external_identity_id' => $identity->id,
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:search-identity',
+        'transaction_date' => '2024-07-01',
+        'transaction_type' => 'signed',
+        'description' => 'Identity row',
+        'raw_payload' => ['slug' => 'identity-match'],
+    ]);
+    NhlPlayerTransaction::create([
+        'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+        'source_key' => 'capwages:search-description',
+        'transaction_date' => '2023-01-30',
+        'transaction_type' => 'trade',
+        'description' => 'Needle details',
+        'raw_payload' => ['slug' => 'needle-details'],
+    ]);
+
+    $this->getJson(route('transactions.payload', ['q' => 'Identity']))
+        ->assertOk()
+        ->assertJsonCount(1, 'transactions')
+        ->assertJsonPath('transactions.0.player.name', 'Identity Match');
+
+    $this->getJson(route('transactions.payload', ['q' => 'Needle']))
+        ->assertOk()
+        ->assertJsonCount(1, 'transactions')
+        ->assertJsonPath('transactions.0.description', 'Needle details');
 });
 
 it('dispatches an identity linked event when an identity player link changes', function () {

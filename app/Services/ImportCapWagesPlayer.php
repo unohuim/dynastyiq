@@ -476,7 +476,7 @@ class ImportCapWagesPlayer
                 'player_external_identity_id' => $identity->id,
                 'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
                 'source_transaction_id' => null,
-                'transaction_date' => null,
+                'transaction_date' => $this->capWagesAcquisitionTransactionDate($method, $description),
                 'transaction_type' => $method !== '' ? mb_strtolower($method) : null,
                 'description' => $description !== '' ? $description : null,
                 'from_team' => null,
@@ -506,6 +506,125 @@ class ImportCapWagesPlayer
                 'overallPick' => $acquisition['overallPick'] ?? null,
                 'draftTeam' => $acquisition['draftTeam'] ?? null,
             ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Extract an explicit transaction date from CapWages acquisition prose.
+     */
+    private function capWagesAcquisitionTransactionDate(string $method, string $description): ?string
+    {
+        if (mb_strtolower(trim($method)) === 'draft' || trim($description) === '') {
+            return null;
+        }
+
+        return $this->dateFromMonthNameText($description)
+            ?? $this->dateFromNumericText($description);
+    }
+
+    /**
+     * Parse dates such as "July 1, 2024", "Jan. 30, 2023", or "Mar. 07 2025".
+     */
+    private function dateFromMonthNameText(string $description): ?string
+    {
+        $monthMap = $this->capWagesMonthMap();
+        $monthPattern = implode('|', array_keys($monthMap));
+
+        if (! preg_match_all(
+            '/\b(' . $monthPattern . ')\.?\s+(\d{1,2})(?:,)?\s+(\d{4})\b/i',
+            $description,
+            $matches,
+            PREG_SET_ORDER,
+        )) {
+            return null;
+        }
+
+        foreach ($matches as $match) {
+            $month = $monthMap[mb_strtolower($match[1])] ?? null;
+            $day = (int) $match[2];
+            $year = (int) $match[3];
+
+            if ($month !== null && checkdate($month, $day, $year)) {
+                return Carbon::createFromDate($year, $month, $day)->toDateString();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse numeric dates such as "8/14/19" or "08/14/2019".
+     */
+    private function dateFromNumericText(string $description): ?string
+    {
+        if (! preg_match_all(
+            '/\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/',
+            $description,
+            $matches,
+            PREG_SET_ORDER,
+        )) {
+            return null;
+        }
+
+        foreach ($matches as $match) {
+            $month = (int) $match[1];
+            $day = (int) $match[2];
+            $year = $this->capWagesTransactionYear((string) $match[3]);
+
+            if (checkdate($month, $day, $year)) {
+                return Carbon::createFromDate($year, $month, $day)->toDateString();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Expand CapWages two-digit years into modern hockey transaction years.
+     */
+    private function capWagesTransactionYear(string $year): int
+    {
+        if (strlen($year) === 4) {
+            return (int) $year;
+        }
+
+        $twoDigitYear = (int) $year;
+
+        return $twoDigitYear >= 70 ? 1900 + $twoDigitYear : 2000 + $twoDigitYear;
+    }
+
+    /**
+     * Map accepted CapWages month labels to month numbers.
+     *
+     * @return array<string,int>
+     */
+    private function capWagesMonthMap(): array
+    {
+        return [
+            'jan' => 1,
+            'january' => 1,
+            'feb' => 2,
+            'february' => 2,
+            'mar' => 3,
+            'march' => 3,
+            'apr' => 4,
+            'april' => 4,
+            'may' => 5,
+            'jun' => 6,
+            'june' => 6,
+            'jul' => 7,
+            'july' => 7,
+            'aug' => 8,
+            'august' => 8,
+            'sep' => 9,
+            'sept' => 9,
+            'september' => 9,
+            'oct' => 10,
+            'october' => 10,
+            'nov' => 11,
+            'november' => 11,
+            'dec' => 12,
+            'december' => 12,
+        ];
     }
 
     /**

@@ -55,6 +55,16 @@
             .filter(value => !hidden.has(value.toUpperCase()));
 
           return positions.length ? positions.join('/') : (player?.position || '');
+        },
+        playerInitials(player){
+          const name = player?.name || [player?.first_name, player?.last_name].filter(Boolean).join(' ') || '';
+          return name
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map(part => part.slice(0, 1).toUpperCase())
+            .join('') || 'DI';
         }
       }"
       class="space-y-5"
@@ -117,16 +127,31 @@
               >
                 Minor League
               </div>
-              <div class="flex items-center gap-3 px-3 py-2">
+              <div class="flex items-center gap-2 px-3 py-1.5">
                 <span
-                  class="inline-flex h-7 w-10 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-600"
+                  class="inline-flex h-6 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600"
                   x-text="p.roster_slot || '-'"
                 ></span>
+                <template x-if="p.avatar_url">
+                  <img
+                    :src="p.avatar_url"
+                    alt=""
+                    class="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-slate-200"
+                    loading="lazy"
+                  >
+                </template>
+                <template x-if="!p.avatar_url">
+                  <span
+                    class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200"
+                    x-text="playerInitials(p)"
+                  ></span>
+                </template>
                 <div class="min-w-0">
                   <div class="truncate text-sm font-medium text-slate-900"
                        x-text="p.name || [p.first_name, p.last_name].filter(Boolean).join(' ')"></div>
-                  <div class="mt-0.5 text-xs text-slate-500">
+                  <div class="text-[11px] text-slate-500">
                     <span x-text="eligibilityLabel(p)"></span>
+                    <span x-show="p.team_abbrev"> • <span x-text="p.team_abbrev"></span></span>
                     <span x-show="p.age !== undefined && p.age !== null"> • Age <span x-text="p.age"></span></span>
                   </div>
                 </div>
