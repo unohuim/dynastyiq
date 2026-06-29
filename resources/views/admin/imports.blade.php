@@ -48,9 +48,9 @@
                             </div>
 
                             <div class="flex flex-wrap gap-2 lg:justify-end">
-                                <form method="POST" action="{{ route('admin.imports.run', ['key' => $import['key']]) }}">
+                                <form method="POST" action="{{ $import['run_url'] }}">
                                     @csrf
-                                    <x-primary-button type="submit" data-admin-import-button>Run workflow</x-primary-button>
+                                    <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
                                 </form>
 
                                 @if($import['can_rerun_failed'])

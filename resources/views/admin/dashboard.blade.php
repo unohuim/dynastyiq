@@ -10,6 +10,5 @@
         'imports' => $imports,
         'hasPlayers' => $hasPlayers,
         'hasFantraxPlayers' => $hasFantraxPlayers,
-        'triage' => $triage,
     ])
 </x-app-layout>

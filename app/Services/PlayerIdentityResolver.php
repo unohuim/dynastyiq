@@ -8,6 +8,7 @@ use App\DTO\PlayerIdentityMatchResult;
 use App\Events\PlayerExternalIdentityLinked;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Models\YahooPlayer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
@@ -28,7 +29,9 @@ class PlayerIdentityResolver
      */
     private const PROVIDER_AUTO_LINK_THRESHOLDS = [
         PlayerExternalIdentity::PROVIDER_NHL => self::SCORE_NAME_PLUS,
+        PlayerExternalIdentity::PROVIDER_NHL_DRAFT => self::SCORE_NAME_PLUS,
         PlayerExternalIdentity::PROVIDER_FANTRAX => self::SCORE_NAME_PLUS,
+        PlayerExternalIdentity::PROVIDER_YAHOO => self::SCORE_NAME_PLUS,
         PlayerExternalIdentity::PROVIDER_CAPWAGES => self::SCORE_NAME_ONLY,
     ];
 
@@ -187,6 +190,38 @@ class PlayerIdentityResolver
                     $payload['team'] ?? $payload['currentTeamAbbrev'] ?? null,
                 ),
                 'raw_payload' => $payload,
+            ],
+        );
+    }
+
+    /**
+     * Upsert a Yahoo Fantasy provider identity from a staged Yahoo player row.
+     */
+    public function upsertYahooIdentity(YahooPlayer $player): PlayerExternalIdentity
+    {
+        $providerPlayerId = trim((string) $player->yahoo_player_id);
+
+        if ($providerPlayerId === '') {
+            throw new InvalidArgumentException('Yahoo identity payload is missing yahoo_player_id.');
+        }
+
+        $displayName = trim((string) $player->full_name) ?: null;
+        $position = collect((array) $player->eligible_positions)
+            ->map(static fn (mixed $position): string => trim((string) $position))
+            ->first(static fn (string $position): bool => $position !== '');
+
+        return $this->upsertProviderIdentity(
+            PlayerExternalIdentity::PROVIDER_YAHOO,
+            $providerPlayerId,
+            [
+                'provider_slug' => $player->player_key,
+                'display_name' => $displayName,
+                'first_name' => $player->first_name,
+                'last_name' => $player->last_name,
+                'birthdate' => null,
+                'position' => $position ?: $player->display_position,
+                'team' => $this->teams->normalizeToAbbrev($player->editorial_team_abbr),
+                'raw_payload' => $player->raw_payload,
             ],
         );
     }

@@ -7,6 +7,7 @@ namespace App\Jobs;
 use App\Events\ImportStreamEvent;
 use App\Models\ImportRun;
 use App\Models\Player;
+use App\Models\PlayerExternalIdentity;
 use App\Services\PlayerIdentityNormalizer;
 use App\Services\PlayerIdentityResolver;
 use App\Services\NhlTeamReference;
@@ -173,6 +174,12 @@ class ImportNhlDraftPicksJob implements ShouldQueue
         $identity = $resolver->upsertNhlDraftIdentity($providerPlayerId, $this->normalizedDraftPayload($pick, $year));
 
         if ($identity->player_id !== null) {
+            return false;
+        }
+
+        $identity = $resolver->resolveNonAuthorityIdentity($identity);
+
+        if ($identity->player_id !== null || $identity->match_status !== PlayerExternalIdentity::STATUS_UNMATCHED) {
             return false;
         }
 

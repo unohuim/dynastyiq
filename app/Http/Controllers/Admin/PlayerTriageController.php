@@ -58,6 +58,7 @@ class PlayerTriageController extends Controller
     private const ALL_PROVIDERS = [
         PlayerExternalIdentity::PROVIDER_NHL,
         PlayerExternalIdentity::PROVIDER_FANTRAX,
+        PlayerExternalIdentity::PROVIDER_YAHOO,
         PlayerExternalIdentity::PROVIDER_CAPWAGES,
         PlayerExternalIdentity::PROVIDER_ELITEPROSPECTS,
     ];
@@ -72,13 +73,13 @@ class PlayerTriageController extends Controller
     /**
      * Render the manual triage inbox.
      */
-    public function index(Request $request): View|JsonResponse
+    public function index(Request $request): View|JsonResponse|RedirectResponse
     {
         if ($request->expectsJson()) {
             return $this->triageJsonResponse($request);
         }
 
-        return view('admin.player-triage-page', $this->viewData($request));
+        return Redirect::to(URL::route('admin.dashboard'));
     }
 
     /**

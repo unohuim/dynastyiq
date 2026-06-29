@@ -15,7 +15,6 @@ class DashboardController extends Controller
 {
     public function __construct(
         private AdminImports $imports,
-        private PlayerTriageController $playerTriage,
     ) {
     }
 
@@ -39,7 +38,9 @@ class DashboardController extends Controller
                 'started_at' => $lastRun?->started_at?->toIso8601String(),
                 'finished_at' => $lastRun?->finished_at?->toIso8601String(),
                 'duration_seconds' => $lastRun?->duration_seconds,
-                'run_url' => route('admin.imports.run', ['key' => $source['key']]),
+                'run_url' => isset($source['run_route'])
+                    ? route($source['run_route'])
+                    : route('admin.imports.run', ['key' => $source['key']]),
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
             ];
@@ -52,7 +53,6 @@ class DashboardController extends Controller
             'imports' => $imports,
             'hasPlayers' => $hasPlayers,
             'hasFantraxPlayers' => $hasFantraxPlayers,
-            'triage' => $this->playerTriage->viewData($request),
         ]);
     }
 

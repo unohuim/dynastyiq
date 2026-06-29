@@ -73,6 +73,50 @@ Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
 
 ---
 
+### Yahoo Fantasy Player Import
+
+**Name:** Yahoo Fantasy Player Import
+**Type:** External Platform Import Pattern
+**Location:**
+- `app/Models/YahooFantasyConnection.php`
+- `app/Models/YahooPlayer.php`
+- `app/Services/YahooFantasyClient.php`
+- `app/Services/YahooFantasyPlayerImporter.php`
+- `app/Jobs/ImportYahooPlayersPageJob.php`
+- `app/Http/Controllers/Admin/YahooOAuthProbeController.php`
+- `app/Http/Controllers/Admin/YahooPlayerImportController.php`
+- `database/migrations/*_create_yahoo_fantasy_connections_table.php`
+- `database/migrations/*_create_yahoo_players_table.php`
+
+**Purpose:**
+Persist user-owned Yahoo Fantasy OAuth access and stage Yahoo Fantasy hockey player records before matching them to canonical DynastyIQ players.
+
+**When to Use:**
+Connecting a user's Yahoo Fantasy Sports OAuth grant, importing Yahoo Fantasy hockey player collection pages, and preserving Yahoo player resource keys and raw payloads for later identity matching.
+
+**When Not to Use:**
+Yahoo league, team, roster, standings, scoring settings, transaction sync, or canonical player creation.
+
+**Public Interface:**
+- `integrations.yahoo.redirect`
+- `integrations.yahoo.callback`
+- `admin.yahoo.oauth.redirect`
+- `admin.yahoo.oauth.callback`
+- `admin.yahoo.players.import`
+- `ImportYahooPlayersPageJob`
+- `YahooFantasyConnection`
+- `YahooFantasyClient::fantasyXmlForConnection()`
+- `YahooPlayer`
+- `YahooFantasyPlayerImporter::importPage()`
+- `YahooFantasyPlayerImporter::import()`
+
+**Example Usage:**
+```php
+ImportYahooPlayersPageJob::dispatch($connection->id, $importRun->id, 0, 25);
+```
+
+---
+
 ### Discord Bot Runtime
 
 **Name:** Discord Bot Runtime  
@@ -650,9 +694,13 @@ if ($repo->claim($gameId, 'pbp')) {
 **Location:**
 - `app/Models/PlayerExternalIdentity.php`
 - `app/Events/PlayerExternalIdentityLinked.php`
+- `app/Console/Commands/ResolveNhlCommand.php`
 - `app/Jobs/ImportNhlDraftPicksJob.php`
+- `app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php`
+- `app/Listeners/QueueNhlIdentityResolution.php`
 - `app/Jobs/RefreshCapWagesContractsForIdentityJob.php`
 - `app/Listeners/QueueCapWagesContractRefresh.php`
+- `app/Services/NhlPlayerIdentityLookup.php`
 - `app/Services/PlayerIdentityNormalizer.php`
 - `app/Services/PlayerIdentityResolver.php`
 - `database/migrations/*_create_player_external_identities_table.php`
@@ -666,14 +714,26 @@ Importing provider player records or resolving provider IDs to canonical Dynasty
 **When Not to Use:**  
 Storing canonical player attributes, fantasy roster membership, or provider-only import payload semantics owned by another table.
 
+**Rules:**
+NHL draft identities check existing canonical players by normalized name and compatible position type before creating minimal prospect rows with `nhl_id = NULL`.
+Non-NHL provider identity links may queue asynchronous NHL identity enrichment for canonical players without `nhl_id`; enrichment only updates the canonical player after exactly one NHL Stats player candidate is validated through the NHL player landing endpoint.
+NHL identity enrichment rejects NHL Stats last-name spillover by exact normalized name and may reduce same-name ambiguity to a single current-team candidate.
+NHL identity enrichment must not assign an NHL player id already owned by another canonical player.
+NHL player resolution can be queued from the admin import registry with `nhl:resolve --players` to reconcile existing canonical players whose `nhl_id` is null.
+
 **Public Interface:**
 - `PlayerExternalIdentity`
 - `Player::externalIdentities()`
 - `PlayerIdentityNormalizer::normalizeName()`
 - `PlayerIdentityResolver::upsertNhlIdentity()`
 - `PlayerIdentityResolver::upsertNhlDraftIdentity()`
+- `ResolveNhlCommand`
 - `ImportNhlDraftPicksJob`
+- `ResolveCanonicalPlayerNhlIdentityJob`
+- `QueueNhlIdentityResolution`
+- `NhlPlayerIdentityLookup`
 - `PlayerIdentityResolver::upsertFantraxIdentity()`
+- `PlayerIdentityResolver::upsertYahooIdentity()`
 - `PlayerIdentityResolver::upsertCapWagesIdentity()`
 - `PlayerIdentityResolver::resolveNonAuthorityIdentity()`
 - `PlayerIdentityResolver::linkIdentityToPlayer()`
@@ -711,6 +771,7 @@ Storing canonical player attributes, identity match state, or materialized contr
 
 **Rules:**
 CapWages identity/profile import eligibility requires a payable non-buyout contract season at least as recent as the current calendar-year season key; buyout or dead-cap-only rows do not qualify retired/inactive players.
+CapWages payloads with durable `nhlId` must link by `players.nhl_id` or remain unresolved; they must not create provisional canonical players with `nhl_id = NULL`.
 CapWages list imports crawl pages sequentially with no fixed delay after successful pages; 403 responses trigger backoff.
 CapWages player detail 5xx responses and connection failures are recorded and skipped so one provider-side player failure does not fail the whole page import.
 Admin import progress bars read processed/total counters from `import_runs` instead of parsing terminal output.

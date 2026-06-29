@@ -60,7 +60,11 @@ class ImportCapWagesPlayer
         $this->upsertCapWagesPlayer($identity, $slug, $data);
         $player = $identity->player;
 
-        if (! $player && $identity->unmatched_reason === PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER) {
+        if (
+            ! $player
+            && ! $nhlId
+            && $identity->unmatched_reason === PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER
+        ) {
             $player = $this->createCanonicalPlayerFromCapWages($identity, $data);
             $identity = $resolver->linkIdentityToPlayer($identity, $player);
             $this->upsertCapWagesPlayer($identity, $slug, $data);

@@ -17,7 +17,23 @@ class AdminImports
     {
         return collect([
             ['key' => 'nhl', 'label' => 'NHL Players', 'command' => 'nhl:import', 'options' => ['--players' => true]],
+            [
+                'key' => 'nhl-resolve-players',
+                'label' => 'Resolve NHL Players',
+                'command' => 'nhl:resolve',
+                'options' => ['--players' => true],
+            ],
             ['key' => 'fantrax', 'label' => 'Fantrax Players', 'command' => 'fx:import', 'options' => ['--players' => true]],
+            [
+                'key' => 'yahoo',
+                'label' => 'Yahoo Players',
+                'run_route' => 'admin.yahoo.players.import',
+                'options' => [
+                    'all_players' => true,
+                    'page_size' => max(1, min((int) config('yahoo.fantasy.players_page_size', 25), 25)),
+                ],
+                'can_retry' => false,
+            ],
             ['key' => 'contracts', 'label' => 'Contracts', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
         ]);
     }
@@ -37,6 +53,8 @@ class AdminImports
     public function dispatch(string $key): Batch
     {
         $source = $this->source($key);
+
+        abort_unless(isset($source['command']), 409, 'This import source is not backed by an Artisan command.');
 
         $startedAt = now();
         $importRun = ImportRun::create([

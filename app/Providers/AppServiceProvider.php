@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use App\Events\PlayerExternalIdentityLinked;
 use App\Listeners\QueueCapWagesContractRefresh;
+use App\Listeners\QueueNhlIdentityResolution;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
@@ -48,6 +49,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Event::listen(PlayerExternalIdentityLinked::class, QueueCapWagesContractRefresh::class);
+        Event::listen(PlayerExternalIdentityLinked::class, QueueNhlIdentityResolution::class);
 
 
 

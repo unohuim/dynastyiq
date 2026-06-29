@@ -5,6 +5,7 @@
             imports: @js($imports),
             hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
+            triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1])),
         })"
         x-init="init()"
         x-cloak
@@ -14,27 +15,23 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
-                    @click="setTab('triage')"
-                    :class="activeTab === 'triage' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
-                >
-                    Triage
-                </button>
-                <button
-                    type="button"
-                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
                     @click="setTab('imports')"
                     :class="activeTab === 'imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
                     Data Imports
                 </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    @click="setTab('triage')"
+                    :class="activeTab === 'triage' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Triage
+                </button>
             </div>
         </div>
 
         <div class="py-4">
-            <div x-show="activeTab === 'triage'" x-cloak>
-                @include('admin.player-triage', array_merge($triage, ['embedded' => true]))
-            </div>
-
             <div x-show="activeTab === 'imports'" x-cloak>
                 <div class="divide-y divide-gray-200 border-y border-gray-200 bg-white">
                     @foreach($imports as $import)
@@ -96,6 +93,34 @@
                             </div>
                         </div>
                     @endforeach
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'triage'" x-cloak>
+                <div
+                    x-ref="triageMount"
+                    data-admin-triage-mount
+                    class="min-h-64"
+                >
+                    <div
+                        x-show="triageLoading"
+                        class="border-y border-gray-200 bg-white px-4 py-10"
+                    >
+                        <div class="mx-auto max-w-3xl space-y-4">
+                            <div class="h-4 w-32 animate-pulse rounded bg-gray-200"></div>
+                            <div class="space-y-3">
+                                <div class="h-16 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-16 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-16 animate-pulse rounded bg-gray-100"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="triageError"
+                        class="border-y border-gray-200 bg-white px-4 py-6 text-sm text-red-600"
+                        x-text="triageError"
+                    ></div>
                 </div>
             </div>
         </div>

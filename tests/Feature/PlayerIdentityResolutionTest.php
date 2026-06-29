@@ -10,7 +10,9 @@ use App\Jobs\ImportNHLPlayerJob;
 use App\Jobs\ImportNhlDraftPicksJob;
 use App\Jobs\ImportPlayersJob;
 use App\Jobs\RefreshCapWagesContractsForIdentityJob;
+use App\Jobs\ResolveCanonicalPlayerNhlIdentityJob;
 use App\Listeners\QueueCapWagesContractRefresh;
+use App\Listeners\QueueNhlIdentityResolution;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\ContractSeason;
@@ -22,6 +24,7 @@ use App\Services\ImportCapWagesPlayer;
 use App\Services\ImportFantraxPlayer;
 use App\Services\ImportNHLPlayer;
 use App\Services\ImportNhlTeams;
+use App\Services\NhlPlayerIdentityLookup;
 use App\Services\NhlTeamReference;
 use App\Services\PlayerIdentityNormalizer;
 use App\Services\PlayerIdentityResolver;
@@ -952,6 +955,58 @@ it('nhl draft import creates a minimal canonical prospect for picks without nhl 
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
 });
 
+it('nhl draft import links an existing player by name and position type before creating a prospect', function () {
+    Queue::fake([ImportNHLPlayerJob::class]);
+    config(['apiImportNhl.draft_years_back' => 1]);
+
+    $existingPlayer = ($this->makePlayer)([
+        'nhl_id' => 8482763,
+        'nhl_team_id' => 6,
+        'team_abbrev' => 'BOS',
+        'first_name' => 'Fabian',
+        'last_name' => 'Lysell',
+        'full_name' => 'Fabian Lysell',
+        'position' => 'R',
+        'pos_type' => 'F',
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/draft/picks/2026/all' => Http::response([
+            'picks' => [
+                [
+                    'round' => 1,
+                    'pickInRound' => 21,
+                    'overallPick' => 21,
+                    'teamId' => 6,
+                    'teamAbbrev' => 'BOS',
+                    'firstName' => ['default' => 'Fabian'],
+                    'lastName' => ['default' => 'Lysell'],
+                    'positionCode' => 'RW',
+                    'countryCode' => 'SWE',
+                    'amateurLeague' => 'SWEDEN',
+                ],
+            ],
+        ]),
+    ]);
+
+    (new ImportNhlDraftPicksJob('draft-existing-run'))->handle(
+        app(PlayerIdentityResolver::class),
+        app(PlayerIdentityNormalizer::class),
+        app(NhlTeamReference::class),
+    );
+
+    $identity = PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+        ->firstOrFail();
+
+    Queue::assertNotPushed(ImportNHLPlayerJob::class);
+    expect(Player::query()->count())->toBe(1);
+    expect($identity->provider_player_id)->toBe('2026:21');
+    expect($identity->player_id)->toBe($existingPlayer->id);
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->match_confidence)->toBe(95);
+});
+
 it('nhl player import job discovers roster and prospect players once per run', function () {
     Queue::fake([ImportNHLPlayerJob::class]);
     Http::fake([
@@ -1089,7 +1144,9 @@ it('fantrax import remains idempotent for identity and legacy player rows', func
 });
 
 it('capwages import creates a canonical non-prospect player for eligible contract identities without a match', function () {
-    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)());
+    ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)([
+        'nhlId' => null,
+    ]));
 
     (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
 
@@ -1097,7 +1154,7 @@ it('capwages import creates a canonical non-prospect player for eligible contrac
     $player = Player::first();
 
     expect($identity->provider)->toBe(PlayerExternalIdentity::PROVIDER_CAPWAGES);
-    expect($identity->provider_player_id)->toBe('123456');
+    expect($identity->provider_player_id)->toBe('test-player');
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
     expect($identity->player_id)->toBe($player->id);
     expect($player->nhl_id)->toBeNull();
@@ -1116,6 +1173,7 @@ it('capwages-created canonical players keep capwages profile context', function 
         'full_name' => 'Anaheim Ducks',
     ]);
     ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)([
+        'nhlId' => null,
         'leagueStatus' => 'Minor',
         'team' => 'Anaheim Ducks',
         'personalInfo' => [
@@ -1150,6 +1208,64 @@ it('capwages-created canonical players keep capwages profile context', function 
     expect($player->shoots)->toBe('L');
     expect($player->current_league_abbrev)->toBe('Minor');
     expect($player->is_prospect)->toBeFalse();
+});
+
+it('capwages durable NHL id links to an existing NHL player despite first-name variation', function () {
+    $existing = ($this->makePlayer)([
+        'nhl_id' => 8485661,
+        'first_name' => 'Alexander',
+        'last_name' => 'Weiermair',
+        'full_name' => 'Alexander Weiermair',
+        'dob' => '2005-05-10',
+        'country_code' => 'USA',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'VGK',
+    ]);
+
+    ($this->fakeCapWagesPlayer)('alex-weiermair', ($this->capWagesPayload)([
+        'nhlId' => 8485661,
+        'name' => 'Alex Weiermair',
+        'firstName' => 'Alex',
+        'lastName' => 'Weiermair',
+        'birthDate' => '2005-05-10',
+        'position' => 'C',
+        'team' => 'VGK',
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('alex-weiermair', false);
+
+    $identity = PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_CAPWAGES)
+        ->where('provider_player_id', '8485661')
+        ->firstOrFail();
+
+    expect(Player::query()->count())->toBe(1);
+    expect($identity->player_id)->toBe($existing->id);
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect(CapWagesPlayer::first()->player_id)->toBe($existing->id);
+});
+
+it('capwages durable NHL id does not create a null-id canonical player when the NHL row is missing', function () {
+    Queue::fake([ImportNHLPlayerJob::class]);
+    ($this->fakeCapWagesPlayer)('alex-weiermair', ($this->capWagesPayload)([
+        'nhlId' => 8485661,
+        'name' => 'Alex Weiermair',
+        'firstName' => 'Alex',
+        'lastName' => 'Weiermair',
+        'birthDate' => '2005-05-10',
+        'position' => 'C',
+        'team' => 'VGK',
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('alex-weiermair', false);
+
+    expect(Player::query()->count())->toBe(0);
+    expect(CapWagesPlayer::query()->count())->toBe(1);
+    expect(CapWagesPlayer::first()->player_id)->toBeNull();
+    expect(PlayerExternalIdentity::first()->match_status)->toBe(PlayerExternalIdentity::STATUS_UNMATCHED);
+    expect(PlayerExternalIdentity::first()->unmatched_reason)
+        ->toBe(PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER);
 });
 
 it('capwages import skips identities with no contract seasons', function () {
@@ -1455,6 +1571,485 @@ it('does not queue capwages contract refresh for non-capwages linked identities'
     );
 
     Queue::assertNotPushed(RefreshCapWagesContractsForIdentityJob::class);
+});
+
+it('queues NHL identity resolution when a non-NHL identity links to a player without an NHL id', function () {
+    Queue::fake();
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'full_name' => 'Jack Campbell',
+        'position' => 'G',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'jack-campbell',
+        'provider_slug' => 'jack-campbell',
+        'display_name' => 'Jack Campbell',
+        'position' => 'G',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    (new QueueNhlIdentityResolution())->handle(
+        new PlayerExternalIdentityLinked($identity, null, $player->id),
+    );
+
+    Queue::assertPushed(
+        ResolveCanonicalPlayerNhlIdentityJob::class,
+        fn (ResolveCanonicalPlayerNhlIdentityJob $job): bool => $job->playerId === $player->id
+            && $job->sourceIdentityId === $identity->id,
+    );
+});
+
+it('does not queue NHL identity resolution when the linked player already has an NHL id', function () {
+    Queue::fake();
+    $player = ($this->makePlayer)([
+        'nhl_id' => 8475789,
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'full_name' => 'Jack Campbell',
+        'position' => 'G',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'jack-campbell',
+        'display_name' => 'Jack Campbell',
+        'position' => 'G',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    (new QueueNhlIdentityResolution())->handle(
+        new PlayerExternalIdentityLinked($identity, null, $player->id),
+    );
+
+    Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
+});
+
+it('resolves a provisional canonical player to one NHL stats player candidate', function () {
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'full_name' => 'Jack Campbell',
+        'position' => 'G',
+        'pos_type' => 'G',
+        'team_abbrev' => null,
+        'nhl_team_id' => null,
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'jack-campbell',
+        'provider_slug' => 'jack-campbell',
+        'display_name' => 'Jack Campbell',
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'position' => 'G',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'player_id' => $player->id,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8475789,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                    'currentTeamId' => null,
+                ],
+                [
+                    'id' => 8459304,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Williams',
+                    'fullName' => 'Jack Williams',
+                    'positionCode' => 'R',
+                    'currentTeamId' => null,
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8475789/landing' => Http::response([
+            'playerId' => 8475789,
+            'currentTeamId' => 22,
+            'currentTeamAbbrev' => 'EDM',
+            'firstName' => ['default' => 'Jack'],
+            'lastName' => ['default' => 'Campbell'],
+            'birthDate' => '1992-01-09',
+            'birthCountry' => 'CAN',
+            'position' => 'G',
+            'headshot' => 'https://assets.nhle.com/mugs/8475789.png',
+            'heroImage' => 'https://assets.nhle.com/action/8475789.jpg',
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($player->id, $identity->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    $player->refresh();
+    $nhlIdentity = PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
+        ->where('provider_player_id', '8475789')
+        ->firstOrFail();
+
+    expect(Player::query()->count())->toBe(1);
+    expect($player->nhl_id)->toBe(8475789);
+    expect((string) $player->dob)->toBe('1992-01-09');
+    expect($player->country_code)->toBe('CAN');
+    expect($player->position)->toBe('G');
+    expect($player->pos_type)->toBe('G');
+    expect($player->team_abbrev)->toBe('EDM');
+    expect($nhlIdentity->player_id)->toBe($player->id);
+    expect($nhlIdentity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+});
+
+it('resolves a canonical player without a source identity to one NHL stats player candidate', function () {
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'full_name' => 'Jack Campbell',
+        'position' => 'G',
+        'pos_type' => 'G',
+        'team_abbrev' => null,
+        'nhl_team_id' => null,
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8475789,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                    'currentTeamId' => null,
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8475789/landing' => Http::response([
+            'playerId' => 8475789,
+            'currentTeamId' => 22,
+            'currentTeamAbbrev' => 'EDM',
+            'firstName' => ['default' => 'Jack'],
+            'lastName' => ['default' => 'Campbell'],
+            'birthDate' => '1992-01-09',
+            'birthCountry' => 'CAN',
+            'position' => 'G',
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($player->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    $player->refresh();
+
+    expect(Player::query()->count())->toBe(1);
+    expect($player->nhl_id)->toBe(8475789);
+    expect($player->team_abbrev)->toBe('EDM');
+    expect(PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
+        ->where('provider_player_id', '8475789')
+        ->where('player_id', $player->id)
+        ->exists())->toBeTrue();
+});
+
+it('filters NHL Stats last-name matches down to the exact current-team player', function () {
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => null,
+        'nhl_team_id' => null,
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8457833,
+                    'currentTeamId' => null,
+                    'firstName' => 'Gaetan',
+                    'fullName' => 'Gaetan Rochette',
+                    'lastName' => 'Rochette',
+                    'positionCode' => 'L',
+                    'sweaterNumber' => null,
+                ],
+                [
+                    'id' => 8458849,
+                    'currentTeamId' => null,
+                    'firstName' => 'Eric',
+                    'fullName' => 'Eric Rochette',
+                    'lastName' => 'Rochette',
+                    'positionCode' => 'D',
+                    'sweaterNumber' => null,
+                ],
+                [
+                    'id' => 8482184,
+                    'currentTeamId' => 17,
+                    'firstName' => 'Theo',
+                    'fullName' => 'Theo Rochette',
+                    'lastName' => 'Rochette',
+                    'positionCode' => 'C',
+                    'sweaterNumber' => null,
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8482184/landing' => Http::response([
+            'playerId' => 8482184,
+            'currentTeamId' => 17,
+            'currentTeamAbbrev' => 'MTL',
+            'firstName' => ['default' => 'Theo'],
+            'lastName' => ['default' => 'Rochette'],
+            'birthDate' => '2002-02-20',
+            'birthCountry' => 'CAN',
+            'position' => 'C',
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($player->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    $player->refresh();
+
+    expect($player->nhl_id)->toBe(8482184);
+    expect(PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
+        ->where('provider_player_id', '8482184')
+        ->where('player_id', $player->id)
+        ->exists())->toBeTrue();
+    expect(PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
+        ->whereIn('provider_player_id', ['8457833', '8458849'])
+        ->exists())->toBeFalse();
+});
+
+it('does not assign an NHL id already owned by another canonical player', function () {
+    $existing = ($this->makePlayer)([
+        'nhl_id' => 8486256,
+        'first_name' => 'Lavr',
+        'last_name' => 'Gashilov',
+        'full_name' => 'Lavr Gashilov',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+    $duplicate = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Lavr',
+        'last_name' => 'Gashilov',
+        'full_name' => 'Lavr Gashilov',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8486256,
+                    'firstName' => 'Lavr',
+                    'lastName' => 'Gashilov',
+                    'fullName' => 'Lavr Gashilov',
+                    'positionCode' => 'C',
+                    'currentTeamId' => 1,
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8486256/landing' => Http::response([
+            'playerId' => 8486256,
+            'currentTeamId' => 1,
+            'currentTeamAbbrev' => 'NJD',
+            'firstName' => ['default' => 'Lavr'],
+            'lastName' => ['default' => 'Gashilov'],
+            'birthDate' => '2007-09-23',
+            'birthCountry' => 'RUS',
+            'position' => 'C',
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($duplicate->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    expect($existing->refresh()->nhl_id)->toBe(8486256);
+    expect($duplicate->refresh()->nhl_id)->toBeNull();
+});
+
+it('marks source identities as conflicts when NHL resolution finds an already owned NHL id', function () {
+    ($this->makePlayer)([
+        'nhl_id' => 8486256,
+        'first_name' => 'Lavr',
+        'last_name' => 'Gashilov',
+        'full_name' => 'Lavr Gashilov',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+    $duplicate = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Lavr',
+        'last_name' => 'Gashilov',
+        'full_name' => 'Lavr Gashilov',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'lavr-gashilov',
+        'display_name' => 'Lavr Gashilov',
+        'first_name' => 'Lavr',
+        'last_name' => 'Gashilov',
+        'position' => 'C',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'player_id' => $duplicate->id,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8486256,
+                    'firstName' => 'Lavr',
+                    'lastName' => 'Gashilov',
+                    'fullName' => 'Lavr Gashilov',
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8486256/landing' => Http::response([
+            'playerId' => 8486256,
+            'currentTeamAbbrev' => 'NJD',
+            'firstName' => ['default' => 'Lavr'],
+            'lastName' => ['default' => 'Gashilov'],
+            'position' => 'C',
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($duplicate->id, $identity->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    $identity->refresh();
+
+    expect($duplicate->refresh()->nhl_id)->toBeNull();
+    expect($identity->player_id)->toBeNull();
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_CONFLICT);
+    expect($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES);
+});
+
+it('stores NHL candidate identities without mutating a player when multiple same-name position matches exist', function () {
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'full_name' => 'Jack Campbell',
+        'position' => 'G',
+        'pos_type' => 'G',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'jack-campbell',
+        'display_name' => 'Jack Campbell',
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
+        'position' => 'G',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'player_id' => $player->id,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8475789,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                ],
+                [
+                    'id' => 8499999,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                ],
+            ],
+        ]),
+    ]);
+
+    (new ResolveCanonicalPlayerNhlIdentityJob($player->id, $identity->id))
+        ->handle(app(NhlPlayerIdentityLookup::class));
+
+    $player->refresh();
+
+    expect($player->nhl_id)->toBeNull();
+    expect(Player::query()->count())->toBe(1);
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL)->count())->toBe(2);
+    expect(PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
+        ->where('match_status', PlayerExternalIdentity::STATUS_CONFLICT)
+        ->count())->toBe(2);
+});
+
+it('keeps NHL identity resolution jobs unique per canonical player', function () {
+    $job = new ResolveCanonicalPlayerNhlIdentityJob(123, 456);
+
+    expect($job)->toBeInstanceOf(ShouldBeUnique::class);
+    expect($job->uniqueId())->toBe('123');
+    expect($job->uniqueFor)->toBe(900);
+});
+
+it('queues NHL resolution jobs for canonical players without NHL ids', function () {
+    Queue::fake();
+    $queued = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+    ]);
+    ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => '',
+        'last_name' => '',
+        'full_name' => 'Single',
+    ]);
+    ($this->makePlayer)([
+        'nhl_id' => 8478402,
+        'first_name' => 'Auston',
+        'last_name' => 'Matthews',
+        'full_name' => 'Auston Matthews',
+    ]);
+
+    Artisan::call('nhl:resolve', ['--players' => true]);
+
+    Queue::assertPushed(
+        ResolveCanonicalPlayerNhlIdentityJob::class,
+        fn (ResolveCanonicalPlayerNhlIdentityJob $job): bool => $job->playerId === $queued->id
+            && $job->sourceIdentityId === null,
+    );
+    Queue::assertPushed(ResolveCanonicalPlayerNhlIdentityJob::class, 1);
+});
+
+it('requires a resolver target for the NHL resolve command', function () {
+    Queue::fake();
+
+    $exitCode = Artisan::call('nhl:resolve');
+
+    expect($exitCode)->toBe(1);
+    Queue::assertNothingPushed();
 });
 
 it('refreshes capwages detail and materializes contracts after a delayed identity link', function () {

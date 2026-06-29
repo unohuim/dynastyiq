@@ -95,6 +95,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->name('admin.dashboard');
 
+        // Yahoo user integration
+        Route::get('/integrations/yahoo/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])
+            ->name('integrations.yahoo.redirect');
+        Route::get('/integrations/yahoo/callback', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'callback'])
+            ->name('integrations.yahoo.callback');
+
         // Communities
         Route::get('/communities', [CommunitiesController::class, 'index'])
             ->middleware(['auth', 'can:view-nav-communities'])
@@ -191,6 +197,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.imports.status');
                 Route::post('/imports/{key}/retry', [\App\Http\Controllers\Admin\ImportsController::class, 'retry'])
                     ->name('admin.imports.retry');
+
+                // Yahoo OAuth proof
+                Route::get('/yahoo/oauth/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])
+                    ->name('admin.yahoo.oauth.redirect');
+                Route::get('/yahoo/oauth/callback', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'callback'])
+                    ->name('admin.yahoo.oauth.callback');
+                Route::post('/yahoo/players/import', \App\Http\Controllers\Admin\YahooPlayerImportController::class)
+                    ->name('admin.yahoo.players.import');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])

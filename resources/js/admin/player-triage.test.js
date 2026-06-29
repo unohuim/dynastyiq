@@ -657,6 +657,27 @@ describe('player triage page module', () => {
         );
     });
 
+    it('keeps embedded triage history on the admin panel after row selection', async () => {
+        const { createPlayerTriagePage } = await loadModules();
+        const history = { pushState: vi.fn(), replaceState: vi.fn() };
+        const fetcher = vi.fn(() => jsonResponse({ detail: detailPayload('Selected Row') }));
+        const root = document.querySelector('[data-player-triage-page]');
+        root.dataset.playerTriageEmbedded = '1';
+        root.dataset.playerTriageHistoryUrl = 'http://app.test/admin';
+
+        createPlayerTriagePage(root, { fetcher, history });
+
+        document.querySelector('[data-player-triage-row]').click();
+        await Promise.resolve();
+
+        expect(String(fetcher.mock.calls[0][0])).toBe('http://app.test/admin/player-triage/identities/7/detail?admin_panel=1');
+        expect(history.pushState).toHaveBeenCalledWith(
+            { playerTriage: true },
+            '',
+            new URL('http://app.test/admin?identity=7'),
+        );
+    });
+
     it('renders detail errors without replacing the page', async () => {
         const { createPlayerTriagePage } = await loadModules();
         const fetcher = vi.fn(() => jsonResponse({ message: 'Detail failed' }, false));

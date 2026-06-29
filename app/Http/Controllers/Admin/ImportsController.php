@@ -43,7 +43,11 @@ class ImportsController extends Controller
                 'status' => $lastRun?->status,
                 'progress' => $lastRun ? $this->importRunPayload($lastRun)['progress'] : null,
                 'counts' => $batch?->total_jobs ? "{$batch->total_jobs} jobs" : null,
-                'can_rerun_failed' => true,
+                'run_url' => isset($source['run_route'])
+                    ? route($source['run_route'])
+                    : route('admin.imports.run', ['key' => $source['key']]),
+                'status_url' => route('admin.imports.status', ['key' => $source['key']]),
+                'can_rerun_failed' => (bool) ($source['can_retry'] ?? true),
             ];
         })->all();
 

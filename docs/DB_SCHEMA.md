@@ -81,6 +81,8 @@ Migrations remain the **sole source of truth**.
 - stats
 - user_preferences
 - users
+- yahoo_fantasy_connections
+- yahoo_players
 
 ---
 
@@ -408,6 +410,83 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `player_id`
 - Unique: `fantrax_id`
+- Implicit (FK index): `player_id`
+
+---
+
+## yahoo_fantasy_connections
+
+**Organization-owned:** No
+**Purpose:** Durable Yahoo Fantasy OAuth grants used by admin-triggered Yahoo Fantasy imports.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| user_id | bigint | No | FK -> users.id (CASCADE) |
+| external_id | string | Yes | Yahoo account or proof metadata identifier when available |
+| display_name | string | Yes | Display label for the connected Yahoo grant |
+| email | string | Yes | Yahoo email when available |
+| status | string | No | Connection status, defaults to `connected` |
+| access_token | text | No | Encrypted OAuth access token |
+| refresh_token | text | Yes | Encrypted OAuth refresh token |
+| token_expires_at | timestamp | Yes | OAuth access token expiry |
+| scopes | json | Yes | Granted OAuth scopes |
+| connected_at | timestamp | Yes | Initial or most recent connection timestamp |
+| last_used_at | timestamp | Yes | Most recent API call timestamp |
+| last_error | text | Yes | Most recent token/API error text |
+| meta | json | Yes | Yahoo proof or provider metadata |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `user_id`
+- Index: `status`
+- Index: `external_id`
+- Index: `token_expires_at`
+- Implicit (FK index): `user_id`
+
+---
+
+## yahoo_players
+
+**Organization-owned:** No
+**Purpose:** Yahoo Fantasy hockey player records staged before provider identity matching.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| player_external_identity_id | bigint | Yes | FK -> player_external_identities.id (SET NULL) |
+| player_id | bigint | Yes | FK -> players.id (SET NULL) |
+| game_key | string(40) | No | Yahoo Fantasy game key, such as `465` |
+| player_key | string(120) | No | Unique Yahoo player resource key, such as `465.p.5980` |
+| yahoo_player_id | string(80) | No | Yahoo player id within the game |
+| full_name | string | Yes | Yahoo full player name |
+| first_name | string | Yes | Yahoo first name |
+| last_name | string | Yes | Yahoo last name |
+| editorial_team_abbr | string(40) | Yes | Yahoo editorial NHL team abbreviation |
+| display_position | string(40) | Yes | Yahoo display position string |
+| eligible_positions | json | Yes | Yahoo eligible positions |
+| raw_payload | json | Yes | Raw Yahoo player XML converted to an auditable payload |
+| imported_at | timestamp | Yes | Most recent Yahoo import timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `player_key`
+- Unique: `(game_key, yahoo_player_id)`
+- Index: `game_key`
+- Index: `player_external_identity_id`
+- Index: `player_id`
+- Index: `(editorial_team_abbr, display_position)`
+- Implicit (FK index): `player_external_identity_id`
 - Implicit (FK index): `player_id`
 
 ---

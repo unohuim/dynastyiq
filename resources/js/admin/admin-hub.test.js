@@ -135,11 +135,58 @@ describe('admin-hub import listeners', () => {
         expect(instance.refreshImportProgress).toHaveBeenCalledWith('fantrax');
     });
 
-    it('opens the admin hub on triage by default', async () => {
+    it('opens the admin hub on data imports by default', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ hasPlayers: true, hasFantrax: true });
+
+        expect(instance.activeTab).toBe('imports');
+    });
+
+    it('opens the admin hub from the tab query parameter', async () => {
+        global.window = {
+            location: {
+                search: '?tab=triage',
+                href: 'http://localhost/admin?tab=triage',
+            },
+            history: {
+                replaceState: vi.fn(),
+                state: null,
+            },
+        };
+
         const adminHub = await loadAdminHub();
         const instance = adminHub({ hasPlayers: true, hasFantrax: true });
 
         expect(instance.activeTab).toBe('triage');
+    });
+
+    it('lazy loads triage when the triage tab is selected', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<div data-admin-triage-mount></div>';
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-player-triage-page data-player-triage-url="/admin/player-triage"></div>',
+                }),
+            })
+        );
+
+        const instance = adminHub({ triageUrl: '/admin/player-triage?admin_panel=1' });
+
+        await instance.setTab('triage');
+
+        expect(instance.activeTab).toBe('triage');
+        expect(fetch).toHaveBeenCalledWith('/admin/player-triage?admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-player-triage-page]')).not.toBeNull();
+        expect(instance.triageLoaded).toBe(true);
+
+        await instance.setTab('imports');
+        await instance.setTab('triage');
+
+        expect(fetch).toHaveBeenCalledTimes(1);
     });
 
     it('updates availability without switching back to removed player tabs', async () => {
@@ -253,6 +300,123 @@ describe('admin-hub import listeners', () => {
 
         expect(instance.streams.fantrax.running).toBe(true);
         expect(instance.progressPollers.fantrax).toBeTruthy();
+    });
+
+    it('resets import card state before starting a new run', async () => {
+        vi.useFakeTimers();
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    import: { imported: 100 },
+                    import_run: {
+                        status: 'completed',
+                        started_at: '2026-06-28T12:00:00+00:00',
+                        finished_at: '2026-06-28T12:00:01+00:00',
+                        duration_seconds: 1,
+                        progress: {
+                            processed_records: 100,
+                            successful_records: 100,
+                            failed_records: 0,
+                            skipped_records: 0,
+                            total_records: 100,
+                            percentage: 100,
+                        },
+                    },
+                }),
+            })
+        );
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({
+            imports: [
+                {
+                    key: 'yahoo',
+                    label: 'Yahoo Players',
+                    run_url: '/admin/yahoo/players/import',
+                },
+            ],
+        });
+        instance.streams.yahoo = {
+            messages: [{ message: 'old output', status: 'completed' }],
+            open: false,
+            running: false,
+            importRun: { status: 'completed' },
+            progress: { processed_records: 12 },
+        };
+        instance.progressPollers.yahoo = setTimeout(() => {}, 1000);
+
+        await instance.startImport('yahoo');
+
+        expect(instance.streams.yahoo.open).toBe(true);
+        expect(instance.streams.yahoo.running).toBe(false);
+        expect(instance.streams.yahoo.progress.processed_records).toBe(100);
+        expect(instance.streams.yahoo.messages).toHaveLength(1);
+        expect(instance.streams.yahoo.messages[0].message).toBe('Yahoo Players imported 100 records');
+        expect(instance.progressPollers.yahoo).toBeUndefined();
+    });
+
+    it('updates repeated immediate import runs with the newest response', async () => {
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    import: { imported: 100 },
+                    import_run: {
+                        status: 'completed',
+                        started_at: '2026-06-28T12:00:00+00:00',
+                        finished_at: '2026-06-28T12:00:01+00:00',
+                        progress: {
+                            processed_records: 100,
+                            successful_records: 100,
+                            failed_records: 0,
+                            skipped_records: 0,
+                            total_records: 100,
+                            percentage: 100,
+                        },
+                    },
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    import: { imported: 75 },
+                    import_run: {
+                        status: 'completed',
+                        started_at: '2026-06-28T12:05:00+00:00',
+                        finished_at: '2026-06-28T12:05:01+00:00',
+                        progress: {
+                            processed_records: 75,
+                            successful_records: 75,
+                            failed_records: 0,
+                            skipped_records: 0,
+                            total_records: 75,
+                            percentage: 100,
+                        },
+                    },
+                }),
+            });
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({
+            imports: [
+                {
+                    key: 'yahoo',
+                    label: 'Yahoo Players',
+                    run_url: '/admin/yahoo/players/import',
+                },
+            ],
+        });
+
+        await instance.startImport('yahoo');
+        await instance.startImport('yahoo');
+
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect(instance.streams.yahoo.running).toBe(false);
+        expect(instance.streams.yahoo.progress.processed_records).toBe(75);
+        expect(instance.imports[0].last_run).toBe('2026-06-28T12:05:01+00:00');
+        expect(instance.streams.yahoo.messages).toHaveLength(1);
+        expect(instance.streams.yahoo.messages[0].message).toBe('Yahoo Players imported 75 records');
     });
 
     it('includes human elapsed time in import progress detail text', async () => {

@@ -79,6 +79,7 @@ return [
         'endpoints' => [
             'teams' => '/team',
             'team'  => '/team/id/{teamId}',
+            'players' => '/players',
         ],
     ],
 

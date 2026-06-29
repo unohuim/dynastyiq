@@ -4,10 +4,17 @@ declare(strict_types=1);
 
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
+use App\Jobs\ImportYahooPlayersPageJob;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Role;
 use App\Models\User;
+use App\Models\YahooFantasyConnection;
+use App\Models\YahooPlayer;
+use App\Services\YahooFantasyPlayerImporter;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 
 beforeEach(function () {
     $this->makeSuperAdmin = function (): User {
@@ -60,15 +67,21 @@ beforeEach(function () {
 });
 
 it('blocks guests from the player triage inbox', function () {
-    $this->get(route('admin.player-triage'))->assertRedirect(route('login'));
+    $this->getJson(route('admin.player-triage'))->assertUnauthorized();
 });
 
 it('blocks authenticated non-admin users from the player triage inbox', function () {
     $user = User::factory()->create();
 
     $this->actingAs($user)
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertForbidden();
+});
+
+it('redirects direct player triage page visits back to the admin panel', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.player-triage'))
+        ->assertRedirect(route('admin.dashboard'));
 });
 
 it('blocks guests from the player triage detail json endpoint', function () {
@@ -87,11 +100,1080 @@ it('blocks authenticated non-admin users from the player triage detail json endp
         ->assertForbidden();
 });
 
+it('blocks guests from the Yahoo OAuth proof redirect', function () {
+    $this->get(route('admin.yahoo.oauth.redirect'))->assertRedirect(route('login'));
+});
+
+it('blocks authenticated non-admin users from the Yahoo OAuth proof redirect', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->get(route('admin.yahoo.oauth.redirect'))
+        ->assertForbidden();
+});
+
+it('shows Yahoo connect in the authenticated account drawer', function () {
+    $this->actingAs(User::factory()->create())
+        ->get(route('admin.dashboard', ['tab' => 'triage']))
+        ->assertOk()
+        ->assertSee('Yahoo')
+        ->assertSee(route('integrations.yahoo.redirect'))
+        ->assertSee('return_to=')
+        ->assertSee('drawer=account')
+        ->assertSee('Connect');
+});
+
+it('shows Yahoo connected in the authenticated account drawer', function () {
+    $user = User::factory()->create();
+    YahooFantasyConnection::create([
+        'user_id' => $user->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('dashboard'))
+        ->assertOk()
+        ->assertSee('Yahoo')
+        ->assertSee('Connected');
+});
+
+it('blocks guests from the user Yahoo OAuth redirect', function () {
+    $this->get(route('integrations.yahoo.redirect'))->assertRedirect(route('login'));
+});
+
+it('redirects authenticated users to Yahoo authorization with the user callback uri', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'yahoo.oauth.authorize' => 'https://api.login.yahoo.com/oauth2/request_auth',
+    ]);
+
+    $response = $this->actingAs(User::factory()->create())
+        ->get(route('integrations.yahoo.redirect', [
+            'return_to' => '/admin?tab=triage',
+            'drawer' => 'account',
+        ]));
+
+    $response->assertRedirect();
+    $response->assertSessionHas('yahoo_oauth_state');
+    $response->assertSessionHas('yahoo_oauth_redirect_uri', route('integrations.yahoo.callback'));
+    $response->assertSessionHas('yahoo_oauth_return_url', url('/admin?tab=triage&drawer=account'));
+
+    $location = $response->headers->get('Location');
+    $parts = parse_url((string) $location);
+    parse_str($parts['query'] ?? '', $query);
+
+    expect($parts['scheme'].'://'.$parts['host'].$parts['path'])->toBe('https://api.login.yahoo.com/oauth2/request_auth')
+        ->and($query['response_type'] ?? null)->toBe('code')
+        ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
+        ->and($query['redirect_uri'] ?? null)->toBe(route('integrations.yahoo.callback'))
+        ->and($query['state'] ?? '')->not->toBe('');
+});
+
+it('persists a user Yahoo OAuth callback and redirects back to the stored admin state', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'services.yahoo.client_secret' => 'yahoo-client-secret',
+        'yahoo.oauth.token' => 'https://api.login.yahoo.com/oauth2/get_token',
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    Http::fake([
+        'https://api.login.yahoo.com/oauth2/get_token' => Http::response([
+            'access_token' => 'user-access-token',
+            'refresh_token' => 'user-refresh-token',
+            'expires_in' => 3600,
+        ]),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl/players;start=0;count=5' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->withSession([
+            'yahoo_oauth_state' => 'expected-state',
+            'yahoo_oauth_redirect_uri' => route('integrations.yahoo.callback'),
+            'yahoo_oauth_return_url' => url('/admin?tab=triage&drawer=account'),
+        ])
+        ->get(route('integrations.yahoo.callback', [
+            'state' => 'expected-state',
+            'code' => 'auth-code',
+        ]))
+        ->assertRedirect(url('/admin?tab=triage&drawer=account&yahoo_connected=1'))
+        ->assertSessionHas('success', 'Yahoo connected');
+
+    $connection = YahooFantasyConnection::query()->where('user_id', $user->id)->firstOrFail();
+
+    expect($connection->status)->toBe('connected')
+        ->and($connection->access_token)->toBe('user-access-token')
+        ->and($connection->refresh_token)->toBe('user-refresh-token')
+        ->and($connection->meta['game']['game_key'] ?? null)->toBe('475');
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://api.login.yahoo.com/oauth2/get_token'
+        && $request['grant_type'] === 'authorization_code'
+        && $request['code'] === 'auth-code'
+        && $request['redirect_uri'] === route('integrations.yahoo.callback'));
+});
+
+it('ignores unsafe Yahoo OAuth return urls', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'yahoo.oauth.authorize' => 'https://api.login.yahoo.com/oauth2/request_auth',
+    ]);
+
+    $response = $this->actingAs(User::factory()->create())
+        ->get(route('integrations.yahoo.redirect', [
+            'return_to' => 'https://evil.example/admin?tab=triage',
+            'drawer' => 'account',
+        ]));
+
+    $response->assertRedirect();
+    $response->assertSessionHas('yahoo_oauth_return_url', url('/dashboard?drawer=account'));
+});
+
+it('redirects super admins to Yahoo authorization with configured OAuth fields', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'services.yahoo.redirect' => 'https://dynastyiq.com/auth/yahoo/callback',
+        'yahoo.oauth.authorize' => 'https://api.login.yahoo.com/oauth2/request_auth',
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.yahoo.oauth.redirect'));
+
+    $response->assertRedirect();
+    $response->assertSessionHas('yahoo_oauth_state');
+
+    $location = $response->headers->get('Location');
+    $parts = parse_url((string) $location);
+    parse_str($parts['query'] ?? '', $query);
+
+    expect($parts['scheme'].'://'.$parts['host'].$parts['path'])->toBe('https://api.login.yahoo.com/oauth2/request_auth')
+        ->and($query['response_type'] ?? null)->toBe('code')
+        ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
+        ->and($query['redirect_uri'] ?? null)->toBe('https://dynastyiq.com/auth/yahoo/callback')
+        ->and($query['state'] ?? '')->not->toBe('');
+});
+
+it('blocks guests from the Yahoo OAuth proof callback', function () {
+    $this->get(route('admin.yahoo.oauth.callback'))->assertRedirect(route('login'));
+});
+
+it('blocks authenticated non-admin users from the Yahoo OAuth proof callback', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->get(route('admin.yahoo.oauth.callback'))
+        ->assertForbidden();
+});
+
+it('rejects Yahoo OAuth proof callbacks with invalid state', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->withSession(['yahoo_oauth_state' => 'expected-state'])
+        ->get(route('admin.yahoo.oauth.callback', [
+            'state' => 'wrong-state',
+            'code' => 'auth-code',
+        ]))
+        ->assertForbidden();
+});
+
+it('rejects Yahoo OAuth proof callbacks without an authorization code', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->withSession(['yahoo_oauth_state' => 'expected-state'])
+        ->get(route('admin.yahoo.oauth.callback', [
+            'state' => 'expected-state',
+        ]))
+        ->assertUnprocessable();
+});
+
+it('exchanges a Yahoo OAuth code and returns sanitized game and player diagnostics', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'services.yahoo.client_secret' => 'yahoo-client-secret',
+        'services.yahoo.redirect' => 'https://dynastyiq.com/auth/yahoo/callback',
+        'yahoo.oauth.token' => 'https://api.login.yahoo.com/oauth2/get_token',
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    Http::fake([
+        'https://api.login.yahoo.com/oauth2/get_token' => Http::response([
+            'access_token' => 'access-token-value',
+            'refresh_token' => 'refresh-token-value',
+            'expires_in' => 3600,
+        ]),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl/players;start=0;count=5' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.12345</player_key>
+        <player_id>12345</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <primary_position>C</primary_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->withSession(['yahoo_oauth_state' => 'expected-state'])
+        ->getJson(route('admin.yahoo.oauth.callback', [
+            'state' => 'expected-state',
+            'code' => 'auth-code',
+        ]));
+
+    $response->assertOk()
+        ->assertJsonPath('ok', true)
+        ->assertJsonPath('connection.status', 'connected')
+        ->assertJsonPath('game.game_key', '475')
+        ->assertJsonPath('game.code', 'nhl')
+        ->assertJsonPath('players.0.player_key', '475.p.12345')
+        ->assertJsonPath('players.0.full_name', 'Nathan MacKinnon')
+        ->assertJsonPath('players.0.editorial_team_abbr', 'COL')
+        ->assertJsonMissing(['access_token' => 'access-token-value'])
+        ->assertJsonMissing(['refresh_token' => 'refresh-token-value']);
+
+    $this->assertSessionHas('yahoo_oauth_probe_token.access_token', 'access-token-value');
+
+    $connection = YahooFantasyConnection::query()->where('status', 'connected')->firstOrFail();
+
+    expect($connection->access_token)->toBe('access-token-value')
+        ->and($connection->refresh_token)->toBe('refresh-token-value')
+        ->and($connection->meta['game']['game_key'] ?? null)->toBe('475');
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://api.login.yahoo.com/oauth2/get_token'
+        && $request['grant_type'] === 'authorization_code'
+        && $request['code'] === 'auth-code'
+        && $request['redirect_uri'] === 'https://dynastyiq.com/auth/yahoo/callback');
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl'
+        && $request->hasHeader('Authorization', 'Bearer access-token-value'));
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl/players;start=0;count=5'
+        && $request->hasHeader('Authorization', 'Bearer access-token-value'));
+});
+
+it('blocks guests from importing Yahoo players', function () {
+    $this->postJson(route('admin.yahoo.players.import'))->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from importing Yahoo players', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->postJson(route('admin.yahoo.players.import'))
+        ->assertForbidden();
+});
+
+it('requires a Yahoo OAuth connection before importing Yahoo players', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.yahoo.players.import'))
+        ->assertStatus(409);
+});
+
+it('refreshes an expired Yahoo connection before queued player page imports', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'services.yahoo.client_secret' => 'yahoo-client-secret',
+        'yahoo.oauth.token' => 'https://api.login.yahoo.com/oauth2/get_token',
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    Http::fake([
+        'https://api.login.yahoo.com/oauth2/get_token' => Http::response([
+            'access_token' => 'fresh-access-token',
+            'refresh_token' => 'fresh-refresh-token',
+            'expires_in' => 3600,
+        ]),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=1' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'expired-access-token',
+        'refresh_token' => 'old-refresh-token',
+        'token_expires_at' => now()->subMinute(),
+        'connected_at' => now(),
+    ]);
+    $importRun = \App\Models\ImportRun::create([
+        'source' => 'yahoo',
+        'status' => 'working',
+        'options' => ['all_players' => true, 'page_size' => 1],
+        'meta' => ['dynamic_total' => true],
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    Queue::fake([ImportYahooPlayersPageJob::class]);
+
+    (new ImportYahooPlayersPageJob($connection->id, $importRun->id, 0, 1))
+        ->handle(app(YahooFantasyPlayerImporter::class));
+
+    $connection->refresh();
+
+    expect($connection->access_token)->toBe('fresh-access-token')
+        ->and($connection->refresh_token)->toBe('fresh-refresh-token');
+
+    $importRun->refresh();
+
+    expect($importRun->processed_records)->toBe(1)
+        ->and($importRun->successful_records)->toBe(1)
+        ->and($importRun->status)->toBe('working');
+
+    Queue::assertPushed(
+        ImportYahooPlayersPageJob::class,
+        fn (ImportYahooPlayersPageJob $job): bool => $job->connectionId === $connection->id
+            && $job->importRunId === $importRun->id
+            && $job->start === 1
+            && $job->pageSize === 1
+            && $job->gameKey === '475',
+    );
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://api.login.yahoo.com/oauth2/get_token'
+        && $request['grant_type'] === 'refresh_token'
+        && $request['refresh_token'] === 'old-refresh-token');
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl'
+        && $request->hasHeader('Authorization', 'Bearer fresh-access-token'));
+});
+
+it('imports bounded Yahoo player collection pages into yahoo players', function () {
+    config([
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    Http::fake([
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=2' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="2">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+      <player>
+        <player_key>475.p.6743</player_key>
+        <player_id>6743</player_id>
+        <name>
+          <full>Connor McDavid</full>
+          <first>Connor</first>
+          <last>McDavid</last>
+        </name>
+        <editorial_team_abbr>EDM</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=2;count=1' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.6369</player_key>
+        <player_id>6369</player_id>
+        <name>
+          <full>Leon Draisaitl</full>
+          <first>Leon</first>
+          <last>Draisaitl</last>
+        </name>
+        <editorial_team_abbr>EDM</editorial_team_abbr>
+        <display_position>C,LW</display_position>
+        <eligible_positions>
+          <position>C</position>
+          <position>LW</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    $result = app(YahooFantasyPlayerImporter::class)->import($connection, 3, 2);
+
+    expect($result['game']['game_key'])->toBe('475')
+        ->and($result['imported'])->toBe(3)
+        ->and($result['players'][0]['player_key'])->toBe('475.p.5980')
+        ->and($result['players'][2]['player_key'])->toBe('475.p.6369');
+
+    expect(YahooPlayer::query()->count())->toBe(3)
+        ->and(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_YAHOO)->count())->toBe(3)
+        ->and(Player::query()->count())->toBe(0);
+
+    $player = YahooPlayer::query()->where('player_key', '475.p.6369')->firstOrFail();
+    $identity = PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_YAHOO)
+        ->where('provider_player_id', '6369')
+        ->firstOrFail();
+
+    expect($player->game_key)->toBe('475')
+        ->and($player->yahoo_player_id)->toBe('6369')
+        ->and($player->player_external_identity_id)->toBe($identity->id)
+        ->and($player->player_id)->toBeNull()
+        ->and($player->full_name)->toBe('Leon Draisaitl')
+        ->and($player->editorial_team_abbr)->toBe('EDM')
+        ->and($player->display_position)->toBe('C,LW')
+        ->and($player->eligible_positions)->toBe(['C', 'LW'])
+        ->and($player->raw_payload)->toBeArray();
+
+    expect($identity->provider_slug)->toBe('475.p.6369')
+        ->and($identity->display_name)->toBe('Leon Draisaitl')
+        ->and($identity->first_name)->toBe('Leon')
+        ->and($identity->last_name)->toBe('Draisaitl')
+        ->and($identity->position)->toBe('C')
+        ->and($identity->team)->toBe('EDM')
+        ->and($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_UNMATCHED)
+        ->and($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER);
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=2'
+        && $request->hasHeader('Authorization', 'Bearer access-token-value'));
+
+    Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=2;count=1'
+        && $request->hasHeader('Authorization', 'Bearer access-token-value'));
+});
+
+it('queues an all-player Yahoo import from the admin import endpoint', function () {
+    config([
+        'yahoo.fantasy.players_page_size' => 25,
+    ]);
+    Queue::fake([ImportYahooPlayersPageJob::class]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->postJson(route('admin.yahoo.players.import'))
+        ->assertOk()
+        ->assertJsonPath('queued', true)
+        ->assertJsonPath('import_run.source', 'yahoo')
+        ->assertJsonPath('import_run.status', 'working')
+        ->assertJsonPath('import_run.progress.total_records', null)
+        ->assertJsonPath('import_run.progress.dynamic_total', true)
+        ->assertJsonPath('import_run.progress.percentage', null);
+
+    $importRun = \App\Models\ImportRun::query()->where('source', 'yahoo')->firstOrFail();
+
+    expect($importRun->options)->toBe(['all_players' => true, 'page_size' => 25])
+        ->and($importRun->meta['dynamic_total'] ?? null)->toBeTrue();
+
+    Queue::assertPushed(
+        ImportYahooPlayersPageJob::class,
+        fn (ImportYahooPlayersPageJob $job): bool => $job->connectionId === $connection->id
+            && $job->importRunId === $importRun->id
+            && $job->start === 0
+            && $job->pageSize === 25,
+    );
+});
+
+it('completes queued Yahoo imports when a player page is short', function () {
+    config([
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+    Queue::fake([ImportYahooPlayersPageJob::class]);
+
+    Http::fake([
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=2' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+    $importRun = \App\Models\ImportRun::create([
+        'source' => 'yahoo',
+        'status' => 'working',
+        'options' => ['all_players' => true, 'page_size' => 2],
+        'meta' => ['dynamic_total' => true],
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    (new ImportYahooPlayersPageJob($connection->id, $importRun->id, 0, 2))
+        ->handle(app(YahooFantasyPlayerImporter::class));
+
+    $importRun->refresh();
+
+    expect($importRun->status)->toBe('completed')
+        ->and($importRun->processed_records)->toBe(1)
+        ->and($importRun->successful_records)->toBe(1)
+        ->and(YahooPlayer::query()->count())->toBe(1);
+
+    Queue::assertNotPushed(ImportYahooPlayersPageJob::class);
+});
+
+it('upserts Yahoo players idempotently by player key', function () {
+    config([
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    YahooPlayer::create([
+        'game_key' => '475',
+        'player_key' => '475.p.5980',
+        'yahoo_player_id' => '5980',
+        'full_name' => 'Old Name',
+        'eligible_positions' => ['LW'],
+        'raw_payload' => ['old' => true],
+    ]);
+
+    Http::fake([
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=1' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    $result = app(YahooFantasyPlayerImporter::class)->import($connection, 1, 1);
+
+    expect($result['imported'])->toBe(1);
+
+    expect(YahooPlayer::query()->count())->toBe(1);
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_YAHOO)->count())->toBe(1);
+
+    $player = YahooPlayer::query()->where('player_key', '475.p.5980')->firstOrFail();
+
+    expect($player->full_name)->toBe('Nathan MacKinnon')
+        ->and($player->editorial_team_abbr)->toBe('COL')
+        ->and($player->eligible_positions)->toBe(['C']);
+});
+
+it('auto-links imported Yahoo identities when canonical evidence reaches the provider threshold', function () {
+    config([
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    $canonical = ($this->makePlayer)([
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'full_name' => 'Nathan MacKinnon',
+        'position' => 'C',
+        'team_abbrev' => 'COL',
+    ]);
+
+    Http::fake([
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <game_key>475</game_key>
+    <game_id>475</game_id>
+    <name>Hockey</name>
+    <code>nhl</code>
+    <season>2026</season>
+  </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/475/players;start=0;count=1' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <game>
+    <players count="1">
+      <player>
+        <player_key>475.p.5980</player_key>
+        <player_id>5980</player_id>
+        <name>
+          <full>Nathan MacKinnon</full>
+          <first>Nathan</first>
+          <last>MacKinnon</last>
+        </name>
+        <editorial_team_abbr>COL</editorial_team_abbr>
+        <display_position>C</display_position>
+        <eligible_positions>
+          <position>C</position>
+        </eligible_positions>
+      </player>
+    </players>
+  </game>
+</fantasy_content>
+XML),
+    ]);
+
+    $admin = ($this->makeSuperAdmin)();
+    $connection = YahooFantasyConnection::create([
+        'user_id' => $admin->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    $result = app(YahooFantasyPlayerImporter::class)->import($connection, 1, 1);
+
+    expect($result['imported'])->toBe(1);
+
+    $identity = PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_YAHOO)
+        ->where('provider_player_id', '5980')
+        ->firstOrFail();
+    $yahooPlayer = YahooPlayer::query()->where('player_key', '475.p.5980')->firstOrFail();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED)
+        ->and($identity->match_confidence)->toBe(95)
+        ->and($identity->player_id)->toBe($canonical->id)
+        ->and($yahooPlayer->player_external_identity_id)->toBe($identity->id)
+        ->and($yahooPlayer->player_id)->toBe($canonical->id);
+});
+
+it('empties Yahoo imported player data without deleting canonical players or OAuth connections', function () {
+    $player = ($this->makePlayer)([
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'full_name' => 'Nathan MacKinnon',
+    ]);
+    $identity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_YAHOO,
+        'provider_player_id' => '5980',
+        'provider_slug' => '475.p.5980',
+        'display_name' => 'Nathan MacKinnon',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $fantraxIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-5980',
+        'display_name' => 'Nathan MacKinnon',
+    ]);
+    $connection = YahooFantasyConnection::create([
+        'user_id' => User::factory()->create()->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+
+    YahooPlayer::create([
+        'player_external_identity_id' => $identity->id,
+        'player_id' => $player->id,
+        'game_key' => '475',
+        'player_key' => '475.p.5980',
+        'yahoo_player_id' => '5980',
+        'full_name' => 'Nathan MacKinnon',
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'eligible_positions' => ['C'],
+        'raw_payload' => ['player_key' => '475.p.5980'],
+        'imported_at' => now(),
+    ]);
+
+    $this->artisan('yahoo:empty')
+        ->assertOk()
+        ->expectsOutput('Removed Yahoo imported player data.')
+        ->expectsOutput('yahoo_players: 1')
+        ->expectsOutput('player_external_identities: 1')
+        ->expectsOutput('Canonical players and Yahoo OAuth connections were not deleted.');
+
+    expect(YahooPlayer::query()->count())->toBe(0)
+        ->and(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_YAHOO)->count())->toBe(0)
+        ->and(PlayerExternalIdentity::query()->whereKey($fantraxIdentity->id)->exists())->toBeTrue()
+        ->and(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
+        ->and(YahooFantasyConnection::query()->whereKey($connection->id)->exists())->toBeTrue();
+});
+
+it('empties NHL imported data without deleting canonical players or team reference data', function () {
+    $now = now();
+    $player = ($this->makePlayer)([
+        'nhl_id' => 5980,
+        'nhl_team_id' => 21,
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'full_name' => 'Nathan MacKinnon',
+    ]);
+    $nhlIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_NHL,
+        'provider_player_id' => '5980',
+        'provider_slug' => '5980',
+        'display_name' => 'Nathan MacKinnon',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $draftIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_NHL_DRAFT,
+        'provider_player_id' => '2013:1',
+        'provider_slug' => '2013:1',
+        'display_name' => 'Nathan MacKinnon',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $fantraxIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-5980',
+        'provider_slug' => 'fantrax-5980',
+        'display_name' => 'Nathan MacKinnon',
+    ]);
+
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 21,
+        'abbrev' => 'COL',
+        'full_name' => 'Colorado Avalanche',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020001,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-01-15',
+        'game_dow' => 'Thu',
+        'game_month' => 'Jan',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    $unitId = DB::table('nhl_units')->insertGetId([
+        'team_abbrev' => 'COL',
+        'unit_type' => 'F',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2025020001,
+        'nhl_player_id' => 5980,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    $unitShiftId = DB::table('nhl_unit_shifts')->insertGetId([
+        'unit_id' => $unitId,
+        'nhl_game_id' => 2025020001,
+        'period' => 1,
+        'start_time' => '00:00',
+        'end_time' => '00:45',
+        'start_game_seconds' => 0,
+        'end_game_seconds' => 45,
+        'seconds' => 45,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $eventId,
+        'unit_shift_id' => $unitShiftId,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_unit_game_summaries')->insert([
+        'nhl_game_id' => 2025020001,
+        'unit_id' => $unitId,
+        'team_id' => 21,
+        'team_abbrev' => 'COL',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_unit_players')->insert([
+        'unit_id' => $unitId,
+        'player_id' => $player->id,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_shifts')->insert([
+        'nhl_game_id' => 2025020001,
+        'nhl_player_id' => 5980,
+        'shift_number' => 1,
+        'period' => 1,
+        'start_time' => '00:00',
+        'end_time' => '00:45',
+        'shift_start_seconds' => 0,
+        'shift_end_seconds' => 45,
+        'shift_duration_seconds' => 45,
+        'team_abbrev' => 'COL',
+        'team_name' => 'Avalanche',
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'unit_id' => $unitId,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_boxscores')->insert([
+        'nhl_game_id' => 2025020001,
+        'nhl_player_id' => 5980,
+        'nhl_team_id' => 21,
+        'player_name' => 'Nathan MacKinnon',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_game_summaries')->insert([
+        'nhl_game_id' => 2025020001,
+        'nhl_player_id' => 5980,
+        'nhl_team_id' => 21,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_season_stats')->insert([
+        'season_id' => '20252026',
+        'nhl_player_id' => 5980,
+        'nhl_team_id' => 21,
+        'game_type' => 2,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020001',
+        'game_type' => 2,
+        'import_type' => 'pbp',
+        'status' => 'completed',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $this->artisan('nhl:empty')
+        ->assertOk()
+        ->expectsOutput('Removed NHL imported data.')
+        ->expectsOutput('event_unit_shifts: 1')
+        ->expectsOutput('nhl_games: 1')
+        ->expectsOutput('player_external_identities: 2')
+        ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
+
+    foreach ([
+        'event_unit_shifts',
+        'nhl_unit_game_summaries',
+        'nhl_unit_players',
+        'nhl_unit_shifts',
+        'nhl_shifts',
+        'nhl_units',
+        'nhl_boxscores',
+        'nhl_game_summaries',
+        'play_by_plays',
+        'nhl_season_stats',
+        'nhl_import_progress',
+        'nhl_games',
+    ] as $table) {
+        expect(DB::table($table)->count())->toBe(0);
+    }
+
+    expect(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
+        ->and(DB::table('nhl_teams')->where('nhl_id', 21)->exists())->toBeTrue()
+        ->and(PlayerExternalIdentity::query()->whereKey($nhlIdentity->id)->exists())->toBeFalse()
+        ->and(PlayerExternalIdentity::query()->whereKey($draftIdentity->id)->exists())->toBeFalse()
+        ->and(PlayerExternalIdentity::query()->whereKey($fantraxIdentity->id)->exists())->toBeTrue();
+});
+
 it('allows super admins to view the player triage inbox', function () {
     $identity = ($this->makeIdentity)();
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertSee('Player Triage')
         ->assertSee($identity->display_name);
@@ -115,7 +1197,7 @@ it('shows unresolved identity statuses in the default inbox', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertSee('Candidate Player')
         ->assertSee('Unmatched Player')
@@ -142,7 +1224,7 @@ it('hides high confidence resolver recommendations from the default inbox', func
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertDontSee('High Confidence Player')
         ->assertSee('No identities match the current filters.');
@@ -168,7 +1250,7 @@ it('shows high confidence resolver recommendations when all identities are reque
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['include_resolved' => 1]))
+        ->getJson(route('admin.player-triage', ['include_resolved' => 1]))
         ->assertOk()
         ->assertSee('Included Confidence Player')
         ->assertSee('95% recommendation');
@@ -188,7 +1270,7 @@ it('hides matched and ignored identities from the default inbox', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertDontSee('Matched Player')
         ->assertDontSee('Ignored Player');
@@ -208,7 +1290,7 @@ it('can include resolved identities with the resolved filter', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['include_resolved' => 1]))
+        ->getJson(route('admin.player-triage', ['include_resolved' => 1]))
         ->assertOk()
         ->assertSee('Matched Player')
         ->assertSee('Ignored Player');
@@ -228,7 +1310,7 @@ it('can filter directly to matched identities', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['statuses' => [PlayerExternalIdentity::STATUS_MATCHED]]))
+        ->getJson(route('admin.player-triage', ['statuses' => [PlayerExternalIdentity::STATUS_MATCHED]]))
         ->assertOk()
         ->assertSee('Matched Player')
         ->assertDontSee('Candidate Player');
@@ -247,7 +1329,7 @@ it('can filter directly to matched identities with the triage state segment', fu
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['triage_state' => 'matched']))
+        ->getJson(route('admin.player-triage', ['triage_state' => 'matched']))
         ->assertOk()
         ->assertSee('Segment Matched Player')
         ->assertDontSee('Segment Candidate Player');
@@ -266,7 +1348,7 @@ it('filters identities by provider', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES]))
+        ->getJson(route('admin.player-triage', ['provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES]))
         ->assertOk()
         ->assertSee('CapWages Player')
         ->assertDontSee('Fantrax Player');
@@ -285,7 +1367,7 @@ it('shows source options from existing external identity providers', function ()
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertSee('Source')
         ->assertSee('Fantrax')
@@ -314,7 +1396,7 @@ it('filters source identities to rows without canonical records', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['source' => PlayerExternalIdentity::PROVIDER_FANTRAX]))
+        ->getJson(route('admin.player-triage', ['source' => PlayerExternalIdentity::PROVIDER_FANTRAX]))
         ->assertOk()
         ->assertSee('Player Inbox (1)')
         ->assertSee('Open Fantrax Player')
@@ -345,7 +1427,7 @@ it('filters source identities to rows with canonical records when matched is sel
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
             'matched' => 1,
         ]))
@@ -372,7 +1454,7 @@ it('can show all source identities with the triage state segment', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
             'triage_state' => 'all',
         ]))
@@ -416,7 +1498,7 @@ it('filters source identities missing a matching source identity', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
         ]))
@@ -459,7 +1541,7 @@ it('shows coverage state instead of resolver recommendation in source matching m
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
         ]))
@@ -499,7 +1581,7 @@ it('shows matching source suggestions in source matching detail mode', function 
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'identity' => $sourceIdentity->id,
@@ -579,7 +1661,7 @@ it('limits matching source suggestions to unlinked exact normalized name identit
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'identity' => $sourceIdentity->id,
@@ -641,7 +1723,7 @@ it('allows matching source search to find unlinked compatible position identitie
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'identity' => $sourceIdentity->id,
@@ -829,7 +1911,7 @@ it('shows matched source details instead of matching source search when coverage
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'matched' => 1,
@@ -881,7 +1963,7 @@ it('filters source identities missing a matching source when search is empty', f
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'search' => '',
@@ -926,7 +2008,7 @@ it('filters source identities that have a matching source identity', function ()
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'source' => PlayerExternalIdentity::PROVIDER_NHL,
             'matching_source' => PlayerExternalIdentity::PROVIDER_FANTRAX,
             'matched' => 1,
@@ -948,7 +2030,7 @@ it('filters identities by display name search', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['search' => 'searchable']))
+        ->getJson(route('admin.player-triage', ['search' => 'searchable']))
         ->assertOk()
         ->assertSee('Searchable Player')
         ->assertDontSee('Hidden Player');
@@ -965,7 +2047,7 @@ it('filters identities by provider player id search', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['search' => '777']))
+        ->getJson(route('admin.player-triage', ['search' => '777']))
         ->assertOk()
         ->assertSee('External Player')
         ->assertDontSee('Other External Player');
@@ -984,7 +2066,7 @@ it('filters identities by unmatched reason', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['reason' => PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES]))
+        ->getJson(route('admin.player-triage', ['reason' => PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES]))
         ->assertOk()
         ->assertSee('Multiple Candidate Player')
         ->assertDontSee('Missing Name Player');
@@ -998,7 +2080,7 @@ it('shows selected identity details in the review pane', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Selected Player')
         ->assertSee('selected-1')
@@ -1028,7 +2110,7 @@ it('shows linked external sources for a selected canonical-linked identity', fun
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Linked External Sources')
         ->assertSee('fantrax-linked-context');
@@ -1050,7 +2132,7 @@ it('shows linked identities as player records without source action controls', f
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Player Record')
         ->assertSee('Already Linked Player')
@@ -1081,7 +2163,7 @@ it('shows player dob when a selected identity is linked', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Player Record')
         ->assertSee('Sep 18, 1987')
@@ -1129,7 +2211,7 @@ it('shows last contract summary when a linked player has capwages contracts', fu
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Last Contract')
         ->assertSee('Standard')
@@ -1162,7 +2244,7 @@ it('shows suggested external matches when no canonical candidate exists', functi
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Create Player Record')
         ->assertSee('Suggested External Records')
@@ -1197,7 +2279,7 @@ it('shows suggested external matches alongside canonical candidates before linki
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Suggested Player Matches')
         ->assertSee('Suggested External Records')
@@ -1219,7 +2301,7 @@ it('shows current resolver recommendation confidence instead of stale stored con
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('95% recommendation')
         ->assertSee('recommends matched');
@@ -1230,7 +2312,7 @@ it('shows current resolver recommendation confidence instead of stale stored con
 
 it('shows an empty inbox state when no identities match filters', function () {
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage'))
+        ->getJson(route('admin.player-triage'))
         ->assertOk()
         ->assertSee('No identities match the current filters.');
 });
@@ -1249,7 +2331,7 @@ it('shows suggested player matches for normalized identity names', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSee('Suggested Player Matches')
         ->assertSee('Suggested Player');
@@ -1277,7 +2359,7 @@ it('orders same-name suggestions by matching birthdate first', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', ['identity' => $identity->id]))
+        ->getJson(route('admin.player-triage', ['identity' => $identity->id]))
         ->assertOk()
         ->assertSeeInOrder(['ANA', 'BOS']);
 });
@@ -1291,7 +2373,7 @@ it('searches canonical players manually by name', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'identity' => $identity->id,
             'player_search' => 'Manual Search',
         ]))
@@ -1325,7 +2407,7 @@ it('manual player search excludes players already linked to the selected identit
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'identity' => $identity->id,
             'player_search' => 'Manual Provider',
         ]))
@@ -1358,7 +2440,7 @@ it('manual player search filters results by selected identity position type', fu
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'identity' => $identity->id,
             'player_search' => 'Jake',
         ]))
@@ -1378,7 +2460,7 @@ it('searches canonical players manually by nhl id', function () {
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
-        ->get(route('admin.player-triage', [
+        ->getJson(route('admin.player-triage', [
             'identity' => $identity->id,
             'player_search' => '7654321',
         ]))
@@ -1821,8 +2903,44 @@ it('shows current import workflow buttons to super admins', function () {
         ->assertOk()
         ->assertSee('Import Workflows')
         ->assertSee('NHL Players')
+        ->assertSee('Resolve NHL Players')
         ->assertSee('Fantrax Players')
+        ->assertSee('Yahoo Players')
         ->assertSee('Contracts')
-        ->assertSee('Run workflow')
+        ->assertSeeInOrder(['NHL Players', 'Resolve NHL Players', 'Fantrax Players', 'Yahoo Players', 'Contracts'])
+        ->assertSee('Run Now')
         ->assertSee('Retry failed');
+});
+
+it('shows the admin data imports card list in registry order', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.dashboard'))
+        ->assertOk()
+        ->assertSee('Data Imports')
+        ->assertSeeInOrder(['Data Imports', 'Triage'])
+        ->assertSeeInOrder(['NHL Players', 'Resolve NHL Players', 'Fantrax Players', 'Yahoo Players', 'Contracts'])
+        ->assertSee('Run Now')
+        ->assertDontSee('Player Inbox');
+});
+
+it('shows Yahoo as a triage source after Yahoo identities are imported', function () {
+    ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_YAHOO,
+        'provider_player_id' => '5980',
+        'provider_slug' => '475.p.5980',
+        'display_name' => 'Nathan MacKinnon',
+        'normalized_name' => 'nathan mackinnon',
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'position' => 'C',
+        'team' => 'COL',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'unmatched_reason' => PlayerExternalIdentity::REASON_NO_CANONICAL_PLAYER,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['source' => PlayerExternalIdentity::PROVIDER_YAHOO]))
+        ->assertOk()
+        ->assertSee('Nathan MacKinnon')
+        ->assertSee('475.p.5980');
 });

@@ -1,10 +1,16 @@
+import { bootPlayerTriage } from './player-triage.js';
+
 let importListenersRegistered = false;
 
 export default function adminHub(options = {}) {
     const nhlAvailable = Boolean(options.hasPlayers);
     const fantraxAvailable = Boolean(options.hasFantrax);
+    const requestedTab = new URLSearchParams(
+        typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
+    ).get('tab');
+    const validInitialTabs = ['imports', 'triage'];
 
-    const initialTab = 'triage';
+    const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
 
     return {
@@ -13,6 +19,10 @@ export default function adminHub(options = {}) {
         activeSource: initialSource,
         hasPlayers: nhlAvailable,
         hasFantrax: fantraxAvailable,
+        triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
+        triageLoaded: false,
+        triageLoading: false,
+        triageError: '',
 
         streams: {},
         progressPollers: {},
@@ -43,14 +53,14 @@ export default function adminHub(options = {}) {
         init() {
             this.initializeImportStreams();
             this.registerImportListeners();
-            this.setTab(this.activeTab);
+            void this.setTab(this.activeTab, { history: false });
         },
 
         /* -----------------------------
          * Tabs
          * --------------------------- */
 
-        setTab(tab) {
+        async setTab(tab, options = {}) {
             if (tab === 'nhl' && !this.hasPlayers) {
                 return;
             }
@@ -60,6 +70,7 @@ export default function adminHub(options = {}) {
             }
 
             this.activeTab = tab;
+            this.syncTabUrl(tab, options);
 
             if (tab === 'nhl' || tab === 'fantrax') {
                 this.activeSource = tab;
@@ -70,6 +81,68 @@ export default function adminHub(options = {}) {
                 (tab === 'fantrax' && this.hasFantrax)
             ) {
                 this.loadPlayers();
+            }
+
+            if (tab === 'triage') {
+                await this.loadTriage();
+            }
+        },
+
+        syncTabUrl(tab, options = {}) {
+            if (
+                options.history === false ||
+                typeof window === 'undefined' ||
+                !window.location?.href ||
+                typeof window.history?.replaceState !== 'function'
+            ) {
+                return;
+            }
+
+            const url = new URL(window.location.href);
+
+            if (tab === 'imports') {
+                url.searchParams.delete('tab');
+            } else {
+                url.searchParams.set('tab', tab);
+            }
+
+            window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+        },
+
+        async loadTriage() {
+            if (this.triageLoaded || this.triageLoading) {
+                return;
+            }
+
+            this.triageLoading = true;
+            this.triageError = '';
+
+            try {
+                const response = await fetch(this.triageUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load triage data');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Triage response did not include a page fragment');
+                }
+
+                const mount = this.$refs?.triageMount ?? document.querySelector('[data-admin-triage-mount]');
+                if (!mount) {
+                    throw new Error('Triage mount was not found');
+                }
+
+                mount.innerHTML = payload.html;
+                this.triageLoaded = true;
+                bootPlayerTriage();
+            } catch (error) {
+                this.triageError = error.message ?? 'Unable to load triage data';
+            } finally {
+                this.triageLoading = false;
             }
         },
 
@@ -260,6 +333,9 @@ export default function adminHub(options = {}) {
             stream.messages = [];
             stream.open = true;
             stream.running = true;
+            stream.importRun = null;
+            stream.progress = null;
+            this.stopImportProgressPoll(key);
 
             try {
                 const response = await fetch(config.run_url, {
@@ -279,6 +355,22 @@ export default function adminHub(options = {}) {
 
                 const payload = await response.json();
                 this.applyImportRun(key, payload.import_run);
+
+                const imported = payload.import?.imported;
+                if (imported !== undefined && imported !== null) {
+                    stream.messages.unshift({
+                        message: `${config.label ?? key} imported ${this.formatNumber(imported)} records`,
+                        status: payload.import_run?.status ?? 'completed',
+                        timestamp: new Date().toISOString(),
+                    });
+                }
+
+                if (payload.import_run?.status === 'completed' || payload.import_run?.status === 'failed') {
+                    stream.running = false;
+                    this.stopImportProgressPoll(key);
+                    return;
+                }
+
                 this.scheduleImportProgressPoll(key);
             } catch (e) {
                 stream.messages.unshift({

@@ -1,119 +1,132 @@
 ---
-pr_id: 4
-pr_name: pr4
+pr_id: 5
+pr_name: pr5
 status: Active
 ---
 
-# Player Triage AJAX and SearchField Refactor PR Plan
+# Yahoo Fantasy Hockey Player Import PR Plan
 
 Status: Active
-Source: Admin player triage workflow review
+Source: Future fantasy provider expansion
 Target branch: staging
-Created: 2026-06-26
-Last updated: 2026-06-27
+Created: 2026-06-27
+Last updated: 2026-06-28
 
 ## Goal
 
-Refactor the player triage page so once the page has loaded, triage work happens through AJAX/JSON interactions with in-place UI updates, while introducing a reusable Tailwind-styled JavaScript SearchField component that can be adopted by other pages later.
+Add a Yahoo fantasy hockey player import so DynastyIQ can ingest Yahoo player records, preserve Yahoo provider identities, and use the existing player identity resolver and admin import progress patterns to match Yahoo players to canonical DynastyIQ players.
 
 ## Prerequisites
 
-- PR3 admin player triage UI refactor has been reviewed by the human.
-- Player triage continues to use `player_external_identities`.
-- The triage page remains protected by existing admin middleware.
-- Existing route names and authorization behavior remain stable unless explicitly approved.
+- PR3 admin imports and player triage work has been reviewed by the human.
+- The Yahoo Fantasy Sports API access model, OAuth requirements, rate limits, and player endpoint contracts have been verified before implementation.
+- Yahoo provider credentials and tokens have an approved storage model before any live API calls are implemented.
+- Player identity resolution continues to use `player_external_identities`.
+- Import progress for admin-triggered imports continues to use `import_runs`.
 
 ## Scope
 
-- Convert triage-page interactions after initial page load to AJAX/JSON.
-- Add a reusable JavaScript SearchField component styled with Tailwind utilities.
-- Use the SearchField component for triage search inputs.
-- Trigger triage filter/search changes automatically without an Apply button dependency.
-- Debounce search input changes, initially `300ms`.
-- Update source, matching source, triage-state segment, search, inbox selection, detail loading, and triage actions in place.
-- Preserve useful URL state for refresh, back, and bookmark behavior.
-- Add focused feature and JavaScript coverage for the new JSON/page-module contracts.
+- Add Yahoo as a fantasy hockey provider for player identity import.
+- Fetch Yahoo fantasy hockey player records from an approved Yahoo API path.
+- Normalize Yahoo player names, provider player ids, positions, teams, and raw payloads.
+- Upsert Yahoo player records into `player_external_identities` as a non-authority provider.
+- Resolve Yahoo identities through `PlayerIdentityResolver` without creating canonical players by default.
+- Add Yahoo player import progress tracking through `import_runs`.
+- Add Yahoo to the admin import registry only after the backend import contract exists.
+- Surface Yahoo unmatched/candidate/conflict identities through the existing triage provider filters.
+- Add a provider empty command only if implementation creates Yahoo-owned imported records outside `player_external_identities`.
 
 ## Out of Scope
 
-- Removing Jetstream, Livewire, or Alpine globally.
-- Replacing existing app-wide navigation, layout, toast, modal, or form systems.
-- Creating a global frontend framework, router, registry, centralized store, or generic list/detail renderer.
-- Changing import services, identity resolution rules, or provider matching thresholds.
-- Adding bulk triage.
-- Refactoring unrelated admin pages.
+- Yahoo league sync, team sync, roster sync, standings, scoring settings, transactions, or user league authorization flows.
+- Replacing Fantrax fantasy integration behavior.
+- Creating canonical players from Yahoo-only identities.
+- Yahoo league/team/roster connection UI beyond the account drawer OAuth entry point.
+- Adding app-wide provider abstraction beyond the minimum Yahoo import surface.
+- Changing existing Fantrax, NHL, or CapWages matching thresholds.
+- Bulk triage operations.
 
 ## Architecture Impact
 
-This PR is expected to introduce or formalize a reusable frontend component pattern:
+This PR is expected to require a new Yahoo integration architecture entry if implementation introduces durable Yahoo-specific services or jobs:
 
-- `resources/js/components/SearchField/search-field.js`
-- `resources/js/components/SelectField/select-field.js`
-- `resources/js/admin/player-triage.js`
-- `docs/architecture/ui/` entry for the durable SearchField/page-module contract, if approved during implementation
-- `docs/ARCHITECTURE_INVENTORY.md` derived summary update after the canonical architecture file is added
+- Candidate canonical doc: `docs/architecture/integrations/YahooFantasyPlayerImport.yaml`
+- Existing docs that must remain respected:
+  - `docs/architecture/admin/AdminImportRegistry.yaml`
+  - `docs/architecture/admin/ImportBroadcastStream.yaml`
+  - `docs/architecture/imports/PlayerIdentityResolution.yaml`
+  - `docs/architecture/integrations/PlatformStateService.yaml`
 
-Canonical architecture docs should be updated when this backlog PR becomes active and the abstraction is approved for implementation.
+If Yahoo adds new provider keys, identity statuses, or import keys, `docs/ENUMS.md` must be updated before those values are used.
 
 ## Implementation Plan
 
-1. Implemented for review: Audit current triage form, filter, search, row-selection, and action interactions for refresh paths.
-2. Implemented for review: Define the SearchField component contract:
-   - Tailwind-only styling.
-   - `300ms` debounce by default.
-   - clear/loading/disabled/error states.
-   - DOM event payload with `name`, `value`, optional `scope`, and optional `id`.
-3. Implemented for review: Define the triage page JSON contract for inbox, detail, matching-source search, canonical search, and actions.
-4. Implemented for review: Add JSON responses/endpoints while preserving safe fallback behavior where practical.
-5. Implemented for review: Refactor `player-triage.js` to own page state, request cancellation, URL updates, and DOM rendering.
-6. Implemented for review: Replace Apply-dependent filter/search behavior with debounced or immediate AJAX changes.
-7. Implemented for review: Ensure row selection and detail pane loading do not refresh the page.
-8. Implemented for review: Ensure link, resolve, ignore, defer, and manual search actions update UI in place.
-9. Implemented for review: Add focused tests for JSON contracts, request behavior, URL state, and SearchField events.
-10. Implemented for review: Update canonical architecture docs and derived inventory once implementation details are approved.
+1. Verify Yahoo Fantasy Sports API authentication, player listing endpoints, pagination, and fantasy hockey player payload fields.
+2. Decide whether Yahoo player import is app-owned or user-owned based on the verified API authentication model.
+3. Define the minimal Yahoo provider player payload fields needed for identity matching:
+   - provider player id.
+   - display name.
+   - first and last name when available.
+   - eligible positions.
+   - NHL team abbreviation when available.
+   - player status or injury metadata when available.
+   - raw payload.
+4. Add a Yahoo player import service that fetches player records and maps them into normalized identity payloads.
+5. Add `PlayerIdentityResolver::upsertYahooIdentity()` or an approved provider-neutral upsert path if one already exists by implementation time.
+6. Treat Yahoo as a non-authority provider: auto-link only to exactly one canonical player at or above the approved provider threshold.
+7. Add a queued Yahoo player import job or bounded chunk job if the provider payload can exceed worker timeout limits.
+8. Track total, processed, imported, failed, and skipped records through `import_runs`.
+9. Register Yahoo in `AdminImports` after the import command/job can report progress safely.
+10. Ensure triage provider filters include Yahoo identities without special-case UI behavior.
+11. Add focused Pest and JavaScript coverage for the new import command/job, resolver behavior, admin import registration, and progress contract.
+12. Update canonical architecture docs and the derived architecture inventory after the implementation surface is approved.
 
 ## Test Plan
 
-- Admin-only triage JSON endpoints reject unauthorized users.
-- Triage filters return deterministic inbox payloads.
-- Source/matching-source/triage-state changes update inbox payloads correctly.
-- SearchField emits debounced named events with stable payload shape.
-- Multiple SearchField instances on one page remain distinguishable by `name`, `scope`, and `id`.
-- Stale requests are cancelled or ignored so late responses do not overwrite newer UI state.
-- Matching-source link actions return JSON and update linked identity state.
-- Canonical link, resolve, ignore, and defer actions return JSON and preserve expected identity state.
-- URL query state is updated for filters, searches, and selected identity.
-- Browser back/forward restores triage state.
-- Empty, loading, and error states are visible and non-blocking.
+- Yahoo player payloads are normalized into stable provider identity fields.
+- Yahoo aggregate or non-player rows are skipped before identity upsert.
+- Yahoo identity upsert is idempotent by provider and provider player id.
+- Yahoo identity raw payloads are preserved for audit and rematching.
+- Yahoo identities do not create canonical players by default.
+- Yahoo identities auto-link only when resolver evidence identifies exactly one canonical player at the approved threshold.
+- Multiple viable Yahoo candidates become conflicts rather than auto-links.
+- Position type matching uses the canonical position type rule: goalies `G`, defense `D`, and `L/C/R/LW/RW/F` as `F`.
+- Team abbreviations are normalized through NHL team reference data when available.
+- Admin-triggered Yahoo imports create and update `import_runs` progress fields.
+- Yahoo import failures record failed/skipped counts without failing the whole import when individual player rows are bad.
+- The admin import registry exposes Yahoo only to authorized admin users.
+- Triage provider filters can show Yahoo unmatched, candidate, conflict, ignored, and matched identities.
 
 ## Decisions
 
-- The reusable SearchField should be a straight JavaScript component, not Alpine-in-Blade.
-- The SearchField should use Tailwind utility classes only.
-- The SearchField must be generic and must not know about player triage, routes, players, or providers.
-- The reusable SelectField should enhance native selects, emit only generic select-field events, and leave domain refresh events to page modules.
-- Page modules own page-specific state, API calls, and rendering decisions.
-- The triage inbox owns the currently loaded identity JSON and filters player search locally; broader server refreshes remain coordinated by the page module.
-- The triage inbox count display distinguishes total matching identities from the browser-loaded slice when the server caps payloads.
-- The triage inbox owns its loading and error rendering; the page module emits inbox loading, loaded, and error events around server refreshes.
-- The triage detail panel owns the currently selected identity detail JSON and renders loading, loaded, empty, and error states from page-level events.
-- The triage detail panel can render a selected identity preview header immediately from the inbox selection event before full detail JSON resolves.
-- Row selection should fetch selected identity detail through a dedicated web-authenticated admin JSON route, while the full triage route remains available for Blade page loads and compatibility refreshes.
-- Triage AJAX should use request cancellation or stale-response guards.
-- The old apply/reset and checkbox filters should be replaced by immediate controls, including an unmatched/matched/all triage-state segment that defaults to unmatched.
-- URL state should be preserved for refresh, back, and bookmark behavior.
-- This PR should chip away from Jetstream/Livewire coupling without attempting a global removal.
+- Yahoo is a non-authority fantasy provider for player identity matching.
+- Yahoo Fantasy Sports API requires OAuth 2.0 and Fantasy Sports Read access.
+- Yahoo Fantasy API responses should be treated as XML first.
+- Yahoo `nhl` game code should be used for current-season proof calls before resolving the season-specific game id from returned metadata.
+- Yahoo player keys follow `{game_key}.p.{player_id}` and pagination uses semicolon parameters such as `;start=0;count=5`.
+- Yahoo player import should reuse the existing player identity resolver rather than creating a parallel matching system.
+- Yahoo import progress should use `import_runs`; Reverb events may nudge the UI, but the database remains authoritative.
+- Yahoo raw payloads should remain provider-owned evidence and must not overwrite canonical player attributes without an explicit resolver rule.
+- Yahoo league and roster sync are separate future work from importing the Yahoo player universe.
+- Yahoo OAuth credentials should live in `config/services.php`; Yahoo API URLs and import defaults should live in `config/yahoo.php`.
+- The Yahoo OAuth flow exchanges a Yahoo code, calls `game/nhl`, fetches `game/nhl/players;start=0;count=5`, and persists the current user's Yahoo OAuth grant in `yahoo_fantasy_connections`.
+- Yahoo player imports should stage Yahoo player collection pages into `yahoo_players` using the current super-admin user's persisted Yahoo connection, without creating canonical players.
+- Yahoo player collection pagination should use the resolved season game key and Yahoo semicolon parameters, such as `game/{game_key}/players;start=0;count=25`.
+- Yahoo admin-triggered all-player imports should queue page-level jobs and continue until Yahoo returns a short or empty player collection page.
+- The Yahoo Players admin import card should use the direct endpoint backed by a persisted Yahoo connection to create an `import_runs` row and queue the first page job.
+- Staged `yahoo_players` rows should immediately upsert `player_external_identities` provider rows with provider `yahoo`, then resolve them as non-authority identities at the same auto-link threshold as Fantrax.
+- `yahoo:empty` removes Yahoo staged player rows and Yahoo provider identities while preserving canonical players and Yahoo OAuth connections.
 
 ## Resolved Questions
 
-- The first reusable component is SearchField.
-- One responsive SearchField component should serve mobile and desktop.
-- Multiple SearchField instances should be distinguished by event payload fields, not by component-specific global state.
-- Triage page only is in scope; other pages should be able to adopt the SearchField later.
+- The first Yahoo PR should import player identities only.
+- Yahoo should be visible in triage as another external identity source once imported.
+- Canonical player creation from Yahoo-only identities is out of scope.
 
 ## Deferred Work
 
-- Full Jetstream removal.
-- Full Livewire removal.
-- App-wide component registry or frontend platform decisions.
-- Replacing existing app-wide toast, modal, or layout systems.
+- Yahoo fantasy league sync.
+- Yahoo fantasy team and roster sync.
+- Yahoo fantasy transactions.
+- Yahoo availability filters for connected leagues.
+- Provider-neutral fantasy platform import abstraction, if Yahoo and Fantrax duplication later justifies one.

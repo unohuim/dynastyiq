@@ -10,6 +10,7 @@
 <div
     data-player-triage-page
     data-player-triage-url="{{ route('admin.player-triage') }}"
+    data-player-triage-history-url="{{ route('admin.dashboard') }}"
     data-player-triage-embedded="{{ $embedded ? '1' : '0' }}"
 >
             <div class="mb-4 border-y border-gray-200 bg-gray-50/70 px-3 py-3 sm:px-4">

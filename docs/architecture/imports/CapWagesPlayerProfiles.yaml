@@ -18,6 +18,7 @@ rules:
   - CapWages player profile rows must only be created when the same detail payload is eligible for a CapWages provider identity.
   - CapWages provider identities are eligible only when the payload has a payable non-buyout contract season at least as recent as the current calendar-year season key.
   - CapWages buyout and dead-cap-only rows must not qualify retired or inactive players for identity, profile, canonical player, or contract materialization.
+  - CapWages payloads with nhlId must not create provisional canonical players; they must link to an existing players.nhl_id row or remain unresolved until NHL import creates the authority row.
   - capwages_players must link to player_external_identities through player_external_identity_id.
   - player_external_identities must not store capwages_players ids or provider-specific detail table references.
   - capwages_players.player_id may mirror the linked identity player_id after a canonical player link exists.

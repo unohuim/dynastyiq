@@ -17,6 +17,9 @@
         hasCommunities: {{ $hasCommunities ? 'true':'false' }},
     }"
     x-init="
+        const params = new URLSearchParams(window.location.search);
+        accountOpen = params.get('drawer') === 'account';
+
         window.addEventListener('fantrax:connected',   () => hasFantrax = true);
         window.addEventListener('discord:connected',   () => hasDiscord = true);
 

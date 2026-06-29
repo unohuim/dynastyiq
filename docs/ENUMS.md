@@ -245,6 +245,31 @@ Do not introduce new enum values without updating this document.
 
 - Existing import run rows default to `completed` when the lifecycle migration is applied.
 
+### Admin Import Source
+
+**Name:** Admin import source
+**Storage location(s):** `import_runs.source` (string column)
+**Allowed values currently used by the admin import registry:**
+
+- `nhl`
+- `nhl-resolve-players`
+- `fantrax`
+- `yahoo`
+- `contracts`
+
+**Semantic meaning:**
+
+- `nhl`: NHL player discovery import.
+- `nhl-resolve-players`: NHL identity reconciliation for existing canonical players with no NHL id.
+- `fantrax`: Fantrax player import.
+- `yahoo`: Yahoo fantasy hockey player import.
+- `contracts`: CapWages contract import.
+
+**Notes:**
+
+- The column is not database constrained.
+- Add admin import registry keys here before using new `import_runs.source` values.
+
 ---
 
 ### NHL Player Transaction Source
@@ -382,6 +407,7 @@ Do not introduce new enum values without updating this document.
 - `nhl`
 - `nhl_draft`
 - `fantrax`
+- `yahoo`
 - `capwages`
 - `eliteprospects`
 
@@ -390,6 +416,7 @@ Do not introduce new enum values without updating this document.
 - `nhl`: NHL API player identity.
 - `nhl_draft`: NHL draft-pick identity for drafted players that do not yet have an NHL player id.
 - `fantrax`: Fantrax API player identity.
+- `yahoo`: Yahoo Fantasy Sports API player identity.
 - `capwages`: CapWages API player identity.
 - `eliteprospects`: EliteProspects API player identity.
 
@@ -397,7 +424,7 @@ Do not introduce new enum values without updating this document.
 
 - The column is not database constrained.
 - NHL is the initial authority provider allowed to create canonical `players` rows during import.
-- NHL draft identities may create minimal canonical prospect `players` rows with `nhl_id = NULL` when the draft pick payload has no usable NHL player id.
+- NHL draft identities may create minimal canonical prospect `players` rows with `nhl_id = NULL` only after checking existing canonical players by normalized name and compatible position type.
 
 ### Player External Identity Match Status
 
@@ -646,6 +673,25 @@ Do not introduce new enum values without updating this document.
 
 - Provider account columns are string-backed, not database enums.
 - Patreon OAuth, nightly sync, webhook handling, tier sync, and member sync all use `patreon`.
+
+### Yahoo Fantasy Connection Status
+
+**Name:** Yahoo Fantasy connection status
+**Storage location(s):** `yahoo_fantasy_connections.status` (string column)
+**Allowed values currently used:**
+
+- `connected`
+- `offline`
+
+**Semantic meaning:**
+
+- `connected`: Yahoo OAuth grant exists and token/API handling is expected to work.
+- `offline`: Yahoo OAuth grant exists but token/API handling failed.
+
+**Notes:**
+
+- The column is not database constrained.
+- `connected` is the database default for new Yahoo OAuth callbacks.
 
 ### Provider Account Status
 

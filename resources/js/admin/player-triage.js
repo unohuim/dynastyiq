@@ -59,6 +59,24 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
     const locationRef = dependencies.location ?? window.location;
 
     const currentUrl = () => new URL(root.dataset.playerTriageUrl || locationRef.href, locationRef.origin);
+    const visibleBaseUrl = () => new URL(root.dataset.playerTriageHistoryUrl || locationRef.href, locationRef.origin);
+
+    const historyUrlFor = (url) => {
+        if (root.dataset.playerTriageEmbedded !== '1') {
+            return url;
+        }
+
+        const visibleUrl = visibleBaseUrl();
+        visibleUrl.search = '';
+
+        url.searchParams.forEach((value, key) => {
+            if (key !== 'admin_panel') {
+                visibleUrl.searchParams.append(key, value);
+            }
+        });
+
+        return visibleUrl;
+    };
 
     const focusSnapshot = () => {
         const input = root.contains(document.activeElement) && document.activeElement.matches('input, textarea')
@@ -191,7 +209,7 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
             }
 
             if (options.history !== false) {
-                historyApi.pushState({ playerTriage: true }, '', options.historyUrl ?? requestUrl);
+                historyApi.pushState({ playerTriage: true }, '', options.historyUrl ?? historyUrlFor(requestUrl));
             }
 
             return payload;
@@ -250,7 +268,7 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
             }
 
             if (options.history !== false) {
-                historyApi.pushState({ playerTriage: true }, '', options.historyUrl ?? requestUrl);
+                historyApi.pushState({ playerTriage: true }, '', options.historyUrl ?? historyUrlFor(requestUrl));
             }
 
             return payload;
@@ -379,7 +397,7 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
             }
 
             loadDetail(new URL(event.detail.detailUrl ?? event.detail.href), {
-                historyUrl: new URL(event.detail.href),
+                historyUrl: historyUrlFor(new URL(event.detail.href)),
             });
         });
 
@@ -391,7 +409,7 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
                 }));
                 restoreSearchFieldFocus(event.target, event.detail.focus);
 
-                const url = mergeParams(new URL(locationRef.href), new URLSearchParams({ search: event.detail.value }));
+                const url = mergeParams(visibleBaseUrl(), new URLSearchParams({ search: event.detail.value }));
                 url.searchParams.delete('identity');
                 historyApi.replaceState?.({ playerTriage: true }, '', url);
 
@@ -417,7 +435,12 @@ export const createPlayerTriagePage = (initialRoot, dependencies = {}) => {
         });
     };
 
-    const handlePopState = () => load(new URL(locationRef.href), { history: false });
+    const handlePopState = () => {
+        const visibleUrl = new URL(locationRef.href);
+        const url = mergeParams(currentUrl(), visibleUrl.searchParams);
+
+        load(url, { history: false });
+    };
 
     bind();
     window.addEventListener('popstate', handlePopState);

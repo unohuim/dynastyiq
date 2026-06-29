@@ -56,6 +56,36 @@
                 <div class="space-y-1">
                     @include('nav.partials._fantrax')
 
+                    @php
+                        $hasYahoo = auth()->user()?->yahooFantasyConnection?->status === 'connected';
+                    @endphp
+                    <a
+                        href="{{ route('integrations.yahoo.redirect', ['return_to' => request()->getRequestUri(), 'drawer' => 'account']) }}"
+                        x-bind:href="`{{ route('integrations.yahoo.redirect') }}?return_to=${encodeURIComponent(window.location.pathname + window.location.search)}&drawer=account`"
+                        class="group flex items-center justify-between px-3 py-2 rounded-xl hover:bg-white/5">
+                        <div class="flex items-center gap-3">
+                            <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M12 3.75c4.56 0 8.25 3.69 8.25 8.25s-3.69 8.25-8.25 8.25S3.75 16.56 3.75 12 7.44 3.75 12 3.75Zm-3 6.75 3 3 3-3" />
+                            </svg>
+                            <span class="text-sm">Yahoo</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            @if($hasYahoo)
+                                <span
+                                    class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/20">Connected</span>
+                            @else
+                                <span
+                                    class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-200 ring-1 ring-indigo-400/20">Connect</span>
+                            @endif
+                            <svg class="h-4 w-4 text-gray-400 group-hover:text-gray-300" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </div>
+                    </a>
+
                     <a href="{{ route('discord.join') }}" target="_blank" rel="noopener"
                         class="group flex items-center justify-between px-3 py-2 rounded-xl hover:bg-white/5">
                         <div class="flex items-center gap-3">

@@ -16,6 +16,7 @@ class PlayerExternalIdentity extends Model
     public const PROVIDER_NHL = 'nhl';
     public const PROVIDER_NHL_DRAFT = 'nhl_draft';
     public const PROVIDER_FANTRAX = 'fantrax';
+    public const PROVIDER_YAHOO = 'yahoo';
     public const PROVIDER_CAPWAGES = 'capwages';
     public const PROVIDER_ELITEPROSPECTS = 'eliteprospects';
 
