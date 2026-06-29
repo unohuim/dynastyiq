@@ -1,0 +1,35 @@
+name: Fantasy Provider League Access
+type: External Platform Integration Pattern
+location:
+  - app/Support/FantasyProvider.php
+  - app/Services/FantasyIntegrationState.php
+  - app/Services/FantasyLeagueAccess.php
+  - app/Http/Controllers/LeagueController.php
+purpose: Expose a provider-neutral readiness and access layer for fantasy league navigation and route access across Fantrax, Yahoo, and future fantasy platforms.
+when_to_use:
+  - Deciding whether a user can see or access the Leagues experience.
+  - Returning a common integration state payload for a fantasy provider.
+  - Querying active platform leagues for all ready connected fantasy providers.
+when_not_to_use:
+  - Storing provider credentials or OAuth tokens.
+  - Importing provider-specific player, roster, or transaction payloads.
+  - Replacing provider-specific sync jobs.
+rules:
+  - Supported fantasy league providers must be declared through FantasyProvider.
+  - FantasyIntegrationState must expose the same payload shape for each supported provider even when provider credential storage differs.
+  - Fantrax connection state is backed by integration_secrets.
+  - Yahoo connection state is backed by yahoo_fantasy_connections.
+  - A provider may show leagues only when it is connected and has at least one active league_user_teams assignment for that provider.
+  - The Leagues navigation affordance and direct Leagues routes must use FantasyLeagueAccess instead of provider-specific credential checks.
+  - Active league queries for the Leagues experience must exclude inactive league_user_teams rows.
+public_interface:
+  - FantasyProvider::leagueProviders()
+  - FantasyIntegrationState::forProvider()
+  - FantasyIntegrationState::forUser()
+  - FantasyIntegrationState::canShowAnyLeague()
+  - FantasyLeagueAccess::canViewLeagues()
+  - FantasyLeagueAccess::activeLeaguesForUser()
+example_usage: |
+  if (app(FantasyLeagueAccess::class)->canViewLeagues($user)) {
+      $leagues = app(FantasyLeagueAccess::class)->activeLeaguesForUser($user)->get();
+  }

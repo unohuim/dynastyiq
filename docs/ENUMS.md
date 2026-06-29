@@ -353,6 +353,27 @@ Do not introduce new enum values without updating this document.
 - Default value is `needs_setup`.
 - Fantrax connect flow writes `connected` after validating a secret and importing leagues.
 
+### Fantasy Integration Readiness Status
+
+**Name:** Fantasy integration readiness status
+**Storage location(s):** `FantasyIntegrationState` response payload (derived, not stored)
+**Allowed values:**
+
+- `disconnected`
+- `connected`
+- `ready`
+
+**Semantic meaning:**
+
+- `disconnected`: No active provider credential or grant exists for the user.
+- `connected`: A valid provider credential or grant exists, but active league ownership has not been materialized.
+- `ready`: A valid provider credential or grant exists and the user has at least one active league assignment for that provider.
+
+**Notes:**
+
+- Leagues navigation visibility is driven by the derived `show_leagues` flag, not by provider credential storage alone.
+- Fantrax and Yahoo expose this common state shape even though Fantrax uses `integration_secrets` and Yahoo uses `yahoo_fantasy_connections`.
+
 ### Platform Roster Membership Status
 
 **Name:** Platform roster membership status  
@@ -372,6 +393,51 @@ Do not introduce new enum values without updating this document.
 - `ir`: Player is in an injured-reserve slot.
 - `na`: Player is in a not-active/not-available slot.
 - `taxi`: Player is on taxi squad.
+
+### League Sync Broadcast Status
+
+**Name:** League sync broadcast status
+**Storage location(s):** `LeagueSyncStatusUpdated.status` broadcast payload
+**Allowed values:**
+
+- `processing`
+- `completed`
+- `failed`
+
+**Semantic meaning:**
+
+- `processing`: A user-visible league sync job has started processing.
+- `completed`: A user-visible league sync job completed successfully.
+- `failed`: A user-visible league sync job failed.
+
+**Notes:**
+
+- These values are not persisted; they are broadcast to the private user channel for Leagues UI feedback.
+
+### Platform League Roster Slot Type
+
+**Name:** Platform league roster slot type
+**Storage location(s):** `platform_league_roster_slots.slot_type` (nullable string column)
+**Allowed values:**
+
+- `starter`
+- `bench`
+- `injured`
+- `minor`
+- `utility`
+
+**Semantic meaning:**
+
+- `starter`: Normal active lineup slot.
+- `bench`: Bench slot.
+- `injured`: Injured-reserve slot.
+- `minor`: Minor/not-active style slot.
+- `utility`: Flexible lineup slot.
+
+**Notes:**
+
+- The column is not database constrained.
+- Provider-specific roster position labels are stored in `platform_league_roster_slots.slot`.
 
 ### League Platform Link Status
 

@@ -49,11 +49,11 @@
           return r.json();
         })
         .then(data => {
-          connected = true;         // updates the badge
+          const integration = data?.integration ?? {};
+          connected = !!integration.connected;         // updates the badge
           open = false;             // collapse the inline form
 
-          // 🔥 notify the rest of the app (e.g., navbar)
-          window.dispatchEvent(new CustomEvent('fantrax:connected'));
+          window.dispatchEvent(new CustomEvent('integration:updated', { detail: integration }));
         })
         .catch(e => {
           error = (e?.errors?.fantrax_secret_key?.[0]) ?? 'Unable to save key.';

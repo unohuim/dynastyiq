@@ -131,6 +131,17 @@ class Player extends Model
 
 
 
+    /**
+     * Get the player's age from the existing accessor.
+     */
+    public function age(): ?int
+    {
+        return $this->age;
+    }
+
+    /**
+     * Get the player's age.
+     */
     public function getAgeAttribute(): ?int
     {
         return $this->dob

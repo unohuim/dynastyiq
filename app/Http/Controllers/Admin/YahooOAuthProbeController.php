@@ -7,12 +7,14 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\YahooFantasyConnection;
 use App\Services\YahooFantasyClient;
+use App\Services\YahooFantasyLeagueService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use RuntimeException;
 use SimpleXMLElement;
+use Throwable;
 
 /**
  * Connects Yahoo OAuth and verifies Fantasy Sports API access.
@@ -46,7 +48,11 @@ class YahooOAuthProbeController extends Controller
     /**
      * Exchange Yahoo's authorization code and return sanitized Fantasy API proof data.
      */
-    public function callback(Request $request, YahooFantasyClient $client): JsonResponse|RedirectResponse
+    public function callback(
+        Request $request,
+        YahooFantasyClient $client,
+        YahooFantasyLeagueService $leagueService,
+    ): JsonResponse|RedirectResponse
     {
         $expectedState = (string) $request->session()->pull('yahoo_oauth_state', '');
         $redirectUri = (string) $request->session()->pull('yahoo_oauth_redirect_uri', $this->redirectUri($request));
@@ -102,6 +108,8 @@ class YahooOAuthProbeController extends Controller
             ]),
         ])->save();
 
+        $leagueSync = $this->syncLeagues($connection->refresh(), $leagueService);
+
         $payload = [
             'ok' => true,
             'connection' => [
@@ -110,6 +118,7 @@ class YahooOAuthProbeController extends Controller
                 'token_expires_at' => $connection->token_expires_at?->toIso8601String(),
             ],
             'game' => $game,
+            'league_sync' => $leagueSync,
             'players' => $this->playersPayload($playersXml),
         ];
 
@@ -119,6 +128,40 @@ class YahooOAuthProbeController extends Controller
         }
 
         return response()->json($payload);
+    }
+
+    /**
+     * Sync Yahoo leagues without invalidating an otherwise successful OAuth grant.
+     *
+     * @return array<string,mixed>
+     */
+    private function syncLeagues(YahooFantasyConnection $connection, YahooFantasyLeagueService $leagueService): array
+    {
+        try {
+            $summary = $leagueService->syncForConnection($connection);
+
+            $connection->forceFill([
+                'last_error' => null,
+                'meta' => array_merge($connection->meta ?? [], [
+                    'league_sync' => $summary,
+                ]),
+            ])->save();
+
+            return $summary;
+        } catch (Throwable $throwable) {
+            $connection->forceFill([
+                'last_error' => $throwable->getMessage(),
+                'meta' => array_merge($connection->meta ?? [], [
+                    'league_sync' => [
+                        'error' => $throwable->getMessage(),
+                    ],
+                ]),
+            ])->save();
+
+            return [
+                'error' => 'Yahoo connected, but league sync failed.',
+            ];
+        }
     }
 
     /**

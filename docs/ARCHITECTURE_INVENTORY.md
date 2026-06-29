@@ -852,6 +852,39 @@ NhlPlayerTransaction::query()->where('player_id', $player->id)->get();
 
 ## Platform Integrations
 
+### Fantasy Provider League Access
+
+**Name:** Fantasy Provider League Access
+**Type:** External Platform Integration Pattern
+**Location:**
+- `app/Support/FantasyProvider.php`
+- `app/Services/FantasyIntegrationState.php`
+- `app/Services/FantasyLeagueAccess.php`
+- `app/Http/Controllers/LeagueController.php`
+
+**Purpose:**
+Expose provider-neutral fantasy readiness and active league access for navigation and direct Leagues route access.
+
+**When to Use:**
+Determining whether a user can access the Leagues experience, returning a fantasy provider state payload, or querying active leagues across ready providers.
+
+**When Not to Use:**
+Storing provider credentials, importing provider-specific payloads, or replacing Fantrax/Yahoo sync jobs.
+
+**Public Interface:**
+- `FantasyProvider::leagueProviders()`
+- `FantasyIntegrationState::forProvider()`
+- `FantasyIntegrationState::forUser()`
+- `FantasyLeagueAccess::canViewLeagues()`
+- `FantasyLeagueAccess::activeLeaguesForUser()`
+
+**Example Usage:**
+```php
+$leagues = app(FantasyLeagueAccess::class)->activeLeaguesForUser($user)->get();
+```
+
+---
+
 ### Fantrax User Connection
 
 **Name:** Fantrax User Connection  
@@ -859,12 +892,13 @@ NhlPlayerTransaction::query()->where('player_id', $player->id)->get();
 **Location:**
 - `app/Http/Controllers/FantraxUserController.php`
 - `app/Models/IntegrationSecret.php`
+- `app/Services/FantasyIntegrationState.php`
 - `app/Services/ImportUserFantraxLeagues.php`
 - `app/Events/FantraxUserConnected.php`
 - `app/Listeners/HandleFantraxUserConnected.php`
 
 **Purpose:**  
-Store a user's Fantrax integration secret and trigger Fantrax league/team imports for that user.
+Store a user's Fantrax integration secret, trigger Fantrax league/team imports, deactivate user league assignments on disconnect, and derive user-facing Fantrax readiness state for navigation and route access.
 
 **When to Use:**  
 Connecting, disconnecting, or refreshing a user's Fantrax account.
@@ -876,11 +910,12 @@ Provider accounts owned by an organization, Patreon sync, or Discord OAuth login
 - `integrations.fantrax.save`
 - `integrations.fantrax.disconnect`
 - `IntegrationSecret`
+- `FantasyIntegrationState`
 - `FantraxUserConnected`
 
 **Example Usage:**
 ```php
-event(new FantraxUserConnected($user));
+$state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider::FANTRAX);
 ```
 
 ---
@@ -896,6 +931,7 @@ event(new FantraxUserConnected($user));
 - `app/Services/ImportFantraxPlayers.php`
 - `app/Jobs/SyncFantraxLeagueJob.php`
 - `app/Jobs/SyncFantraxTeamJob.php`
+- `app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php`
 - `app/Models/PlatformLeague.php`
 - `app/Models/PlatformTeam.php`
 - `app/Models/PlatformRosterMembership.php`
@@ -913,6 +949,7 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 **Public Interface:**
 - `SyncFantraxLeagueJob`
 - `SyncFantraxTeamJob`
+- `SyncFantraxRosterMembershipsForLinkedIdentity`
 - `FantraxLeagueService`
 - Platform league/team/roster models
 
@@ -947,6 +984,113 @@ Executing sync jobs or storing provider credentials.
 **Example Usage:**
 ```php
 $state = app(PlatformState::class);
+```
+
+---
+
+### Platform League Roster Slots
+
+**Name:** Platform League Roster Slots
+**Type:** External Platform Integration Pattern
+**Location:**
+- `app/Models/PlatformLeagueRosterSlot.php`
+- `app/Models/PlatformLeague.php`
+- `app/Http/Controllers/LeagueController.php`
+- `app/Services/YahooFantasyLeagueService.php`
+- `database/migrations/*_create_platform_league_roster_slots_table.php`
+
+**Purpose:**
+Store provider-neutral roster slot order and counts for platform leagues so roster displays can follow league settings.
+
+**When to Use:**
+Importing league roster position settings from external fantasy providers or sorting platform roster memberships for display.
+
+**When Not to Use:**
+Current roster membership storage, scoring categories, standings, or provider setting guesses without source payloads.
+
+**Public Interface:**
+- `PlatformLeagueRosterSlot`
+- `PlatformLeague::rosterSlots()`
+- `platform_league_roster_slots`
+
+**Example Usage:**
+```php
+$slotOrder = $league->rosterSlots()->pluck('sort_order', 'slot');
+```
+
+---
+
+### Yahoo Fantasy League Sync
+
+**Name:** Yahoo Fantasy League Sync
+**Type:** External Platform Sync Pattern
+**Location:**
+- `app/Jobs/SyncYahooTeamRosterJob.php`
+- `app/Services/YahooFantasyLeagueService.php`
+- `app/Services/YahooFantasyClient.php`
+- `app/Models/YahooFantasyConnection.php`
+- `app/Models/PlatformLeague.php`
+- `app/Models/PlatformLeagueRosterSlot.php`
+- `app/Models/PlatformTeam.php`
+- `app/Http/Controllers/LeagueController.php`
+- `app/Http/Controllers/Admin/YahooOAuthProbeController.php`
+
+**Purpose:**
+Map a connected Yahoo Fantasy user's hockey leagues, roster settings, and teams into platform-neutral league tables.
+
+**When to Use:**
+Syncing Yahoo leagues after OAuth connection, refreshing Yahoo league assignments, importing Yahoo roster position settings, or making Yahoo leagues available through the shared Leagues experience.
+
+**When Not to Use:**
+Yahoo player imports, standings, scoring settings, scoreboard data, or transactions.
+
+**Public Interface:**
+- `SyncYahooTeamRosterJob`
+- `PlatformLeague::rosterSlots()`
+- `YahooFantasyLeagueService::syncForConnection()`
+- `YahooFantasyClient::fantasyXmlForConnection()`
+- `integrations.yahoo.callback`
+- `admin.yahoo.oauth.callback`
+- `leagues.yahoo.resync`
+
+**Example Usage:**
+```php
+$summary = app(YahooFantasyLeagueService::class)->syncForConnection($connection);
+```
+
+---
+
+### Yahoo Fantasy Roster Sync
+
+**Name:** Yahoo Fantasy Roster Sync
+**Type:** External Platform Sync Pattern
+**Location:**
+- `app/Jobs/SyncYahooTeamRosterJob.php`
+- `app/Services/YahooFantasyRosterService.php`
+- `app/Services/YahooFantasyClient.php`
+- `app/Services/PlayerIdentityResolver.php`
+- `app/Models/YahooPlayer.php`
+- `app/Models/PlatformTeam.php`
+
+**Purpose:**
+Map Yahoo Fantasy team rosters through Yahoo player staging and canonical identities into platform roster memberships.
+
+**When to Use:**
+Syncing current Yahoo rosters for owned Yahoo teams or updating Yahoo platform roster memberships.
+
+**When Not to Use:**
+Yahoo league discovery, all-player collection imports, or rendering league rosters directly from provider XML.
+
+**Notes:**
+Roster sync reports payload, identity resolution, membership insert/update, and stale-close counts, and may persist the latest summary on `platform_teams.extras` for diagnostics.
+
+**Public Interface:**
+- `SyncYahooTeamRosterJob`
+- `YahooFantasyRosterService::syncTeam()`
+
+**Example Usage:**
+```php
+SyncYahooTeamRosterJob::dispatch($platformTeam->id);
 ```
 
 ---
@@ -1367,6 +1511,7 @@ Community-only pages or generic stats pages.
 
 **Public Interface:**
 - `<x-leagues-hub-layout>`
+- `resources/js/components/LeaguesHubLayout.js`
 
 **Example Usage:**
 ```blade

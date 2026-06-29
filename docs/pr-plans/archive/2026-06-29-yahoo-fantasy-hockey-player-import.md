@@ -1,16 +1,16 @@
 ---
 pr_id: 5
 pr_name: pr5
-status: Active
+status: Archived
 ---
 
 # Yahoo Fantasy Hockey Player Import PR Plan
 
-Status: Active
+Status: Archived
 Source: Future fantasy provider expansion
 Target branch: staging
 Created: 2026-06-27
-Last updated: 2026-06-28
+Last updated: 2026-06-29
 
 ## Goal
 

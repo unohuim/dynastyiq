@@ -63,6 +63,7 @@ Migrations remain the **sole source of truth**.
 - personal_access_tokens
 - perspectives
 - platform_leagues
+- platform_league_roster_slots
 - platform_player_ids
 - platform_roster_memberships
 - platform_teams
@@ -1655,6 +1656,35 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `(platform, platform_league_id)` (`uq_platform_league`)
 - Index: `platform`
+
+---
+
+## platform_league_roster_slots
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** Provider-neutral roster slot settings for external fantasy platform leagues.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| slot | string | No | Provider roster slot label |
+| slot_type | string | Yes | Normalized slot display group |
+| position_type | string | Yes | Normalized hockey position type |
+| count | unsignedSmallInteger | No | Number of configured slots |
+| sort_order | unsignedSmallInteger | No | Provider roster display order |
+| raw_payload | json | Yes | Raw provider roster slot payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, slot)` (`uq_platform_league_roster_slot`)
+- Index: `(platform_league_id, sort_order)` (`idx_platform_league_roster_order`)
+- Implicit (FK index): `platform_league_id`
 
 ---
 

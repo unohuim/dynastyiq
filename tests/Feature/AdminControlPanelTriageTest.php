@@ -5,13 +5,17 @@ declare(strict_types=1);
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Jobs\ImportYahooPlayersPageJob;
+use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
 use App\Models\Role;
 use App\Models\User;
 use App\Models\YahooFantasyConnection;
 use App\Models\YahooPlayer;
 use App\Services\YahooFantasyPlayerImporter;
+use App\Services\YahooFantasyRosterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -218,9 +222,105 @@ XML),
   </game>
 </fantasy_content>
 XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=nhl/leagues' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <users>
+    <user>
+      <games>
+        <game>
+          <game_key>475</game_key>
+          <leagues count="1">
+            <league>
+              <league_key>475.l.12345</league_key>
+              <league_id>12345</league_id>
+              <name>Dynasty Hockey</name>
+              <url>https://hockey.fantasysports.yahoo.com/hockey/12345</url>
+              <season>2026</season>
+            </league>
+          </leagues>
+        </game>
+      </games>
+    </user>
+  </users>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=nhl/teams' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <users>
+    <user>
+      <games>
+        <game>
+          <teams count="1">
+            <team>
+              <team_key>475.l.12345.t.2</team_key>
+              <team_id>2</team_id>
+              <name>Rob's Team</name>
+              <url>https://hockey.fantasysports.yahoo.com/hockey/12345/2</url>
+            </team>
+          </teams>
+        </game>
+      </games>
+    </user>
+  </users>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/league/475.l.12345/teams' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <league>
+    <league_key>475.l.12345</league_key>
+    <teams count="2">
+      <team>
+        <team_key>475.l.12345.t.1</team_key>
+        <team_id>1</team_id>
+        <name>Opponent Team</name>
+      </team>
+      <team>
+        <team_key>475.l.12345.t.2</team_key>
+        <team_id>2</team_id>
+        <name>Rob's Team</name>
+      </team>
+    </teams>
+  </league>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/league/475.l.12345/settings' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <league>
+    <league_key>475.l.12345</league_key>
+    <settings>
+      <roster_positions>
+        <roster_position>
+          <position>C</position>
+          <position_type>O</position_type>
+          <count>2</count>
+        </roster_position>
+        <roster_position>
+          <position>D</position>
+          <position_type>O</position_type>
+          <count>4</count>
+        </roster_position>
+        <roster_position>
+          <position>G</position>
+          <position_type>G</position_type>
+          <count>2</count>
+        </roster_position>
+        <roster_position>
+          <position>BN</position>
+          <count>5</count>
+        </roster_position>
+      </roster_positions>
+    </settings>
+  </league>
+</fantasy_content>
+XML),
     ]);
 
     $user = User::factory()->create();
+    Queue::fake([SyncYahooTeamRosterJob::class]);
 
     $this->actingAs($user)
         ->withSession([
@@ -240,12 +340,185 @@ XML),
     expect($connection->status)->toBe('connected')
         ->and($connection->access_token)->toBe('user-access-token')
         ->and($connection->refresh_token)->toBe('user-refresh-token')
-        ->and($connection->meta['game']['game_key'] ?? null)->toBe('475');
+        ->and($connection->meta['game']['game_key'] ?? null)->toBe('475')
+        ->and($connection->meta['league_sync']['leagues_count'] ?? null)->toBe(1)
+        ->and($connection->meta['league_sync']['owned_teams_count'] ?? null)->toBe(1);
+
+    $this->assertDatabaseHas('platform_leagues', [
+        'platform' => 'yahoo',
+        'platform_league_id' => '475.l.12345',
+        'name' => 'Dynasty Hockey',
+        'sport' => 'hockey',
+    ]);
+    $league = PlatformLeague::query()
+        ->where('platform', 'yahoo')
+        ->where('platform_league_id', '475.l.12345')
+        ->firstOrFail();
+    $this->assertDatabaseHas('platform_league_roster_slots', [
+        'platform_league_id' => $league->id,
+        'slot' => 'C',
+        'slot_type' => 'starter',
+        'position_type' => 'F',
+        'count' => 2,
+        'sort_order' => 1,
+    ]);
+    $this->assertDatabaseHas('platform_league_roster_slots', [
+        'platform_league_id' => $league->id,
+        'slot' => 'BN',
+        'slot_type' => 'bench',
+        'position_type' => null,
+        'count' => 5,
+        'sort_order' => 4,
+    ]);
+    $this->assertDatabaseHas('platform_teams', [
+        'platform_team_id' => '475.l.12345.t.2',
+        'name' => "Rob's Team",
+    ]);
+    $this->assertDatabaseHas('league_user_teams', [
+        'user_id' => $user->id,
+        'is_active' => true,
+    ]);
+    $team = PlatformTeam::query()
+        ->where('platform_team_id', '475.l.12345.t.2')
+        ->firstOrFail();
+    Queue::assertPushed(
+        SyncYahooTeamRosterJob::class,
+        fn (SyncYahooTeamRosterJob $job): bool => $job->platformTeamId === $team->id,
+    );
 
     Http::assertSent(fn ($request): bool => $request->url() === 'https://api.login.yahoo.com/oauth2/get_token'
         && $request['grant_type'] === 'authorization_code'
         && $request['code'] === 'auth-code'
         && $request['redirect_uri'] === route('integrations.yahoo.callback'));
+});
+
+it('syncs Yahoo team roster players through staging identities and roster memberships', function () {
+    config([
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+    ]);
+
+    Http::fake([
+        'https://fantasysports.yahooapis.com/fantasy/v2/team/475.l.12345.t.2/roster/players' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <team>
+    <team_key>475.l.12345.t.2</team_key>
+    <roster>
+      <players count="1">
+        <player>
+          <player_key>475.p.5980</player_key>
+          <player_id>5980</player_id>
+          <name>
+            <full>Nathan MacKinnon</full>
+            <first>Nathan</first>
+            <last>MacKinnon</last>
+          </name>
+          <editorial_team_abbr>COL</editorial_team_abbr>
+          <display_position>C</display_position>
+          <eligible_positions>
+            <position>C</position>
+          </eligible_positions>
+          <selected_position>
+            <position>C</position>
+          </selected_position>
+        </player>
+      </players>
+    </roster>
+  </team>
+</fantasy_content>
+XML),
+    ]);
+
+    $user = User::factory()->create();
+    YahooFantasyConnection::create([
+        'user_id' => $user->id,
+        'status' => 'connected',
+        'access_token' => 'access-token-value',
+        'refresh_token' => 'refresh-token-value',
+        'token_expires_at' => now()->addHour(),
+        'connected_at' => now(),
+    ]);
+    $league = PlatformLeague::create([
+        'platform' => 'yahoo',
+        'platform_league_id' => '475.l.12345',
+        'name' => 'Dynasty Hockey',
+        'sport' => 'hockey',
+    ]);
+    $team = PlatformTeam::create([
+        'platform_league_id' => $league->id,
+        'platform_team_id' => '475.l.12345.t.2',
+        'name' => "Rob's Team",
+    ]);
+    $user->platformLeagues()->attach($league->id, [
+        'team_id' => $team->id,
+        'is_active' => true,
+        'extras' => json_encode(['provider' => 'yahoo']),
+        'synced_at' => now(),
+    ]);
+    $player = Player::create([
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'full_name' => 'Nathan MacKinnon',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'COL',
+        'status' => 'active',
+    ]);
+    $stalePlayer = Player::create([
+        'first_name' => 'Stale',
+        'last_name' => 'Player',
+        'full_name' => 'Stale Player',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'COL',
+        'status' => 'active',
+    ]);
+    DB::table('platform_roster_memberships')->insert([
+        'platform_team_id' => $team->id,
+        'player_id' => $stalePlayer->id,
+        'platform' => 'yahoo',
+        'platform_player_id' => '475.p.old',
+        'slot' => 'C',
+        'status' => 'active',
+        'starts_at' => now()->subDay(),
+        'created_at' => now()->subDay(),
+        'updated_at' => now()->subDay(),
+    ]);
+
+    $result = app(YahooFantasyRosterService::class)->syncTeam($team->id);
+
+    expect($result)->toBe([
+        'players_count' => 1,
+        'resolved_count' => 1,
+    ]);
+    $this->assertDatabaseHas('yahoo_players', [
+        'player_key' => '475.p.5980',
+        'yahoo_player_id' => '5980',
+        'player_id' => $player->id,
+    ]);
+    $this->assertDatabaseHas('player_external_identities', [
+        'provider' => PlayerExternalIdentity::PROVIDER_YAHOO,
+        'provider_player_id' => '5980',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $this->assertDatabaseHas('platform_roster_memberships', [
+        'platform_team_id' => $team->id,
+        'player_id' => $player->id,
+        'platform' => 'yahoo',
+        'platform_player_id' => '475.p.5980',
+        'slot' => 'C',
+        'status' => 'active',
+        'ends_at' => null,
+    ]);
+
+    expect(
+        DB::table('platform_roster_memberships')
+            ->where('platform_team_id', $team->id)
+            ->where('player_id', $stalePlayer->id)
+            ->whereNotNull('ends_at')
+            ->exists(),
+    )->toBeTrue();
 });
 
 it('ignores unsafe Yahoo OAuth return urls', function () {
@@ -369,6 +642,34 @@ XML),
       </player>
     </players>
   </game>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=nhl/leagues' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <users>
+    <user>
+      <games>
+        <game>
+          <leagues count="0" />
+        </game>
+      </games>
+    </user>
+  </users>
+</fantasy_content>
+XML),
+        'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=nhl/teams' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<fantasy_content xmlns="https://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+  <users>
+    <user>
+      <games>
+        <game>
+          <teams count="0" />
+        </game>
+      </games>
+    </user>
+  </users>
 </fantasy_content>
 XML),
     ]);

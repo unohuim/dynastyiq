@@ -9,6 +9,7 @@ location:
   - app/Listeners/QueueNhlIdentityResolution.php
   - app/Jobs/RefreshCapWagesContractsForIdentityJob.php
   - app/Listeners/QueueCapWagesContractRefresh.php
+  - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
   - app/Services/NhlPlayerIdentityLookup.php
   - app/Services/PlayerIdentityNormalizer.php
   - app/Services/PlayerIdentityResolver.php
@@ -40,6 +41,7 @@ rules:
   - NHL identity enrichment with multiple same-name and same-position candidates must upsert NHL candidate identities for triage without mutating players.nhl_id.
   - Non-authority provider imports may auto-link only when an existing provider link, known durable ID, or provider-specific evidence score identifies exactly one canonical player at or above the provider threshold.
   - Provider evidence scoring must treat exact normalized name as 75, exact normalized name plus one strong context match as 85, and exact normalized name plus birthdate or two strong context matches as 95.
+  - Provider identity matching may treat first-name y/i ending variants as compatible, such as Dmitry and Dmitri, only when last name matches and position type remains compatible.
   - Strong context matches currently include position type and team abbreviation.
   - Provider team strings should be normalized through NHL team reference data before being stored as matching evidence.
   - Position type matching must compare goalies as G, defense as D, and L/C/R/LW/RW/F as F.
@@ -57,6 +59,7 @@ rules:
   - CapWages contract rows and contract season rows must only be materialized after a CapWages identity has a non-null player_id.
   - PlayerIdentityResolver::linkIdentityToPlayer() must dispatch PlayerExternalIdentityLinked when an identity transitions to a different player_id.
   - CapWages must respond to PlayerExternalIdentityLinked by queuing RefreshCapWagesContractsForIdentityJob, which re-fetches CapWages detail before writing contracts.
+  - Fantrax must respond to PlayerExternalIdentityLinked by mirroring the canonical player_id to fantrax_players and queueing Fantrax league roster sync so platform_roster_memberships can be rebuilt from provider roster evidence.
   - Matching status and unmatched reason values must remain aligned with docs/ENUMS.md.
   - A matched identity must reference exactly one canonical player.
   - A canonical player may have many provider identities, but a provider and provider_player_id pair must be unique.
@@ -79,6 +82,7 @@ public_interface:
   - PlayerIdentityResolver::linkIdentityToPlayer()
   - PlayerExternalIdentityLinked
   - RefreshCapWagesContractsForIdentityJob
+  - SyncFantraxRosterMembershipsForLinkedIdentity
   - PlayerIdentityResolver::statusCountsByProvider()
 example_usage: |
   $identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);

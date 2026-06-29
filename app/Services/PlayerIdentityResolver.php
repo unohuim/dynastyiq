@@ -431,7 +431,7 @@ class PlayerIdentityResolver
     {
         return Player::query()
             ->get()
-            ->filter(fn (Player $player) => $this->normalizer->normalizeName($player->full_name) === $identity->normalized_name)
+            ->filter(fn (Player $player) => $this->identityNameMatchesPlayer($identity, $player))
             ->filter(fn (Player $player) => $this->positionTypesAreCompatible($identity, $player))
             ->map(fn (Player $player) => [
                 'player' => $player,
@@ -439,6 +439,51 @@ class PlayerIdentityResolver
             ])
             ->sortByDesc('score')
             ->values();
+    }
+
+    /**
+     * Determine whether a canonical player name is compatible with a provider identity.
+     */
+    private function identityNameMatchesPlayer(PlayerExternalIdentity $identity, Player $player): bool
+    {
+        if ($this->normalizer->normalizeName($player->full_name) === $identity->normalized_name) {
+            return true;
+        }
+
+        $identityFirstName = $this->normalizer->normalizeName($identity->first_name);
+        $identityLastName = $this->normalizer->normalizeName($identity->last_name);
+        $playerFirstName = $this->normalizer->normalizeName($player->first_name);
+        $playerLastName = $this->normalizer->normalizeName($player->last_name);
+
+        if ($identityLastName === null || $playerLastName === null || $identityLastName !== $playerLastName) {
+            return false;
+        }
+
+        return $this->firstNamesAreCompatible($identityFirstName, $playerFirstName);
+    }
+
+    /**
+     * Treat common transliteration endings as compatible first names.
+     */
+    private function firstNamesAreCompatible(?string $identityFirstName, ?string $playerFirstName): bool
+    {
+        if ($identityFirstName === null || $playerFirstName === null) {
+            return false;
+        }
+
+        if ($identityFirstName === $playerFirstName) {
+            return true;
+        }
+
+        return $this->yiEndingVariant($identityFirstName) === $this->yiEndingVariant($playerFirstName);
+    }
+
+    /**
+     * Normalize final y/i variants without changing broader name matching rules.
+     */
+    private function yiEndingVariant(string $name): string
+    {
+        return preg_replace('/[yi]$/', '#', $name) ?? $name;
     }
 
     /**

@@ -259,6 +259,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         // Leagues
         Route::get('/leagues', [LeagueController::class, 'index'])
             ->name('leagues.index');
+        Route::post('/leagues/resync', [LeagueController::class, 'resync'])
+            ->name('leagues.resync');
+        Route::post('/leagues/yahoo/resync', [LeagueController::class, 'resyncYahoo'])
+            ->name('leagues.yahoo.resync');
         Route::get('/leagues/{league_id}', [LeagueController::class, 'show'])
             ->name('leagues.show');
         Route::get('/leagues/{league_id}/panel', [LeagueController::class, 'panel'])

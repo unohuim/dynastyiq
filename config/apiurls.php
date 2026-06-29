@@ -99,11 +99,14 @@ return [
         ],
         'endpoints' => [
             'players'           => '/general/getPlayerIds?sport=NHL',
+            'adp'               => '/general/getAdp',
             'player_data'       => '/general/getPlayerProfile?leagueId={leagueId}&playerId={playerId}',
             'user_leagues'      => '/general/getLeagues?userSecretId={userSecretId}',
             'league_info'       => '/general/getLeagueInfo?leagueId={leagueId}',
-            'team_rosters'      => '/general/getTeamRosters?leagueId={leagueId}'
-
+            'draft_picks'       => '/general/getDraftPicks?leagueId={leagueId}',
+            'draft_results'     => '/general/getDraftResults?leagueId={leagueId}',
+            'team_rosters'      => '/general/getTeamRosters?leagueId={leagueId}',
+            'standings'         => '/general/getStandings?leagueId={leagueId}',
         ],
     ],
 

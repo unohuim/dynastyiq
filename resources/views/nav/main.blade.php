@@ -1,6 +1,9 @@
 
 @php
-    $hasFantrax      = auth()->check() && !empty(auth()->user()->fantraxSecret);
+    $fantasyStates = auth()->check()
+        ? app(\App\Services\FantasyIntegrationState::class)->forUser(auth()->user())
+        : [];
+    $hasFantasyLeagues = collect($fantasyStates)->contains(fn ($state) => (bool) ($state['show_leagues'] ?? false));
     $hasDiscord      = session('diq-user.connected', false);
     // Initial “Community Tools enabled” across any org the user has (cheap existence check)
     $hasCommunities  = auth()->check()
@@ -12,7 +15,8 @@
     x-data="{
         accountOpen:false,
         leftOpen:false,
-        hasFantrax: {{ $hasFantrax ? 'true':'false' }},
+        fantasyStates: @js($fantasyStates),
+        hasFantasyLeagues: {{ $hasFantasyLeagues ? 'true':'false' }},
         hasDiscord: {{ $hasDiscord ? 'true':'false' }},
         hasCommunities: {{ $hasCommunities ? 'true':'false' }},
     }"
@@ -20,7 +24,13 @@
         const params = new URLSearchParams(window.location.search);
         accountOpen = params.get('drawer') === 'account';
 
-        window.addEventListener('fantrax:connected',   () => hasFantrax = true);
+        window.addEventListener('integration:updated', (e) => {
+            const detail = e.detail || {};
+            if (['fantrax', 'yahoo'].includes(detail.provider)) {
+                fantasyStates[detail.provider] = detail;
+                hasFantasyLeagues = Object.values(fantasyStates).some((state) => !!state?.show_leagues);
+            }
+        });
         window.addEventListener('discord:connected',   () => hasDiscord = true);
 
         // React to Community Tools changes from anywhere (drawer, server echo, etc.)
@@ -49,7 +59,7 @@
 
             @auth
                 <x-nav-link
-                    x-show="hasFantrax"
+                    x-show="hasFantasyLeagues"
                     x-cloak
                     href="{{ route('leagues.index') }}"
                     class="text-lg font-semibold {{ request()->routeIs('leagues.index') ? 'text-indigo-600' : 'text-gray-600 hover:text-indigo-500' }}"
@@ -213,7 +223,7 @@
                 @endphp
 
                 <div class="px-2 space-y-2">
-                    <template x-if="hasFantrax">
+                    <template x-if="hasFantasyLeagues">
                         {!! $item(route('leagues.index'), 'Leagues',
                             $ico('M4.5 6.75h15m-15 4.5h15m-15 4.5h15'),
                             request()->routeIs('leagues.index')) !!}

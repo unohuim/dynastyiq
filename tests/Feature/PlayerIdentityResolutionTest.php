@@ -11,13 +11,16 @@ use App\Jobs\ImportNhlDraftPicksJob;
 use App\Jobs\ImportPlayersJob;
 use App\Jobs\RefreshCapWagesContractsForIdentityJob;
 use App\Jobs\ResolveCanonicalPlayerNhlIdentityJob;
+use App\Jobs\SyncFantraxLeagueJob;
 use App\Listeners\QueueCapWagesContractRefresh;
 use App\Listeners\QueueNhlIdentityResolution;
+use App\Listeners\SyncFantraxRosterMembershipsForLinkedIdentity;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\ContractSeason;
 use App\Models\FantraxPlayer;
 use App\Models\NhlTeam;
+use App\Models\PlatformLeague;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Services\ImportCapWagesPlayer;
@@ -1505,6 +1508,64 @@ it('does not dispatch an identity linked event when the identity remains on the 
     app(PlayerIdentityResolver::class)->linkIdentityToPlayer($identity, $player);
 
     Event::assertNotDispatched(PlayerExternalIdentityLinked::class);
+});
+
+it('matches fantrax first name y and i ending variants when last name and position type match', function () {
+    Queue::fake();
+    $player = ($this->makePlayer)([
+        'first_name' => 'Dmitri',
+        'last_name' => 'Voronkov',
+        'full_name' => 'Dmitri Voronkov',
+        'position' => 'C',
+        'team_abbrev' => 'CBJ',
+    ]);
+
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)([
+        'fantraxId' => 'fantrax-voronkov',
+        'name' => 'Voronkov, Dmitry',
+        'position' => 'C',
+        'team' => 'CBJ',
+    ]));
+
+    expect(PlayerExternalIdentity::query()->where('provider_player_id', 'fantrax-voronkov')->value('player_id'))
+        ->toBe($player->id);
+    expect(FantraxPlayer::query()->where('fantrax_id', 'fantrax-voronkov')->value('player_id'))
+        ->toBe($player->id);
+});
+
+it('updates fantrax player rows and queues league syncs when fantrax identities are manually linked', function () {
+    Queue::fake();
+    $player = ($this->makePlayer)();
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-manual-link',
+        'display_name' => 'Manual Link Player',
+        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+    FantraxPlayer::create([
+        'fantrax_id' => 'fantrax-manual-link',
+        'player_id' => null,
+        'name' => 'Manual Link Player',
+    ]);
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-league',
+        'name' => 'Fantrax League',
+        'sport' => 'hockey',
+    ]);
+
+    (new SyncFantraxRosterMembershipsForLinkedIdentity())->handle(
+        new PlayerExternalIdentityLinked($identity, null, $player->id),
+    );
+
+    expect(FantraxPlayer::query()->where('fantrax_id', 'fantrax-manual-link')->value('player_id'))
+        ->toBe($player->id);
+    Queue::assertPushed(
+        SyncFantraxLeagueJob::class,
+        fn (SyncFantraxLeagueJob $job): bool => $job->platformLeagueId === $league->id,
+    );
 });
 
 it('queues capwages contract refresh when a capwages identity is linked', function () {

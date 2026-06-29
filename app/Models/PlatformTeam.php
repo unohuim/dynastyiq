@@ -32,7 +32,7 @@ class PlatformTeam extends Model
      */
     public function league(): BelongsTo
     {
-        return $this->belongsTo(PlatformLeague::class);
+        return $this->belongsTo(PlatformLeague::class, 'platform_league_id');
     }
 
 
@@ -62,7 +62,7 @@ class PlatformTeam extends Model
     {
         $leagueId = $league instanceof PlatformLeague ? $league->id : $league;
 
-        return $query->where('league_id', $leagueId);
+        return $query->where('platform_league_id', $leagueId);
     }
 
     /**
