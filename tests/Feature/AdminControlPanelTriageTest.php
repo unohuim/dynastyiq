@@ -2,10 +2,14 @@
 
 declare(strict_types=1);
 
+use App\Events\NhlGameImportStatusUpdated;
+use App\Jobs\ImportYahooPlayersPageJob;
+use App\Jobs\NhlDiscoveryJob;
+use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
-use App\Jobs\ImportYahooPlayersPageJob;
-use App\Jobs\SyncYahooTeamRosterJob;
+use App\Models\NhlGameImportRun;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\PlatformLeague;
@@ -16,7 +20,9 @@ use App\Models\YahooFantasyConnection;
 use App\Models\YahooPlayer;
 use App\Services\YahooFantasyPlayerImporter;
 use App\Services\YahooFantasyRosterService;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
@@ -143,6 +149,309 @@ it('shows Yahoo connected in the authenticated account drawer', function () {
         ->assertOk()
         ->assertSee('Yahoo')
         ->assertSee('Connected');
+});
+
+it('blocks guests from the NHL game import status endpoint', function () {
+    $this->getJson(route('admin.nhl-game-imports.status'))->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from the NHL game import status endpoint', function () {
+    $this->actingAs(User::factory()->create())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertForbidden();
+});
+
+it('blocks guests from queuing NHL game discovery', function () {
+    $this->postJson(route('admin.nhl-game-imports.discover'), [
+        'date' => '2026-01-15',
+    ])->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from queuing NHL game discovery', function () {
+    $this->actingAs(User::factory()->create())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'date' => '2026-01-15',
+        ])
+        ->assertForbidden();
+});
+
+it('blocks guests from queuing NHL game processing', function () {
+    $this->postJson(route('admin.nhl-game-imports.process'), [
+        'date' => '2026-01-15',
+    ])->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from queuing NHL game processing', function () {
+    $this->actingAs(User::factory()->create())
+        ->postJson(route('admin.nhl-game-imports.process'), [
+            'date' => '2026-01-15',
+        ])
+        ->assertForbidden();
+});
+
+it('allows super admins to queue NHL game discovery for a single date', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'date' => '2026-01-15',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.mode', NhlGameImportRun::MODE_DATE)
+        ->assertJsonPath('run.start_date', '2026-01-15')
+        ->assertJsonPath('run.end_date', '2026-01-15')
+        ->assertJsonPath('run.queued_jobs', 1);
+
+    $this->assertDatabaseHas('nhl_game_import_runs', [
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+    ]);
+
+    Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
+        return $job->start->toDateString() === '2026-01-15'
+            && $job->end->toDateString() === '2026-01-15';
+    });
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
+        return $event->reason === 'discovery-queued';
+    });
+});
+
+it('allows super admins to queue NHL game discovery for a range', function () {
+    Bus::fake();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'start' => '2026-01-17',
+            'end' => '2026-01-15',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.mode', NhlGameImportRun::MODE_RANGE)
+        ->assertJsonPath('run.start_date', '2026-01-17')
+        ->assertJsonPath('run.end_date', '2026-01-15')
+        ->assertJsonPath('run.date_count', 3);
+
+    Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
+        return $job->start->toDateString() === '2026-01-17'
+            && $job->end->toDateString() === '2026-01-15';
+    });
+});
+
+it('allows super admins to queue NHL game processing for each date in a range', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.process'), [
+            'start' => '2026-01-17',
+            'end' => '2026-01-15',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_PROCESS)
+        ->assertJsonPath('run.queued_jobs', 3);
+
+    foreach (['2026-01-17', '2026-01-16', '2026-01-15'] as $date) {
+        Bus::assertDispatched(NhlOrchestratorJob::class, fn (NhlOrchestratorJob $job): bool => $job->gameDate === $date);
+    }
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
+        return $event->reason === 'processing-queued';
+    });
+});
+
+it('queues NHL game processing from a discovery run without creating a second run', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 1,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.process'), [
+            'run_id' => $run->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.id', $run->id)
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.processing_started', true)
+        ->assertJsonPath('run.queued_jobs', 3);
+
+    expect(NhlGameImportRun::count())->toBe(1);
+
+    foreach (['2026-01-17', '2026-01-16', '2026-01-15'] as $date) {
+        Bus::assertDispatched(NhlOrchestratorJob::class, fn (NhlOrchestratorJob $job): bool => $job->gameDate === $date);
+    }
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'processing-queued' && $event->runId === $run->id;
+    });
+});
+
+it('defaults NHL game processing to today when no date option is provided', function () {
+    Bus::fake();
+    $this->travelTo('2026-01-15 12:00:00');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.process'), [])
+        ->assertAccepted()
+        ->assertJsonPath('run.mode', NhlGameImportRun::MODE_DEFAULT)
+        ->assertJsonPath('run.start_date', '2026-01-15')
+        ->assertJsonPath('run.end_date', '2026-01-15');
+
+    Bus::assertDispatched(NhlOrchestratorJob::class, fn (NhlOrchestratorJob $job): bool => $job->gameDate === '2026-01-15');
+});
+
+it('requires an explicit NHL discovery date selection', function () {
+    Bus::fake();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('date');
+
+    Bus::assertNotDispatched(NhlDiscoveryJob::class);
+});
+
+it('rejects ambiguous NHL discovery date selections', function () {
+    Bus::fake();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'date' => '2026-01-15',
+            'start' => '2026-01-17',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('date');
+
+    Bus::assertNotDispatched(NhlDiscoveryJob::class);
+});
+
+it('rejects NHL game import date ranges larger than the admin limit', function () {
+    Bus::fake();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'start' => '2026-06-01',
+            'end' => '2026-01-01',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('start');
+
+    Bus::assertNotDispatched(NhlDiscoveryJob::class);
+});
+
+it('returns NHL game import status with pipeline progress counts', function () {
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_PROCESS,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 3,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020001,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-01-15',
+        'game_dow' => 'Thu',
+        'game_month' => 'Jan',
+        'home_team_id' => 1,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 2,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    foreach ([
+        ['date' => '2026-01-15', 'type' => 'pbp', 'status' => 'completed'],
+        ['date' => '2026-01-16', 'type' => 'summary', 'status' => 'running'],
+        ['date' => '2026-01-17', 'type' => 'boxscore', 'status' => 'scheduled'],
+    ] as $index => $row) {
+        DB::table('nhl_import_progress')->insert([
+            'season_id' => '20252026',
+            'game_date' => $row['date'],
+            'game_id' => (string) (2025020001 + $index),
+            'game_type' => 2,
+            'import_type' => $row['type'],
+            'status' => $row['status'],
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->assertJsonPath('runs.0.id', $run->id)
+        ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_RUNNING)
+        ->assertJsonPath('runs.0.progress.total_stage_rows', 3)
+        ->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.progress.running_stage_rows', 1)
+        ->assertJsonPath('runs.0.progress.scheduled_stage_rows', 1)
+        ->assertJsonPath('runs.0.facts.selected_date_count', 3)
+        ->assertJsonPath('runs.0.facts.discovered_game_date_count', 3)
+        ->assertJsonPath('runs.0.facts.discovered_game_count', 3)
+        ->assertJsonPath('runs.0.facts.scheduled_stage_rows', 1)
+        ->assertJsonPath('runs.0.facts.total_stage_rows', 3)
+        ->assertJsonPath('runs.0.games.0.game_id', '2025020001')
+        ->assertJsonPath('runs.0.games.0.game_date', '2026-01-15')
+        ->assertJsonPath('runs.0.games.0.away_team_abbrev', 'MTL')
+        ->assertJsonPath('runs.0.games.0.home_team_abbrev', 'TOR')
+        ->assertJsonPath('runs.0.games.0.total_stage_rows', 1)
+        ->assertJsonPath('runs.0.games.0.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.games.0.percentage', 100)
+        ->assertJsonPath('processable.date_count', 1);
+});
+
+it('returns discovered NHL game import runs as completed once pipeline rows exist', function () {
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020001',
+        'game_type' => 2,
+        'import_type' => 'pbp',
+        'status' => 'scheduled',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->assertJsonPath('runs.0.id', $run->id)
+        ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_COMPLETED)
+        ->assertJsonPath('runs.0.facts.total_stage_rows', 1)
+        ->assertJsonPath('runs.0.facts.scheduled_stage_rows', 1);
 });
 
 it('blocks guests from the user Yahoo OAuth redirect', function () {
@@ -1292,7 +1601,13 @@ it('empties Yahoo imported player data without deleting canonical players or OAu
         ->and(YahooFantasyConnection::query()->whereKey($connection->id)->exists())->toBeTrue();
 });
 
-it('empties NHL imported data without deleting canonical players or team reference data', function () {
+it('requires an explicit NHL empty mode', function () {
+    $this->artisan('nhl:empty')
+        ->assertExitCode(\Symfony\Component\Console\Command\Command::INVALID)
+        ->expectsOutput('Choose at least one mode: nhl:empty --players, nhl:empty --games, or both.');
+});
+
+it('empties NHL player identities without deleting game import data', function () {
     $now = now();
     $player = ($this->makePlayer)([
         'nhl_id' => 5980,
@@ -1313,6 +1628,61 @@ it('empties NHL imported data without deleting canonical players or team referen
         'provider' => PlayerExternalIdentity::PROVIDER_NHL_DRAFT,
         'provider_player_id' => '2013:1',
         'provider_slug' => '2013:1',
+        'display_name' => 'Nathan MacKinnon',
+        'player_id' => $player->id,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    $fantraxIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-5980',
+        'provider_slug' => 'fantrax-5980',
+        'display_name' => 'Nathan MacKinnon',
+    ]);
+
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 21,
+        'abbrev' => 'COL',
+        'full_name' => 'Colorado Avalanche',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020001,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-01-15',
+        'game_dow' => 'Thu',
+        'game_month' => 'Jan',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $this->artisan('nhl:empty', ['--players' => true])
+        ->assertOk()
+        ->expectsOutput('Removed NHL player external identities.')
+        ->expectsOutput('player_external_identities: 2')
+        ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
+
+    expect(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
+        ->and(DB::table('nhl_games')->where('nhl_game_id', 2025020001)->exists())->toBeTrue()
+        ->and(PlayerExternalIdentity::query()->whereKey($nhlIdentity->id)->exists())->toBeFalse()
+        ->and(PlayerExternalIdentity::query()->whereKey($draftIdentity->id)->exists())->toBeFalse()
+        ->and(PlayerExternalIdentity::query()->whereKey($fantraxIdentity->id)->exists())->toBeTrue();
+});
+
+it('empties NHL game import data without deleting player identities', function () {
+    $now = now();
+    $player = ($this->makePlayer)([
+        'nhl_id' => 5980,
+        'nhl_team_id' => 21,
+        'first_name' => 'Nathan',
+        'last_name' => 'MacKinnon',
+        'full_name' => 'Nathan MacKinnon',
+    ]);
+    $nhlIdentity = ($this->makeIdentity)([
+        'provider' => PlayerExternalIdentity::PROVIDER_NHL,
+        'provider_player_id' => '5980',
+        'provider_slug' => '5980',
         'display_name' => 'Nathan MacKinnon',
         'player_id' => $player->id,
         'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
@@ -1380,6 +1750,21 @@ it('empties NHL imported data without deleting canonical players or team referen
         'created_at' => $now,
         'updated_at' => $now,
     ]);
+    DB::table('nhl_unit_game_strength_summaries')->insert([
+        'nhl_game_id' => 2025020001,
+        'unit_id' => $unitId,
+        'strength' => 'EV',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_player_game_strength_summaries')->insert([
+        'nhl_game_id' => 2025020001,
+        'player_id' => $player->id,
+        'nhl_player_id' => 5980,
+        'strength' => 'EV',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
     DB::table('nhl_unit_players')->insert([
         'unit_id' => $unitId,
         'player_id' => $player->id,
@@ -1437,27 +1822,63 @@ it('empties NHL imported data without deleting canonical players or team referen
         'created_at' => $now,
         'updated_at' => $now,
     ]);
+    $validationId = DB::table('nhl_game_validations')->insertGetId([
+        'nhl_game_id' => 2025020001,
+        'validation_type' => 'summary_boxscore',
+        'status' => 'failed',
+        'mismatch_count' => 1,
+        'checked_at' => $now,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_game_validation_deltas')->insert([
+        'validation_id' => $validationId,
+        'nhl_player_id' => 5980,
+        'field' => 'goals',
+        'boxscore_value' => '2',
+        'summary_value' => '1',
+        'delta' => 1,
+        'severity' => 'error',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
 
-    $this->artisan('nhl:empty')
+    $this->artisan('nhl:empty', ['--games' => true])
         ->assertOk()
-        ->expectsOutput('Removed NHL imported data.')
+        ->expectsOutput('Removed NHL game import data.')
         ->expectsOutput('event_unit_shifts: 1')
+        ->expectsOutput('nhl_game_validations: 1')
+        ->expectsOutput('nhl_game_import_runs: 1')
         ->expectsOutput('nhl_games: 1')
-        ->expectsOutput('player_external_identities: 2')
         ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
 
     foreach ([
         'event_unit_shifts',
+        'nhl_unit_game_strength_summaries',
+        'nhl_player_game_strength_summaries',
         'nhl_unit_game_summaries',
         'nhl_unit_players',
         'nhl_unit_shifts',
         'nhl_shifts',
         'nhl_units',
+        'nhl_game_validation_deltas',
+        'nhl_game_validations',
         'nhl_boxscores',
         'nhl_game_summaries',
         'play_by_plays',
         'nhl_season_stats',
         'nhl_import_progress',
+        'nhl_game_import_runs',
         'nhl_games',
     ] as $table) {
         expect(DB::table($table)->count())->toBe(0);
@@ -1465,8 +1886,7 @@ it('empties NHL imported data without deleting canonical players or team referen
 
     expect(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
         ->and(DB::table('nhl_teams')->where('nhl_id', 21)->exists())->toBeTrue()
-        ->and(PlayerExternalIdentity::query()->whereKey($nhlIdentity->id)->exists())->toBeFalse()
-        ->and(PlayerExternalIdentity::query()->whereKey($draftIdentity->id)->exists())->toBeFalse()
+        ->and(PlayerExternalIdentity::query()->whereKey($nhlIdentity->id)->exists())->toBeTrue()
         ->and(PlayerExternalIdentity::query()->whereKey($fantraxIdentity->id)->exists())->toBeTrue();
 });
 
@@ -3213,12 +3633,13 @@ it('shows current import workflow buttons to super admins', function () {
         ->assertSee('Retry failed');
 });
 
-it('shows the admin data imports card list in registry order', function () {
+it('shows the admin player imports card list in registry order', function () {
     $this->actingAs(($this->makeSuperAdmin)())
         ->get(route('admin.dashboard'))
         ->assertOk()
-        ->assertSee('Data Imports')
-        ->assertSeeInOrder(['Data Imports', 'Triage'])
+        ->assertSee('Player Imports')
+        ->assertSee('Game Imports')
+        ->assertSeeInOrder(['Player Imports', 'Game Imports', 'Triage'])
         ->assertSeeInOrder(['NHL Players', 'Resolve NHL Players', 'Fantrax Players', 'Yahoo Players', 'Contracts'])
         ->assertSee('Run Now')
         ->assertDontSee('Player Inbox');

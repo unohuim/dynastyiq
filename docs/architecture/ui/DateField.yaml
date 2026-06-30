@@ -1,0 +1,32 @@
+name: Date Field
+type: Reusable Blade UI Component
+location:
+  - resources/views/components/ui/date-field.blade.php
+  - resources/views/admin/operational.blade.php
+purpose: Provide a native browser date input with a full-field click target that opens the calendar picker where supported.
+when_to_use:
+  - Blade forms that need a single native date input.
+  - Alpine-backed forms where the input should bind through x-model.
+  - Operational forms where clicking anywhere in the field should open the native calendar picker.
+when_not_to_use:
+  - Date range widgets that need custom range selection behavior.
+  - Date-time inputs.
+  - Forms that require a custom calendar implementation.
+rules:
+  - The component must use the native date input instead of a custom JavaScript calendar.
+  - The full field wrapper must call showPicker when available and focus the input as fallback.
+  - Callers own the Alpine model expression and any validation or request behavior.
+  - Styling must remain Tailwind-only and aligned with normal form fields.
+  - Browser-native calendar behavior must be allowed to vary by browser.
+public_interface:
+  - x-ui.date-field
+  - id
+  - label
+  - model
+  - standard Blade attribute passthrough
+example_usage: |
+  <x-ui.date-field
+      id="starts-at"
+      label="Start date"
+      model="form.start"
+  />

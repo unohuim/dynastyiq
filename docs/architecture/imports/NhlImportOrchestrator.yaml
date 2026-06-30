@@ -1,6 +1,7 @@
 name: NHL Import Orchestrator
 type: Queue Orchestration Pattern
 location:
+  - app/Support/NhlImportStages.php
   - app/Services/NhlImportOrchestrator.php
   - app/Repositories/NhlImportProgressRepo.php
   - app/Jobs/NhlOrchestratorJob.php
@@ -8,6 +9,7 @@ location:
   - app/Jobs/SummarizePbpNhlJob.php
   - app/Jobs/ImportShiftsNhlJob.php
   - app/Jobs/ImportBoxscoreNhlJob.php
+  - app/Jobs/ValidateNhlGameSummaryJob.php
   - app/Jobs/MakeShiftUnitsNhlJob.php
   - app/Jobs/ConnectEventsShiftUnitsNhlJob.php
   - app/Jobs/SumNhlGameUnitsJob.php
@@ -20,15 +22,18 @@ when_not_to_use:
   - One-off admin imports that do not use nhl_import_progress.
   - Synchronous request-time imports.
 rules:
-  - The orchestrator owns NHL import stage order.
+  - The orchestrator owns NHL import stage advancement.
+  - Canonical stage order, dependencies, job mappings, and stale-timeout config keys must come from NhlImportStages.
   - Jobs must report success and failure through the orchestrator or repository contract.
   - Import status values must remain aligned with docs/ENUMS.md.
+  - Jobs must only perform work that has already been atomically claimed as running.
+  - Season stat rollups must wait until terminal summary validation stages have completed.
 public_interface:
   - NhlImportOrchestrator::processScheduled()
   - NhlImportOrchestrator::claim()
+  - NhlImportOrchestrator::isRunning()
   - NhlImportOrchestrator::onSuccess()
   - NhlImportOrchestrator::onFailure()
   - NhlImportOrchestrator::sweepStale()
 example_usage: |
   app(NhlImportOrchestrator::class)->processScheduled('2026-01-15');
-

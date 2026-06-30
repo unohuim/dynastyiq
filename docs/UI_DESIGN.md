@@ -24,7 +24,8 @@ In the event of conflict:
 
 1. `docs/CONVENTIONS.md`
 2. `docs/UI_DESIGN.md`
-3. PR-specific notes
+3. `docs/UI_MOTION.md`
+4. PR-specific notes
 
 ### Enforcement Scope
 
@@ -146,9 +147,15 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 ### Modals & Panels
 
 - Slide-overs are preferred for longer create/edit forms.
+- Reusable right-side slide-overs should use the `x-ui.slide-over` Blade component.
 - Modals are appropriate for confirmations and short forms.
 - Never stack modals.
 - Forms must preserve entered values after validation errors.
+
+### Date Inputs
+
+- Reusable native date inputs should use the `x-ui.date-field` Blade component.
+- Date fields should preserve browser-native calendar behavior instead of introducing custom calendar widgets by default.
 
 ### Tables & Lists
 
@@ -159,6 +166,11 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 - Row action menus should use a vertical `...` pattern on the far right unless there is only one obvious action.
 - Menus must not be clipped by parent section/card shells.
 - Long secondary values may truncate on small screens when needed to preserve layout stability.
+
+### Motion
+
+Interactive state changes, including accordions, inline drawers, caret rotations,
+slide-overs, dropdowns, and async loading reveals, must follow `docs/UI_MOTION.md`.
 
 ---
 
@@ -183,6 +195,7 @@ They must include:
 - Short-lived success toasts
 - Inline validation errors
 - Non-blocking error messages
+- Tailwind motion for visible state changes must follow `docs/UI_MOTION.md`
 
 ### Disallowed
 

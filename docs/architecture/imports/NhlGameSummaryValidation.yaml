@@ -1,0 +1,37 @@
+name: NHL Game Summary Validation
+type: Domain Validation Gate
+location:
+  - app/Services/CompareNhlPbPBoxscore.php
+  - app/Services/ValidateNhlGameSummary.php
+  - app/Jobs/ValidateNhlGameSummaryJob.php
+  - app/Models/NhlGameValidation.php
+  - app/Models/NhlGameValidationDelta.php
+  - database/migrations/2026_06_29_010000_create_nhl_game_validations_table.php
+purpose: Persist an auditable validation result comparing computed NHL player game summaries against official NHL boxscore totals.
+when_to_use:
+  - Validating a fully processed NHL game before downstream stat trust.
+  - Persisting player and field-level validation deltas for admin triage.
+  - Accepting a reviewed validation exception to unblock downstream trust and rollups.
+when_not_to_use:
+  - Comparing unsupported provider fields without explicit field semantics.
+  - Replacing the import services that create summaries or boxscores.
+  - Presenting public stats without reading approved or accepted validation state.
+rules:
+  - Exact comparable fields may auto-approve only when no blocking deltas exist.
+  - Failed validations must persist deltas before the pipeline stage is marked failed.
+  - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.
+  - Skater blocking validation fields are goals, assists, points, penalty minutes, hits, power-play goals, shots on goal, faceoff percentage, time on ice with tolerance, shifts, and blocked shots.
+  - Skater faceoffs won, faceoffs lost, giveaways, takeaways, and missing summary records must not be blocking validation fields.
+  - Goalie blocking validation fields are goals against, shots against, saves, save percentage, even-strength/power-play/shorthanded saves and shots against, derived even-strength/power-play/shorthanded goals against, penalty minutes, and time on ice with tolerance.
+  - Starter and decision metadata must not be blocking validation fields.
+  - Admin Game Validations should use embedded row-level detail disclosure in the admin control panel, keyed by nhl_game_validations.id, while standalone validation routes may remain for direct access.
+  - Validation type, status, and severity values must remain aligned with docs/ENUMS.md.
+  - Validation deltas must use provider nhl_player_id values, not canonical player primary keys.
+public_interface:
+  - CompareNhlPbPBoxscore::compare()
+  - ValidateNhlGameSummary::validate()
+  - ValidateNhlGameSummaryJob
+  - NhlGameValidation
+  - NhlGameValidationDelta
+example_usage: |
+  $validation = app(ValidateNhlGameSummary::class)->validate($gameId);

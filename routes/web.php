@@ -213,6 +213,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/yahoo/players/import', \App\Http\Controllers\Admin\YahooPlayerImportController::class)
                     ->name('admin.yahoo.players.import');
 
+                // NHL game import orchestration
+                Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
+                    ->name('admin.nhl-game-imports.status');
+                Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
+                    ->name('admin.nhl-game-imports.discover');
+                Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])
+                    ->name('admin.nhl-game-imports.process');
+
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])
                     ->name('admin.player-triage');
@@ -233,6 +241,22 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.player-triage.ignore');
                 Route::post('/player-triage/identities/{identity}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
                     ->name('admin.player-triage.defer');
+
+                // NHL game validation triage
+                Route::get('/nhl-validations', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'index'])
+                    ->name('admin.nhl-validations.index');
+                Route::get('/nhl-validations/{validation}', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'show'])
+                    ->name('admin.nhl-validations.show');
+                Route::post('/nhl-validations/{validation}/accept-exception', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acceptException'])
+                    ->name('admin.nhl-validations.accept-exception');
+                Route::post('/nhl-validations/{validation}/rerun', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerun'])
+                    ->name('admin.nhl-validations.rerun');
+                Route::post('/nhl-validations/{validation}/rerun-summary', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerunSummary'])
+                    ->name('admin.nhl-validations.rerun-summary');
+                Route::post('/nhl-validations/{validation}/rerun-boxscore', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerunBoxscore'])
+                    ->name('admin.nhl-validations.rerun-boxscore');
+                Route::post('/nhl-validations/{validation}/rebuild-game', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rebuildGame'])
+                    ->name('admin.nhl-validations.rebuild-game');
 
                 // Scheduler
                 Route::get('/scheduler', [\App\Http\Controllers\Admin\SchedulerController::class, 'index'])

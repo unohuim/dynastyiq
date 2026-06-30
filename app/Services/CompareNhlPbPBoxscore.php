@@ -1,129 +1,290 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\NhlBoxscore;
 use App\Models\NhlGameSummary;
+use App\Models\NhlGameValidationDelta;
 
+/**
+ * Compares computed NHL game summaries against official NHL boxscore totals.
+ */
 class CompareNhlPbPBoxscore
 {
+    private const PERCENTAGE_TOLERANCE = 0.001;
+
+    /** @var array<string,string> */
+    private const SKATER_EXACT_FIELD_MAP = [
+        'goals' => 'g',
+        'assists' => 'a',
+        'points' => 'pts',
+        'penalty_minutes' => 'pim',
+        'sog' => 'sog',
+        'hits' => 'h',
+        'blocks' => 'b',
+        'power_play_goals' => 'ppg',
+        'shifts' => 'shifts',
+    ];
+
+    /** @var array<string,string> */
+    private const GOALIE_EXACT_FIELD_MAP = [
+        'penalty_minutes' => 'pim',
+        'goals_against' => 'ga',
+        'saves' => 'sv',
+        'shots_against' => 'sa',
+        'ev_saves' => 'evsv',
+        'ev_shots_against' => 'evsa',
+        'pp_saves' => 'ppsv',
+        'pp_shots_against' => 'ppsa',
+        'pk_saves' => 'pksv',
+        'pk_shots_against' => 'pksa',
+    ];
+
+    /** @var array<string,string> */
+    private const TOLERATED_FIELD_MAP = [
+        'toi_seconds' => 'toi',
+    ];
+
     /**
-     * Compare nhl_boxscores stats against nhl_game_summaries stats for given game_id.
-     * Only compares stats present in nhl_boxscores.
+     * Compare one game and return normalized field deltas.
      *
-     * Assumptions / mappings:
-     * - goals => g
-     * - assists => a
-     * - points => pts
-     * - plus_minus => plus_minus
-     * - penalty_minutes => pim
-     * - toi_seconds => toi (seconds)
-     * - sog => sog
-     * - hits => h
-     * - blocks => b
-     * - faceoffs_won => fow
-     * - faceoffs_lost => fol
-     * - faceoff_win_percentage => fow_percentage
-     * - power_play_goals => ppg
-     * - power_play_assists => ppa
-     * - short_handed_goals => sha
-     * - short_handed_assists => pka (assumed as short handed assists, no exact mapping)
-     * - giveaways => gv
-     * - takeaways => tk
-     * - goals_against => ga
-     * - saves => sv
-     * - shots_against => sa
-     * - ev_saves => evsv
-     * - ev_shots_against => evsa
-     * - pp_saves => ppsv
-     * - pp_shots_against => ppsa
-     * - pk_saves => pksv
-     * - pk_shots_against => pksa
-     *
-     * Notes:
-     * - short_handed_assists mapped to pka (penalty kill assists) as closest guess.
-     * - toi in boxscore is string, but we compare toi_seconds (int) with toi in summaries (int seconds).
-     *
-     * @param int $game_id
-     * @return array Comparison results keyed by nhl_player_id, each value is array of mismatched stats with [boxscore, summary]
+     * @return array<int,array{
+     *     nhl_player_id:int|null,
+     *     field:string,
+     *     boxscore_value:mixed,
+     *     summary_value:mixed,
+     *     delta:float|int|null,
+     *     severity:string
+     * }>
      */
-    public function compare(int $game_id): array
+    public function compare(int $gameId): array
     {
-        $results = [];
+        $deltas = [];
+        $boxscores = NhlBoxscore::where('nhl_game_id', $gameId)->get();
+        $summaries = NhlGameSummary::where('nhl_game_id', $gameId)
+            ->get()
+            ->keyBy('nhl_player_id');
 
-        $boxscores = NhlBoxscore::where('nhl_game_id', $game_id)->get();
+        foreach ($boxscores as $boxscore) {
+            $playerId = $boxscore->nhl_player_id ? (int) $boxscore->nhl_player_id : null;
+            $summary = $playerId !== null ? $summaries->get($playerId) : null;
 
-        foreach ($boxscores as $box) {
-            $summary = NhlGameSummary::where('nhl_game_id', $game_id)
-                ->where('nhl_player_id', $box->nhl_player_id)
-                ->first();
-
-            if (!$summary) {
-                $results[$box->nhl_player_id] = ['error' => 'No summary record found'];
+            if (! $summary) {
                 continue;
             }
 
-            $mismatches = [];
+            $exactFieldMap = $this->isGoalie($boxscore) ? self::GOALIE_EXACT_FIELD_MAP : self::SKATER_EXACT_FIELD_MAP;
 
-            $map = [
-                'goals' => 'g',
-                'assists' => 'a',
-                'points' => 'pts',
-                //'plus_minus' => 'plus_minus',
-                'penalty_minutes' => 'pim',
-                'toi_seconds' => 'toi',
-                'sog' => 'sog',
-                'hits' => 'h',
-                'blocks' => 'b',                
-                'faceoff_win_percentage' => 'fow_percentage',
-                'power_play_goals' => 'ppg',                                
-                'giveaways' => 'gv',
-                'takeaways' => 'tk',
-                'goals_against' => 'ga',
-                'saves' => 'sv',
-                'shots_against' => 'sa',
-                'ev_saves' => 'evsv',
-                'ev_shots_against' => 'evsa',
-                'pp_saves' => 'ppsv',
-                'pp_shots_against' => 'ppsa',
-                'pk_saves' => 'pksv',
-                'pk_shots_against' => 'pksa',
-            ];
+            foreach ($exactFieldMap as $boxscoreField => $summaryField) {
+                $boxscoreValue = $this->numericValue($boxscore->{$boxscoreField});
+                $summaryValue = $this->numericValue($summary->{$summaryField});
 
-            foreach ($map as $boxField => $summaryField) {
-                $boxVal = $box->$boxField;
-                $sumVal = $summary->$summaryField;
-
-                // Handle nullable toi_seconds/toi
-                if ($boxField === 'toi_seconds') {
-                    if ($boxVal === null && $sumVal === null) {
-                        continue;
-                    }
-                    if ((int)$boxVal !== (int)$sumVal) {
-                        $mismatches[$boxField] = ['boxscore' => $boxVal, 'summary' => $sumVal];
-                    }
-                    continue;
-                }
-
-                // Handle float faceoff_win_percentage comparison with tolerance
-                if ($boxField === 'faceoff_win_percentage') {
-                    if (abs($boxVal - $sumVal) > 0.1) { // tolerate minor decimal difference
-                        $mismatches[$boxField] = ['boxscore' => $boxVal, 'summary' => $sumVal];
-                    }
-                    continue;
-                }
-
-                // Default integer equality check
-                if ($boxVal !== $sumVal) {
-                    $mismatches[$boxField] = ['boxscore' => $boxVal, 'summary' => $sumVal];
+                if ($boxscoreValue !== $summaryValue) {
+                    $deltas[] = $this->delta(
+                        $playerId,
+                        $boxscoreField,
+                        $boxscoreValue,
+                        $summaryValue,
+                        $summaryValue - $boxscoreValue
+                    );
                 }
             }
 
-            if (!empty($mismatches)) {
-                $results[$box->nhl_player_id] = $mismatches;
+            if (! $this->isGoalie($boxscore)) {
+                $this->compareFaceoffPercentage($deltas, $playerId, $boxscore, $summary);
+            }
+
+            if ($this->isGoalie($boxscore)) {
+                $this->compareGoalieDerivedFields($deltas, $playerId, $boxscore, $summary);
+            }
+
+            foreach (self::TOLERATED_FIELD_MAP as $boxscoreField => $summaryField) {
+                $boxscoreValue = (float) $boxscore->{$boxscoreField};
+                $summaryValue = (float) $summary->{$summaryField};
+
+                $delta = abs($boxscoreValue - $summaryValue);
+
+                if ($boxscoreField === 'toi_seconds' && $delta > 1.0) {
+                    $deltas[] = $this->delta(
+                        $playerId,
+                        $boxscoreField,
+                        $boxscoreValue,
+                        $summaryValue,
+                        $summaryValue - $boxscoreValue
+                    );
+                }
             }
         }
 
-        return $results;
+        foreach ($summaries as $playerId => $summary) {
+            if ($boxscores->firstWhere('nhl_player_id', $playerId)) {
+                continue;
+            }
+
+            if ($this->hasComparableTotals($summary)) {
+                $deltas[] = $this->delta(
+                    (int) $playerId,
+                    'boxscore_record',
+                    null,
+                    'present',
+                    null
+                );
+            }
+        }
+
+        return $deltas;
+    }
+
+    /**
+     * Compare normalized faceoff percentage for skaters.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function compareFaceoffPercentage(array &$deltas, ?int $playerId, NhlBoxscore $boxscore, NhlGameSummary $summary): void
+    {
+        $boxscoreValue = (float) $boxscore->faceoff_win_percentage;
+        $summaryValue = ((float) $summary->fow_percentage) / 100;
+
+        if (abs($boxscoreValue - $summaryValue) <= self::PERCENTAGE_TOLERANCE) {
+            return;
+        }
+
+        $deltas[] = $this->delta(
+            $playerId,
+            'faceoff_win_percentage',
+            $boxscoreValue,
+            $summaryValue,
+            $summaryValue - $boxscoreValue
+        );
+    }
+
+    /**
+     * Compare goalie-only derived fields not stored directly on NHL boxscores.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function compareGoalieDerivedFields(array &$deltas, ?int $playerId, NhlBoxscore $boxscore, NhlGameSummary $summary): void
+    {
+        $this->compareDerivedExact(
+            $deltas,
+            $playerId,
+            'ev_goals_against',
+            $this->numericValue($boxscore->ev_goals_against),
+            $this->numericValue($summary->evga)
+        );
+        $this->compareDerivedExact(
+            $deltas,
+            $playerId,
+            'pp_goals_against',
+            $this->numericValue($boxscore->pp_goals_against),
+            $this->numericValue($summary->ppga)
+        );
+        $this->compareDerivedExact(
+            $deltas,
+            $playerId,
+            'pk_goals_against',
+            $this->numericValue($boxscore->pk_goals_against),
+            $this->numericValue($summary->pkga)
+        );
+
+        $boxscoreSavePercentage = $this->percentage((float) $boxscore->saves, (float) $boxscore->shots_against);
+        $summarySavePercentage = $this->percentage((float) $summary->sv, (float) $summary->sa);
+
+        if (abs($boxscoreSavePercentage - $summarySavePercentage) <= self::PERCENTAGE_TOLERANCE) {
+            return;
+        }
+
+        $deltas[] = $this->delta(
+            $playerId,
+            'save_percentage',
+            $boxscoreSavePercentage,
+            $summarySavePercentage,
+            $summarySavePercentage - $boxscoreSavePercentage
+        );
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function compareDerivedExact(array &$deltas, ?int $playerId, string $field, int|float $boxscoreValue, int|float $summaryValue): void
+    {
+        if ($boxscoreValue === $summaryValue) {
+            return;
+        }
+
+        $deltas[] = $this->delta(
+            $playerId,
+            $field,
+            $boxscoreValue,
+            $summaryValue,
+            $summaryValue - $boxscoreValue
+        );
+    }
+
+    /**
+     * @return array{
+     *     nhl_player_id:int|null,
+     *     field:string,
+     *     boxscore_value:mixed,
+     *     summary_value:mixed,
+     *     delta:float|int|null,
+     *     severity:string
+     * }
+     */
+    private function delta(
+        ?int $playerId,
+        string $field,
+        mixed $boxscoreValue,
+        mixed $summaryValue,
+        float|int|null $delta
+    ): array {
+        return [
+            'nhl_player_id' => $playerId,
+            'field' => $field,
+            'boxscore_value' => $boxscoreValue,
+            'summary_value' => $summaryValue,
+            'delta' => $delta,
+            'severity' => NhlGameValidationDelta::SEVERITY_ERROR,
+        ];
+    }
+
+    private function numericValue(mixed $value): int|float
+    {
+        if (is_float($value)) {
+            return $value;
+        }
+
+        if (is_numeric($value) && str_contains((string) $value, '.')) {
+            return (float) $value;
+        }
+
+        return (int) $value;
+    }
+
+    private function percentage(float $numerator, float $denominator): float
+    {
+        if ($denominator <= 0.0) {
+            return 0.0;
+        }
+
+        return round($numerator / $denominator, 3);
+    }
+
+    private function isGoalie(NhlBoxscore $boxscore): bool
+    {
+        return strtoupper((string) $boxscore->position) === 'G';
+    }
+
+    private function hasComparableTotals(NhlGameSummary $summary): bool
+    {
+        foreach ([...self::SKATER_EXACT_FIELD_MAP, ...self::GOALIE_EXACT_FIELD_MAP] as $summaryField) {
+            if ($this->numericValue($summary->{$summaryField}) !== 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

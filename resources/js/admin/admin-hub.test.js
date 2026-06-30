@@ -32,7 +32,7 @@ describe('admin-hub import listeners', () => {
         second.registerImportListeners();
 
         expect(privateChannel).toHaveBeenCalledTimes(1);
-        expect(listen).toHaveBeenCalledTimes(2); // one for stream output, one for players availability
+        expect(listen).toHaveBeenCalledTimes(3);
     });
 
     it('appends stream output once per event even with repeated adminHub boot', async () => {
@@ -135,6 +135,61 @@ describe('admin-hub import listeners', () => {
         expect(instance.refreshImportProgress).toHaveBeenCalledWith('fantrax');
     });
 
+    it('refreshes game imports when a game import status event arrives while active', async () => {
+        let gameImportHandler;
+
+        const listen = vi.fn((event, handler) => {
+            if (event === '.admin.nhl-game-imports.updated') {
+                gameImportHandler = handler;
+            }
+            return listener;
+        });
+
+        const listener = { listen };
+        const privateChannel = vi.fn(() => listener);
+        window.Echo = { private: privateChannel };
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.activeTab = 'game-imports';
+        instance.loadGameImports = vi.fn();
+
+        instance.registerImportListeners();
+        gameImportHandler?.call(instance, {
+            reason: 'stage-completed',
+        });
+
+        expect(instance.loadGameImports).toHaveBeenCalledTimes(1);
+        expect(instance.loadGameImports).toHaveBeenCalledWith({ background: true });
+    });
+
+    it('ignores game import status events when another tab is active', async () => {
+        let gameImportHandler;
+
+        const listen = vi.fn((event, handler) => {
+            if (event === '.admin.nhl-game-imports.updated') {
+                gameImportHandler = handler;
+            }
+            return listener;
+        });
+
+        const listener = { listen };
+        const privateChannel = vi.fn(() => listener);
+        window.Echo = { private: privateChannel };
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.activeTab = 'imports';
+        instance.loadGameImports = vi.fn();
+
+        instance.registerImportListeners();
+        gameImportHandler?.call(instance, {
+            reason: 'stage-completed',
+        });
+
+        expect(instance.loadGameImports).not.toHaveBeenCalled();
+    });
+
     it('opens the admin hub on data imports by default', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub({ hasPlayers: true, hasFantrax: true });
@@ -158,6 +213,42 @@ describe('admin-hub import listeners', () => {
         const instance = adminHub({ hasPlayers: true, hasFantrax: true });
 
         expect(instance.activeTab).toBe('triage');
+    });
+
+    it('opens the admin validations tab from the tab query parameter', async () => {
+        global.window = {
+            location: {
+                search: '?tab=validations',
+                href: 'http://localhost/admin?tab=validations',
+            },
+            history: {
+                replaceState: vi.fn(),
+                state: null,
+            },
+        };
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ hasPlayers: true, hasFantrax: true });
+
+        expect(instance.activeTab).toBe('validations');
+    });
+
+    it('opens the admin game imports tab from the tab query parameter', async () => {
+        global.window = {
+            location: {
+                search: '?tab=game-imports',
+                href: 'http://localhost/admin?tab=game-imports',
+            },
+            history: {
+                replaceState: vi.fn(),
+                state: null,
+            },
+        };
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ hasPlayers: true, hasFantrax: true });
+
+        expect(instance.activeTab).toBe('game-imports');
     });
 
     it('lazy loads triage when the triage tab is selected', async () => {
@@ -187,6 +278,390 @@ describe('admin-hub import listeners', () => {
         await instance.setTab('triage');
 
         expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('lazy loads game validations when the validations tab is selected', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<div data-admin-validations-mount></div>';
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-triage-page>Game Validation Triage</div>',
+                }),
+            })
+        );
+
+        const instance = adminHub({ validationsUrl: '/admin/nhl-validations?admin_panel=1' });
+
+        await instance.setTab('validations');
+
+        expect(instance.activeTab).toBe('validations');
+        expect(fetch).toHaveBeenCalledWith('/admin/nhl-validations?admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-validation-triage-page]')).not.toBeNull();
+        expect(instance.validationsLoaded).toBe(true);
+
+        await instance.setTab('imports');
+        await instance.setTab('validations');
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('toggles embedded game validation details from a caret row action', async () => {
+        vi.useFakeTimers();
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = `
+            <div data-admin-validations-mount>
+                <button
+                    data-validation-toggle
+                    data-validation-id="7"
+                    data-validation-url="/admin/nhl-validations/7?admin_panel=1"
+                    aria-expanded="false"
+                >
+                    <svg data-validation-caret></svg>
+                </button>
+                <table>
+                    <tbody>
+                        <tr data-validation-detail-row="7" class="hidden">
+                            <td>
+                                <div
+                                    data-validation-detail-shell="7"
+                                    class="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-300 ease-out"
+                                >
+                                    <div class="min-h-0 overflow-hidden">
+                                        <div data-validation-detail-content="7"></div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-detail>Delta rows</div>',
+                }),
+            })
+        );
+
+        const instance = adminHub();
+        const mount = document.querySelector('[data-admin-validations-mount]');
+        const trigger = document.querySelector('[data-validation-toggle]');
+        const row = document.querySelector('[data-validation-detail-row="7"]');
+        const shell = document.querySelector('[data-validation-detail-shell="7"]');
+        const caret = document.querySelector('[data-validation-caret]');
+
+        instance.bindValidationDetailToggles(mount);
+        trigger.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fetch).toHaveBeenCalledWith('/admin/nhl-validations/7?admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(row.classList.contains('hidden')).toBe(false);
+        expect(shell.classList.contains('grid-rows-[1fr]')).toBe(true);
+        expect(shell.classList.contains('opacity-100')).toBe(true);
+        expect(caret.classList.contains('rotate-180')).toBe(true);
+        expect(document.querySelector('[data-validation-detail]')).not.toBeNull();
+
+        trigger.click();
+
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(shell.classList.contains('grid-rows-[0fr]')).toBe(true);
+        expect(shell.classList.contains('opacity-0')).toBe(true);
+        expect(caret.classList.contains('rotate-180')).toBe(false);
+        expect(row.classList.contains('hidden')).toBe(false);
+
+        vi.advanceTimersByTime(300);
+
+        expect(row.classList.contains('hidden')).toBe(true);
+    });
+
+    it('loads game imports when the game imports tab is selected', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    processable: { date_count: 2 },
+                    runs: [
+                        {
+                            id: 12,
+                            action: 'process',
+                            status: 'completed',
+                            start_date: '2026-01-17',
+                            end_date: '2026-01-15',
+                            progress: { percentage: 33 },
+                            facts: {
+                                discovered_game_count: 2,
+                                discovered_game_date_count: 2,
+                                scheduled_stage_rows: 8,
+                            },
+                        },
+                    ],
+                }),
+            })
+        );
+
+        const instance = adminHub({ gameImportStatusUrl: '/admin/nhl-game-imports/status' });
+
+        await instance.setTab('game-imports');
+
+        expect(fetch).toHaveBeenCalledWith('/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.runs).toHaveLength(1);
+        expect(instance.gameImports.runs[0].id).toBe(12);
+        expect(instance.gameImports.processableDateCount).toBe(2);
+
+        instance.gameImports.loading = false;
+        await instance.loadGameImports({ background: true });
+
+        expect(instance.gameImports.loading).toBe(false);
+    });
+
+    it('disables discovery row processing when there are no scheduled stage rows', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            action: 'discover',
+            facts: {
+                scheduled_stage_rows: 0,
+            },
+        };
+
+        expect(instance.canProcessGameImportRun(run)).toBe(false);
+
+        run.facts.scheduled_stage_rows = 8;
+        expect(instance.canProcessGameImportRun(run)).toBe(true);
+
+        instance.gameImports.processing = true;
+        expect(instance.canProcessGameImportRun(run)).toBe(false);
+    });
+
+    it('formats discovery facts for pending and discovered ranges', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+
+        expect(instance.gameImportTitle({
+            action: 'discover',
+            start_date: '2026-01-15',
+            end_date: '2026-01-15',
+        })).toBe('Jan 15, 2026');
+        expect(instance.gameImportTitle({
+            action: 'discover',
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        })).toBe('Jan 15, 2026 - Jan 17, 2026');
+        expect(instance.gameImportBadgeText({
+            action: 'discover',
+            status: 'queued',
+            facts: { total_stage_rows: 0 },
+        })).toBe('DISCOVERING');
+        expect(instance.discoveryStatusText({
+            date_count: 3,
+            facts: { total_stage_rows: 0 },
+        })).toBe('DISCOVERING');
+        expect(instance.discoveryFactsText({
+            date_count: 3,
+            facts: { selected_date_count: 3 },
+        })).toBe('Checking 3 selected dates');
+        expect(instance.gameImportBadgeText({
+            action: 'discover',
+            facts: { total_stage_rows: 16, scheduled_stage_rows: 16 },
+        })).toBe('READY');
+        expect(instance.gameImportTitle({
+            action: 'discover',
+            processing_started: true,
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        })).toBe('Jan 15, 2026 - Jan 17, 2026');
+        expect(instance.gameImportBadgeText({
+            action: 'discover',
+            processing_started: true,
+            status: 'running',
+        })).toBe('RUNNING');
+        expect(instance.discoveryStatusText({
+            facts: { total_stage_rows: 16, scheduled_stage_rows: 16 },
+        })).toBe('READY');
+        expect(instance.discoveryFactsText({
+            facts: {
+                discovered_game_count: 2,
+                discovered_game_date_count: 2,
+                scheduled_stage_rows: 16,
+            },
+        })).toBe('2 games · 16 stages scheduled');
+    });
+
+    it('formats game import accordion rows and per-game progress', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            id: 42,
+            action: 'discover',
+            facts: {
+                discovered_game_count: 3,
+                scheduled_stage_rows: 24,
+            },
+            games: [
+                {
+                    game_id: '2026020001',
+                    game_date: '2026-01-15',
+                    away_team_abbrev: 'MTL',
+                    home_team_abbrev: 'TOR',
+                    total_stage_rows: 8,
+                    completed_stage_rows: 4,
+                    running_stage_rows: 1,
+                    failed_stage_rows: 0,
+                    percentage: 50,
+                },
+            ],
+        };
+
+        expect(instance.gameImportSummaryText(run)).toBe('3 games · 24 stages scheduled');
+        expect(instance.gameImportAccordionId(run)).toBe('game-import-run-42-games');
+        expect(instance.isGameImportRunExpanded(run)).toBe(false);
+
+        instance.toggleGameImportRun(run);
+
+        expect(instance.isGameImportRunExpanded(run)).toBe(true);
+        expect(instance.gameImportGames(run)).toHaveLength(1);
+        expect(instance.gameImportGameLabel(run.games[0])).toBe('MTL @ TOR');
+        expect(instance.gameImportGameMeta(run.games[0])).toBe('Jan 15, 2026');
+        expect(instance.gameImportGameProgressPercentage(run.games[0])).toBe(50);
+        expect(instance.gameImportGameProgressClass(run.games[0])).toBe('bg-indigo-600');
+        expect(instance.gameImportGameProgressClass({
+            total_stage_rows: 8,
+            completed_stage_rows: 0,
+            running_stage_rows: 0,
+            failed_stage_rows: 0,
+            percentage: 0,
+        })).toBe('bg-yellow-400');
+        expect(instance.gameImportGameProgressClass({
+            total_stage_rows: 8,
+            completed_stage_rows: 8,
+            running_stage_rows: 0,
+            failed_stage_rows: 0,
+            percentage: 100,
+        })).toBe('bg-lime-500');
+        expect(instance.gameImportGameProgressText(run.games[0])).toBe('4 / 8 stages completed · 1 active · 0 failed');
+    });
+
+    it('opens and closes the game import drawer without mutating the form', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.gameImports.form.date = '2026-01-15';
+
+        instance.openGameImportDrawer();
+        expect(instance.gameImports.drawerOpen).toBe(true);
+
+        instance.closeGameImportDrawer();
+        expect(instance.gameImports.drawerOpen).toBe(false);
+        expect(instance.gameImports.form.date).toBe('2026-01-15');
+    });
+
+    it('submits game discovery as JSON and refreshes runs', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Discovery queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 22, action: 'discover' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportDiscoverUrl: '/admin/nhl-game-imports/discover',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        instance.gameImports.drawerOpen = true;
+        instance.gameImports.form.date = '2026-01-15';
+
+        await instance.submitGameImportDiscover();
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/discover', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ date: '2026-01-15' }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.drawerOpen).toBe(false);
+        expect(instance.gameImports.runs[0].id).toBe(22);
+    });
+
+    it('submits process games using the selected discovery run range', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Processing queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 23, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportProcessUrl: '/admin/nhl-game-imports/process',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        const run = {
+            id: 23,
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        await instance.processGameImports(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/process', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ run_id: 23, start: '2026-01-17', end: '2026-01-15' }),
+        });
+        expect(instance.gameImports.runs[0].id).toBe(23);
+    });
+
+    it('shows validation errors from game import JSON responses', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: false,
+                json: () => Promise.resolve({
+                    message: 'The given data was invalid.',
+                    errors: {
+                        date: ['Choose a date option before queuing discovery.'],
+                    },
+                }),
+            })
+        );
+
+        const instance = adminHub({ gameImportDiscoverUrl: '/admin/nhl-game-imports/discover' });
+
+        await instance.submitGameImportDiscover();
+
+        expect(instance.gameImports.error).toBe('Choose a date option before queuing discovery.');
+        expect(instance.gameImports.discovering).toBe(false);
     });
 
     it('updates availability without switching back to removed player tabs', async () => {

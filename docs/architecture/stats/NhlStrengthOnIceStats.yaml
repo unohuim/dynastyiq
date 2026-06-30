@@ -1,0 +1,31 @@
+name: NHL Strength On-Ice Stats
+type: Stats Aggregation Pattern
+location:
+  - app/Services/SumNhlGameStrengthUnits.php
+  - app/Services/NhlStrengthStatsQuery.php
+  - app/Models/NhlUnitGameStrengthSummary.php
+  - app/Models/NhlPlayerGameStrengthSummary.php
+  - database/migrations/2026_06_29_020001_create_nhl_strength_summaries_table.php
+purpose: Persist strength-aware on-ice totals by game so stats requests can aggregate summaries instead of scanning raw play-by-play events.
+when_to_use:
+  - Building unit or player on-ice stats by season, range, game type, or strength.
+  - Deriving per-game, per-60, percentages, or IPP from grouped totals.
+  - Refactoring stats reads away from raw play-by-play event scans.
+when_not_to_use:
+  - Importing raw play-by-play events.
+  - Replacing official boxscore validation.
+  - Storing cheap rate variants that can be derived from totals.
+rules:
+  - Request-time stats must aggregate from persisted game-strength summaries, not raw play-by-play rows.
+  - Strength values must remain aligned with docs/ENUMS.md.
+  - Empty-net contexts remain EV unless a separate context flag is approved.
+  - Per-game, per-60, percentages, and IPP must be derived from totals in one query/presentation layer.
+  - Legacy nhl_unit_game_summaries may remain during migration but must not be the target strength model.
+public_interface:
+  - SumNhlGameStrengthUnits::sum()
+  - NhlStrengthStatsQuery::players()
+  - NhlStrengthStatsQuery::units()
+  - NhlUnitGameStrengthSummary
+  - NhlPlayerGameStrengthSummary
+example_usage: |
+  app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();

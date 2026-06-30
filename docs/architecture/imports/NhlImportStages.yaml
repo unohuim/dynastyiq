@@ -1,0 +1,31 @@
+name: NHL Import Stages
+type: Domain Metadata Contract
+location:
+  - app/Support/NhlImportStages.php
+purpose: Define the canonical stage order, dependencies, queue job mappings, and stale-timeout config keys for the NHL game import pipeline.
+when_to_use:
+  - Seeding import progress rows for discovered NHL games.
+  - Checking import-stage dependencies.
+  - Dispatching the queue job for a claimed import stage.
+  - Sweeping stale running stages.
+when_not_to_use:
+  - Performing a stage transformation.
+  - Persisting import progress state.
+  - Adding non-NHL import workflows.
+rules:
+  - NHL import stage order must be read from this contract instead of duplicating stage arrays.
+  - Stage values must remain aligned with docs/ENUMS.md.
+  - Stage job mappings must point to jobs that extend BaseNhlJob.
+  - Stale timeout config keys must point to config/apiImportNhl.php.
+  - Boxscore import must precede shift import so official shift and time-on-ice targets are available to shift reconciliation.
+  - Summary validation must run as the terminal game pipeline stage after boxscore, shift-unit creation, event connections, and game-unit aggregation have completed.
+public_interface:
+  - NhlImportStages::ordered()
+  - NhlImportStages::dependenciesFor()
+  - NhlImportStages::nextAfter()
+  - NhlImportStages::jobClassFor()
+  - NhlImportStages::timeoutConfigKeyFor()
+example_usage: |
+  foreach (NhlImportStages::ordered() as $stage) {
+      // seed or process the stage
+  }

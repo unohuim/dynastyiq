@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\PlayByPlay;
 use App\Models\NhlUnitShift;
 use App\Models\NhlUnit;
+use Illuminate\Support\Facades\DB;
 
 class ConnectEventsToUnitShifts
 {
@@ -24,6 +25,10 @@ class ConnectEventsToUnitShifts
         $events = PlayByPlay::where('nhl_game_id', $this->gameId)
             ->orderBy('seconds_in_game')
             ->get();
+
+        DB::table('event_unit_shifts')
+            ->whereIn('event_id', $events->pluck('id'))
+            ->delete();
 
         $criticalStoppage = ['stoppage', 'penalty', 'goal', 'period-end', 'game-end'];
         $criticalStart = ['period-start', 'faceoff'];

@@ -16,6 +16,7 @@ Before proposing a plan or writing any files, Codex MUST read and treat the foll
 - docs/CONVENTIONS.md
 - docs/ENUMS.md
 - docs/UI_DESIGN.md
+- docs/UI_MOTION.md
 - docs/testing/testing-standards.yaml
 - docs/architecture/README.yaml
 - docs/ARCHITECTURE_INVENTORY.md
@@ -51,9 +52,10 @@ It is **not** the primary source of architectural truth.
 
 1. docs/CONVENTIONS.md
 2. docs/UI_DESIGN.md
-3. docs/ui_backlog.md (known existing deviations only)
-4. resources/views/**
-5. resources/js/**
+3. docs/UI_MOTION.md
+4. docs/ui_backlog.md (known existing deviations only)
+5. resources/views/**
+6. resources/js/**
 
 Existing deviations in `docs/ui_backlog.md` do not permit new deviations.
 
@@ -138,6 +140,7 @@ Codex must never self-certify completion.
 - New automated PHP tests must use Pest.
 - Test authoring and test audits must follow `docs/testing/testing-standards.yaml`.
 - New UI and materially touched UI must follow `docs/UI_DESIGN.md`.
+- Interactive state changes must follow `docs/UI_MOTION.md`.
 - Existing architectural patterns and invariants must be respected.
 - Enum-like values must be documented in `docs/ENUMS.md`.
 - Database schema documentation must stay descriptive; migrations remain the source of truth.
@@ -223,6 +226,7 @@ Codex must never self-certify completion.
 ### UI
 
 - UI authority is documented in `docs/architecture/ui/UIDesignAuthority.yaml`.
+- UI motion standards are documented in `docs/UI_MOTION.md`.
 - Existing deviations are tracked in `docs/ui_backlog.md`.
 - New UI deviations are prohibited unless explicitly approved.
 - Blade executable `<script>` blocks must not be introduced into new or migrated interactive pages.

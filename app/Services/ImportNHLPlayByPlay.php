@@ -58,6 +58,17 @@ class ImportNHLPlayByPlay
                 return 0;
             }
 
+            $eligibility = app(NhlGameImportEligibility::class);
+
+            if (! $eligibility->allowsGameType($response['gameType'] ?? null)) {
+                throw new \DomainException(sprintf(
+                    'Unsupported NHL game type %s for game %s. Allowed game types: %s.',
+                    (string) ($response['gameType'] ?? 'missing'),
+                    (string) $gameId,
+                    $eligibility->allowedGameTypeList()
+                ));
+            }
+
             $periodLengthSeconds = 1200; // 20 minutes per regulation period
 
 
@@ -186,6 +197,10 @@ class ImportNHLPlayByPlay
 
                     'highlight_clip_sharing_url' => $details['highlightClipSharingUrl'] ?? null,
                     'highlight_clip_id' => $details['highlightClip'] ?? null,
+                    'metadata' => [
+                        'event' => $event,
+                        'details' => $details,
+                    ],
                 ];
 
                 $data['strength'] = $this->determineStrength(

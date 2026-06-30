@@ -11,7 +11,14 @@ class SumNhlGameUnits
 {
     protected int $gameId;
 
-    public function __construct(int|string $gameId)
+    /**
+     * Create the legacy unit summary service with optional strength summary collaborator.
+     */
+    public function __construct(
+        int|string $gameId,
+        private readonly SumNhlGameStrengthUnits|null $strengthUnits = null,
+        private readonly NhlPbpEventNormalizer|null $normalizer = null
+    )
     {
         $this->gameId = (int) $gameId;
     }
@@ -19,6 +26,11 @@ class SumNhlGameUnits
     public function sum(): int
     {
         $now = Carbon::now();
+        $normalizer = $this->normalizer ?? app(NhlPbpEventNormalizer::class);
+        $sogPredicate = $normalizer->boxscoreSogSqlPredicate('p');
+        $shotAttemptPredicate = $normalizer->shotAttemptSqlPredicate('p');
+        $unblockedShotAttemptPredicate = $normalizer->unblockedShotAttemptSqlPredicate('p');
+        $penaltyMinutesExpression = $normalizer->penaltyMinutesSqlExpression('p');
 
         // 1) Aggregate shift time & count per unit (independent of unit_type).
         $shiftAgg = DB::table('nhl_unit_shifts as us')
@@ -39,39 +51,39 @@ class SumNhlGameUnits
             ->join('play_by_plays as p', 'p.id', '=', 'eus.event_id')
             ->where('us.nhl_game_id', $this->gameId)
             ->groupBy('us.unit_id')
-            ->selectRaw(<<<'SQL'
+            ->selectRaw(<<<SQL
                 us.unit_id,
 
                 -- Goals for/against + strength splits
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as gf,
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ga,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as gf,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ga,
 
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'EV' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ev_gf,
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PP' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pp_gf,
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PK' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pk_gf,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'EV' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ev_gf,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'PP' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pp_gf,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'PK' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pk_gf,
 
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'EV' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ev_ga,
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PP' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pp_ga,
-                SUM(CASE WHEN p.type_desc_key = 'goal' AND p.strength = 'PK' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pk_ga,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'EV' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ev_ga,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'PP' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pp_ga,
+                SUM(CASE WHEN COALESCE(p.period_type,'') <> 'SO' AND p.type_desc_key = 'goal' AND p.strength = 'PK' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pk_ga,
 
                 -- Shots on goal (goal counts as SOG) + strength splits
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as sf,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as sa,
+                SUM(CASE WHEN {$sogPredicate} AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as sf,
+                SUM(CASE WHEN {$sogPredicate} AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as sa,
 
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'EV' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ev_sf,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'PP' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pp_sf,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'PK' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pk_sf,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'EV' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ev_sf,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'PP' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pp_sf,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'PK' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as pk_sf,
 
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'EV' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ev_sa,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'PP' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pp_sa,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal') AND p.strength = 'PK' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pk_sa,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'EV' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as ev_sa,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'PP' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pp_sa,
+                SUM(CASE WHEN {$sogPredicate} AND p.strength = 'PK' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as pk_sa,
 
                 -- Corsi/Fenwick
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal','missed-shot','blocked-shot') AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as satf,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal','missed-shot','blocked-shot') AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as sata,
+                SUM(CASE WHEN {$shotAttemptPredicate} AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as satf,
+                SUM(CASE WHEN {$shotAttemptPredicate} AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as sata,
 
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal','missed-shot') AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ff,
-                SUM(CASE WHEN p.type_desc_key IN ('shot-on-goal','goal','missed-shot') AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as fa,
+                SUM(CASE WHEN {$unblockedShotAttemptPredicate} AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as ff,
+                SUM(CASE WHEN {$unblockedShotAttemptPredicate} AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as fa,
 
                 -- Blocks & hits (team perspective)
                 SUM(CASE WHEN p.type_desc_key = 'blocked-shot' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as bf,
@@ -86,8 +98,8 @@ class SumNhlGameUnits
 
                 -- Fights & PIM
                 SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.desc_key = 'fighting' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as f,
-                SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id = us.team_id THEN COALESCE(p.duration,0) ELSE 0 END) as pim_f,
-                SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id <> us.team_id THEN COALESCE(p.duration,0) ELSE 0 END) as pim_a,
+                SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id = us.team_id THEN {$penaltyMinutesExpression} ELSE 0 END) as pim_f,
+                SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id <> us.team_id THEN {$penaltyMinutesExpression} ELSE 0 END) as pim_a,
                 SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id = us.team_id THEN 1 ELSE 0 END) as penalties_f,
                 SUM(CASE WHEN p.type_desc_key = 'penalty' AND p.event_owner_team_id <> us.team_id THEN 1 ELSE 0 END) as penalties_a,
 
@@ -207,6 +219,11 @@ class SumNhlGameUnits
             array_diff(array_keys($payload->first()), ['nhl_game_id', 'unit_id', 'created_at'])
         );
 
-        return $payload->count();
+        $strengthCount = ($this->strengthUnits ?? app()->make(
+            SumNhlGameStrengthUnits::class,
+            ['gameId' => $this->gameId]
+        ))->sum();
+
+        return $payload->count() + $strengthCount;
     }
 }

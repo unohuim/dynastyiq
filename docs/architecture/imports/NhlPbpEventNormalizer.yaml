@@ -1,0 +1,37 @@
+name: NHL PBP Event Normalizer
+type: Domain Rule Service
+location:
+  - app/Services/NhlPbpEventNormalizer.php
+  - app/Services/SumNHLPlayByPlay.php
+  - app/Services/SumNhlGameUnits.php
+  - app/Services/SumNhlGameStrengthUnits.php
+purpose: Centralize NHL play-by-play event semantics that must remain consistent across player summaries, unit summaries, validation triage, and import debugging.
+when_to_use:
+  - Classifying play-by-play events as boxscore-comparable shots, shot attempts, or shootout-only events.
+  - Normalizing provider penalty minute values before writing derived summaries.
+  - Sharing event classification between PHP summary code and SQL aggregate code.
+when_not_to_use:
+  - Fetching or persisting provider payloads from NHL APIs.
+  - Deciding import stage order or retry behavior.
+  - Replacing official boxscore validation as the downstream trust gate.
+rules:
+  - Raw imported provider fields must remain provider-faithful.
+  - Derived player and unit summaries must use the same event classification rules.
+  - Shootout events must not contribute to boxscore-comparable skater or goalie totals.
+  - Goal events count as shots on goal only when the provider supplies shot metadata.
+  - Provider penalty minute codes with special semantics must be normalized only in derived calculations.
+  - SQL aggregate predicates must stay behaviorally aligned with PHP classification helpers.
+public_interface:
+  - NhlPbpEventNormalizer::isShootout()
+  - NhlPbpEventNormalizer::isBoxscoreComparable()
+  - NhlPbpEventNormalizer::isShotOnGoal()
+  - NhlPbpEventNormalizer::isShotAttempt()
+  - NhlPbpEventNormalizer::isUnblockedShotAttempt()
+  - NhlPbpEventNormalizer::normalizedPenaltyMinutes()
+  - NhlPbpEventNormalizer::isEmptyNetAgainst()
+  - NhlPbpEventNormalizer::boxscoreSogSqlPredicate()
+  - NhlPbpEventNormalizer::shotAttemptSqlPredicate()
+  - NhlPbpEventNormalizer::unblockedShotAttemptSqlPredicate()
+  - NhlPbpEventNormalizer::penaltyMinutesSqlExpression()
+example_usage: |
+  $normalizer->isShotOnGoal($play);

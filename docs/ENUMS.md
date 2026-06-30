@@ -32,8 +32,8 @@ Do not introduce new enum values without updating this document.
 
 ### Role Scope
 
-**Name:** Role scope  
-**Storage location(s):** `roles.scope` (enum column)  
+**Name:** Role scope
+**Storage location(s):** `roles.scope` (enum column)
 **Allowed values:**
 
 - `global`
@@ -51,8 +51,8 @@ Do not introduce new enum values without updating this document.
 
 ### Seeded Role Slug
 
-**Name:** Seeded role slug  
-**Storage location(s):** `roles.slug` (unique string column, seeded by `RoleSeeder`)  
+**Name:** Seeded role slug
+**Storage location(s):** `roles.slug` (unique string column, seeded by `RoleSeeder`)
 **Allowed values:**
 
 - `super-admin`
@@ -82,8 +82,8 @@ Do not introduce new enum values without updating this document.
 
 ### Player Shoots
 
-**Name:** Player handedness / shoots  
-**Storage location(s):** `players.shoots` (nullable enum column)  
+**Name:** Player handedness / shoots
+**Storage location(s):** `players.shoots` (nullable enum column)
 **Allowed values:**
 
 - `R`
@@ -96,8 +96,8 @@ Do not introduce new enum values without updating this document.
 
 ### Player Status
 
-**Name:** Player status  
-**Storage location(s):** `players.status` (string column)  
+**Name:** Player status
+**Storage location(s):** `players.status` (string column)
 **Allowed values currently used:**
 
 - `active`
@@ -113,8 +113,8 @@ Do not introduce new enum values without updating this document.
 
 ### NHL Unit Type
 
-**Name:** NHL unit type  
-**Storage location(s):** `nhl_units.unit_type` (enum column)  
+**Name:** NHL unit type
+**Storage location(s):** `nhl_units.unit_type` (enum column)
 **Allowed values:**
 
 - `F`
@@ -133,8 +133,8 @@ Do not introduce new enum values without updating this document.
 
 ### NHL Zone Code
 
-**Name:** NHL shift zone code  
-**Storage location(s):** `nhl_unit_shifts.starting_zone`, `nhl_unit_shifts.ending_zone` (nullable enum columns)  
+**Name:** NHL shift zone code
+**Storage location(s):** `nhl_unit_shifts.starting_zone`, `nhl_unit_shifts.ending_zone` (nullable enum columns)
 **Allowed values:**
 
 - `O`
@@ -147,10 +147,47 @@ Do not introduce new enum values without updating this document.
 - `N`: Neutral zone.
 - `D`: Defensive zone.
 
+### NHL Strength State
+
+**Name:** NHL strength state
+**Storage location(s):** `play_by_plays.strength`, `nhl_unit_game_strength_summaries.strength`, `nhl_player_game_strength_summaries.strength`, stats filters
+**Allowed values:**
+
+- `EV`
+- `PP`
+- `PK`
+
+**Semantic meaning:**
+
+- `EV`: Even-strength context, including current empty-net 6v5 or 5v6 contexts.
+- `PP`: Power-play context for the advantaged team.
+- `PK`: Penalty-kill context for the shorthanded team.
+
+**Notes:**
+
+- Empty-net context is not a separate strength value in the current model.
+- Add a separate context flag before splitting 6v5 or 5v6 away from `EV`.
+
+### NHL Penalty Type Code
+
+**Name:** NHL penalty type code
+**Storage location(s):** `play_by_plays.penalty_type_code`
+**Allowed values currently handled by domain logic:**
+
+- `MAT`
+
+**Semantic meaning:**
+
+- `MAT`: Match penalty. NHL play-by-play stores `duration` as `5`; summary and unit PIM calculations add the automatic 10-minute misconduct for 15 total penalty minutes.
+
+**Notes:**
+
+- Other provider penalty type codes may be stored, but only `MAT` has special calculation behavior documented here.
+
 ### NHL Game Type
 
-**Name:** NHL game type  
-**Storage location(s):** `nhl_games.game_type`, `nhl_import_progress.game_type`, `nhl_season_stats.game_type`, stats request validation  
+**Name:** NHL game type
+**Storage location(s):** `nhl_games.game_type`, `nhl_import_progress.game_type`, `nhl_season_stats.game_type`, stats request validation
 **Allowed values in UI/API filters:**
 
 - `1`
@@ -175,36 +212,39 @@ Do not introduce new enum values without updating this document.
 
 ### NHL Import Type
 
-**Name:** NHL import type  
-**Storage location(s):** `nhl_import_progress.import_type` (enum column)  
+**Name:** NHL import type
+**Storage location(s):** `nhl_import_progress.import_type` (enum column)
 **Allowed values:**
 
 - `pbp`
 - `summary`
-- `shifts`
 - `boxscore`
+- `shifts`
 - `shift-units`
 - `connect-events`
 - `sum-game-units`
+- `validate-summary`
 
 **Semantic meaning:**
 
 - `pbp`: Import play-by-play events.
 - `summary`: Summarize play-by-play into per-player game summaries.
-- `shifts`: Import raw NHL shift data.
 - `boxscore`: Import NHL boxscore data.
+- `shifts`: Import raw NHL shift data after boxscore targets are available.
 - `shift-units`: Build NHL unit shift windows.
 - `connect-events`: Link play-by-play events to unit shifts.
 - `sum-game-units`: Aggregate per-game unit summaries.
+- `validate-summary`: Compare computed game summaries to official boxscore totals.
 
 **Notes:**
 
-- `NhlImportOrchestrator` advances these stages in the order listed above.
+- `NhlImportStages` defines the canonical stage order, dependencies, job mappings, and stale-timeout config keys.
+- `NhlImportOrchestrator` advances stages using `NhlImportStages`.
 
 ### NHL Import Status
 
-**Name:** NHL import status  
-**Storage location(s):** `nhl_import_progress.status` (enum column)  
+**Name:** NHL import status
+**Storage location(s):** `nhl_import_progress.status` (enum column)
 **Allowed values:**
 
 - `scheduled`
@@ -222,6 +262,116 @@ Do not introduce new enum values without updating this document.
 **Notes:**
 
 - Default value is `scheduled`.
+
+### NHL Game Import Run Action
+
+**Name:** NHL game import run action
+**Storage location(s):** `nhl_game_import_runs.action`
+**Allowed values:**
+
+- `discover`
+- `process`
+
+**Semantic meaning:**
+
+- `discover`: Admin queued NHL game discovery for a date selection.
+- `process`: Admin queued NHL game processing orchestrator jobs for a date selection.
+
+### NHL Game Import Run Mode
+
+**Name:** NHL game import run mode
+**Storage location(s):** `nhl_game_import_runs.mode`
+**Allowed values:**
+
+- `date`
+- `season`
+- `newdays`
+- `range`
+- `days`
+- `default`
+
+**Semantic meaning:**
+
+- `date`: Single-date selection.
+- `season`: Season-id date window.
+- `newdays`: Window based on the oldest existing NHL import progress date.
+- `range`: Explicit date range or single boundary date.
+- `days`: Date window derived from a days count.
+- `default`: Controller default selection, currently today for processing requests.
+
+### NHL Game Import Run Status
+
+**Name:** NHL game import run status
+**Storage location(s):** `nhl_game_import_runs.status`, admin status payload
+**Allowed values:**
+
+- `queued`
+- `running`
+- `completed`
+- `failed`
+
+**Semantic meaning:**
+
+- `queued`: Admin request has been accepted and jobs have been queued.
+- `running`: Related NHL import progress rows are scheduled, running, or partially completed.
+- `completed`: Related NHL import progress rows are all completed.
+- `failed`: At least one related NHL import progress row is in error.
+
+---
+
+### NHL Game Validation Type
+
+**Name:** NHL game validation type
+**Storage location(s):** `nhl_game_validations.validation_type`
+**Allowed values:**
+
+- `summary_boxscore`
+
+**Semantic meaning:**
+
+- `summary_boxscore`: Computed `nhl_game_summaries` rows compared against official `nhl_boxscores` rows.
+
+**Notes:**
+
+- Validation type values identify the artifact and source being compared.
+
+### NHL Game Validation Status
+
+**Name:** NHL game validation status
+**Storage location(s):** `nhl_game_validations.status` (enum column)
+**Allowed values:**
+
+- `approved`
+- `failed`
+- `accepted_exception`
+
+**Semantic meaning:**
+
+- `approved`: Exact comparable totals matched and the validation can be trusted by downstream work.
+- `failed`: One or more durable validation deltas exist.
+- `accepted_exception`: An admin reviewed and accepted the failed validation as a known exception.
+
+**Notes:**
+
+- `failed` validation status blocks downstream import stages until rerun approval or accepted exception.
+
+### NHL Game Validation Delta Severity
+
+**Name:** NHL game validation delta severity
+**Storage location(s):** `nhl_game_validation_deltas.severity` (enum column)
+**Allowed values:**
+
+- `error`
+- `warning`
+
+**Semantic meaning:**
+
+- `error`: Delta blocks automatic validation approval.
+- `warning`: Delta is informational and does not block automatic validation approval.
+
+**Notes:**
+
+- Current summary-boxscore validation persists blocking deltas as `error`.
 
 ---
 
@@ -294,8 +444,8 @@ Do not introduce new enum values without updating this document.
 
 ### Platform
 
-**Name:** Fantasy platform  
-**Storage location(s):** `platform_leagues.platform`, `platform_player_ids.platform`, `platform_roster_memberships.platform`, `integration_secrets.provider`, league creation validation  
+**Name:** Fantasy platform
+**Storage location(s):** `platform_leagues.platform`, `platform_player_ids.platform`, `platform_roster_memberships.platform`, `integration_secrets.provider`, league creation validation
 **Allowed values:**
 
 - `fantrax`
@@ -314,8 +464,8 @@ Do not introduce new enum values without updating this document.
 
 ### Integration Secret Provider
 
-**Name:** Integration secret provider  
-**Storage location(s):** `integration_secrets.provider` (enum column)  
+**Name:** Integration secret provider
+**Storage location(s):** `integration_secrets.provider` (enum column)
 **Allowed values:**
 
 - `fantrax`
@@ -334,8 +484,8 @@ Do not introduce new enum values without updating this document.
 
 ### Integration Secret Status
 
-**Name:** Integration secret status  
-**Storage location(s):** `integration_secrets.status` (enum column)  
+**Name:** Integration secret status
+**Storage location(s):** `integration_secrets.status` (enum column)
 **Allowed values:**
 
 - `connected`
@@ -376,8 +526,8 @@ Do not introduce new enum values without updating this document.
 
 ### Platform Roster Membership Status
 
-**Name:** Platform roster membership status  
-**Storage location(s):** `platform_roster_memberships.status` (nullable enum column)  
+**Name:** Platform roster membership status
+**Storage location(s):** `platform_roster_memberships.status` (nullable enum column)
 **Allowed values:**
 
 - `active`
@@ -441,8 +591,8 @@ Do not introduce new enum values without updating this document.
 
 ### League Platform Link Status
 
-**Name:** League platform link status  
-**Storage location(s):** `league_platform_league.status` (nullable string column)  
+**Name:** League platform link status
+**Storage location(s):** `league_platform_league.status` (nullable string column)
 **Allowed values currently documented by migration comments/code:**
 
 - `active`
@@ -466,8 +616,8 @@ Do not introduce new enum values without updating this document.
 
 ### Player External Identity Provider
 
-**Name:** External player identity provider  
-**Storage location(s):** `player_external_identities.provider` (string column)  
+**Name:** External player identity provider
+**Storage location(s):** `player_external_identities.provider` (string column)
 **Allowed values:**
 
 - `nhl`
@@ -494,8 +644,8 @@ Do not introduce new enum values without updating this document.
 
 ### Player External Identity Match Status
 
-**Name:** External player identity match status  
-**Storage location(s):** `player_external_identities.match_status` (string column)  
+**Name:** External player identity match status
+**Storage location(s):** `player_external_identities.match_status` (string column)
 **Allowed values:**
 
 - `matched`
@@ -520,8 +670,8 @@ Do not introduce new enum values without updating this document.
 
 ### Player External Identity Unmatched Reason
 
-**Name:** External player identity unmatched reason  
-**Storage location(s):** `player_external_identities.unmatched_reason` (nullable string column)  
+**Name:** External player identity unmatched reason
+**Storage location(s):** `player_external_identities.unmatched_reason` (nullable string column)
 **Allowed values currently used by code:**
 
 - `no_canonical_player`
@@ -549,8 +699,8 @@ Do not introduce new enum values without updating this document.
 
 ### Visibility
 
-**Name:** Content visibility  
-**Storage location(s):** `perspectives.visibility`, `ranking_profiles.visibility`, `player_rankings.visibility` (enum columns)  
+**Name:** Content visibility
+**Storage location(s):** `perspectives.visibility`, `ranking_profiles.visibility`, `player_rankings.visibility` (enum columns)
 **Allowed values:**
 
 - `private`
@@ -570,8 +720,8 @@ Do not introduce new enum values without updating this document.
 
 ### Sport
 
-**Name:** Sport  
-**Storage location(s):** `perspectives.sport`, `ranking_profiles.sport`, `player_rankings.sport` (enum columns), `leagues.sport` and `platform_leagues.sport` (string columns)  
+**Name:** Sport
+**Storage location(s):** `perspectives.sport`, `ranking_profiles.sport`, `player_rankings.sport` (enum columns), `leagues.sport` and `platform_leagues.sport` (string columns)
 **Allowed values in enum-backed ranking/perspective tables:**
 
 - `hockey`
@@ -591,8 +741,8 @@ Do not introduce new enum values without updating this document.
 
 ### Stats Slice
 
-**Name:** Stats slice  
-**Storage location(s):** Stats controller request validation; Discord command `enum_options.slice`  
+**Name:** Stats slice
+**Storage location(s):** Stats controller request validation; Discord command `enum_options.slice`
 **Allowed values:**
 
 - `total`
@@ -607,8 +757,8 @@ Do not introduce new enum values without updating this document.
 
 ### Stats Resource
 
-**Name:** Stats resource  
-**Storage location(s):** Stats controller request validation; Discord command `enum_options.resource`  
+**Name:** Stats resource
+**Storage location(s):** Stats controller request validation; Discord command `enum_options.resource`
 **Allowed values in StatsController:**
 
 - `players`
@@ -633,8 +783,8 @@ Do not introduce new enum values without updating this document.
 
 ### Stats Period
 
-**Name:** Stats period  
-**Storage location(s):** Stats controller request validation; Discord command `enum_options.period`  
+**Name:** Stats period
+**Storage location(s):** Stats controller request validation; Discord command `enum_options.period`
 **Allowed values in current `StatsController`:**
 
 - `season`
@@ -670,8 +820,8 @@ Do not introduce new enum values without updating this document.
 
 ### Discord Command Handler Kind
 
-**Name:** Discord command handler kind  
-**Storage location(s):** `discord_commands.handler_kind` (enum column)  
+**Name:** Discord command handler kind
+**Storage location(s):** `discord_commands.handler_kind` (enum column)
 **Allowed values:**
 
 - `route`
@@ -686,8 +836,8 @@ Do not introduce new enum values without updating this document.
 
 ### Discord Command HTTP Method
 
-**Name:** Discord command HTTP method  
-**Storage location(s):** `discord_commands.http_method` (nullable enum column)  
+**Name:** Discord command HTTP method
+**Storage location(s):** `discord_commands.http_method` (nullable enum column)
 **Allowed values:**
 
 - `GET`
@@ -704,8 +854,8 @@ Do not introduce new enum values without updating this document.
 
 ### Discord Command Auth Scope
 
-**Name:** Discord command auth scope  
-**Storage location(s):** `discord_commands.auth_scope` (string column)  
+**Name:** Discord command auth scope
+**Storage location(s):** `discord_commands.auth_scope` (string column)
 **Allowed values currently seeded:**
 
 - `user`
@@ -725,8 +875,8 @@ Do not introduce new enum values without updating this document.
 
 ### Provider Account Provider
 
-**Name:** Provider account provider  
-**Storage location(s):** `provider_accounts.provider`, `membership_tiers.provider`, `memberships.provider` (string columns)  
+**Name:** Provider account provider
+**Storage location(s):** `provider_accounts.provider`, `membership_tiers.provider`, `memberships.provider` (string columns)
 **Allowed values currently used:**
 
 - `patreon`
@@ -761,8 +911,8 @@ Do not introduce new enum values without updating this document.
 
 ### Provider Account Status
 
-**Name:** Provider account status  
-**Storage location(s):** `provider_accounts.status` (string column)  
+**Name:** Provider account status
+**Storage location(s):** `provider_accounts.status` (string column)
 **Allowed values:**
 
 - `disconnected`
@@ -782,8 +932,8 @@ Do not introduce new enum values without updating this document.
 
 ### Membership Status
 
-**Name:** Membership status  
-**Storage location(s):** `memberships.status` (string column), `CommunityMemberRequest`, Patreon member status mapper  
+**Name:** Membership status
+**Storage location(s):** `memberships.status` (string column), `CommunityMemberRequest`, Patreon member status mapper
 **Allowed values:**
 
 - `active`
@@ -806,8 +956,8 @@ Do not introduce new enum values without updating this document.
 
 ### Patreon Patron Status (External)
 
-**Name:** Patreon patron status  
-**Storage location(s):** Incoming Patreon payload `attributes.patron_status`; not persisted directly  
+**Name:** Patreon patron status
+**Storage location(s):** Incoming Patreon payload `attributes.patron_status`; not persisted directly
 **Mapped external values:**
 
 - `declined_patron`
@@ -826,8 +976,8 @@ Do not introduce new enum values without updating this document.
 
 ### Membership Event Type
 
-**Name:** Membership event type  
-**Storage location(s):** `membership_events.event_type` (string column)  
+**Name:** Membership event type
+**Storage location(s):** `membership_events.event_type` (string column)
 **Allowed values currently emitted:**
 
 - `tier.changed`
@@ -852,8 +1002,8 @@ Do not introduce new enum values without updating this document.
 
 ### User Preference Key
 
-**Name:** User preference key  
-**Storage location(s):** `user_preferences.key` (string column), `UserPreferencesController` validation  
+**Name:** User preference key
+**Storage location(s):** `user_preferences.key` (string column), `UserPreferencesController` validation
 **Allowed values:**
 
 - `notifications.discord.dm`

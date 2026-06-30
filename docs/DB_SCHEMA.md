@@ -45,6 +45,7 @@ Migrations remain the **sole source of truth**.
 - membership_tiers
 - memberships
 - nhl_boxscores
+- nhl_game_import_runs
 - nhl_game_summaries
 - nhl_games
 - nhl_import_progress
@@ -836,6 +837,7 @@ Migrations remain the **sole source of truth**.
 | penalty_minutes | integer | No | Defaults to `0` |
 | toi | string | Yes | Raw time on ice |
 | toi_seconds | integer | Yes | Time on ice in seconds |
+| shifts | unsignedSmallInteger | No | Shift count; default `0` |
 | sog | integer | No | Shots on goal; defaults to `0` |
 | hits | integer | No | Defaults to `0` |
 | blocks | integer | No | Defaults to `0` |
@@ -853,10 +855,13 @@ Migrations remain the **sole source of truth**.
 | shots_against | integer | No | Defaults to `0` |
 | ev_saves | integer | No | Defaults to `0` |
 | ev_shots_against | integer | No | Defaults to `0` |
+| ev_goals_against | unsignedSmallInteger | No | Even-strength goals against; default `0` |
 | pp_saves | integer | No | Defaults to `0` |
 | pp_shots_against | integer | No | Defaults to `0` |
+| pp_goals_against | unsignedSmallInteger | No | Power-play goals against; default `0` |
 | pk_saves | integer | No | Defaults to `0` |
 | pk_shots_against | integer | No | Defaults to `0` |
+| pk_goals_against | unsignedSmallInteger | No | Penalty-kill goals against; default `0` |
 | position | string | Yes | Position |
 | player_name | string | Yes | Player name |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -1056,7 +1061,7 @@ Migrations remain the **sole source of truth**.
 | game_date | date | No | Game date |
 | game_id | string(10) | No | NHL game ID as string |
 | game_type | unsignedTinyInteger | Yes | NHL game type |
-| import_type | enum | No | `pbp`, `summary`, `shifts`, `boxscore`, `shift-units`, `connect-events`, `sum-game-units` |
+| import_type | enum | No | `pbp`, `summary`, `boxscore`, `shifts`, `shift-units`, `connect-events`, `sum-game-units`, `validate-summary` |
 | items_count | unsignedInteger | No | Defaults to `0` |
 | status | enum | No | `scheduled`, `running`, `error`, `completed`; defaults to `scheduled` |
 | discovered_at | timestamp | Yes | Discovery timestamp |
@@ -1075,7 +1080,101 @@ Migrations remain the **sole source of truth**.
 
 ### Behavioral Notes
 
-- `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> shifts -> boxscore -> shift units -> event connections -> game unit summaries.
+- `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> game unit summaries -> validation.
+
+---
+
+## nhl_game_import_runs
+
+**Organization-owned:** No
+**Purpose:** Admin-visible NHL game import orchestration requests.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| action | string(24) | No | `discover`, `process` |
+| mode | string(24) | No | Date selection mode |
+| status | string(24) | No | `queued`, `running`, `completed`, `failed`; defaults to `queued` |
+| start_date | date | No | Later inclusive date boundary |
+| end_date | date | No | Earlier inclusive date boundary |
+| date_count | unsignedInteger | No | Count of inclusive selected dates |
+| queued_jobs | unsignedInteger | No | Count of jobs queued directly by the admin request |
+| payload | json | Yes | Validated admin request options |
+| last_error | text | Yes | Last run-level error, when recorded |
+| created_by | bigint | Yes | FK to `users.id` |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `created_by` -> `users.id` (NULL on delete)
+- Index: `(action, status)`
+- Index: `(start_date, end_date)`
+- Index: `created_at`
+
+### Behavioral Notes
+
+- Run rows describe admin-dispatched discovery or processing requests.
+- Pipeline stage progress remains sourced from `nhl_import_progress`.
+
+---
+
+## nhl_game_validations
+
+**Organization-owned:** No
+**Purpose:** Persist validation state for computed NHL game artifacts.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | bigint | No | FK to `nhl_games.nhl_game_id` |
+| validation_type | string | No | `summary_boxscore` |
+| status | enum | No | `approved`, `failed`, `accepted_exception` |
+| mismatch_count | unsignedInteger | No | Count of persisted blocking deltas |
+| checked_at | timestamp | Yes | Validation execution timestamp |
+| approved_at | timestamp | Yes | Approval or exception timestamp |
+| approved_by | bigint | Yes | FK to `users.id` |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(nhl_game_id, validation_type)`
+- Index: `(status, checked_at)`
+
+---
+
+## nhl_game_validation_deltas
+
+**Organization-owned:** No
+**Purpose:** Persist player and field-level deltas for failed NHL game validations.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| validation_id | bigint | No | FK to `nhl_game_validations.id` |
+| nhl_player_id | bigint | Yes | NHL provider player ID |
+| field | string | No | Compared boxscore-side field name |
+| boxscore_value | string | Yes | Official value snapshot |
+| summary_value | string | Yes | Computed value snapshot |
+| delta | decimal(12,3) | Yes | Computed minus official value |
+| severity | enum | No | `error`, `warning`; defaults to `error` |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Index: `nhl_player_id`
+- Index: `(validation_id, nhl_player_id)`
 
 ---
 
@@ -1380,9 +1479,113 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `(nhl_game_id, unit_id)`
 - Index: `nhl_game_id`
+
+---
+
+## nhl_unit_game_strength_summaries
+
+**Organization-owned:** No
+**Purpose:** Strength-specific per-game on-ice totals for NHL units.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | bigint | No | FK -> nhl_games.nhl_game_id |
+| unit_id | bigint | No | FK -> nhl_units.id |
+| team_id | unsignedBigInteger | Yes | NHL team ID |
+| team_abbrev | string(10) | Yes | Team abbreviation |
+| strength | enum | No | `EV`, `PP`, `PK` |
+| toi | unsignedInteger | No | Time on ice |
+| shifts | unsignedSmallInteger | No | Shift count |
+| ozs | unsignedSmallInteger | No | Offensive-zone starts |
+| nzs | unsignedSmallInteger | No | Neutral-zone starts |
+| dzs | unsignedSmallInteger | No | Defensive-zone starts |
+| gf | unsignedSmallInteger | No | Goals for |
+| ga | unsignedSmallInteger | No | Goals against |
+| sf | unsignedSmallInteger | No | Shots for |
+| sa | unsignedSmallInteger | No | Shots against |
+| satf | unsignedSmallInteger | No | Shot attempts for |
+| sata | unsignedSmallInteger | No | Shot attempts against |
+| ff | unsignedSmallInteger | No | Fenwick for |
+| fa | unsignedSmallInteger | No | Fenwick against |
+| bf | unsignedSmallInteger | No | Blocks for |
+| ba | unsignedSmallInteger | No | Blocks against |
+| hf | unsignedSmallInteger | No | Hits for |
+| ha | unsignedSmallInteger | No | Hits against |
+| fow | unsignedSmallInteger | No | Faceoffs won |
+| fol | unsignedSmallInteger | No | Faceoffs lost |
+| fot | unsignedSmallInteger | No | Faceoffs total |
+| pim_f | unsignedSmallInteger | No | Penalty minutes for |
+| pim_a | unsignedSmallInteger | No | Penalty minutes against |
+| penalties_f | unsignedSmallInteger | No | Penalties for |
+| penalties_a | unsignedSmallInteger | No | Penalties against |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(nhl_game_id, unit_id, strength)`
+- Index: `(nhl_game_id, strength)`
+- Index: `(unit_id, strength)`
+
+---
+
+## nhl_player_game_strength_summaries
+
+**Organization-owned:** No
+**Purpose:** Strength-specific per-game on-ice totals for NHL players.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | bigint | No | FK -> nhl_games.nhl_game_id |
+| player_id | bigint | No | FK -> players.id |
+| nhl_player_id | bigint | No | NHL provider player ID |
+| team_id | unsignedBigInteger | Yes | NHL team ID |
+| team_abbrev | string(10) | Yes | Team abbreviation |
+| strength | enum | No | `EV`, `PP`, `PK` |
+| toi | unsignedInteger | No | Time on ice |
+| shifts | unsignedSmallInteger | No | Shift count |
+| gf | unsignedSmallInteger | No | Goals for |
+| ga | unsignedSmallInteger | No | Goals against |
+| sf | unsignedSmallInteger | No | Shots for |
+| sa | unsignedSmallInteger | No | Shots against |
+| satf | unsignedSmallInteger | No | Shot attempts for |
+| sata | unsignedSmallInteger | No | Shot attempts against |
+| ff | unsignedSmallInteger | No | Fenwick for |
+| fa | unsignedSmallInteger | No | Fenwick against |
+| bf | unsignedSmallInteger | No | Blocks for |
+| ba | unsignedSmallInteger | No | Blocks against |
+| hf | unsignedSmallInteger | No | Hits for |
+| ha | unsignedSmallInteger | No | Hits against |
+| fow | unsignedSmallInteger | No | Faceoffs won |
+| fol | unsignedSmallInteger | No | Faceoffs lost |
+| fot | unsignedSmallInteger | No | Faceoffs total |
+| pim_f | unsignedSmallInteger | No | Penalty minutes for |
+| pim_a | unsignedSmallInteger | No | Penalty minutes against |
+| penalties_f | unsignedSmallInteger | No | Penalties for |
+| penalties_a | unsignedSmallInteger | No | Penalties against |
+| individual_g | unsignedSmallInteger | No | Individual goals while in this strength |
+| individual_a | unsignedSmallInteger | No | Individual assists while in this strength |
+| individual_pts | unsignedSmallInteger | No | Individual points while in this strength |
+| ipp | decimal(7,4) | No | Individual points percentage |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(nhl_game_id, player_id, strength)`
+- Index: `(nhl_player_id, strength)`
+- Index: `(nhl_game_id, strength)`
 - Index: `team_id`
 - Index: `team_abbrev`
-- Implicit (FK index): `unit_id`
+- Implicit (FK index): `player_id`
 
 ---
 
@@ -1460,12 +1663,15 @@ Migrations remain the **sole source of truth**.
 | id | bigint | No | Primary key |
 | team_abbrev | string(10) | Yes | Team abbreviation |
 | unit_type | enum | No | `F`, `D`, `G`, `PP`, `PK` |
+| composition_hash | string(64) | Yes | Deterministic hash of unit type and sorted player composition |
+| composition_player_ids | json | Yes | Sorted NHL player ids used for the composition hash |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
 ### Keys & Indexes
 
 - PK: `id`
+- Unique: `(team_abbrev, unit_type, composition_hash)` for new resolved units
 - Index: `team_abbrev`
 - Index: `unit_type`
 
@@ -2005,7 +2211,7 @@ Migrations remain the **sole source of truth**.
 | highlight_clip_id | unsignedBigInteger | Yes | Highlight clip ID |
 | away_score | integer | Yes | Defaults to `0` |
 | home_score | integer | Yes | Defaults to `0` |
-| metadata | json | Yes | Raw/extra metadata |
+| metadata | json | Yes | Raw provider metadata; NHL imports preserve the source `event` and `details` payloads for audit/debug context |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 

@@ -11,9 +11,11 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use App\Services\NhlImportOrchestrator;
+use App\Services\NhlGameImportEligibility;
+use App\Support\NhlImportStages;
 
 /**
- * Abstract base for NHL pipeline jobs (pbp, summary, shifts, boxscore, unit-shifts, connect-events).
+ * Abstract base for NHL pipeline jobs.
  */
 abstract class BaseNhlJob implements ShouldQueue
 {
@@ -37,7 +39,7 @@ abstract class BaseNhlJob implements ShouldQueue
     }
 
     /**
-     * Return stage key: 'pbp', 'summary', 'shifts', 'boxscore', 'unit-shifts', or 'connect-events'.
+     * Return the canonical stage key.
      */
     abstract protected function stageName(): string;
 
@@ -47,15 +49,30 @@ abstract class BaseNhlJob implements ShouldQueue
     abstract protected function perform(int $gameId): int;
 
     /**
-     * Template handle: guard → perform → report.
+     * Template handle: verify claimed work, perform it, then report.
      */
-    public function handle(NhlImportOrchestrator $orchestrator): void
+    public function handle(
+        NhlImportOrchestrator $orchestrator,
+        NhlGameImportEligibility $eligibility
+    ): void
     {
-        if (! $orchestrator->onRunning($this->gameId, $this->stageName())) {
+        if (! $orchestrator->isRunning($this->gameId, $this->stageName())) {
             return;
         }
 
         try {
+            if (
+                $this->stageName() !== NhlImportStages::PBP
+                && ! $eligibility->allowsStoredGame($this->gameId)
+            ) {
+                throw new \DomainException(sprintf(
+                    'NHL game %d cannot run %s before PBP stores an allowed game type (%s).',
+                    $this->gameId,
+                    $this->stageName(),
+                    $eligibility->allowedGameTypeList()
+                ));
+            }
+
             $count = $this->perform($this->gameId);
 
             $orchestrator->onSuccess($this->gameId, $this->stageName(), [

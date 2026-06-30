@@ -1,6 +1,7 @@
 import { bootPlayerTriage } from './player-triage.js';
 
 let importListenersRegistered = false;
+const validationDetailTransitionMs = 300;
 
 export default function adminHub(options = {}) {
     const nhlAvailable = Boolean(options.hasPlayers);
@@ -8,7 +9,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'triage'];
+    const validInitialTabs = ['imports', 'game-imports', 'triage', 'validations'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
@@ -20,12 +21,39 @@ export default function adminHub(options = {}) {
         hasPlayers: nhlAvailable,
         hasFantrax: fantraxAvailable,
         triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
+        validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
+        gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
+        gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
+        gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         triageLoaded: false,
         triageLoading: false,
         triageError: '',
+        validationsLoaded: false,
+        validationsLoading: false,
+        validationsError: '',
+        validationDetails: {},
+        gameImports: {
+            drawerOpen: false,
+            loading: false,
+            discovering: false,
+            processing: false,
+            error: '',
+            runs: [],
+            expandedRuns: {},
+            processableDateCount: 0,
+            form: {
+                date: '',
+                start: '',
+                end: '',
+                days: '',
+                newdays: '',
+                season: '',
+            },
+        },
 
         streams: {},
         progressPollers: {},
+        gameImportPoller: null,
 
         roster: {
             nhl: {
@@ -72,6 +100,10 @@ export default function adminHub(options = {}) {
             this.activeTab = tab;
             this.syncTabUrl(tab, options);
 
+            if (tab !== 'game-imports') {
+                this.stopGameImportPoll();
+            }
+
             if (tab === 'nhl' || tab === 'fantrax') {
                 this.activeSource = tab;
             }
@@ -85,6 +117,14 @@ export default function adminHub(options = {}) {
 
             if (tab === 'triage') {
                 await this.loadTriage();
+            }
+
+            if (tab === 'validations') {
+                await this.loadValidations();
+            }
+
+            if (tab === 'game-imports') {
+                await this.loadGameImports();
             }
         },
 
@@ -144,6 +184,539 @@ export default function adminHub(options = {}) {
             } finally {
                 this.triageLoading = false;
             }
+        },
+
+        async loadValidations() {
+            if (this.validationsLoaded || this.validationsLoading) {
+                return;
+            }
+
+            this.validationsLoading = true;
+            this.validationsError = '';
+
+            try {
+                const response = await fetch(this.validationsUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load validation triage');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Validation response did not include a page fragment');
+                }
+
+                const mount = this.$refs?.validationsMount ?? document.querySelector('[data-admin-validations-mount]');
+                if (!mount) {
+                    throw new Error('Validation mount was not found');
+                }
+
+                mount.innerHTML = payload.html;
+                this.bindValidationDetailToggles(mount);
+                this.validationsLoaded = true;
+            } catch (error) {
+                this.validationsError = error.message ?? 'Unable to load validation triage';
+            } finally {
+                this.validationsLoading = false;
+            }
+        },
+
+        bindValidationDetailToggles(mount) {
+            if (!mount || mount.dataset.validationTogglesBound === 'true') {
+                return;
+            }
+
+            mount.dataset.validationTogglesBound = 'true';
+            mount.addEventListener('click', (event) => {
+                const trigger = event.target?.closest?.('[data-validation-toggle]');
+
+                if (!trigger) {
+                    return;
+                }
+
+                event.preventDefault();
+                void this.toggleValidationDetail(trigger);
+            });
+        },
+
+        async toggleValidationDetail(trigger) {
+            const validationId = trigger.dataset.validationId;
+            const url = trigger.dataset.validationUrl;
+
+            if (!validationId || !url) {
+                return;
+            }
+
+            const row = document.querySelector(`[data-validation-detail-row="${validationId}"]`);
+            const shell = document.querySelector(`[data-validation-detail-shell="${validationId}"]`);
+            const target = document.querySelector(`[data-validation-detail-content="${validationId}"]`);
+
+            if (!row || !shell || !target) {
+                return;
+            }
+
+            const isOpen = trigger.getAttribute('aria-expanded') === 'true';
+
+            if (isOpen) {
+                this.setValidationDetailOpen(trigger, row, shell, false);
+                return;
+            }
+
+            this.setValidationDetailOpen(trigger, row, shell, true);
+
+            if (this.validationDetails[validationId]?.loaded) {
+                return;
+            }
+
+            target.innerHTML = '<div class="px-4 py-6 text-sm text-gray-500">Loading validation details...</div>';
+
+            try {
+                const response = await fetch(url, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load validation details');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Validation detail response did not include a page fragment');
+                }
+
+                target.innerHTML = payload.html;
+                this.validationDetails[validationId] = { loaded: true };
+            } catch (error) {
+                target.innerHTML = `<div class="px-4 py-6 text-sm text-red-600">${this.escapeHtml(error.message ?? 'Unable to load validation details')}</div>`;
+            }
+        },
+
+        setValidationDetailOpen(trigger, row, shell, open) {
+            trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+            if (open) {
+                row.dataset.validationClosing = 'false';
+                row.classList.remove('hidden');
+            }
+
+            shell.classList.toggle('grid-rows-[0fr]', !open);
+            shell.classList.toggle('grid-rows-[1fr]', open);
+            shell.classList.toggle('opacity-0', !open);
+            shell.classList.toggle('opacity-100', open);
+            trigger.querySelector('[data-validation-caret]')?.classList.toggle('rotate-180', open);
+
+            if (!open) {
+                row.dataset.validationClosing = 'true';
+                globalThis.setTimeout(() => {
+                    if (
+                        row.dataset.validationClosing === 'true' &&
+                        trigger.getAttribute('aria-expanded') === 'false'
+                    ) {
+                        row.classList.add('hidden');
+                    }
+                }, validationDetailTransitionMs);
+            }
+        },
+
+        escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        },
+
+        /* -----------------------------
+         * Game Imports
+         * --------------------------- */
+
+        openGameImportDrawer() {
+            this.gameImports.drawerOpen = true;
+            this.gameImports.error = '';
+        },
+
+        closeGameImportDrawer() {
+            this.gameImports.drawerOpen = false;
+        },
+
+        gameImportPayload() {
+            return Object.entries(this.gameImports.form).reduce((payload, [key, value]) => {
+                const normalized = typeof value === 'string' ? value.trim() : value;
+
+                if (normalized !== '' && normalized !== null && normalized !== undefined) {
+                    payload[key] = normalized;
+                }
+
+                return payload;
+            }, {});
+        },
+
+        async loadGameImports(options = {}) {
+            const background = Boolean(options.background);
+
+            if (!background) {
+                this.gameImports.loading = true;
+            }
+
+            this.gameImports.error = '';
+
+            try {
+                const response = await fetch(this.gameImportStatusUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load game imports');
+                }
+
+                this.gameImports.runs = payload.runs ?? [];
+                this.gameImports.processableDateCount = Number(payload.processable?.date_count) || 0;
+                this.scheduleGameImportPollIfNeeded();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to load game imports';
+            } finally {
+                if (!background) {
+                    this.gameImports.loading = false;
+                }
+            }
+        },
+
+        async submitGameImportDiscover() {
+            this.gameImports.discovering = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(
+                    this.gameImportDiscoverUrl,
+                    this.gameImportPayload()
+                );
+
+                this.gameImports.drawerOpen = false;
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue discovery';
+            } finally {
+                this.gameImports.discovering = false;
+            }
+        },
+
+        async processGameImports(run = null) {
+            this.gameImports.processing = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(
+                    this.gameImportProcessUrl,
+                    run ? this.gameImportRunPayload(run) : this.gameImportPayload()
+                );
+
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue processing';
+            } finally {
+                this.gameImports.processing = false;
+            }
+        },
+
+        gameImportRunPayload(run) {
+            return {
+                run_id: run.id,
+                start: run.start_date,
+                end: run.end_date,
+            };
+        },
+
+        async sendGameImportRequest(url, body) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': document
+                        .querySelector('meta[name="csrf-token"]')
+                        ?.getAttribute('content'),
+                },
+                body: JSON.stringify(body),
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(this.validationMessage(payload) ?? payload.message ?? 'Request failed');
+            }
+
+            return payload;
+        },
+
+        validationMessage(payload) {
+            const errors = payload?.errors ?? {};
+            const firstKey = Object.keys(errors)[0];
+
+            if (!firstKey) {
+                return null;
+            }
+
+            return errors[firstKey]?.[0] ?? null;
+        },
+
+        gameImportTitle(run) {
+            return this.formatGameImportRange(run);
+        },
+
+        gameImportBadgeText(run) {
+            if (run.processing_started) {
+                return String(run.status ?? 'queued').toUpperCase();
+            }
+
+            if (run.action === 'discover') {
+                return this.discoveryBadgeText(run);
+            }
+
+            return String(run.status ?? 'queued').toUpperCase();
+        },
+
+        gameImportBadgeClass(run) {
+            if (run.processing_started) {
+                return this.gameImportStatusClass(run.status);
+            }
+
+            if (run.action === 'discover') {
+                return this.discoveryBadgeClass(run);
+            }
+
+            return this.gameImportStatusClass(run.status);
+        },
+
+        gameImportStatusClass(status) {
+            if (status === 'completed') {
+                return 'bg-green-100 text-green-700';
+            }
+
+            if (status === 'failed') {
+                return 'bg-red-100 text-red-700';
+            }
+
+            if (status === 'running') {
+                return 'bg-blue-100 text-blue-700';
+            }
+
+            return 'bg-gray-100 text-gray-700';
+        },
+
+        discoveryBadgeText(run) {
+            const progress = run.progress ?? {};
+            const facts = run.facts ?? {};
+            const failed = Number(progress.failed_stage_rows) || 0;
+            const totalRows = Number(facts.total_stage_rows) || Number(progress.total_stage_rows) || 0;
+
+            if (failed > 0 || run.status === 'failed') {
+                return 'FAILED';
+            }
+
+            return totalRows > 0 ? 'READY' : 'DISCOVERING';
+        },
+
+        discoveryBadgeClass(run) {
+            const label = this.discoveryBadgeText(run);
+
+            if (label === 'READY') {
+                return 'bg-green-100 text-green-700';
+            }
+
+            if (label === 'FAILED') {
+                return 'bg-red-100 text-red-700';
+            }
+
+            return 'bg-blue-100 text-blue-700';
+        },
+
+        formatGameImportRange(run) {
+            if (run.start_date === run.end_date) {
+                return this.formatGameImportDate(run.start_date);
+            }
+
+            return `${this.formatGameImportDate(run.end_date)} - ${this.formatGameImportDate(run.start_date)}`;
+        },
+
+        formatGameImportDate(value) {
+            if (!value) {
+                return 'No date';
+            }
+
+            const parts = String(value).split('-').map((part) => Number(part));
+            const date = parts.length === 3
+                ? new Date(parts[0], parts[1] - 1, parts[2])
+                : this.parseDate(value);
+
+            if (!date || Number.isNaN(date.getTime())) {
+                return String(value);
+            }
+
+            return date.toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+            });
+        },
+
+        gameImportProgressPercentage(run) {
+            const progress = run.progress ?? {};
+            const percentage = Number(progress.percentage);
+
+            if (Number.isFinite(percentage) && percentage > 0) {
+                return Math.max(0, Math.min(100, percentage));
+            }
+
+            return run.status === 'queued' ? 0 : 8;
+        },
+
+        gameImportProgressText(run) {
+            const progress = run.progress ?? {};
+            const total = Number(progress.total_stage_rows) || 0;
+            const completed = Number(progress.completed_stage_rows) || 0;
+            const running = Number(progress.running_stage_rows) || 0;
+            const failed = Number(progress.failed_stage_rows) || 0;
+
+            if (total === 0) {
+                return 'Awaiting discovered pipeline rows';
+            }
+
+            return `${this.formatNumber(completed)} / ${this.formatNumber(total)} stages completed · ${this.formatNumber(running)} active · ${this.formatNumber(failed)} failed`;
+        },
+
+        gameImportSummaryText(run) {
+            if (run.action === 'discover' && !run.processing_started) {
+                return this.discoveryFactsText(run);
+            }
+
+            return this.gameImportProgressText(run);
+        },
+
+        gameImportAccordionId(run) {
+            return `game-import-run-${run.id}-games`;
+        },
+
+        isGameImportRunExpanded(run) {
+            return Boolean(this.gameImports.expandedRuns?.[run.id]);
+        },
+
+        toggleGameImportRun(run) {
+            this.gameImports.expandedRuns = {
+                ...this.gameImports.expandedRuns,
+                [run.id]: !this.isGameImportRunExpanded(run),
+            };
+        },
+
+        gameImportGames(run) {
+            return Array.isArray(run.games) ? run.games : [];
+        },
+
+        gameImportGameLabel(game) {
+            if (game.away_team_abbrev && game.home_team_abbrev) {
+                return `${game.away_team_abbrev} @ ${game.home_team_abbrev}`;
+            }
+
+            return `Game ${game.game_id ?? ''}`.trim();
+        },
+
+        gameImportGameMeta(game) {
+            return this.formatGameImportDate(game.game_date);
+        },
+
+        gameImportGameProgressPercentage(game) {
+            const percentage = Number(game.percentage);
+
+            if (Number.isFinite(percentage)) {
+                return Math.max(0, Math.min(100, percentage));
+            }
+
+            const total = Number(game.total_stage_rows) || 0;
+            const completed = Number(game.completed_stage_rows) || 0;
+
+            return total > 0 ? Math.floor((completed / total) * 100) : 0;
+        },
+
+        gameImportGameProgressClass(game) {
+            if (Number(game.failed_stage_rows) > 0) {
+                return 'bg-red-500';
+            }
+
+            const percentage = this.gameImportGameProgressPercentage(game);
+
+            if (percentage >= 100) {
+                return 'bg-lime-500';
+            }
+
+            if (percentage > 0 || Number(game.running_stage_rows) > 0) {
+                return 'bg-indigo-600';
+            }
+
+            return 'bg-yellow-400';
+        },
+
+        gameImportGameProgressText(game) {
+            const total = Number(game.total_stage_rows) || 0;
+            const completed = Number(game.completed_stage_rows) || 0;
+            const running = Number(game.running_stage_rows) || 0;
+            const failed = Number(game.failed_stage_rows) || 0;
+
+            if (total === 0) {
+                return 'Awaiting stages';
+            }
+
+            return `${this.formatNumber(completed)} / ${this.formatNumber(total)} stages completed · ${this.formatNumber(running)} active · ${this.formatNumber(failed)} failed`;
+        },
+
+        canProcessGameImportRun(run) {
+            return run?.action === 'discover'
+                && !run.processing_started
+                && !this.gameImports.processing
+                && Number(run?.facts?.scheduled_stage_rows || 0) > 0;
+        },
+
+        discoveryFactsText(run) {
+            const facts = run.facts ?? {};
+            const discoveredGames = Number(facts.discovered_game_count) || 0;
+            const selectedDates = Number(facts.selected_date_count) || Number(run.date_count) || 0;
+            const scheduledRows = Number(facts.scheduled_stage_rows) || 0;
+
+            if (discoveredGames === 0) {
+                return `Checking ${this.formatNumber(selectedDates)} selected dates`;
+            }
+
+            return `${this.formatNumber(discoveredGames)} games · ${this.formatNumber(scheduledRows)} stages scheduled`;
+        },
+
+        discoveryStatusText(run) {
+            return this.discoveryBadgeText(run);
+        },
+
+        scheduleGameImportPollIfNeeded() {
+            this.stopGameImportPoll();
+
+            const hasActiveRun = this.gameImports.runs.some((run) =>
+                ['queued', 'running'].includes(run.status)
+            );
+
+            if (!hasActiveRun || this.activeTab !== 'game-imports') {
+                return;
+            }
+
+            this.gameImportPoller = setTimeout(() => {
+                this.loadGameImports({ background: true });
+            }, 5000);
+        },
+
+        stopGameImportPoll() {
+            if (!this.gameImportPoller) {
+                return;
+            }
+
+            clearTimeout(this.gameImportPoller);
+            this.gameImportPoller = null;
         },
 
         /* -----------------------------
@@ -283,7 +856,18 @@ export default function adminHub(options = {}) {
                 })
                 .listen('.players.available', (payload) => {
                     this.handlePlayersAvailable(payload?.source);
+                })
+                .listen('.admin.nhl-game-imports.updated', () => {
+                    this.handleGameImportStatusUpdated();
                 });
+        },
+
+        handleGameImportStatusUpdated() {
+            if (this.activeTab !== 'game-imports') {
+                return;
+            }
+
+            void this.loadGameImports({ background: true });
         },
 
         ensureStream(key) {

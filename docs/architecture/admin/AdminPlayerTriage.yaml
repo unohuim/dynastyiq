@@ -60,7 +60,7 @@ rules:
   - Matching-source search results must query player_external_identities for unlinked identities from the matching source and allow normalized-name variants while preserving compatible position type constraints.
   - The default triage inbox should focus on identities with current resolver confidence below 75 percent or no confidence; explicit filters may include higher-confidence recommendations.
   - The admin control panel may embed the full triage inbox, but the standalone triage route must remain available and protected.
-  - The admin control panel top-level tabs should expose only Triage and Data Imports unless a new admin information architecture is explicitly approved.
+  - The admin control panel top-level tabs may expose Player Imports, Game Imports, Triage, and NHL Validations as approved operational tabs.
   - Admin-only triage routes must remain protected by admin middleware.
 public_interface:
   - admin.player-triage

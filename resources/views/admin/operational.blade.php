@@ -6,6 +6,10 @@
             hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
             triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1])),
+            validationsUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1])),
+            gameImportStatusUrl: @js(route('admin.nhl-game-imports.status')),
+            gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
+            gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
         })"
         x-init="init()"
         x-cloak
@@ -18,7 +22,23 @@
                     @click="setTab('imports')"
                     :class="activeTab === 'imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
-                    Data Imports
+                    Player Imports
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    @click="setTab('game-imports')"
+                    :class="activeTab === 'game-imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Game Imports
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    @click="setTab('validations')"
+                    :class="activeTab === 'validations' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Game Validations
                 </button>
                 <button
                     type="button"
@@ -96,6 +116,245 @@
                 </div>
             </div>
 
+            <div x-show="activeTab === 'game-imports'" x-cloak>
+                <div class="border-y border-gray-200 bg-gray-50">
+                    <div class="flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-900">NHL Game Import Pipeline</h3>
+                            <p class="mt-1 max-w-3xl text-sm text-gray-600">
+                                Discover games by date selection, then process scheduled pipeline stages through queued orchestration jobs.
+                            </p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="openGameImportDrawer()"
+                            >
+                                Discovery
+                            </button>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="gameImports.error"
+                        x-cloak
+                        class="border-t border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                        x-text="gameImports.error"
+                    ></div>
+
+                    <div class="border-t border-gray-200 px-4 py-5">
+                        <div class="mb-3 flex items-center justify-between gap-3">
+                            <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Orchestrations</h4>
+                            <div class="text-xs text-gray-500">Live updates enabled</div>
+                        </div>
+
+                        <div x-show="gameImports.loading" class="space-y-2">
+                            <div class="h-16 animate-pulse rounded bg-white"></div>
+                            <div class="h-16 animate-pulse rounded bg-white"></div>
+                            <div class="h-16 animate-pulse rounded bg-white"></div>
+                        </div>
+
+                        <div x-show="!gameImports.loading && gameImports.runs.length === 0" class="bg-white px-4 py-8 text-center text-sm text-gray-500">
+                            No game import runs have been queued yet.
+                        </div>
+
+                        <div x-show="!gameImports.loading && gameImports.runs.length > 0" class="space-y-2">
+                            <template x-for="run in gameImports.runs" :key="run.id">
+                                <div class="rounded-md bg-white px-4 py-4 shadow-sm">
+                                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div class="min-w-0">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="text-sm font-semibold text-gray-900" x-text="gameImportTitle(run)"></span>
+                                                <span
+                                                    class="rounded px-2 py-0.5 text-xs font-semibold uppercase"
+                                                    :class="gameImportBadgeClass(run)"
+                                                    x-text="gameImportBadgeText(run)"
+                                                ></span>
+                                            </div>
+                                        </div>
+                                        <div class="flex items-center text-sm text-gray-600 sm:text-right">
+                                            <template x-if="run.action === 'discover' && !run.processing_started">
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    @click="processGameImports(run)"
+                                                    :disabled="!canProcessGameImportRun(run)"
+                                                >
+                                                    <span x-text="gameImports.processing ? 'Queuing...' : 'Process'"></span>
+                                                </button>
+                                            </template>
+                                            <template x-if="run.action !== 'discover' || run.processing_started">
+                                                <div>
+                                                    <div><span x-text="formatNumber(run.queued_jobs)"></span> jobs queued</div>
+                                                    <div><span x-text="formatNumber(run.date_count)"></span> dates</div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-4 border-t border-gray-200 pt-3">
+                                        <button
+                                            type="button"
+                                            class="flex w-full items-center justify-between gap-3 text-left"
+                                            :aria-expanded="isGameImportRunExpanded(run) ? 'true' : 'false'"
+                                            :aria-controls="gameImportAccordionId(run)"
+                                            @click="toggleGameImportRun(run)"
+                                        >
+                                            <span class="text-sm text-gray-600" x-text="gameImportSummaryText(run)"></span>
+                                            <svg
+                                                class="h-4 w-4 flex-none text-gray-400 transition-transform duration-300 ease-out motion-reduce:transition-none"
+                                                :class="isGameImportRunExpanded(run) ? 'rotate-180' : ''"
+                                                viewBox="0 0 20 20"
+                                                fill="currentColor"
+                                                aria-hidden="true"
+                                            >
+                                                <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                            </svg>
+                                        </button>
+
+                                        <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+                                            <div
+                                                class="h-full rounded-full bg-indigo-600 transition-[width] duration-300 ease-out"
+                                                x-bind:style="`width: ${gameImportProgressPercentage(run)}%`"
+                                            ></div>
+                                        </div>
+                                        <div
+                                            x-show="run.progress?.last_error"
+                                            class="mt-2 truncate text-xs text-red-600"
+                                            x-text="run.progress?.last_error"
+                                        ></div>
+
+                                        <div
+                                            x-show="isGameImportRunExpanded(run)"
+                                            x-cloak
+                                            :id="gameImportAccordionId(run)"
+                                            class="mt-3 space-y-3"
+                                        >
+                                            <template x-if="gameImportGames(run).length === 0">
+                                                <div class="text-sm text-gray-500">No games discovered yet.</div>
+                                            </template>
+
+                                            <template x-for="game in gameImportGames(run)" :key="game.game_id">
+                                                <div class="border-t border-gray-100 pt-3">
+                                                    <div class="flex items-start justify-between gap-3">
+                                                        <div class="min-w-0">
+                                                            <div class="truncate text-sm font-medium text-gray-900" x-text="gameImportGameLabel(game)"></div>
+                                                            <div class="text-xs text-gray-500" x-text="gameImportGameMeta(game)"></div>
+                                                        </div>
+                                                        <div class="text-xs font-medium text-gray-600" x-text="`${gameImportGameProgressPercentage(game)}%`"></div>
+                                                    </div>
+                                                    <div class="mt-2 h-1 overflow-hidden rounded-full bg-gray-200">
+                                                        <div
+                                                            class="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+                                                            :class="gameImportGameProgressClass(game)"
+                                                            x-bind:style="`width: ${gameImportGameProgressPercentage(game)}%`"
+                                                        ></div>
+                                                    </div>
+                                                    <div class="mt-1 text-xs text-gray-600" x-text="gameImportGameProgressText(game)"></div>
+                                                    <div
+                                                        x-show="game.last_error"
+                                                        class="mt-1 truncate text-xs text-red-600"
+                                                        x-text="game.last_error"
+                                                    ></div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <x-ui.slide-over
+                    show="gameImports.drawerOpen"
+                    close-action="closeGameImportDrawer()"
+                    title-id="game-import-drawer-title"
+                    max-width="max-w-lg"
+                >
+                    <form
+                        class="flex h-full w-full flex-col"
+                        @submit.prevent="submitGameImportDiscover()"
+                    >
+                        <div class="border-b border-gray-200 px-5 py-4">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <h3 id="game-import-drawer-title" class="text-sm font-semibold text-gray-900">Discover Games</h3>
+                                    <p class="mt-1 text-sm text-gray-600">Choose one command-style date option or a start/end range.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                    @click="closeGameImportDrawer()"
+                                >
+                                    <span class="sr-only">Close</span>
+                                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+                            <x-ui.date-field
+                                id="game-import-date"
+                                label="Single date"
+                                model="gameImports.form.date"
+                            />
+
+                            <div class="grid gap-4 sm:grid-cols-2">
+                                <x-ui.date-field
+                                    id="game-import-start"
+                                    label="Start date"
+                                    model="gameImports.form.start"
+                                />
+                                <x-ui.date-field
+                                    id="game-import-end"
+                                    label="End date"
+                                    model="gameImports.form.end"
+                                />
+                            </div>
+
+                            <div class="grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label for="game-import-days" class="block text-sm font-medium text-gray-700">Days</label>
+                                    <input id="game-import-days" x-model="gameImports.form.days" type="number" min="0" max="120" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                                <div>
+                                    <label for="game-import-newdays" class="block text-sm font-medium text-gray-700">New days</label>
+                                    <input id="game-import-newdays" x-model="gameImports.form.newdays" type="number" min="1" max="120" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label for="game-import-season" class="block text-sm font-medium text-gray-700">Season</label>
+                                <input id="game-import-season" x-model="gameImports.form.season" type="text" inputmode="numeric" placeholder="20252026" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 px-5 py-4">
+                            <div class="flex justify-end gap-2">
+                                <button
+                                    type="button"
+                                    class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+                                    @click="closeGameImportDrawer()"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    :disabled="gameImports.discovering"
+                                >
+                                    <span x-text="gameImports.discovering ? 'Queuing...' : 'Discover'"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </x-ui.slide-over>
+            </div>
+
             <div x-show="activeTab === 'triage'" x-cloak>
                 <div
                     x-ref="triageMount"
@@ -120,6 +379,34 @@
                         x-show="triageError"
                         class="border-y border-gray-200 bg-white px-4 py-6 text-sm text-red-600"
                         x-text="triageError"
+                    ></div>
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'validations'" x-cloak>
+                <div
+                    x-ref="validationsMount"
+                    data-admin-validations-mount
+                    class="min-h-64"
+                >
+                    <div
+                        x-show="validationsLoading"
+                        class="border-y border-gray-200 bg-white px-4 py-10"
+                    >
+                        <div class="mx-auto max-w-3xl space-y-4">
+                            <div class="h-4 w-40 animate-pulse rounded bg-gray-200"></div>
+                            <div class="space-y-3">
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="validationsError"
+                        class="border-y border-gray-200 bg-white px-4 py-6 text-sm text-red-600"
+                        x-text="validationsError"
                     ></div>
                 </div>
             </div>

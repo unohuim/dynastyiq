@@ -14,12 +14,15 @@ when_not_to_use:
   - Non-NHL queue status.
 rules:
   - NHL import progress persistence must go through this repository when part of orchestration.
-  - Claim operations must remain atomic.
+  - Claim operations must remain atomic and must transition scheduled rows to running in the same write.
   - Status values must remain aligned with docs/ENUMS.md.
+  - Base NHL import jobs must verify running state before performing stage work.
+  - Explicit admin reruns must reschedule progress rows through this repository.
 public_interface:
   - NhlImportProgressRepo::claim()
   - NhlImportProgressRepo::isRunning()
   - NhlImportProgressRepo::markCompleted()
+  - NhlImportProgressRepo::reschedule()
   - NhlImportProgressRepo::markError()
   - NhlImportProgressRepo::scheduledExists()
   - NhlImportProgressRepo::completedDepsCount()
@@ -27,4 +30,3 @@ example_usage: |
   if ($repo->claim($gameId, 'pbp')) {
       dispatch(new ImportPbpNhlJob($gameId));
   }
-
