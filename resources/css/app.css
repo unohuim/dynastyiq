@@ -22,11 +22,11 @@
   }
 
   .players-list-mobile {
-    @apply relative space-y-px;
+    @apply relative w-full max-w-full space-y-px overflow-x-hidden;
   }
 
   .player-stats-card-mobile {
-    @apply flex overflow-hidden bg-white border-b border-gray-100;
+    @apply flex w-full max-w-full overflow-hidden bg-white border-b border-gray-100;
   }
 
   .player-stats-team-strip-mobile {
@@ -39,11 +39,11 @@
 
 
   .player-stats-content-mobile {
-    @apply flex-1 w-full px-3 pt-1;
+    @apply min-w-0 flex-1 w-full px-3 pt-1;
   }
 
   .player-stats-top-row-mobile {
-    @apply flex w-full justify-between items-start mb-2;
+    @apply flex w-full min-w-0 justify-between items-start gap-2 mb-2;
   }
 
   .player-stats-left-mobile {
@@ -55,11 +55,11 @@
   }
 
   .player-stats-name-mobile {
-    @apply text-xxs leading-tight;
+    @apply min-w-0 truncate text-xxs leading-tight;
   }
 
   .player-stats-aav-mobile{
-    @apply flex bg-gray-100 text-gray-800 text-xxs ml-2 px-1 py-0.5 rounded;
+    @apply hidden bg-gray-100 text-gray-800 text-xxs ml-2 px-1 py-0.5 rounded min-[420px]:flex;
   }
   .player-stats-right-mobile {
     @apply flex min-w-40 items-center justify-between text-sm text-gray-600;
@@ -74,15 +74,15 @@
   }
 
   .player-stats-bottom-row-mobile {
-    @apply flex items-center mt-2 text-xxs text-gray-800 flex-wrap-reverse justify-end;
+    @apply flex min-w-0 items-center mt-2 text-xxs text-gray-800 flex-wrap justify-end overflow-hidden;
   }
 
   .player-stats-stat-group-mobile {
-    @apply flex justify-end gap-4 flex-wrap-reverse;
+    @apply flex max-w-full justify-end gap-x-3 gap-y-1 flex-wrap;
   }
 
   .player-stats-stat-mobile {
-    @apply flex items-center gap-1;
+    @apply flex shrink-0 items-center gap-1;
   }
 
   .player-stats-stat-key-mobile {
@@ -109,7 +109,7 @@
 
   .searchbar-input-mobile {
     @apply col-start-1 row-start-1 block bg-white py-1.5 pl-10 pr-3 text-base text-gray-500 outline outline-1 -outline-offset-1 
-      outline-gray-900 placeholder:text-gray-400 sm:pl-9 sm:text-sm/6;
+      outline-gray-900 placeholder:text-gray-400;
   }
   .searchbar-input-mobile:focus {
     @apply outline-1 outline-0 ring-0 border-gray-300 border; /* Remove form plugin focus ring and border-2 */

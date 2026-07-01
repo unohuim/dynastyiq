@@ -2,8 +2,8 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
 use App\Models\Perspective;
+use Illuminate\Database\Seeder;
 
 class PerspectiveSeeder extends Seeder
 {
@@ -12,77 +12,20 @@ class PerspectiveSeeder extends Seeder
      */
     public function run(): void
     {
-        $perspectives = [
+        Perspective::whereIn('slug', [
+            'goalie',
+            'nhl',
+            'yahoo-standard',
+            'skaters-fantasy',
+            'skaters-advanced',
+            'goalies-fantasy',
+            'goalies-splits',
+        ])->delete();
 
+        $perspectives = [
             [
                 'name' => 'Skaters',
                 'slug' => 'skaters',
-                'author_id' => 1,
-                'organization_id' => 1,
-                'visibility' => 'public_guest',
-                'sport' => 'hockey',
-                'settings' => json_encode([
-                    'columns' => [
-                        ['key' => 'g', 'label' => 'G', 'type' => 'int'],
-                        ['key' => 'a', 'label' => 'A', 'type' => 'int'],
-                        ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
-                        ['key' => 'toi', 'label' => 'TOI', 'type' => 'int'],
-                        ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
-                        ['key' => 'b', 'label' => 'Blk', 'type' => 'int'],
-                        ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
-                        ['key' => 'sat', 'label' => 'SAT', 'type' => 'int'],
-                        ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
-
-                    ],
-                    'sort' => [
-                        'sortKey' => 'pts',
-                        'sortDirection' => 'desc',
-                    ],
-                    'filters' => [
-                        'league_abbrev' => [
-                            'value' => 'NHL',
-                            'locked' => true,
-                        ],
-
-                    ],
-                ]),
-            ],
-
-            [
-                'name' => 'Goalies',
-                'slug' => 'goalie',
-                'author_id' => 1,
-                'organization_id' => 1,
-                'visibility' => 'public_guest',
-                'sport' => 'hockey',
-                'settings' => json_encode([
-                    'columns' => [
-                        ['key' => 'sa', 'label' => 'SA', 'type' => 'int'],
-                        ['key' => 'sv', 'label' => 'SV', 'type' => 'int'],
-                        ['key' => 'ga', 'label' => 'GA', 'type' => 'int'],
-                        ['key' => 'so', 'label' => 'SO', 'type' => 'int'],
-
-
-                    ],
-                    'sort' => [
-                        'sortKey' => 'sv',
-                        'sortDirection' => 'desc',
-                    ],
-                    'filters' => [
-                        'league_abbrev' => [
-                            'value' => 'NHL',
-                            'locked' => true,
-                        ],
-
-                    ],
-                ]),
-            ],
-
-
-
-            [
-                'name' => 'nhl.com',
-                'slug' => 'nhl',
                 'author_id' => 1,
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
@@ -93,63 +36,136 @@ class PerspectiveSeeder extends Seeder
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
-                        ['key' => 'plus_minus', 'label' => '+/-', 'type' => 'int'],
-                        ['key' => 'pim', 'label' => 'PIM', 'type' => 'int'],
-                        ['key' => 'pts_per_gp', 'label' => 'P/GP', 'type' => 'float'],
                         ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
-                        ['key' => 'sog', 'label' => 'S', 'type' => 'int'],
+                        ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
+                        ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
+                        ['key' => 'b', 'label' => 'Blk', 'type' => 'int'],
+                        ['key' => 'plus_minus', 'label' => '+/-', 'type' => 'int'],
+                        ['key' => 'shots_plus_blocks', 'label' => 'SOG+Blk', 'type' => 'int'],
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
                         'sortDirection' => 'desc',
                     ],
                     'filters' => [
-                        'league_abbrev' => [
-                            'value' => 'NHL',
+                        'pos_type' => [
+                            'operator' => '!=',
+                            'value' => 'G',
                             'locked' => true,
                         ],
-                        'season_id' => [
-                            'value' => '20242025',
-                            'locked' => false,
-                        ],
+                    ],
+                    'ui' => [
+                        'positionButtons' => ['F', 'C', 'LW', 'RW', 'D'],
                     ],
                 ]),
             ],
-
             [
-                'name' => 'Standard Yahoo',
-                'slug' => 'yahoo-standard',
+                'name' => 'Skaters Adv',
+                'slug' => 'skaters-adv',
                 'author_id' => 1,
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
+                'is_slicable' => false,
                 'settings' => json_encode([
                     'columns' => [
-                        ['key' => 'g', 'label' => 'G', 'type' => 'int'],
-                        ['key' => 'a', 'label' => 'A', 'type' => 'int'],
-                        ['key' => 'plus_minus', 'label' => '+/-', 'type' => 'int'],
-                        ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
-                        ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
-                        ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
+                        ['key' => 'ipp', 'label' => 'IPP', 'type' => 'float'],
+                        ['key' => 'individual_g', 'label' => 'iG', 'type' => 'int'],
+                        ['key' => 'individual_pts', 'label' => 'iPTS', 'type' => 'int'],
+                        ['key' => 'gf_pct', 'label' => 'GF%', 'type' => 'float'],
+                        ['key' => 'cf_pct', 'label' => 'CF%', 'type' => 'float'],
+                        ['key' => 'sf_pct', 'label' => 'SF%', 'type' => 'float'],
+                        ['key' => 'pdo', 'label' => 'PDO', 'type' => 'float'],
+                        ['key' => 'ozs_pct', 'label' => 'OZS%', 'type' => 'float'],
                     ],
                     'sort' => [
-                        'sortKey' => 'ppp',
+                        'sortKey' => 'ipp',
                         'sortDirection' => 'desc',
                     ],
                     'filters' => [
-                        'league_abbrev' => [
-                            'value' => 'NHL',
-                            'locked' => true,
-                        ],
-                        'season_id' => [
-                            'value' => '20242025',
+                        'pos_type' => [
+                            'operator' => '!=',
+                            'value' => 'G',
                             'locked' => true,
                         ],
                     ],
+                    'ui' => [
+                        'positionButtons' => ['F', 'C', 'LW', 'RW', 'D'],
+                    ],
                 ]),
             ],
-
-
+            [
+                'name' => 'Goalies',
+                'slug' => 'goalies',
+                'author_id' => 1,
+                'organization_id' => 1,
+                'visibility' => 'public_guest',
+                'sport' => 'hockey',
+                'is_slicable' => false,
+                'settings' => json_encode([
+                    'columns' => [
+                        ['key' => 'wins', 'label' => 'W', 'type' => 'int'],
+                        ['key' => 'losses', 'label' => 'L', 'type' => 'int'],
+                        ['key' => 'ot_losses', 'label' => 'OTL', 'type' => 'int'],
+                        ['key' => 'starts', 'label' => 'GS', 'type' => 'int'],
+                        ['key' => 'sv', 'label' => 'SV', 'type' => 'int'],
+                        ['key' => 'sa', 'label' => 'SA', 'type' => 'int'],
+                        ['key' => 'sv_pct', 'label' => 'SV%', 'type' => 'float'],
+                        ['key' => 'gaa', 'label' => 'GAA', 'type' => 'float'],
+                        ['key' => 'so', 'label' => 'SO', 'type' => 'int'],
+                        ['key' => 'quality_starts', 'label' => 'QS', 'type' => 'int'],
+                        ['key' => 'quality_start_percentage', 'label' => 'QS%', 'type' => 'float'],
+                    ],
+                    'sort' => [
+                        'sortKey' => 'wins',
+                        'sortDirection' => 'desc',
+                    ],
+                    'filters' => [
+                        'pos_type' => [
+                            'value' => 'G',
+                            'locked' => true,
+                        ],
+                    ],
+                    'ui' => [
+                        'positionButtons' => [],
+                    ],
+                ]),
+            ],
+            [
+                'name' => 'Goalies Adv',
+                'slug' => 'goalies-adv',
+                'author_id' => 1,
+                'organization_id' => 1,
+                'visibility' => 'public_guest',
+                'sport' => 'hockey',
+                'is_slicable' => false,
+                'settings' => json_encode([
+                    'columns' => [
+                        ['key' => 'evsv', 'label' => 'EVSV', 'type' => 'int'],
+                        ['key' => 'ev_sv_pct', 'label' => 'EVSV%', 'type' => 'float'],
+                        ['key' => 'ppsv', 'label' => 'PPSV', 'type' => 'int'],
+                        ['key' => 'pp_sv_pct', 'label' => 'PPSV%', 'type' => 'float'],
+                        ['key' => 'pksv', 'label' => 'PKSV', 'type' => 'int'],
+                        ['key' => 'pk_sv_pct', 'label' => 'PKSV%', 'type' => 'float'],
+                        ['key' => 'shosv', 'label' => 'SOSV', 'type' => 'int'],
+                        ['key' => 'ga_per_gp', 'label' => 'GA/GP', 'type' => 'float'],
+                        ['key' => 'really_bad_starts', 'label' => 'RBS', 'type' => 'int'],
+                    ],
+                    'sort' => [
+                        'sortKey' => 'evsv',
+                        'sortDirection' => 'desc',
+                    ],
+                    'filters' => [
+                        'pos_type' => [
+                            'value' => 'G',
+                            'locked' => true,
+                        ],
+                    ],
+                    'ui' => [
+                        'positionButtons' => [],
+                    ],
+                ]),
+            ],
             [
                 'name' => 'Prospects',
                 'slug' => 'prospects',
@@ -162,7 +178,6 @@ class PerspectiveSeeder extends Seeder
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
-
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
@@ -174,14 +189,20 @@ class PerspectiveSeeder extends Seeder
                             'value' => 'NHL',
                             'locked' => true,
                         ],
-
+                        'is_prospect' => [
+                            'value' => true,
+                            'locked' => true,
+                        ],
                     ],
                 ]),
             ],
         ];
 
         foreach ($perspectives as $perspective) {
-            Perspective::create($perspective);
+            Perspective::updateOrCreate(
+                ['slug' => $perspective['slug']],
+                $perspective
+            );
         }
     }
 }

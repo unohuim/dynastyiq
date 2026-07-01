@@ -206,6 +206,29 @@ Do not introduce new enum values without updating this document.
 - Stats controllers validate `game_type` as `1`, `2`, or `3`.
 - `2` is the default regular-season value in stats views.
 
+### NHL Goalie Decision
+
+**Name:** NHL goalie decision
+**Storage location(s):** `nhl_game_summaries.goalie_decision`
+**Allowed values:**
+
+- `W`
+- `L`
+- `OTL`
+- `ND`
+
+**Semantic meaning:**
+
+- `W`: Goalie credited with the win by DynastyIQ native goalie summary logic.
+- `L`: Goalie credited with a regulation loss by DynastyIQ native goalie summary logic.
+- `OTL`: Goalie credited with an overtime or shootout loss by DynastyIQ native goalie summary logic.
+- `ND`: Goalie appeared without receiving the game decision.
+
+**Notes:**
+
+- The value is derived from imported NHL game and boxscore context for native fantasy summaries.
+- External provider goalie-decision values must not be stored here unless they are explicitly mapped to this enum.
+
 ---
 
 ## NHL Import Pipeline

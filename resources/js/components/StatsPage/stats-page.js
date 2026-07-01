@@ -5,6 +5,9 @@ import { StatsMobile } from './stats-mobile.js';
 
 let statsComponent = null;
 
+const mobileBreakpoint = () => Number(window.__statsMobileBreakpoint ?? 1024);
+const isMobileViewport = () => window.innerWidth < mobileBreakpoint();
+
 // keys that should NOT change the "top-right display" when selected
 const STATIC_DISPLAY_KEYS = new Set([
   'player', 'name',
@@ -27,13 +30,13 @@ export class StatsPage {
     // displayKey controls the top-right label/value; defaults to the initial sortKey
     this.settings.displayKey = settings.displayKey ?? this.settings.sortKey;
 
-    this.isMobile = window.innerWidth <= 639;
+    this.isMobile = isMobileViewport();
 
     let resizeTimeout;
     window.addEventListener('resize', () => {
       clearTimeout(resizeTimeout);
       resizeTimeout = setTimeout(() => {
-        const nowMobile = window.innerWidth <= 639;
+        const nowMobile = isMobileViewport();
         if (nowMobile !== this.isMobile) {
           this.isMobile = nowMobile;
           this.render();
@@ -67,7 +70,7 @@ export class StatsPage {
     this.settings.displayKey = nextDisplayKey;
 
     const sorted = sortData(this.originalData, sortKey, sortDirection);
-    const isMobile = window.innerWidth <= 639;
+    const isMobile = isMobileViewport();
 
     if (isMobile) {
       StatsMobile({
@@ -84,7 +87,7 @@ export class StatsPage {
 
   render() {
     const sorted = sortData(this.originalData, this.settings.sortKey, this.settings.sortDirection);
-    const isMobile = window.innerWidth <= 639;
+    const isMobile = isMobileViewport();
 
     if (isMobile) {
       StatsMobile({
@@ -100,21 +103,26 @@ export class StatsPage {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootStatsPage(initialData = null) {
   const container = document.getElementById('stats-page');
-  const data = window.__stats;
+  const data = initialData ?? window.__stats;
 
-  if (container && data) {
+  if (container && data && !statsComponent) {
     statsComponent = new StatsPage({ container, data });
     statsComponent.render();
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => bootStatsPage(), { once: true });
+} else {
+  bootStatsPage();
+}
 
 window.addEventListener('statsUpdated', (event) => {
   const updatedData = event.detail?.json ?? {};
   if (!updatedData) return;
 
-  if (statsComponent) {
-    statsComponent.updatePayload(updatedData);
-  }
+  bootStatsPage(updatedData);
+  statsComponent?.updatePayload(updatedData);
 });

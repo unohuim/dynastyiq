@@ -38,7 +38,13 @@ class ImportNhlBoxscore
             $teamId = $response[$teamSide]['id'] ?? null;
 
 
-            $this->processShutout($nhlGameId, $stats[$teamSide]['goalies']);
+            $this->processShutout($nhlGameId, $stats[$teamSide]['goalies'] ?? []);
+            $this->processGoalieFantasyStats(
+                $nhlGameId,
+                (int) $teamId,
+                $stats[$teamSide]['goalies'] ?? [],
+                $response
+            );
 
 
             foreach (['forwards', 'defense', 'goalies'] as $posGroup) {
@@ -173,6 +179,130 @@ class ImportNhlBoxscore
                 ->where('nhl_player_id', $gkId)
                 ->update(['so' => $so]);
         }
+    }
+
+    /**
+     * Persist native fantasy goalie fields that can be derived from official boxscore context.
+     *
+     * @param array<int,array<string,mixed>> $goalies
+     * @param array<string,mixed> $response
+     */
+    private function processGoalieFantasyStats(int|string $gameId, int $teamId, array $goalies, array $response): void
+    {
+        if ($teamId === 0 || $goalies === []) {
+            return;
+        }
+
+        $activeGoalies = collect($goalies)
+            ->filter(fn (array $goalie): bool => !empty($goalie['playerId']) && $this->toiToSeconds($goalie['toi'] ?? '00:00') > 0)
+            ->values();
+
+        if ($activeGoalies->isEmpty()) {
+            return;
+        }
+
+        $hasStarterFlag = $activeGoalies->contains(fn (array $goalie): bool => array_key_exists('starter', $goalie));
+        $primaryGoalieId = $activeGoalies
+            ->sortByDesc(fn (array $goalie): int => $this->toiToSeconds($goalie['toi'] ?? '00:00'))
+            ->first()['playerId'] ?? null;
+
+        foreach ($activeGoalies as $goalie) {
+            $goalieId = $goalie['playerId'] ?? null;
+
+            if ($goalieId === null) {
+                continue;
+            }
+
+            $toi = $this->toiToSeconds($goalie['toi'] ?? '00:00');
+            $shotsAgainst = (int) ($goalie['shotsAgainst'] ?? 0);
+            $saves = (int) ($goalie['saves'] ?? 0);
+            $goalsAgainst = (int) ($goalie['goalsAgainst'] ?? 0);
+            [$evSaves, $evShotsAgainst] = $this->parseSaveShots($goalie['evenStrengthShotsAgainst'] ?? '0/0');
+            [$ppSaves, $ppShotsAgainst] = $this->parseSaveShots($goalie['powerPlayShotsAgainst'] ?? '0/0');
+            [$pkSaves, $pkShotsAgainst] = $this->parseSaveShots($goalie['shorthandedShotsAgainst'] ?? '0/0');
+            $savePercentage = $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : 0.0;
+            $goalsAgainstAverage = $toi > 0 ? round(($goalsAgainst * 3600) / $toi, 3) : 0.0;
+            $started = $hasStarterFlag
+                ? (bool) ($goalie['starter'] ?? false)
+                : (string) $goalieId === (string) $primaryGoalieId;
+
+            $decision = (string) $goalieId === (string) $primaryGoalieId
+                ? $this->goalieDecision($teamId, $response)
+                : 'ND';
+
+            NhlGameSummary::updateOrCreate(
+                [
+                    'nhl_game_id' => (int) $gameId,
+                    'nhl_player_id' => $goalieId,
+                ],
+                [
+                    'nhl_team_id' => $teamId,
+                    'goalie_started' => $started,
+                    'goalie_decision' => $decision,
+                    'quality_start' => $this->isQualityStart($started, $shotsAgainst, $savePercentage),
+                    'really_bad_start' => $started && $savePercentage < 0.850,
+                    'sv_pct' => $savePercentage,
+                    'gaa' => $goalsAgainstAverage,
+                    'toi' => $toi,
+                    'sa' => $shotsAgainst,
+                    'sv' => $saves,
+                    'ga' => $goalsAgainst,
+                    'evsa' => $evShotsAgainst,
+                    'evsv' => $evSaves,
+                    'ppsa' => $ppShotsAgainst,
+                    'ppsv' => $ppSaves,
+                    'pksa' => $pkShotsAgainst,
+                    'pksv' => $pkSaves,
+                ]
+            );
+        }
+    }
+
+    private function isQualityStart(bool $started, int $shotsAgainst, float $savePercentage): bool
+    {
+        if (! $started || $shotsAgainst < 1) {
+            return false;
+        }
+
+        return $savePercentage >= 0.917 || ($shotsAgainst <= 20 && $savePercentage >= 0.885);
+    }
+
+    /**
+     * Return a native goalie fantasy decision for the primary goalie on the given team.
+     *
+     * @param array<string,mixed> $response
+     */
+    private function goalieDecision(int $teamId, array $response): string
+    {
+        $homeTeamId = (int) ($response['homeTeam']['id'] ?? 0);
+        $awayTeamId = (int) ($response['awayTeam']['id'] ?? 0);
+        $homeScore = (int) ($response['homeTeam']['score'] ?? 0);
+        $awayScore = (int) ($response['awayTeam']['score'] ?? 0);
+
+        if ($homeTeamId === 0 || $awayTeamId === 0 || $homeScore === $awayScore) {
+            return 'ND';
+        }
+
+        $winningTeamId = $homeScore > $awayScore ? $homeTeamId : $awayTeamId;
+
+        if ($teamId === $winningTeamId) {
+            return 'W';
+        }
+
+        return $this->endedAfterRegulation($response) ? 'OTL' : 'L';
+    }
+
+    /**
+     * @param array<string,mixed> $response
+     */
+    private function endedAfterRegulation(array $response): bool
+    {
+        $periodType = strtoupper((string) ($response['periodDescriptor']['periodType'] ?? ''));
+        $outcome = is_array($response['gameOutcome'] ?? null) ? $response['gameOutcome'] : [];
+        $outcomePeriodType = strtoupper((string) ($outcome['lastPeriodType'] ?? $outcome['periodType'] ?? ''));
+
+        return in_array($periodType, ['OT', 'SO'], true)
+            || in_array($outcomePeriodType, ['OT', 'SO'], true);
     }
 
     private function isShutout(array $goalies): bool

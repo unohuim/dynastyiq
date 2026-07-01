@@ -59,7 +59,7 @@ export class UI {
 
 
     const svgIconSort = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svgIconSort.setAttribute('viewBox', '0 0 16 16');
+    svgIconSort.setAttribute('viewBox', '0 0 24 24');
     svgIconSort.setAttribute('fill', 'none');
     svgIconSort.setAttribute('stroke', 'currentColor');
     svgIconSort.setAttribute('data-slot', 'icon');

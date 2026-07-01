@@ -2,11 +2,13 @@
 
 declare(strict_types=1);
 
+use App\Models\Perspective;
 use App\Models\Player;
 use App\Services\NhlStrengthStatsQuery;
 use App\Services\ResolveNhlUnit;
 use App\Services\SumNhlGameUnits;
 use App\Services\SumNhlGameStrengthUnits;
+use App\Services\SumNhlSeasonStats;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -554,4 +556,235 @@ it('returns no rows for a date range outside the game date', function (): void {
     ]);
 
     expect($rows)->toHaveCount(0);
+});
+
+it('rolls goalie fantasy fields into nhl season stats', function (): void {
+    ($this->insertGame)();
+    $goalie = ($this->makePlayer)(30, 'Goalie Player');
+    $goalie->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+        'is_goalie' => true,
+    ]);
+
+    DB::table('nhl_game_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 30,
+        'nhl_team_id' => 1,
+        'toi' => 3600,
+        'sa' => 40,
+        'sv' => 38,
+        'ga' => 2,
+        'evsa' => 30,
+        'evsv' => 29,
+        'ppsa' => 5,
+        'ppsv' => 4,
+        'pksa' => 5,
+        'pksv' => 5,
+        'goalie_started' => true,
+        'goalie_decision' => 'W',
+        'quality_start' => true,
+        'really_bad_start' => false,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    app(SumNhlSeasonStats::class)->sum('20262027');
+
+    $row = DB::table('nhl_season_stats')
+        ->where('season_id', '20262027')
+        ->where('nhl_player_id', 30)
+        ->where('game_type', 2)
+        ->first();
+
+    expect((int) $row->wins)->toBe(1)
+        ->and((int) $row->losses)->toBe(0)
+        ->and((int) $row->ot_losses)->toBe(0)
+        ->and((int) $row->starts)->toBe(1)
+        ->and((int) $row->quality_starts)->toBe(1)
+        ->and((int) $row->really_bad_starts)->toBe(0)
+        ->and((float) $row->sv_pct)->toBe(0.95)
+        ->and((float) $row->gaa)->toBe(2.0)
+        ->and((float) $row->ev_sv_pct)->toBe(0.967)
+        ->and((float) $row->pp_sv_pct)->toBe(0.8)
+        ->and((float) $row->pk_sv_pct)->toBe(1.0)
+        ->and((float) $row->quality_start_percentage)->toBe(1.0);
+});
+
+it('exposes native advanced skater aliases and perspective position buttons in stats payload', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(1, 'Advanced Skater');
+
+    DB::table('nhl_season_stats')->insert([
+        'season_id' => '20262027',
+        'nhl_player_id' => 1,
+        'nhl_team_id' => 1,
+        'gp' => 1,
+        'game_type' => 2,
+        'g' => 1,
+        'a' => 1,
+        'pts' => 2,
+        'toi' => 1200,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_player_game_strength_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'player_id' => $player->id,
+        'nhl_player_id' => 1,
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'strength' => 'EV',
+        'toi' => 1200,
+        'gf' => 4,
+        'ga' => 1,
+        'sf' => 20,
+        'sa' => 10,
+        'satf' => 30,
+        'sata' => 15,
+        'ff' => 24,
+        'fa' => 12,
+        'ozs' => 8,
+        'dzs' => 2,
+        'individual_g' => 1,
+        'individual_a' => 2,
+        'individual_pts' => 3,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Perspective::create([
+        'name' => 'Native Advanced Test',
+        'slug' => 'native-advanced-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => false,
+        'settings' => [
+            'columns' => [
+                ['key' => 'ipp', 'label' => 'IPP', 'type' => 'float'],
+                ['key' => 'gf', 'label' => 'GF', 'type' => 'int'],
+                ['key' => 'ga', 'label' => 'GA', 'type' => 'int'],
+                ['key' => 'cf_pct', 'label' => 'CF%', 'type' => 'float'],
+                ['key' => 'pdo', 'label' => 'PDO', 'type' => 'float'],
+                ['key' => 'ozs_pct', 'label' => 'OZS%', 'type' => 'float'],
+            ],
+            'sort' => [
+                'sortKey' => 'ipp',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'pos_type' => [
+                    'operator' => '!=',
+                    'value' => 'G',
+                    'locked' => true,
+                ],
+            ],
+            'ui' => [
+                'positionButtons' => ['F', 'C', 'LW', 'RW', 'D'],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('api.stats', [
+        'perspective' => 'native-advanced-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('meta.positionButtons', ['F', 'C', 'LW', 'RW', 'D']);
+
+    $row = $response->json('data.0');
+
+    expect($row['name'])->toBe('Advanced Skater')
+        ->and($row['ipp'])->toBe(0.75)
+        ->and($row['gf'])->toBe(4)
+        ->and($row['ga'])->toBe(1)
+        ->and($row['cf'])->toBe(30)
+        ->and($row['ca'])->toBe(15)
+        ->and($row['cf_pct'])->toBe(0.667)
+        ->and($row['pdo'])->toBe(1.1)
+        ->and($row['ozs_pct'])->toBe(0.8);
+});
+
+it('limits the prospects perspective to players marked as prospects', function (): void {
+    $prospect = ($this->makePlayer)(101, 'Future Prospect');
+    $prospect->update([
+        'is_prospect' => true,
+        'current_league_abbrev' => 'OHL',
+    ]);
+    $olderNonProspect = ($this->makePlayer)(102, 'Older Nonprospect');
+    $olderNonProspect->update([
+        'is_prospect' => false,
+        'current_league_abbrev' => 'AHL',
+    ]);
+
+    DB::table('stats')->insert([
+        [
+            'player_id' => $prospect->id,
+            'is_prospect' => true,
+            'player_name' => 'Future Prospect',
+            'season_id' => '20262027',
+            'league_abbrev' => 'OHL',
+            'team_name' => 'London',
+            'game_type_id' => 2,
+            'gp' => 10,
+            'g' => 4,
+            'a' => 6,
+            'pts' => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'player_id' => $olderNonProspect->id,
+            'is_prospect' => false,
+            'player_name' => 'Older Nonprospect',
+            'season_id' => '20262027',
+            'league_abbrev' => 'AHL',
+            'team_name' => 'Marlies',
+            'game_type_id' => 2,
+            'gp' => 20,
+            'g' => 8,
+            'a' => 12,
+            'pts' => 20,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    Perspective::create([
+        'name' => 'Prospects Test',
+        'slug' => 'prospects-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+                ['key' => 'a', 'label' => 'A', 'type' => 'int'],
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'pts',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'league_abbrev' => [
+                    'operator' => '!=',
+                    'value' => 'NHL',
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('api.stats', [
+        'perspective' => 'prospects-test',
+        'season_id' => '20262027',
+    ]));
+
+    $response->assertOk();
+
+    expect(collect($response->json('data'))->pluck('name')->all())
+        ->toBe(['Future Prospect']);
 });

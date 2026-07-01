@@ -81,11 +81,11 @@ export function renderStatsDesktop(
 
     const gridCols = displayHeadings
         .map((_, i) => {
-            if (i === rkIdx) return "48px";
-            if (i === typeIdx) return "56px";
-            if (i === teamIdx) return "92px";
-            if (i === playerIdx) return "minmax(260px,2fr)";
-            return "minmax(0,1fr)";
+            if (i === rkIdx) return "44px";
+            if (i === typeIdx) return "52px";
+            if (i === teamIdx) return "76px";
+            if (i === playerIdx) return "190px";
+            return "72px";
         })
         .join(" ");
 
@@ -100,9 +100,12 @@ export function renderStatsDesktop(
 
     // ----- DOM build -----
     container.innerHTML = "";
+    const scrollWrap = document.createElement("div");
+    scrollWrap.className = "w-full overflow-x-auto pb-2";
+
     const wrapper = document.createElement("div");
     wrapper.className =
-        "min-w-full bg-white shadow rounded-lg border border-gray-200 relative";
+        "min-w-max bg-white shadow rounded-lg border border-gray-200 relative";
 
     // Controls bar (sticky)
     const controls = document.createElement("div");
@@ -153,7 +156,7 @@ export function renderStatsDesktop(
 
     displayHeadings.forEach(({ key, label }) => {
         const th = document.createElement("div");
-        th.className = "select-none flex items-center justify-center gap-1";
+        th.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
         th.textContent = label;
 
         if (key !== "__rk") {
@@ -303,13 +306,20 @@ export function renderStatsDesktop(
                 } else if (isAAVKey(key)) {
                     const raw = row.stats?.[key] ?? row[key];
                     cell.className =
-                        "flex items-center justify-center text-sm text-gray-500";
+                        "flex items-center justify-center whitespace-nowrap text-sm text-gray-500";
                     cell.textContent = formatAAV(raw);
+                } else if (i === playerIdx) {
+                    const rawVal = row.stats?.[key] ?? row[key];
+                    const val = formatStatValue(key, rawVal);
+                    cell.className =
+                        "flex min-w-0 items-center justify-start whitespace-nowrap overflow-hidden text-ellipsis pr-2 text-gray-700";
+                    cell.title = String(val ?? "");
+                    cell.textContent = val ?? "";
                 } else {
                     const rawVal = row.stats?.[key] ?? row[key];
                     const val = formatStatValue(key, rawVal);
                     const common =
-                        "flex items-center justify-center text-gray-500";
+                        "flex items-center justify-center whitespace-nowrap tabular-nums text-gray-500";
                     cell.className =
                         settings.sortKey === key
                             ? `${common} font-semibold`
@@ -340,7 +350,8 @@ export function renderStatsDesktop(
     wrapper.appendChild(controls);
     wrapper.appendChild(headerRow);
     wrapper.appendChild(bodyWrap);
-    container.appendChild(wrapper);
+    scrollWrap.appendChild(wrapper);
+    container.appendChild(scrollWrap);
 
     // ensure correct sticky offset for header (on mount + resize)
     const onResize = () => updateHeaderOffset();

@@ -1,129 +1,205 @@
 ---
-pr_id: 8
-pr_name: pr8
+pr_id: 10
+pr_name: pr10
 status: Active
-created: 2026-06-29
-last_updated: 2026-06-29
+created: 2026-07-01
+last_updated: 2026-07-01
 ---
 
-# On-Ice Strength Stats Refactor
+# Stats Page JS Overhaul
 
 ## Source
 
-Play-by-play import review and follow-up discussion about using shifts, units, and event links to derive plus/minus, IPP, per-game, per-60, and strength-aware stats.
+Follow-up from PR 9 mobile/non-desktop stats rendering failures and architectural review of the `/stats` page perspective-to-render flow.
 
 ## Objective
 
-Refactor the on-ice stat layer toward a best-practice strength-aware aggregation model while leveraging existing shift, unit, unit-shift, event-link, and summary abstractions.
+Rebuild the `/stats` page as an isolated JSON-driven stats experience with separate mobile and non-mobile JavaScript renderers, a dedicated stats page layout that avoids Livewire and Jetstream page shell dependencies, and a polished loading experience for perspective changes.
 
-## Ideal Target
+## Product Direction
 
-If implemented from scratch, raw shifts and PBP events would produce deterministic on-ice intervals, event links, and pre-aggregated game-level totals by player or unit and strength. Season and range views would sum these persisted game totals and calculate rates from totals at the presentation/API layer.
+The stats page should keep separate mobile and non-mobile renderers.
 
-The system should never inspect raw PBP events during ordinary user stats requests.
+The goal is not to force one fully responsive table/card component. Mobile and desktop stats views have different interaction models and should be implemented as distinct JavaScript components that consume the same normalized JSON payload.
 
-## Existing Abstractions To Preserve
+Preserve the current visual direction:
 
-- `nhl_shifts` as raw player shift intervals.
-- `nhl_units` as stable player combinations.
-- `nhl_unit_shifts` as game-level time windows for units.
-- `event_unit_shifts` as persisted links between PBP events and on-ice intervals.
-- `ConnectEventsToUnitShifts` as the current event-linking concept.
-- `SumNhlGameUnits` and `nhl_unit_game_summaries` as the current game-level unit aggregation concept.
-- Stats page slice concepts: `total`, `pgp`, and `p60`.
+- Keep the existing mobile card visual language where practical.
+- Keep the existing desktop stats table visual language where practical.
+- Keep mobile bottom navigation.
+- Keep the profile/account drawer.
+- Replace or isolate the desktop top bar if it depends on Jetstream, Livewire, or the current app layout shell.
 
-## Existing Abstractions To Improve
+## Current Problems
 
-- Add a stable unit composition identity, such as a composition hash, instead of scanning units by player list in PHP.
-- Treat strength as a first-class aggregation dimension rather than only a wide-column suffix pattern.
-- Move range aggregation to SQL `SUM(...) GROUP BY ...` over pre-aggregated game rows.
-- Calculate per-game, per-60, percentages, and IPP from totals consistently in one layer.
-- Clarify whether player on-ice summaries should be materialized separately from unit summaries.
+The current `/stats` page is fragile because state and rendering are split across too many owners:
 
-## Scope
+- `StatsController@index` builds initial payload server-side.
+- Blade embeds `window.__stats` and an inline Alpine `statsPage()` controller.
+- Alpine owns perspective controls, filter state, URL updates, API fetches, and `statsUpdated` dispatches.
+- Separate vanilla JavaScript owns desktop/mobile rendering and sort state.
+- Rendering depends on an empty `#stats-page` mount point and the global app bundle loading successfully.
+- The current page uses `<x-app-layout>`, which brings Jetstream and Livewire concerns into a data-heavy stats page.
 
-1. Audit current on-ice stat requirements for players and units.
-2. Decide the approved target grain for strength-aware totals:
-   - player-game-strength summaries,
-   - unit-game-strength summaries,
-   - or both.
-3. Define allowed strength values and whether empty-net contexts remain EV or receive a separate context flag.
-4. Add or evolve database structures for strength-aware totals without losing existing unit-game summary behavior.
-5. Add stable unit composition identity and uniqueness rules.
-6. Refactor event linking and game aggregation to produce deterministic, rerunnable totals.
-7. Add SQL aggregation paths for season and arbitrary date ranges.
-8. Derive `per_gp`, `per_60`, percentages, and IPP from grouped totals instead of storing every rate variant.
-9. Update stats payload generation so strength filters and slices use the new aggregation layer.
-10. Add fixture-driven tests for EV, PP, PK, empty-net, boundary events, and IPP calculations.
-11. Update canonical architecture docs and derived inventory.
+This makes perspective changes, mobile rendering, asset failures, and first-paint timing difficult to reason about.
 
-## Non-Goals
+## Target Architecture
 
-- Replacing the base PBP importer.
-- Adding boxscore validation and triage.
-- Removing existing stat pages before the new aggregation path is approved.
-- Running imports, migrations, queues, schedulers, or CI.
+Create a stats-only page architecture:
 
-## Stat Model Guidance
+- A new stats-specific layout, such as `resources/views/layouts/stats.blade.php`.
+- A new stats page view, such as `resources/views/stats/index.blade.php`.
+- A dedicated stats JavaScript entry or boot module, such as `resources/js/pages/stats-page.js`.
+- A single JavaScript shell/controller that owns all `/stats` state.
+- Separate renderer components for mobile and non-mobile views.
 
-Persist expensive totals:
+The new stats layout must not consume:
 
-- Time on ice.
-- Shifts.
-- Goals for and against.
-- Shots for and against.
-- Shot attempts for and against.
-- Fenwick for and against.
-- Blocks and hits for and against.
-- Zone starts.
-- Faceoffs.
-- Penalties and PIM.
-- Individual goals, assists, and points needed for IPP.
+- `<x-app-layout>`
+- Livewire styles/scripts
+- Jetstream banner
+- Jetstream modal stacks
+- Any page-level Livewire dependency
 
-Derive cheap rates:
+The new stats layout should keep:
 
-- Per game.
-- Per 60.
-- Percentages.
-- IPP.
-- On-ice shooting percentage.
-- On-ice save percentage.
+- Basic HTML/head metadata.
+- CSRF meta.
+- Required Vite assets.
+- Mobile bottom navigation.
+- Profile/account drawer.
+- A lightweight desktop navigation/header if the existing desktop top bar is Jetstream/Livewire-coupled.
 
-## Acceptance Criteria
+Do not delete old layouts, views, or components during this PR. Route `/stats` to the new isolated view and leave old files in place unless a scoped cleanup is explicitly approved.
 
-- On-ice stats can be queried by total, range, season, and strength without scanning raw PBP rows in request time.
-- EV/PP/PK splits are consistent for players and units.
-- Per-game and per-60 slices are derived from the same total model.
-- Unit identity is stable and enforced.
-- Tests cover event-to-interval boundary behavior and strength-specific aggregation.
+## JavaScript State Ownership
 
-## Review Notes
+The dedicated stats shell should own:
 
-This PR is the stats-depth layer. It should build on the reliability and validation PRs rather than trying to solve all import concerns at once.
+- `perspective`
+- `period`
+- `season_id`
+- `game_type`
+- `filters`
+- `sortKey`
+- `sortDirection`
+- `viewportMode`
+- `payload`
+- `loading`
+- `error`
 
-## Implementation Notes
+The shell should:
 
-- Added canonical strength values `EV`, `PP`, and `PK`; empty-net contexts remain `EV`.
-- Added deterministic NHL unit composition identity via `composition_hash`.
-- Added normalized unit-game-strength and player-game-strength summary tables.
-- Added `ResolveNhlUnit` to replace player-list scanning during unit resolution.
-- Added `SumNhlGameStrengthUnits` alongside the legacy `SumNhlGameUnits` output.
-- Added `NhlStrengthStatsQuery` for season/range/grouped totals with derived `total`, `pgp`, and `p60` slices.
-- Embedded NHL validation triage into the Admin Control Panel as an approved operational tab while preserving standalone routes.
-- Renamed the admin import tab to Player Imports and added a separate Game Imports tab for the staged NHL game pipeline.
-- Added an admin Game Imports workflow that queues NHL discovery and processing jobs from date selections, tracks admin run requests, and displays pipeline progress from `nhl_import_progress`.
-- Moved Game Imports processing to discovery-row actions and made discovery rows show known discovered work facts instead of a processing progress bar.
-- Reused the clicked discovery orchestration row for processing progress instead of creating a second visible processing row.
-- Moved NHL summary validation to the terminal game pipeline stage after shift units, event connections, and game-unit aggregation.
-- Raw shift imports now write both time on ice and shift counts into `nhl_game_summaries`.
-- Split `nhl:empty` into explicit `--players` and `--games` modes so NHL player identities and NHL game-derived import data can be cleared independently.
-- Play-by-play goal events now count as shots on goal only when NHL provides shot metadata; no-shot goals still count as goals and goalie goals against.
-- Failed NHL summary validations now export per-game boxscore, play-by-play, and shift troubleshooting markdown snapshots.
-- Failed validation troubleshooting now also exports standalone per-game delta markdown snapshots, and one failed section no longer blocks the remaining files.
-- NHL game imports now accept only provider game types 1, 2, and 3; PBP establishes the stored game type before later stages can advance.
-- Failed validation triage now exposes an explicit full-game rebuild path that clears game-scoped raw and derived import artifacts and requeues the pipeline from PBP.
-- Skater plus/minus is now derived from eligible linked goal events after event-unit links exist and is compared against official boxscore plus/minus during validation.
-- Persisted skater plus/minus now reconciles to official boxscore values when available to absorb provider ambiguity at exact goal-time shift boundaries.
-- NHL game processing now runs source preflight before dispatch, blocks core imports missing PBP or boxscore, skips only shift-derived on-ice stages when shiftcharts are missing, and exposes the source reason plus exact provider URL in the Game Imports accordion.
-- Summary validation now records `incomplete` when comparable core totals pass but source coverage prevents shift-dependent validation.
-- Game Imports now includes a Source Gaps queue for missing provider feeds, with per-game reruns that refresh source preflight before queueing either a full core rebuild or only shift-derived stages.
+- Read the initial JSON payload from the page.
+- Normalize the payload once.
+- Render controls and the correct renderer.
+- Fetch `/api/stats` on perspective or server-backed filter changes.
+- Update the URL.
+- Show loading states.
+- Delegate display to the mobile or non-mobile renderer.
+
+Avoid the current global `statsUpdated` event bridge for the rebuilt page.
+
+## Renderer Requirements
+
+Create or adapt two dedicated renderers:
+
+- `StatsDesktopRenderer`
+- `StatsMobileRenderer`
+
+Both renderers should receive plain JSON and callbacks. They should not fetch data or own page-level state.
+
+Expected renderer inputs:
+
+- `rows`
+- `columns`
+- `settings`
+- `state`
+- `controls`
+- callbacks such as `onSortChange`, `onFilterChange`, and `onPerspectiveChange`
+
+Local filtering and sorting should be fast and should operate against the already-loaded JSON rows whenever possible. Perspective changes should fetch fresh JSON.
+
+## Loading Experience
+
+Perspective changes must have a deliberate styled loading experience.
+
+Requirements:
+
+- Never show a blank stats area.
+- Keep perspective/navigation controls usable or visibly disabled with clear loading affordance.
+- Use desktop row skeletons in non-mobile mode.
+- Use mobile card skeletons in mobile mode.
+- Preserve layout dimensions enough to avoid large visual jumps.
+- Show a clear error state with retry behavior when fetch fails.
+
+Sort/search/filter operations that can be performed locally should update immediately and should not show the heavier perspective-change loading state.
+
+## JSON Contract Direction
+
+Keep the current API shape initially if that reduces risk, but normalize it in the JS shell.
+
+Target client-side shape:
+
+```js
+{
+  columns: [
+    { key: "name", label: "Player", type: "identity" },
+    { key: "pts", label: "PTS", type: "number", sortable: true }
+  ],
+  rows: [],
+  controls: {
+    perspectives: [],
+    seasons: [],
+    gameTypes: [],
+    positionButtons: [],
+    filterSchema: []
+  },
+  state: {
+    perspective: "skaters",
+    season_id: "20252026",
+    game_type: 2,
+    sortKey: "pts",
+    sortDirection: "desc",
+    canSlice: false
+  },
+  meta: {}
+}
+```
+
+The server API can be cleaned up in a later PR if needed. This PR should focus on page isolation, state ownership, and reliable rendering.
+
+## Implementation Outline
+
+1. Audit `nav.main` and profile drawer dependencies.
+2. Create a stats-specific layout without Livewire or Jetstream page shell dependencies.
+3. Create a new stats page view using that layout.
+4. Point `StatsController@index` at the new stats view.
+5. Add a dedicated stats page JS shell.
+6. Adapt or replace current desktop and mobile renderers so they consume normalized JSON and callbacks.
+7. Move perspective, filter, fetch, sort, URL, and viewport logic into the JS shell.
+8. Add styled mobile-card and desktop-row loading skeletons.
+9. Keep current API response shape initially and normalize client-side.
+10. Remove reliance on the `statsUpdated` global event flow for the new page.
+
+## Out Of Scope
+
+- Deleting old stats views or old renderer files.
+- Removing global app layout dependencies outside `/stats`.
+- Rebuilding the stats API contract server-side unless required for the page shell.
+- Changing NHL import logic.
+- External provider stats integrations.
+- Running CI, tests, imports, migrations, seeders, queues, schedulers, or operational commands.
+
+## Verification Direction
+
+The implementation PR should include focused verification for:
+
+- Initial `/stats` render.
+- Perspective change fetch and render.
+- Mobile/non-mobile renderer selection at the desktop cutoff.
+- JSON-driven local sort behavior.
+- Styled loading state during perspective changes.
+- Fetch failure error state.
+
+Automated tests should be scoped and should follow repository testing standards. Manual viewport review should verify both mobile and non-mobile visual continuity.
