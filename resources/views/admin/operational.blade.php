@@ -8,6 +8,7 @@
             triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1])),
             validationsUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1])),
             gameImportStatusUrl: @js(route('admin.nhl-game-imports.status')),
+            gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
         })"
@@ -143,41 +144,137 @@
                         x-text="gameImports.error"
                     ></div>
 
-                    <div class="border-t border-gray-200 px-4 py-5">
-                        <div class="mb-3 flex items-center justify-between gap-3">
+                    <div class="border-t border-gray-200 bg-white px-4 py-3">
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-between gap-2 text-left"
+                            :aria-expanded="isGameImportSourceGapsExpanded() ? 'true' : 'false'"
+                            :aria-controls="sourceGapsAccordionId()"
+                            @click="toggleGameImportSourceGaps()"
+                        >
+                            <span>
+                                <span class="text-xs font-semibold uppercase text-gray-500">Source Gaps</span>
+                                <span class="mt-0.5 block text-xs text-gray-500">Games with provider feeds that are empty or unavailable.</span>
+                            </span>
+                            <span class="flex items-center gap-2">
+                                <span class="text-[11px] font-medium text-gray-500">
+                                    <span x-text="formatNumber(gameImports.sourceGaps.items.length)"></span>
+                                    <span> games</span>
+                                </span>
+                                <svg
+                                    class="h-3.5 w-3.5 flex-none text-gray-400 transition-transform duration-300 ease-out motion-reduce:transition-none"
+                                    :class="isGameImportSourceGapsExpanded() ? 'rotate-180' : ''"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                    aria-hidden="true"
+                                >
+                                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                </svg>
+                            </span>
+                        </button>
+
+                        <div
+                            x-show="isGameImportSourceGapsExpanded()"
+                            x-cloak
+                            :id="sourceGapsAccordionId()"
+                            class="mt-2"
+                        >
+                            <div x-show="gameImports.sourceGaps.loading" class="space-y-1">
+                                <div class="h-9 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-9 animate-pulse rounded bg-gray-100"></div>
+                            </div>
+
+                            <div
+                                x-show="!gameImports.sourceGaps.loading && gameImports.sourceGaps.items.length === 0"
+                                class="border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500"
+                            >
+                                No missing NHL source records.
+                            </div>
+
+                            <div
+                                x-show="!gameImports.sourceGaps.loading && gameImports.sourceGaps.items.length > 0"
+                                class="space-y-1.5"
+                            >
+                                <template x-for="gap in gameImports.sourceGaps.items" :key="gap.game_id">
+                                    <div class="rounded-md border border-gray-200 bg-white px-3 py-2 shadow-sm">
+                                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <div class="min-w-0">
+                                                <div class="flex flex-wrap items-center gap-2">
+                                                    <span class="text-xs font-semibold text-gray-900" x-text="gameImportGameLabel(gap)"></span>
+                                                    <span class="text-[11px] text-gray-500" x-text="gameImportGameMeta(gap)"></span>
+                                                </div>
+                                                <div class="mt-0.5 text-[11px] text-amber-700" x-text="gameImportSourceGapSummaryText(gap)"></div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                @click="rerunGameImportSourceGap(gap)"
+                                                :disabled="gameImports.sourceGaps.rerunning[gap.game_id] === true"
+                                            >
+                                                <span
+                                                    x-text="gameImports.sourceGaps.rerunning[gap.game_id] === true ? 'Checking...' : 'Rerun'"
+                                                ></span>
+                                            </button>
+                                        </div>
+
+                                        <div class="mt-2 space-y-1 border-t border-gray-100 pt-2">
+                                            <template x-for="source in gap.sources" :key="`${gap.game_id}-${source.source}`">
+                                                <div class="flex flex-col gap-1 text-[11px] sm:flex-row sm:items-center sm:justify-between">
+                                                    <span
+                                                        class="inline-flex w-fit rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-800"
+                                                        x-text="gameImportSourceStatusLabel(source)"
+                                                    ></span>
+                                                    <a
+                                                        class="break-all text-gray-600 underline decoration-gray-300 underline-offset-2 hover:text-gray-900"
+                                                        :href="source.url"
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        x-text="source.url"
+                                                    ></a>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-200 px-4 py-3">
+                        <div class="mb-2 flex items-center justify-between gap-2">
                             <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Orchestrations</h4>
-                            <div class="text-xs text-gray-500">Live updates enabled</div>
+                            <div class="text-[11px] text-gray-500">Live updates enabled</div>
                         </div>
 
-                        <div x-show="gameImports.loading" class="space-y-2">
-                            <div class="h-16 animate-pulse rounded bg-white"></div>
-                            <div class="h-16 animate-pulse rounded bg-white"></div>
-                            <div class="h-16 animate-pulse rounded bg-white"></div>
+                        <div x-show="gameImports.loading" class="space-y-1.5">
+                            <div class="h-10 animate-pulse rounded bg-white"></div>
+                            <div class="h-10 animate-pulse rounded bg-white"></div>
+                            <div class="h-10 animate-pulse rounded bg-white"></div>
                         </div>
 
-                        <div x-show="!gameImports.loading && gameImports.runs.length === 0" class="bg-white px-4 py-8 text-center text-sm text-gray-500">
+                        <div x-show="!gameImports.loading && gameImports.runs.length === 0" class="bg-white px-3 py-4 text-center text-xs text-gray-500">
                             No game import runs have been queued yet.
                         </div>
 
-                        <div x-show="!gameImports.loading && gameImports.runs.length > 0" class="space-y-2">
+                        <div x-show="!gameImports.loading && gameImports.runs.length > 0" class="space-y-1.5">
                             <template x-for="run in gameImports.runs" :key="run.id">
-                                <div class="rounded-md bg-white px-4 py-4 shadow-sm">
-                                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div class="rounded-md bg-white px-3 py-2.5 shadow-sm">
+                                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <div class="min-w-0">
-                                            <div class="flex flex-wrap items-center gap-2">
-                                                <span class="text-sm font-semibold text-gray-900" x-text="gameImportTitle(run)"></span>
+                                            <div class="flex flex-wrap items-center gap-1.5">
+                                                <span class="text-xs font-semibold text-gray-900" x-text="gameImportTitle(run)"></span>
                                                 <span
-                                                    class="rounded px-2 py-0.5 text-xs font-semibold uppercase"
+                                                    class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
                                                     :class="gameImportBadgeClass(run)"
                                                     x-text="gameImportBadgeText(run)"
                                                 ></span>
                                             </div>
                                         </div>
-                                        <div class="flex items-center text-sm text-gray-600 sm:text-right">
+                                        <div class="flex items-center text-xs text-gray-600 sm:text-right">
                                             <template x-if="run.action === 'discover' && !run.processing_started">
                                                 <button
                                                     type="button"
-                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                                                     @click="processGameImports(run)"
                                                     :disabled="!canProcessGameImportRun(run)"
                                                 >
@@ -193,17 +290,17 @@
                                         </div>
                                     </div>
 
-                                    <div class="mt-4 border-t border-gray-200 pt-3">
+                                    <div class="mt-2 border-t border-gray-200 pt-2">
                                         <button
                                             type="button"
-                                            class="flex w-full items-center justify-between gap-3 text-left"
+                                            class="flex w-full items-center justify-between gap-2 text-left"
                                             :aria-expanded="isGameImportRunExpanded(run) ? 'true' : 'false'"
                                             :aria-controls="gameImportAccordionId(run)"
                                             @click="toggleGameImportRun(run)"
                                         >
-                                            <span class="text-sm text-gray-600" x-text="gameImportSummaryText(run)"></span>
+                                            <span class="text-xs text-gray-600" x-text="gameImportSummaryText(run)"></span>
                                             <svg
-                                                class="h-4 w-4 flex-none text-gray-400 transition-transform duration-300 ease-out motion-reduce:transition-none"
+                                                class="h-3.5 w-3.5 flex-none text-gray-400 transition-transform duration-300 ease-out motion-reduce:transition-none"
                                                 :class="isGameImportRunExpanded(run) ? 'rotate-180' : ''"
                                                 viewBox="0 0 20 20"
                                                 fill="currentColor"
@@ -213,7 +310,7 @@
                                             </svg>
                                         </button>
 
-                                        <div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-200">
+                                        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-200">
                                             <div
                                                 class="h-full rounded-full bg-indigo-600 transition-[width] duration-300 ease-out"
                                                 x-bind:style="`width: ${gameImportProgressPercentage(run)}%`"
@@ -221,7 +318,7 @@
                                         </div>
                                         <div
                                             x-show="run.progress?.last_error"
-                                            class="mt-2 truncate text-xs text-red-600"
+                                            class="mt-1 truncate text-[11px] text-red-600"
                                             x-text="run.progress?.last_error"
                                         ></div>
 
@@ -229,34 +326,52 @@
                                             x-show="isGameImportRunExpanded(run)"
                                             x-cloak
                                             :id="gameImportAccordionId(run)"
-                                            class="mt-3 space-y-3"
+                                            class="mt-2 space-y-2"
                                         >
                                             <template x-if="gameImportGames(run).length === 0">
-                                                <div class="text-sm text-gray-500">No games discovered yet.</div>
+                                                <div class="text-xs text-gray-500">No games discovered yet.</div>
                                             </template>
 
                                             <template x-for="game in gameImportGames(run)" :key="game.game_id">
-                                                <div class="border-t border-gray-100 pt-3">
-                                                    <div class="flex items-start justify-between gap-3">
-                                                        <div class="min-w-0">
-                                                            <div class="truncate text-sm font-medium text-gray-900" x-text="gameImportGameLabel(game)"></div>
-                                                            <div class="text-xs text-gray-500" x-text="gameImportGameMeta(game)"></div>
+                                                <div class="border-t border-gray-100 pt-2">
+                                                    <div class="flex items-start justify-between gap-2">
+                                                        <div class="flex min-w-0 items-center gap-2">
+                                                            <div class="truncate text-[11px] font-medium text-gray-900" x-text="gameImportGameLabel(game)"></div>
+                                                            <div class="shrink-0 text-[11px] text-gray-500" x-text="gameImportGameMeta(game)"></div>
                                                         </div>
-                                                        <div class="text-xs font-medium text-gray-600" x-text="`${gameImportGameProgressPercentage(game)}%`"></div>
+                                                        <div class="text-[11px] font-medium text-gray-600" x-text="`${gameImportGameProgressPercentage(game)}%`"></div>
                                                     </div>
-                                                    <div class="mt-2 h-1 overflow-hidden rounded-full bg-gray-200">
+                                                    <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-200">
                                                         <div
                                                             class="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
                                                             :class="gameImportGameProgressClass(game)"
                                                             x-bind:style="`width: ${gameImportGameProgressPercentage(game)}%`"
                                                         ></div>
                                                     </div>
-                                                    <div class="mt-1 text-xs text-gray-600" x-text="gameImportGameProgressText(game)"></div>
+                                                    <div class="mt-1 text-[11px] text-gray-600" x-text="gameImportGameProgressText(game)"></div>
                                                     <div
                                                         x-show="game.last_error"
-                                                        class="mt-1 truncate text-xs text-red-600"
+                                                        class="mt-1 truncate text-[11px] text-red-600"
                                                         x-text="game.last_error"
                                                     ></div>
+                                                    <div
+                                                        x-show="gameImportBlockedSources(game).length > 0"
+                                                        x-cloak
+                                                        class="mt-1.5 space-y-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800"
+                                                    >
+                                                        <template x-for="source in gameImportBlockedSources(game)" :key="`${game.game_id}-${source.source}`">
+                                                            <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                                                <span class="font-medium" x-text="gameImportSourceStatusLabel(source)"></span>
+                                                                <a
+                                                                    class="break-all text-amber-800 underline decoration-amber-300 underline-offset-2 hover:text-amber-950"
+                                                                    :href="source.url"
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    x-text="source.url"
+                                                                ></a>
+                                                            </div>
+                                                        </template>
+                                                    </div>
                                                 </div>
                                             </template>
                                         </div>

@@ -17,7 +17,8 @@ class SumNhlGameUnits
     public function __construct(
         int|string $gameId,
         private readonly SumNhlGameStrengthUnits|null $strengthUnits = null,
-        private readonly NhlPbpEventNormalizer|null $normalizer = null
+        private readonly NhlPbpEventNormalizer|null $normalizer = null,
+        private readonly NhlPlusMinusCalculator|null $plusMinusCalculator = null
     )
     {
         $this->gameId = (int) $gameId;
@@ -224,6 +225,9 @@ class SumNhlGameUnits
             ['gameId' => $this->gameId]
         ))->sum();
 
-        return $payload->count() + $strengthCount;
+        $plusMinusCount = ($this->plusMinusCalculator ?? app(NhlPlusMinusCalculator::class))
+            ->calculate($this->gameId);
+
+        return $payload->count() + $strengthCount + $plusMinusCount;
     }
 }

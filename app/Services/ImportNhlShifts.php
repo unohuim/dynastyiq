@@ -15,6 +15,8 @@ class ImportNhlShifts
     use HasAPITrait;
 
     private const SHIFT_TYPE_CODE = 517;
+    private const SHORT_ARTIFACT_BASE_SECONDS = 30;
+    private const SHORT_ARTIFACT_MAX_SECONDS = 45;
 
     /**
      * Import raw shift data from NHL API and store into nhl_shifts table,
@@ -415,8 +417,13 @@ class ImportNhlShifts
             return $playerShifts;
         }
 
+        $artifactMaxSeconds = max(
+            self::SHORT_ARTIFACT_BASE_SECONDS,
+            min(self::SHORT_ARTIFACT_MAX_SECONDS, $excessToi)
+        );
+
         $shortRows = collect($playerShifts)
-            ->filter(fn (array $shift): bool => (int) $shift['shift_duration_seconds'] <= 20)
+            ->filter(fn (array $shift): bool => (int) $shift['shift_duration_seconds'] <= $artifactMaxSeconds)
             ->values()
             ->all();
 

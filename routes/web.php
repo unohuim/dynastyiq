@@ -216,6 +216,11 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // NHL game import orchestration
                 Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
                     ->name('admin.nhl-game-imports.status');
+                Route::get('/nhl-game-imports/source-gaps', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'sourceGaps'])
+                    ->name('admin.nhl-game-imports.source-gaps');
+                Route::post('/nhl-game-imports/source-gaps/{gameId}/rerun', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunSourceGap'])
+                    ->whereNumber('gameId')
+                    ->name('admin.nhl-game-imports.source-gaps.rerun');
                 Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
                     ->name('admin.nhl-game-imports.discover');
                 Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])

@@ -251,6 +251,7 @@ Do not introduce new enum values without updating this document.
 - `running`
 - `error`
 - `completed`
+- `skipped`
 
 **Semantic meaning:**
 
@@ -258,10 +259,33 @@ Do not introduce new enum values without updating this document.
 - `running`: Import stage has been claimed by a worker.
 - `error`: Import stage failed and records `last_error`.
 - `completed`: Import stage completed successfully.
+- `skipped`: Import stage was intentionally not run because a required provider source for that stage is unavailable.
 
 **Notes:**
 
 - Default value is `scheduled`.
+
+### NHL Game Source Status
+
+**Name:** NHL game source status
+**Storage location(s):** `nhl_game_source_statuses.status`
+**Allowed values:**
+
+- `available`
+- `empty`
+- `unavailable`
+
+**Semantic meaning:**
+
+- `available`: Required provider response exists and contains the minimum expected payload.
+- `empty`: Provider response succeeded but lacks required records for that source.
+- `unavailable`: Provider response failed or is unsupported for this import pipeline.
+
+**Notes:**
+
+- Source names are `pbp`, `boxscore`, and `shifts`.
+- Empty or unavailable PBP or boxscore source statuses skip the core game import pipeline before PBP dispatch.
+- Empty or unavailable shifts source statuses skip only shift-derived on-ice stages.
 
 ### NHL Game Import Run Action
 
@@ -344,16 +368,19 @@ Do not introduce new enum values without updating this document.
 - `approved`
 - `failed`
 - `accepted_exception`
+- `incomplete`
 
 **Semantic meaning:**
 
 - `approved`: Exact comparable totals matched and the validation can be trusted by downstream work.
 - `failed`: One or more durable validation deltas exist.
 - `accepted_exception`: An admin reviewed and accepted the failed validation as a known exception.
+- `incomplete`: Comparable core totals passed, but at least one source-dependent field group could not be validated.
 
 **Notes:**
 
 - `failed` validation status blocks downstream import stages until rerun approval or accepted exception.
+- `incomplete` does not mean parser failure; it indicates provider source coverage is incomplete.
 
 ### NHL Game Validation Delta Severity
 

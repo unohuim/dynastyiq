@@ -9,6 +9,12 @@ use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameSourceStatus;
+use App\Repositories\NhlImportProgressRepo;
+use App\Services\NhlGameImportRebuilder;
+use App\Services\NhlGameSourcePreflight;
+use App\Services\NhlImportOrchestrator;
+use App\Support\NhlImportStages;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +27,13 @@ use Illuminate\Validation\ValidationException;
 class NhlGameImportController extends Controller
 {
     private const MAX_DATE_COUNT = 120;
+    private const SHIFT_RERUN_STAGES = [
+        NhlImportStages::SHIFTS,
+        NhlImportStages::SHIFT_UNITS,
+        NhlImportStages::CONNECT_EVENTS,
+        NhlImportStages::SUM_GAME_UNITS,
+        NhlImportStages::VALIDATE_SUMMARY,
+    ];
 
     /**
      * Return recent admin game import runs with current pipeline progress.
@@ -39,6 +52,60 @@ class NhlGameImportController extends Controller
                 'date_count' => $this->processableDateCount(),
             ],
         ]);
+    }
+
+    /**
+     * Return all games with currently missing NHL provider source records.
+     */
+    public function sourceGaps(): JsonResponse
+    {
+        return response()->json([
+            'gaps' => $this->sourceGapRows(),
+        ]);
+    }
+
+    /**
+     * Re-check source availability for one game and queue the narrowest useful rerun.
+     */
+    public function rerunSourceGap(
+        int $gameId,
+        NhlGameSourcePreflight $preflight,
+        NhlGameImportRebuilder $rebuilder,
+        NhlImportProgressRepo $progress,
+        NhlImportOrchestrator $orchestrator
+    ): JsonResponse {
+        $previousBlockedSources = NhlGameSourceStatus::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('status', '!=', NhlGameSourceStatus::STATUS_AVAILABLE)
+            ->pluck('source')
+            ->unique()
+            ->values()
+            ->all();
+
+        $result = $preflight->check($gameId);
+        $action = 'source_checked';
+
+        if ($result['core_allowed'] && $this->hasCoreGap($previousBlockedSources)) {
+            $rebuilder->rebuild($gameId);
+            $action = 'game_rebuild_queued';
+        } elseif (
+            $result['core_allowed']
+            && $result['on_ice_allowed']
+            && in_array(NhlGameSourceStatus::SOURCE_SHIFTS, $previousBlockedSources, true)
+        ) {
+            foreach (self::SHIFT_RERUN_STAGES as $stage) {
+                $progress->reschedule($gameId, $stage);
+            }
+
+            $orchestrator->dispatchJob($gameId, NhlImportStages::SHIFTS);
+            $action = 'shift_stages_queued';
+        }
+
+        return response()->json([
+            'status' => $action,
+            'source_result' => $result,
+            'gaps' => $this->sourceGapRows(),
+        ], 202);
     }
 
     /**
@@ -388,10 +455,11 @@ class NhlGameImportController extends Controller
         $scheduled = (int) ($rows['scheduled'] ?? 0);
         $running = (int) ($rows['running'] ?? 0);
         $completed = (int) ($rows['completed'] ?? 0);
+        $skipped = (int) ($rows['skipped'] ?? 0);
         $failed = (int) ($rows['error'] ?? 0);
-        $total = $scheduled + $running + $completed + $failed;
-        $percentage = $total > 0 ? (int) floor(($completed / $total) * 100) : 0;
-        $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $failed);
+        $total = $scheduled + $running + $completed + $skipped + $failed;
+        $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0;
+        $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
         $lastError = DB::table('nhl_import_progress')
             ->whereBetween('game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()])
             ->where('status', 'error')
@@ -405,6 +473,7 @@ class NhlGameImportController extends Controller
             'scheduled_stage_rows' => $scheduled,
             'running_stage_rows' => $running,
             'completed_stage_rows' => $completed,
+            'skipped_stage_rows' => $skipped,
             'failed_stage_rows' => $failed,
             'percentage' => $percentage,
             'last_error' => $lastError,
@@ -426,6 +495,7 @@ class NhlGameImportController extends Controller
             'discovered_game_date_count' => (int) (clone $query)->distinct()->count('game_date'),
             'discovered_game_count' => (int) (clone $query)->distinct()->count('game_id'),
             'scheduled_stage_rows' => (int) (clone $query)->where('status', 'scheduled')->count(),
+            'skipped_stage_rows' => (int) (clone $query)->where('status', 'skipped')->count(),
             'total_stage_rows' => (int) (clone $query)->count(),
         ];
     }
@@ -456,17 +526,42 @@ class NhlGameImportController extends Controller
             ->whereIn('nhl_game_id', $rows->pluck('game_id')->unique()->values()->all())
             ->get()
             ->keyBy(fn ($game) => (string) $game->nhl_game_id);
+        $sourceStatuses = DB::table('nhl_game_source_statuses')
+            ->select(['nhl_game_id', 'source', 'status', 'reason', 'url', 'details', 'checked_at'])
+            ->whereIn('nhl_game_id', $rows->pluck('game_id')->unique()->values()->all())
+            ->orderBy('source')
+            ->get()
+            ->groupBy(fn ($status) => (string) $status->nhl_game_id);
 
         return $rows
             ->groupBy('game_id')
-            ->map(function ($gameRows, $gameId) use ($games): array {
+            ->map(function ($gameRows, $gameId) use ($games, $sourceStatuses): array {
                 $scheduled = (int) $gameRows->where('status', 'scheduled')->count();
                 $running = (int) $gameRows->where('status', 'running')->count();
                 $completed = (int) $gameRows->where('status', 'completed')->count();
+                $skipped = (int) $gameRows->where('status', 'skipped')->count();
                 $failed = (int) $gameRows->where('status', 'error')->count();
-                $total = $scheduled + $running + $completed + $failed;
+                $total = $scheduled + $running + $completed + $skipped + $failed;
                 $first = $gameRows->first();
                 $game = $games->get((string) $gameId);
+                $statuses = $sourceStatuses
+                    ->get((string) $gameId, collect())
+                    ->map(fn ($status): array => [
+                        'source' => $status->source,
+                        'status' => $status->status,
+                        'reason' => $status->reason,
+                        'url' => $status->url,
+                        'details' => is_string($status->details)
+                            ? json_decode($status->details, true)
+                            : $status->details,
+                        'checked_at' => $status->checked_at,
+                    ])
+                    ->values()
+                    ->all();
+                $blockedSources = array_values(array_filter(
+                    $statuses,
+                    fn (array $status): bool => $status['status'] !== 'available'
+                ));
 
                 return [
                     'game_id' => $gameId,
@@ -476,14 +571,79 @@ class NhlGameImportController extends Controller
                     'scheduled_stage_rows' => $scheduled,
                     'running_stage_rows' => $running,
                     'completed_stage_rows' => $completed,
+                    'skipped_stage_rows' => $skipped,
                     'failed_stage_rows' => $failed,
                     'total_stage_rows' => $total,
-                    'percentage' => $total > 0 ? (int) floor(($completed / $total) * 100) : 0,
+                    'percentage' => $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0,
                     'last_error' => $gameRows->where('status', 'error')->pluck('last_error')->filter()->first(),
+                    'source_statuses' => $statuses,
+                    'blocked_sources' => $blockedSources,
                 ];
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * Return source gaps grouped by game for the admin source-health queue.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function sourceGapRows(): array
+    {
+        $rows = DB::table('nhl_game_source_statuses as statuses')
+            ->leftJoin('nhl_games as games', 'games.nhl_game_id', '=', 'statuses.nhl_game_id')
+            ->select([
+                'statuses.nhl_game_id',
+                'statuses.source',
+                'statuses.status',
+                'statuses.reason',
+                'statuses.url',
+                'statuses.details',
+                'statuses.checked_at',
+                'games.game_date',
+                'games.away_team_abbrev',
+                'games.home_team_abbrev',
+            ])
+            ->where('statuses.status', '!=', NhlGameSourceStatus::STATUS_AVAILABLE)
+            ->orderByDesc('statuses.checked_at')
+            ->orderBy('statuses.nhl_game_id')
+            ->orderBy('statuses.source')
+            ->get();
+
+        return $rows
+            ->groupBy('nhl_game_id')
+            ->map(function ($gameRows, $gameId): array {
+                $first = $gameRows->first();
+
+                return [
+                    'game_id' => (int) $gameId,
+                    'game_date' => $first->game_date,
+                    'away_team_abbrev' => $first->away_team_abbrev,
+                    'home_team_abbrev' => $first->home_team_abbrev,
+                    'sources' => $gameRows->map(fn ($row): array => [
+                        'source' => $row->source,
+                        'status' => $row->status,
+                        'reason' => $row->reason,
+                        'url' => $row->url,
+                        'details' => is_string($row->details)
+                            ? json_decode($row->details, true)
+                            : $row->details,
+                        'checked_at' => $row->checked_at,
+                    ])->values()->all(),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int,string> $sources
+     */
+    private function hasCoreGap(array $sources): bool
+    {
+        return in_array(NhlGameSourceStatus::SOURCE_PBP, $sources, true)
+            || in_array(NhlGameSourceStatus::SOURCE_BOXSCORE, $sources, true);
     }
 
     /**
@@ -506,6 +666,7 @@ class NhlGameImportController extends Controller
         int $scheduled,
         int $running,
         int $completed,
+        int $skipped,
         int $failed
     ): string {
         if ($failed > 0) {
@@ -518,7 +679,7 @@ class NhlGameImportController extends Controller
             return NhlGameImportRun::STATUS_COMPLETED;
         }
 
-        if ($total > 0 && $completed === $total) {
+        if ($total > 0 && ($completed + $skipped) === $total) {
             return NhlGameImportRun::STATUS_COMPLETED;
         }
 

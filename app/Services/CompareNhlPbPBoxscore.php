@@ -15,6 +15,13 @@ class CompareNhlPbPBoxscore
 {
     private const PERCENTAGE_TOLERANCE = 0.001;
 
+    /** @var array<int,string> */
+    private const SHIFT_DEPENDENT_FIELDS = [
+        'plus_minus',
+        'shifts',
+        'toi_seconds',
+    ];
+
     /** @var array<string,string> */
     private const SKATER_EXACT_FIELD_MAP = [
         'goals' => 'g',
@@ -25,6 +32,7 @@ class CompareNhlPbPBoxscore
         'hits' => 'h',
         'blocks' => 'b',
         'power_play_goals' => 'ppg',
+        'plus_minus' => 'plus_minus',
         'shifts' => 'shifts',
     ];
 
@@ -62,6 +70,7 @@ class CompareNhlPbPBoxscore
     public function compare(int $gameId): array
     {
         $deltas = [];
+        $shiftsAvailable = app(NhlGameSourcePreflight::class)->storedShiftsAvailable($gameId);
         $boxscores = NhlBoxscore::where('nhl_game_id', $gameId)->get();
         $summaries = NhlGameSummary::where('nhl_game_id', $gameId)
             ->get()
@@ -78,6 +87,10 @@ class CompareNhlPbPBoxscore
             $exactFieldMap = $this->isGoalie($boxscore) ? self::GOALIE_EXACT_FIELD_MAP : self::SKATER_EXACT_FIELD_MAP;
 
             foreach ($exactFieldMap as $boxscoreField => $summaryField) {
+                if (! $shiftsAvailable && in_array($boxscoreField, self::SHIFT_DEPENDENT_FIELDS, true)) {
+                    continue;
+                }
+
                 $boxscoreValue = $this->numericValue($boxscore->{$boxscoreField});
                 $summaryValue = $this->numericValue($summary->{$summaryField});
 
@@ -101,6 +114,10 @@ class CompareNhlPbPBoxscore
             }
 
             foreach (self::TOLERATED_FIELD_MAP as $boxscoreField => $summaryField) {
+                if (! $shiftsAvailable && in_array($boxscoreField, self::SHIFT_DEPENDENT_FIELDS, true)) {
+                    continue;
+                }
+
                 $boxscoreValue = (float) $boxscore->{$boxscoreField};
                 $summaryValue = (float) $summary->{$summaryField};
 
@@ -123,7 +140,7 @@ class CompareNhlPbPBoxscore
                 continue;
             }
 
-            if ($this->hasComparableTotals($summary)) {
+            if ($this->hasComparableTotals($summary, $shiftsAvailable)) {
                 $deltas[] = $this->delta(
                     (int) $playerId,
                     'boxscore_record',
@@ -277,9 +294,13 @@ class CompareNhlPbPBoxscore
         return strtoupper((string) $boxscore->position) === 'G';
     }
 
-    private function hasComparableTotals(NhlGameSummary $summary): bool
+    private function hasComparableTotals(NhlGameSummary $summary, bool $shiftsAvailable): bool
     {
-        foreach ([...self::SKATER_EXACT_FIELD_MAP, ...self::GOALIE_EXACT_FIELD_MAP] as $summaryField) {
+        foreach ([...self::SKATER_EXACT_FIELD_MAP, ...self::GOALIE_EXACT_FIELD_MAP] as $boxscoreField => $summaryField) {
+            if (! $shiftsAvailable && in_array($boxscoreField, self::SHIFT_DEPENDENT_FIELDS, true)) {
+                continue;
+            }
+
             if ($this->numericValue($summary->{$summaryField}) !== 0) {
                 return true;
             }

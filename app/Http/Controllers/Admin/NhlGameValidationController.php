@@ -120,6 +120,18 @@ class NhlGameValidationController extends Controller
                         ->orWhere('assist1_player_id', $playerId)
                         ->orWhere('assist2_player_id', $playerId);
                 })->whereIn('type_desc_key', ['shot-on-goal', 'goal']),
+                'plus_minus' => $query
+                    ->where('type_desc_key', 'goal')
+                    ->whereIn('id', function ($linkedEvents) use ($validation, $playerId): void {
+                        $linkedEvents
+                            ->select('eus.event_id')
+                            ->from('event_unit_shifts as eus')
+                            ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+                            ->join('nhl_unit_players as up', 'up.unit_id', '=', 'us.unit_id')
+                            ->join('players as linked_players', 'linked_players.id', '=', 'up.player_id')
+                            ->where('us.nhl_game_id', $validation->nhl_game_id)
+                            ->where('linked_players.nhl_id', $playerId);
+                    }),
                 'saves',
                 'shots_against',
                 'goals_against',

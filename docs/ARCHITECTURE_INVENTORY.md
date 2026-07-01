@@ -743,6 +743,33 @@ app(NhlGameImportRebuilder::class)->rebuild($gameId);
 
 ---
 
+### NHL Plus Minus Calculator
+
+**Name:** NHL Plus Minus Calculator
+**Type:** Domain Rule Service
+**Location:**
+- `app/Services/NhlPlusMinusCalculator.php`
+- `docs/architecture/imports/NhlPlusMinusCalculator.yaml`
+
+**Purpose:**
+Calculate skater plus/minus from eligible linked goal events and reconcile persisted player-game totals to official boxscore values when available.
+
+**When to Use:**
+After shift units and event-unit links exist for a game.
+
+**When Not to Use:**
+Before event links exist, or for individual scoring and goalie stats.
+
+**Public Interface:**
+- `NhlPlusMinusCalculator::calculate()`
+
+**Example Usage:**
+```php
+app(NhlPlusMinusCalculator::class)->calculate($gameId);
+```
+
+---
+
 ### NHL Import Stages
 
 **Name:** NHL Import Stages
@@ -771,6 +798,40 @@ Performing stage transformations or persisting progress state.
 foreach (NhlImportStages::ordered() as $stage) {
     // process stage metadata
 }
+```
+
+---
+
+### NHL Game Source Preflight
+
+**Name:** NHL Game Source Preflight
+**Type:** Import Availability Gate
+**Location:**
+- `app/Services/NhlGameSourcePreflight.php`
+- `app/Models/NhlGameSourceStatus.php`
+- `app/Http/Controllers/Admin/NhlGameImportController.php`
+- `database/migrations/2026_06_30_000003_create_nhl_game_source_statuses_table.php`
+
+**Purpose:**
+Verify PBP, boxscore, and shiftcharts source feeds before a game enters source-dependent NHL import stages, and persist blocked-source context for admin review.
+
+**When to Use:**
+Before claiming the PBP stage, when explaining why a discovered game is blocked from processing, or when an admin retries missing provider sources.
+
+**When Not to Use:**
+For boxscore stat validation after imports complete.
+
+**Public Interface:**
+- `NhlGameSourcePreflight::check()`
+- `NhlGameSourcePreflight::storedOrCheck()`
+- `NhlGameSourcePreflight::storedShiftsAvailable()`
+- `NhlGameSourcePreflight::shiftsUrl()`
+- `admin.nhl-game-imports.source-gaps`
+- `admin.nhl-game-imports.source-gaps.rerun`
+
+**Example Usage:**
+```php
+$result = app(NhlGameSourcePreflight::class)->check($gameId);
 ```
 
 ---
@@ -819,7 +880,7 @@ $validation = app(ValidateNhlGameSummary::class)->validate($gameId);
 - `docs/architecture/imports/NhlValidationTroubleshootingExporter.yaml`
 
 **Purpose:**
-Write compact per-game markdown snapshots for failed NHL summary validations so raw boxscore, play-by-play, shift, and delta context can be reviewed together.
+Write compact per-game markdown snapshots for failed NHL summary validations so standalone delta, raw boxscore, play-by-play, and shift context can be reviewed together.
 
 **When to Use:**
 Failed summary-boxscore validations that need durable local troubleshooting evidence.

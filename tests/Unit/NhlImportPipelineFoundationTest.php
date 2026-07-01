@@ -13,6 +13,7 @@ use App\Jobs\ValidateNhlGameSummaryJob;
 use App\Models\NhlGameImportRun;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\NhlDiscoverGames;
+use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -27,6 +28,25 @@ uses(TestCase::class, RefreshDatabase::class);
 
 beforeEach(function (): void {
     Carbon::setTestNow('2026-06-29 12:00:00');
+    $this->app->instance(NhlGameSourcePreflight::class, new class extends NhlGameSourcePreflight {
+        public function check(int $gameId): array
+        {
+            return [
+                'allowed' => true,
+                'core_allowed' => true,
+                'on_ice_allowed' => true,
+                'statuses' => [],
+                'message' => null,
+                'core_message' => null,
+                'on_ice_message' => null,
+            ];
+        }
+
+        public function storedOrCheck(int $gameId): array
+        {
+            return $this->check($gameId);
+        }
+    });
 
     $this->insertProgress = function (
         int $gameId = 2026020001,
@@ -221,6 +241,87 @@ it('does not dispatch a duplicate job after the row has already been claimed', f
     $orchestrator->dispatchJob(2026020001, NhlImportStages::PBP);
 
     Bus::assertDispatchedTimes(ImportPbpNhlJob::class, 1);
+});
+
+it('skips on-ice stages and still dispatches validation when only the shifts source is missing', function (): void {
+    Bus::fake();
+    ($this->insertPipeline)(2026020001, [
+        NhlImportStages::PBP => 'completed',
+        NhlImportStages::SUMMARY => 'completed',
+        NhlImportStages::BOXSCORE => 'completed',
+    ]);
+    $this->app->instance(NhlGameSourcePreflight::class, new class extends NhlGameSourcePreflight {
+        public function storedOrCheck(int $gameId): array
+        {
+            return [
+                'allowed' => true,
+                'core_allowed' => true,
+                'on_ice_allowed' => false,
+                'statuses' => [],
+                'message' => 'NHL source preflight blocked import: shifts:empty_shiftcharts',
+                'core_message' => null,
+                'on_ice_message' => 'NHL source preflight blocked import: shifts:empty_shiftcharts',
+            ];
+        }
+    });
+
+    app(NhlImportOrchestrator::class)->dispatchJob(2026020001, NhlImportStages::SHIFTS);
+
+    Bus::assertDispatched(ValidateNhlGameSummaryJob::class);
+    foreach ([NhlImportStages::SHIFTS, NhlImportStages::SHIFT_UNITS, NhlImportStages::CONNECT_EVENTS, NhlImportStages::SUM_GAME_UNITS] as $stage) {
+        $this->assertDatabaseHas('nhl_import_progress', [
+            'game_id' => '2026020001',
+            'import_type' => $stage,
+            'status' => 'skipped',
+            'last_error' => 'NHL source preflight blocked import: shifts:empty_shiftcharts',
+        ]);
+    }
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'running',
+    ]);
+});
+
+it('records source preflight statuses with exact provider URLs', function (): void {
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'gameType' => 2,
+            'plays' => [
+                ['eventId' => 7],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/boxscore' => Http::response([
+            'playerByGameStats' => [
+                'awayTeam' => ['forwards' => []],
+                'homeTeam' => ['forwards' => []],
+            ],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [],
+            'total' => 0,
+        ]),
+    ]);
+
+    $result = (new NhlGameSourcePreflight())->check(2026020001);
+
+    expect($result['allowed'])->toBeTrue()
+        ->and($result['core_allowed'])->toBeTrue()
+        ->and($result['on_ice_allowed'])->toBeFalse()
+        ->and($result['message'])->toBe('NHL source preflight blocked import: shifts:empty_shiftcharts');
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001,
+        'source' => 'pbp',
+        'status' => 'available',
+        'url' => 'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play',
+    ]);
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001,
+        'source' => 'shifts',
+        'status' => 'empty',
+        'reason' => 'empty_shiftcharts',
+        'url' => 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001',
+    ]);
 });
 
 it('processes only ready scheduled stages for a date', function (): void {

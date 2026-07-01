@@ -1852,6 +1852,17 @@ it('empties NHL game import data without deleting player identities', function (
         'queued_jobs' => 1,
         'payload' => ['date' => '2026-01-15'],
     ]);
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2025020001,
+        'source' => 'shifts',
+        'status' => 'empty',
+        'reason' => 'empty_shiftcharts',
+        'url' => 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2025020001',
+        'details' => json_encode(['data_count' => 0]),
+        'checked_at' => $now,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
 
     $this->artisan('nhl:empty', ['--games' => true])
         ->assertOk()
@@ -1859,6 +1870,7 @@ it('empties NHL game import data without deleting player identities', function (
         ->expectsOutput('event_unit_shifts: 1')
         ->expectsOutput('nhl_game_validations: 1')
         ->expectsOutput('nhl_game_import_runs: 1')
+        ->expectsOutput('nhl_game_source_statuses: 1')
         ->expectsOutput('nhl_games: 1')
         ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
 
@@ -1879,6 +1891,7 @@ it('empties NHL game import data without deleting player identities', function (
         'nhl_season_stats',
         'nhl_import_progress',
         'nhl_game_import_runs',
+        'nhl_game_source_statuses',
         'nhl_games',
     ] as $table) {
         expect(DB::table($table)->count())->toBe(0);

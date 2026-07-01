@@ -12,7 +12,17 @@ use Illuminate\Support\Facades\DB;
 
 class NhlImportOrchestrator
 {
-    public function __construct(private readonly NhlImportProgressRepo $repo)
+    private const ON_ICE_STAGES = [
+        NhlImportStages::SHIFTS,
+        NhlImportStages::SHIFT_UNITS,
+        NhlImportStages::CONNECT_EVENTS,
+        NhlImportStages::SUM_GAME_UNITS,
+    ];
+
+    public function __construct(
+        private readonly NhlImportProgressRepo $repo,
+        private readonly NhlGameSourcePreflight $sourcePreflight
+    )
     {
     }
 
@@ -88,7 +98,15 @@ class NhlImportOrchestrator
     {
         $jobClass = NhlImportStages::jobClassFor($type);
 
-        if (!$jobClass || !$this->repo->claim($gameId, $type)) {
+        if (! $jobClass) {
+            return;
+        }
+
+        if (! $this->sourcePreflightAllows($gameId, $type, $type === NhlImportStages::PBP)) {
+            return;
+        }
+
+        if (! $this->repo->claim($gameId, $type)) {
             return;
         }
 
@@ -146,5 +164,41 @@ class NhlImportOrchestrator
                 $lock->release();
             }
         }
+    }
+
+    private function sourcePreflightAllows(int $gameId, string $type, bool $refresh): bool
+    {
+        $result = $refresh
+            ? $this->sourcePreflight->check($gameId)
+            : $this->sourcePreflight->storedOrCheck($gameId);
+
+        if (! $result['core_allowed']) {
+            $this->repo->markSkipped(
+                $gameId,
+                NhlImportStages::ordered(),
+                $result['core_message'] ?? 'NHL source preflight skipped import.'
+            );
+
+            return false;
+        }
+
+        if (
+            in_array($type, self::ON_ICE_STAGES, true)
+            && ! $result['on_ice_allowed']
+        ) {
+            $this->repo->markSkipped(
+                $gameId,
+                self::ON_ICE_STAGES,
+                $result['on_ice_message'] ?? 'NHL shiftcharts source missing; on-ice stages skipped.'
+            );
+
+            if ($this->readyFor($gameId, NhlImportStages::VALIDATE_SUMMARY)) {
+                $this->dispatchJob($gameId, NhlImportStages::VALIDATE_SUMMARY);
+            }
+
+            return false;
+        }
+
+        return true;
     }
 }

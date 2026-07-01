@@ -14,6 +14,8 @@ when_not_to_use:
 rules:
   - Exported files must be derived from persisted imported data.
   - Exported files must include the failed deltas that caused the validation failure.
+  - Failed validations must emit separate deltas, boxscore, play-by-play, and shifts markdown files for the game when those sections can be built.
+  - A failure writing one troubleshooting file must not prevent attempts to write the remaining troubleshooting files.
   - Play-by-play exports must include event classification context such as strength, situation code, shot type, goalie id, and shot-on-goal classification.
   - Exported files must not mutate source import tables.
   - The output path must come from configuration.

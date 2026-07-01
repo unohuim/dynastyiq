@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Models\Player;
 use App\Services\NhlStrengthStatsQuery;
 use App\Services\ResolveNhlUnit;
+use App\Services\SumNhlGameUnits;
 use App\Services\SumNhlGameStrengthUnits;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -198,6 +199,194 @@ it('counts goals against while the unit is on ice', function (): void {
     app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
 
     $this->assertDatabaseHas('nhl_unit_game_strength_summaries', ['unit_id' => $unit->id, 'ga' => 1]);
+});
+
+it('calculates plus minus from even-strength linked goal events', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    ($this->makePlayer)(2, 'Away Skater');
+    DB::table('nhl_game_summaries')->insert([
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => 1,
+            'nhl_team_id' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => 2,
+            'nhl_team_id' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+    $homeUnit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $awayUnit = app(ResolveNhlUnit::class)->resolve('F', [2], 'MTL');
+    $homeShiftId = ($this->insertUnitShift)($homeUnit->id, 'F', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $awayShiftId = ($this->insertUnitShift)($awayUnit->id, 'F', 0, 60, ['team_id' => 2, 'team_abbrev' => 'MTL']);
+    $eventId = ($this->insertEvent)('goal', 30, ['event_owner_team_id' => 1, 'strength' => 'EV']);
+    DB::table('event_unit_shifts')->insert([
+        ['event_id' => $eventId, 'unit_shift_id' => $homeShiftId, 'created_at' => now(), 'updated_at' => now()],
+        ['event_id' => $eventId, 'unit_shift_id' => $awayShiftId, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 1,
+        'plus_minus' => 1,
+    ]);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 2,
+        'plus_minus' => -1,
+    ]);
+});
+
+it('reconciles persisted plus minus to official boxscore values when available', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    DB::table('nhl_game_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 1,
+        'nhl_team_id' => 1,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_boxscores')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 1,
+        'nhl_team_id' => 1,
+        'position' => 'C',
+        'plus_minus' => 0,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $shiftId = ($this->insertUnitShift)($unit->id, 'F', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $eventId = ($this->insertEvent)('goal', 30, ['event_owner_team_id' => 1, 'strength' => 'EV']);
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $eventId,
+        'unit_shift_id' => $shiftId,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 1,
+        'plus_minus' => 0,
+    ]);
+});
+
+it('excludes power-play goals from plus minus', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    ($this->makePlayer)(2, 'Away Skater');
+    DB::table('nhl_game_summaries')->insert([
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'nhl_team_id' => 1, 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 2, 'nhl_team_id' => 2, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $homeUnit = app(ResolveNhlUnit::class)->resolve('PP', [1], 'TOR');
+    $awayUnit = app(ResolveNhlUnit::class)->resolve('PK', [2], 'MTL');
+    $homeShiftId = ($this->insertUnitShift)($homeUnit->id, 'PP', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $awayShiftId = ($this->insertUnitShift)($awayUnit->id, 'PK', 0, 60, ['team_id' => 2, 'team_abbrev' => 'MTL']);
+    $eventId = ($this->insertEvent)('goal', 30, ['event_owner_team_id' => 1, 'strength' => 'PP']);
+    DB::table('event_unit_shifts')->insert([
+        ['event_id' => $eventId, 'unit_shift_id' => $homeShiftId, 'created_at' => now(), 'updated_at' => now()],
+        ['event_id' => $eventId, 'unit_shift_id' => $awayShiftId, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 1, 'plus_minus' => 0]);
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 2, 'plus_minus' => 0]);
+});
+
+it('includes shorthanded goals in plus minus', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    ($this->makePlayer)(2, 'Away Skater');
+    DB::table('nhl_game_summaries')->insert([
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'nhl_team_id' => 1, 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 2, 'nhl_team_id' => 2, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $homeUnit = app(ResolveNhlUnit::class)->resolve('PP', [1], 'TOR');
+    $awayUnit = app(ResolveNhlUnit::class)->resolve('PK', [2], 'MTL');
+    $homeShiftId = ($this->insertUnitShift)($homeUnit->id, 'PP', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $awayShiftId = ($this->insertUnitShift)($awayUnit->id, 'PK', 0, 60, ['team_id' => 2, 'team_abbrev' => 'MTL']);
+    $eventId = ($this->insertEvent)('goal', 30, ['event_owner_team_id' => 2, 'strength' => 'PK']);
+    DB::table('event_unit_shifts')->insert([
+        ['event_id' => $eventId, 'unit_shift_id' => $homeShiftId, 'created_at' => now(), 'updated_at' => now()],
+        ['event_id' => $eventId, 'unit_shift_id' => $awayShiftId, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 1, 'plus_minus' => -1]);
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 2, 'plus_minus' => 1]);
+});
+
+it('deduplicates a player linked through multiple units on the same goal', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    DB::table('nhl_game_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 1,
+        'nhl_team_id' => 1,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $forwardUnit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $powerPlayUnit = app(ResolveNhlUnit::class)->resolve('PP', [1], 'TOR');
+    $forwardShiftId = ($this->insertUnitShift)($forwardUnit->id, 'F', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $powerPlayShiftId = ($this->insertUnitShift)($powerPlayUnit->id, 'PP', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $eventId = ($this->insertEvent)('goal', 30, ['event_owner_team_id' => 1, 'strength' => 'EV']);
+    DB::table('event_unit_shifts')->insert([
+        ['event_id' => $eventId, 'unit_shift_id' => $forwardShiftId, 'created_at' => now(), 'updated_at' => now()],
+        ['event_id' => $eventId, 'unit_shift_id' => $powerPlayShiftId, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 1, 'plus_minus' => 1]);
+});
+
+it('excludes penalty shot goals from plus minus', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(1, 'Home Skater');
+    ($this->makePlayer)(2, 'Away Skater');
+    DB::table('nhl_game_summaries')->insert([
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 1, 'nhl_team_id' => 1, 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_game_id' => 2026020001, 'nhl_player_id' => 2, 'nhl_team_id' => 2, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $homeUnit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
+    $awayUnit = app(ResolveNhlUnit::class)->resolve('F', [2], 'MTL');
+    $homeShiftId = ($this->insertUnitShift)($homeUnit->id, 'F', 0, 60, ['team_id' => 1, 'team_abbrev' => 'TOR']);
+    $awayShiftId = ($this->insertUnitShift)($awayUnit->id, 'F', 0, 60, ['team_id' => 2, 'team_abbrev' => 'MTL']);
+    ($this->insertEvent)('penalty', 30, [
+        'event_owner_team_id' => 2,
+        'time_in_period' => '00:30',
+        'penalty_type_code' => 'PS',
+    ]);
+    $eventId = ($this->insertEvent)('goal', 30, [
+        'event_owner_team_id' => 1,
+        'strength' => 'EV',
+        'time_in_period' => '00:30',
+    ]);
+    DB::table('event_unit_shifts')->insert([
+        ['event_id' => $eventId, 'unit_shift_id' => $homeShiftId, 'created_at' => now(), 'updated_at' => now()],
+        ['event_id' => $eventId, 'unit_shift_id' => $awayShiftId, 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    app()->make(SumNhlGameUnits::class, ['gameId' => 2026020001])->sum();
+
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 1, 'plus_minus' => 0]);
+    $this->assertDatabaseHas('nhl_game_summaries', ['nhl_player_id' => 2, 'plus_minus' => 0]);
 });
 
 it('counts goals as shots for', function (): void {

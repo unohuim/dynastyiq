@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 use App\Jobs\ImportBoxscoreNhlJob;
 use App\Jobs\ImportPbpNhlJob;
+use App\Jobs\ImportShiftsNhlJob;
 use App\Jobs\MakeShiftUnitsNhlJob;
 use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
+use App\Models\NhlGameSourceStatus;
 use App\Models\NhlGameValidation;
 use App\Models\NhlGameValidationDelta;
 use App\Models\Player;
@@ -17,6 +19,7 @@ use App\Services\ConnectEventsToUnitShifts;
 use App\Services\CompareNhlPbPBoxscore;
 use App\Services\ImportNHLPlayByPlay;
 use App\Services\ImportNhlShifts;
+use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Services\SumNhlGameUnits;
 use App\Services\SumNHLPlayByPlay;
@@ -157,6 +160,92 @@ beforeEach(function (): void {
         foreach (NhlImportStages::ordered() as $stage) {
             ($this->insertProgress)($gameId, $stage, $statuses[$stage] ?? 'scheduled');
         }
+    };
+
+    $this->fakeSourcePreflight = function (array $sourceStatuses): void {
+        app()->instance(NhlGameSourcePreflight::class, new class($sourceStatuses) extends NhlGameSourcePreflight {
+            /**
+             * @param array<string, array<string, mixed>> $sourceStatuses
+             */
+            public function __construct(private readonly array $sourceStatuses)
+            {
+            }
+
+            /**
+             * @return array{
+             *     allowed: bool,
+             *     core_allowed: bool,
+             *     on_ice_allowed: bool,
+             *     statuses: array<int, array<string, mixed>>,
+             *     message: string|null,
+             *     core_message: string|null,
+             *     on_ice_message: string|null
+             * }
+             */
+            public function check(int $gameId): array
+            {
+                $statuses = collect([
+                    NhlGameSourceStatus::SOURCE_PBP,
+                    NhlGameSourceStatus::SOURCE_BOXSCORE,
+                    NhlGameSourceStatus::SOURCE_SHIFTS,
+                ])->map(function (string $source) use ($gameId): array {
+                    $status = $this->sourceStatuses[$source] ?? [
+                        'status' => NhlGameSourceStatus::STATUS_AVAILABLE,
+                        'reason' => null,
+                    ];
+
+                    return [
+                        'nhl_game_id' => $gameId,
+                        'source' => $source,
+                        'status' => $status['status'],
+                        'reason' => $status['reason'] ?? null,
+                        'url' => $status['url'] ?? "https://example.test/{$source}/{$gameId}",
+                        'details' => $status['details'] ?? [],
+                    ];
+                })->all();
+
+                foreach ($statuses as $status) {
+                    NhlGameSourceStatus::query()->updateOrCreate(
+                        [
+                            'nhl_game_id' => $gameId,
+                            'source' => $status['source'],
+                        ],
+                        [
+                            'status' => $status['status'],
+                            'reason' => $status['reason'],
+                            'url' => $status['url'],
+                            'details' => $status['details'],
+                            'checked_at' => now(),
+                        ]
+                    );
+                }
+
+                $blockedCore = array_values(array_filter(
+                    $statuses,
+                    fn (array $status): bool => in_array($status['source'], [
+                        NhlGameSourceStatus::SOURCE_PBP,
+                        NhlGameSourceStatus::SOURCE_BOXSCORE,
+                    ], true) && $status['status'] !== NhlGameSourceStatus::STATUS_AVAILABLE
+                ));
+                $blockedOnIce = array_values(array_filter(
+                    $statuses,
+                    fn (array $status): bool => $status['source'] === NhlGameSourceStatus::SOURCE_SHIFTS
+                        && $status['status'] !== NhlGameSourceStatus::STATUS_AVAILABLE
+                ));
+                $coreAllowed = $blockedCore === [];
+                $onIceAllowed = $blockedOnIce === [];
+
+                return [
+                    'allowed' => $coreAllowed,
+                    'core_allowed' => $coreAllowed,
+                    'on_ice_allowed' => $onIceAllowed,
+                    'statuses' => $statuses,
+                    'message' => $coreAllowed && $onIceAllowed ? null : 'blocked',
+                    'core_message' => $coreAllowed ? null : 'core blocked',
+                    'on_ice_message' => $onIceAllowed ? null : 'on-ice blocked',
+                ];
+            }
+        });
     };
 });
 
@@ -896,6 +985,203 @@ it('persists an approved validation when no deltas exist', function (): void {
         ->and($validation->approved_at)->not->toBeNull();
 });
 
+it('persists an incomplete validation when core deltas pass but shifts are unavailable', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 0,
+        'shifts' => 0,
+    ]);
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2026020001,
+        'source' => 'shifts',
+        'status' => 'empty',
+        'reason' => 'empty_shiftcharts',
+        'url' => 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001',
+        'details' => json_encode(['data_count' => 0, 'total' => 0]),
+        'checked_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INCOMPLETE)
+        ->and($validation->mismatch_count)->toBe(0)
+        ->and($validation->approved_at)->toBeNull();
+});
+
+it('lists games with missing source records for admin rerun triage', function (): void {
+    $admin = ($this->makeSuperAdmin)();
+    ($this->insertGame)();
+
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        'status' => NhlGameSourceStatus::STATUS_EMPTY,
+        'reason' => 'empty_shiftcharts',
+        'url' => 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001',
+        'details' => json_encode(['data_count' => 0]),
+        'checked_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->getJson(route('admin.nhl-game-imports.source-gaps'))
+        ->assertOk()
+        ->assertJsonPath('gaps.0.game_id', 2026020001)
+        ->assertJsonPath('gaps.0.away_team_abbrev', 'MTL')
+        ->assertJsonPath('gaps.0.home_team_abbrev', 'TOR')
+        ->assertJsonPath('gaps.0.sources.0.source', NhlGameSourceStatus::SOURCE_SHIFTS)
+        ->assertJsonPath('gaps.0.sources.0.reason', 'empty_shiftcharts')
+        ->assertJsonPath('gaps.0.sources.0.details.data_count', 0);
+});
+
+it('requires authentication for source gap admin endpoints', function (): void {
+    $this->getJson(route('admin.nhl-game-imports.source-gaps'))
+        ->assertUnauthorized();
+
+    $this->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertUnauthorized();
+});
+
+it('blocks non-admin users from source gap admin endpoints', function (): void {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->getJson(route('admin.nhl-game-imports.source-gaps'))
+        ->assertForbidden();
+
+    $this->actingAs($user)
+        ->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertForbidden();
+});
+
+it('queues only shift-derived stages when a missing shifts source recovers', function (): void {
+    Bus::fake();
+    $admin = ($this->makeSuperAdmin)();
+    ($this->insertGame)();
+    ($this->insertPipeline)(2026020001, [
+        NhlImportStages::PBP => 'completed',
+        NhlImportStages::SUMMARY => 'completed',
+        NhlImportStages::BOXSCORE => 'completed',
+        NhlImportStages::SHIFTS => 'skipped',
+        NhlImportStages::SHIFT_UNITS => 'skipped',
+        NhlImportStages::CONNECT_EVENTS => 'skipped',
+        NhlImportStages::SUM_GAME_UNITS => 'skipped',
+        NhlImportStages::VALIDATE_SUMMARY => 'completed',
+    ]);
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_SHIFTS,
+        'status' => NhlGameSourceStatus::STATUS_EMPTY,
+        'reason' => 'empty_shiftcharts',
+        'url' => 'https://example.test/shifts/2026020001',
+        'details' => json_encode([]),
+        'checked_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    ($this->fakeSourcePreflight)([]);
+
+    $this->actingAs($admin)
+        ->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertAccepted()
+        ->assertJsonPath('status', 'shift_stages_queued')
+        ->assertJsonCount(0, 'gaps');
+
+    Bus::assertDispatched(ImportShiftsNhlJob::class);
+    Bus::assertNotDispatched(ImportPbpNhlJob::class);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::SHIFTS,
+        'status' => 'running',
+    ]);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'scheduled',
+    ]);
+});
+
+it('rebuilds the full game when a missing core source recovers', function (): void {
+    Bus::fake();
+    $admin = ($this->makeSuperAdmin)();
+    ($this->insertGame)();
+    ($this->insertPipeline)(2026020001, [
+        NhlImportStages::PBP => 'skipped',
+        NhlImportStages::SUMMARY => 'skipped',
+        NhlImportStages::BOXSCORE => 'skipped',
+        NhlImportStages::SHIFTS => 'skipped',
+        NhlImportStages::SHIFT_UNITS => 'skipped',
+        NhlImportStages::CONNECT_EVENTS => 'skipped',
+        NhlImportStages::SUM_GAME_UNITS => 'skipped',
+        NhlImportStages::VALIDATE_SUMMARY => 'skipped',
+    ]);
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_PBP,
+        'status' => NhlGameSourceStatus::STATUS_EMPTY,
+        'reason' => 'empty_plays',
+        'url' => 'https://example.test/pbp/2026020001',
+        'details' => json_encode([]),
+        'checked_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    ($this->fakeSourcePreflight)([]);
+
+    $this->actingAs($admin)
+        ->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertAccepted()
+        ->assertJsonPath('status', 'game_rebuild_queued')
+        ->assertJsonCount(0, 'gaps');
+
+    Bus::assertDispatched(ImportPbpNhlJob::class);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'running',
+    ]);
+});
+
+it('keeps a game in source gaps when a rerun still finds a missing core source', function (): void {
+    Bus::fake();
+    $admin = ($this->makeSuperAdmin)();
+    ($this->insertGame)();
+    ($this->insertPipeline)(2026020001);
+    DB::table('nhl_game_source_statuses')->insert([
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_BOXSCORE,
+        'status' => NhlGameSourceStatus::STATUS_EMPTY,
+        'reason' => 'empty_player_stats',
+        'url' => 'https://example.test/boxscore/2026020001',
+        'details' => json_encode([]),
+        'checked_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    ($this->fakeSourcePreflight)([
+        NhlGameSourceStatus::SOURCE_BOXSCORE => [
+            'status' => NhlGameSourceStatus::STATUS_EMPTY,
+            'reason' => 'empty_player_stats',
+        ],
+    ]);
+
+    $this->actingAs($admin)
+        ->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertAccepted()
+        ->assertJsonPath('status', 'source_checked')
+        ->assertJsonPath('gaps.0.sources.0.source', NhlGameSourceStatus::SOURCE_BOXSCORE);
+
+    Bus::assertNothingDispatched();
+});
+
 it('persists a failed validation with field deltas', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8478402);
@@ -952,7 +1238,77 @@ it('writes troubleshooting markdown snapshots when validation fails', function (
         ->and(File::exists($directory . '/boxscore_2026020001.md'))->toBeTrue()
         ->and(File::exists($directory . '/pbp_2026020001.md'))->toBeTrue()
         ->and(File::exists($directory . '/shifts_2026020001.md'))->toBeTrue()
+        ->and(File::exists($directory . '/deltas_2026020001.md'))->toBeTrue()
         ->and(File::get($directory . '/pbp_2026020001.md'))->toContain('Counts SOG', '704');
+});
+
+it('includes linked unit context for plus-minus troubleshooting snapshots', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, ['plus_minus' => 1]);
+    ($this->insertSummary)(2026020001, 8478402, ['plus_minus' => 0]);
+
+    $playId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '746',
+        'period' => 2,
+        'period_type' => 'REG',
+        'time_in_period' => '14:20',
+        'time_remaining' => '05:40',
+        'seconds_in_period' => 860,
+        'seconds_in_game' => 2060,
+        'seconds_remaining' => 1540,
+        'situation_code' => '1551',
+        'type_code' => 505,
+        'type_desc_key' => 'goal',
+        'sort_order' => 510,
+        'event_owner_team_id' => 1,
+        'scoring_player_id' => 8478402,
+        'strength' => 'EV',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $unitId = DB::table('nhl_units')->insertGetId([
+        'team_abbrev' => 'TOR',
+        'unit_type' => 'F',
+        'composition_hash' => 'plus-minus-unit',
+        'composition_player_ids' => json_encode([8478402]),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_unit_players')->insert([
+        'unit_id' => $unitId,
+        'player_id' => $player->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $unitShiftId = DB::table('nhl_unit_shifts')->insertGetId([
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'unit_id' => $unitId,
+        'nhl_game_id' => 2026020001,
+        'period' => 2,
+        'start_time' => '14:08',
+        'end_time' => '15:24',
+        'start_game_seconds' => 2048,
+        'end_game_seconds' => 2124,
+        'seconds' => 76,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $playId,
+        'unit_shift_id' => $unitShiftId,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and(File::get($directory . '/pbp_2026020001.md'))
+        ->toContain('Plus/Minus Linked Goal Context', '746', 'Test Player (8478402)', '+1');
 });
 
 it('replaces stale deltas on rerun', function (): void {
@@ -1325,6 +1681,140 @@ it('reconciles shiftchart artifacts against boxscore shift targets when availabl
             'event_number' => $eventNumber,
         ]);
     }
+});
+
+it('drops a thirty-second-or-less shift artifact when it exactly matches boxscore overage', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8477456, [
+        'first_name' => 'J.T.',
+        'last_name' => 'Compher',
+        'full_name' => 'J.T. Compher',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8477456, [
+        'toi' => '11:05',
+        'toi_seconds' => 665,
+        'shifts' => 16,
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            $rows = [];
+            $rows[] = $this->shift(1, 1, '00:00', '00:39', '00:39', 54);
+            $rows[] = $this->shift(2, 1, '02:43', '03:19', '00:36', 135);
+            $rows[] = $this->shift(3, 1, '05:58', '07:12', '01:14', 188);
+            $rows[] = $this->shift(4, 1, '13:27', '14:11', '00:44', 332);
+            $rows[] = $this->shift(5, 1, '18:28', '18:47', '00:19', 455);
+            $rows[] = $this->shift(6, 2, '02:51', '03:25', '00:34', 613);
+            $rows[] = $this->shift(7, 2, '04:34', '05:09', '00:35', 633);
+            $rows[] = $this->shift(8, 2, '06:19', '07:08', '00:49', 646);
+            $rows[] = $this->shift(9, 2, '11:08', '12:32', '01:24', 700);
+            $rows[] = $this->shift(10, 2, '16:19', '17:12', '00:53', 756);
+            $rows[] = $this->shift(11, 2, '19:36', '20:00', '00:24', 855);
+            $rows[] = $this->shift(12, 3, '00:00', '00:46', '00:46', 860);
+            $rows[] = $this->shift(13, 3, '02:52', '03:33', '00:41', 894);
+            $rows[] = $this->shift(14, 3, '11:37', '12:37', '01:00', 1050);
+            $rows[] = $this->shift(15, 3, '16:18', '16:36', '00:18', 1103);
+            $rows[] = $this->shift(16, 3, '16:37', '17:06', '00:29', 1114);
+            $rows[] = $this->shift(17, 4, '01:43', '01:52', '00:09', 1177);
+
+            return ['data' => $rows];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(int $shiftNumber, int $period, string $start, string $end, string $duration, int $eventNumber): array
+        {
+            return [
+                'playerId' => 8477456,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'DET',
+                'teamName' => 'Detroit Red Wings',
+                'firstName' => 'J.T.',
+                'lastName' => 'Compher',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(16);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8477456,
+        'toi' => 665,
+        'shifts' => 16,
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8477456,
+        'event_number' => 1114,
+    ]);
+});
+
+it('drops a thirty-two-second shift artifact when official targets exactly prove the overage', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8477021, [
+        'first_name' => 'Alexander',
+        'last_name' => 'Kerfoot',
+        'full_name' => 'Alexander Kerfoot',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8477021, [
+        'toi' => '00:40',
+        'toi_seconds' => 40,
+        'shifts' => 1,
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(1, '00:00', '00:40', '00:40', 10),
+                    $this->shift(2, '19:28', '20:00', '00:32', 436),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(int $shiftNumber, string $start, string $end, string $duration, int $eventNumber): array
+        {
+            return [
+                'playerId' => 8477021,
+                'shiftNumber' => $shiftNumber,
+                'period' => 1,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'UTA',
+                'teamName' => 'Utah Mammoth',
+                'firstName' => 'Alexander',
+                'lastName' => 'Kerfoot',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(1);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8477021,
+        'toi' => 40,
+        'shifts' => 1,
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8477021,
+        'event_number' => 436,
+    ]);
 });
 
 it('documents validate-summary in the canonical stage order', function (): void {

@@ -1,0 +1,41 @@
+name: NHL Game Source Preflight
+type: Import Availability Gate
+location:
+  - app/Services/NhlGameSourcePreflight.php
+  - app/Models/NhlGameSourceStatus.php
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - database/migrations/2026_06_30_000003_create_nhl_game_source_statuses_table.php
+purpose: Verify required provider source feeds are present before a game enters the staged NHL import pipeline.
+when_to_use:
+  - Checking whether a discovered NHL game can begin processing.
+  - Showing admin users why a game import is blocked by missing provider data.
+when_not_to_use:
+  - Validating imported stat totals against boxscore totals.
+  - Replacing per-stage import error handling once a game has passed source preflight.
+rules:
+  - Required source feeds are play-by-play, boxscore, and shiftcharts.
+  - Source preflight must run before the PBP stage is claimed.
+  - A game with PBP or boxscore marked empty or unavailable must not dispatch any import stage.
+  - A game with shiftcharts marked empty or unavailable may still import and validate core PBP and boxscore stats.
+  - Missing shiftcharts must skip shift-derived on-ice stages without marking those stages as failed.
+  - Blocked games must preserve the exact provider URL checked for each missing source.
+  - Admin source-gap reruns must refresh source preflight before queueing import work.
+  - Recovered core source gaps must rebuild the full game pipeline from PBP.
+  - Recovered shiftchart-only gaps must queue only shift-derived stages and summary validation.
+  - Source status records are keyed by NHL game id plus source.
+  - Later stages may reuse complete stored preflight rows and must not dispatch if a source required by that stage is blocked.
+  - Source status values must remain aligned with docs/ENUMS.md.
+  - Unsupported provider game types are treated as a PBP source preflight block.
+public_interface:
+  - NhlGameSourcePreflight::check()
+  - NhlGameSourcePreflight::storedOrCheck()
+  - NhlGameSourcePreflight::storedShiftsAvailable()
+  - NhlGameSourcePreflight::shiftsUrl()
+  - admin.nhl-game-imports.source-gaps
+  - admin.nhl-game-imports.source-gaps.rerun
+example_usage: |
+  $result = app(NhlGameSourcePreflight::class)->check($gameId);
+
+  if (! $result['allowed']) {
+      $repo->markGameError($gameId, $result['message']);
+  }

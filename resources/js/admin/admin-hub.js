@@ -23,6 +23,7 @@ export default function adminHub(options = {}) {
         triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
         validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
+        gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         triageLoaded: false,
@@ -40,7 +41,13 @@ export default function adminHub(options = {}) {
             error: '',
             runs: [],
             expandedRuns: {},
+            sourceGapsExpanded: true,
             processableDateCount: 0,
+            sourceGaps: {
+                loading: false,
+                items: [],
+                rerunning: {},
+            },
             form: {
                 date: '',
                 start: '',
@@ -125,6 +132,7 @@ export default function adminHub(options = {}) {
 
             if (tab === 'game-imports') {
                 await this.loadGameImports();
+                await this.loadGameImportSourceGaps();
             }
         },
 
@@ -385,6 +393,59 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async loadGameImportSourceGaps(options = {}) {
+            const background = Boolean(options.background);
+
+            if (!background) {
+                this.gameImports.sourceGaps.loading = true;
+            }
+
+            try {
+                const response = await fetch(this.gameImportSourceGapsUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load source gaps');
+                }
+
+                this.gameImports.sourceGaps.items = payload.gaps ?? [];
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to load source gaps';
+            } finally {
+                if (!background) {
+                    this.gameImports.sourceGaps.loading = false;
+                }
+            }
+        },
+
+        async rerunGameImportSourceGap(gap) {
+            const gameId = gap?.game_id;
+
+            if (!gameId) {
+                return;
+            }
+
+            this.gameImports.error = '';
+            this.gameImports.sourceGaps.rerunning = {
+                ...this.gameImports.sourceGaps.rerunning,
+                [gameId]: true,
+            };
+
+            try {
+                await this.sendGameImportRequest(`${this.gameImportSourceGapsUrl}/${gameId}/rerun`, {});
+                await this.loadGameImportSourceGaps({ background: true });
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to rerun source check';
+            } finally {
+                const next = { ...this.gameImports.sourceGaps.rerunning };
+                delete next[gameId];
+                this.gameImports.sourceGaps.rerunning = next;
+            }
+        },
+
         async submitGameImportDiscover() {
             this.gameImports.discovering = true;
             this.gameImports.error = '';
@@ -578,13 +639,14 @@ export default function adminHub(options = {}) {
             const total = Number(progress.total_stage_rows) || 0;
             const completed = Number(progress.completed_stage_rows) || 0;
             const running = Number(progress.running_stage_rows) || 0;
+            const skipped = Number(progress.skipped_stage_rows) || 0;
             const failed = Number(progress.failed_stage_rows) || 0;
 
             if (total === 0) {
                 return 'Awaiting discovered pipeline rows';
             }
 
-            return `${this.formatNumber(completed)} / ${this.formatNumber(total)} stages completed · ${this.formatNumber(running)} active · ${this.formatNumber(failed)} failed`;
+            return this.stageProgressText(completed, total, running, failed, skipped);
         },
 
         gameImportSummaryText(run) {
@@ -610,20 +672,42 @@ export default function adminHub(options = {}) {
             };
         },
 
+        sourceGapsAccordionId() {
+            return 'game-import-source-gaps';
+        },
+
+        isGameImportSourceGapsExpanded() {
+            return Boolean(this.gameImports.sourceGapsExpanded);
+        },
+
+        toggleGameImportSourceGaps() {
+            this.gameImports.sourceGapsExpanded = !this.isGameImportSourceGapsExpanded();
+        },
+
+        gameImportSourceGapSummaryText(gap) {
+            const count = Array.isArray(gap.sources) ? gap.sources.length : 0;
+
+            return `${this.formatNumber(count)} ${count === 1 ? 'source' : 'sources'} missing`;
+        },
+
         gameImportGames(run) {
             return Array.isArray(run.games) ? run.games : [];
         },
 
         gameImportGameLabel(game) {
             if (game.away_team_abbrev && game.home_team_abbrev) {
-                return `${game.away_team_abbrev} @ ${game.home_team_abbrev}`;
+                return `${game.away_team_abbrev} vs ${game.home_team_abbrev}`;
             }
 
-            return `Game ${game.game_id ?? ''}`.trim();
+            return game.game_id ?? "";
         },
 
         gameImportGameMeta(game) {
-            return this.formatGameImportDate(game.game_date);
+            if (!game.away_team_abbrev || !game.home_team_abbrev) {
+                return this.formatGameImportDate(game.game_date);
+            }
+
+            return [game.game_id, this.formatGameImportDate(game.game_date)].filter(Boolean).join(" · ");
         },
 
         gameImportGameProgressPercentage(game) {
@@ -636,12 +720,18 @@ export default function adminHub(options = {}) {
             const total = Number(game.total_stage_rows) || 0;
             const completed = Number(game.completed_stage_rows) || 0;
 
-            return total > 0 ? Math.floor((completed / total) * 100) : 0;
+            const skipped = Number(game.skipped_stage_rows) || 0;
+
+            return total > 0 ? Math.floor(((completed + skipped) / total) * 100) : 0;
         },
 
         gameImportGameProgressClass(game) {
             if (Number(game.failed_stage_rows) > 0) {
                 return 'bg-red-500';
+            }
+
+            if (Number(game.skipped_stage_rows) > 0) {
+                return 'bg-yellow-400';
             }
 
             const percentage = this.gameImportGameProgressPercentage(game);
@@ -661,13 +751,48 @@ export default function adminHub(options = {}) {
             const total = Number(game.total_stage_rows) || 0;
             const completed = Number(game.completed_stage_rows) || 0;
             const running = Number(game.running_stage_rows) || 0;
+            const skipped = Number(game.skipped_stage_rows) || 0;
             const failed = Number(game.failed_stage_rows) || 0;
 
             if (total === 0) {
                 return 'Awaiting stages';
             }
 
-            return `${this.formatNumber(completed)} / ${this.formatNumber(total)} stages completed · ${this.formatNumber(running)} active · ${this.formatNumber(failed)} failed`;
+            return this.stageProgressText(completed, total, running, failed, skipped);
+        },
+
+        stageProgressText(completed, total, running, failed, skipped = 0) {
+            const parts = [
+                `${this.formatNumber(completed)} / ${this.formatNumber(total)} stages completed`,
+                `${this.formatNumber(running)} active`,
+            ];
+
+            if (skipped > 0) {
+                parts.push(`${this.formatNumber(skipped)} skipped`);
+            }
+
+            parts.push(`${this.formatNumber(failed)} failed`);
+
+            return parts.join(' · ');
+        },
+
+        gameImportBlockedSources(game) {
+            if (Array.isArray(game.blocked_sources)) {
+                return game.blocked_sources;
+            }
+
+            if (!Array.isArray(game.source_statuses)) {
+                return [];
+            }
+
+            return game.source_statuses.filter((source) => source.status && source.status !== 'available');
+        },
+
+        gameImportSourceStatusLabel(source) {
+            const status = source?.status ?? 'unknown';
+            const reason = source?.reason ? ` · ${source.reason}` : '';
+
+            return `${source?.source ?? 'source'} ${status}${reason}`;
         },
 
         canProcessGameImportRun(run) {
@@ -868,6 +993,7 @@ export default function adminHub(options = {}) {
             }
 
             void this.loadGameImports({ background: true });
+            void this.loadGameImportSourceGaps({ background: true });
         },
 
         ensureStream(key) {

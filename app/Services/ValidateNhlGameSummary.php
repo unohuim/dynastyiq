@@ -17,6 +17,7 @@ class ValidateNhlGameSummary
     public function __construct(
         private readonly CompareNhlPbPBoxscore $comparator,
         private readonly NhlValidationTroubleshootingExporter $troubleshootingExporter,
+        private readonly NhlGameSourcePreflight $sourcePreflight,
     ) {
     }
 
@@ -26,20 +27,19 @@ class ValidateNhlGameSummary
     public function validate(int $gameId): NhlGameValidation
     {
         $deltas = $this->comparator->compare($gameId);
+        $status = $this->validationStatus($gameId, $deltas);
 
-        $validation = DB::transaction(function () use ($gameId, $deltas): NhlGameValidation {
+        $validation = DB::transaction(function () use ($gameId, $deltas, $status): NhlGameValidation {
             $validation = NhlGameValidation::updateOrCreate(
                 [
                     'nhl_game_id' => $gameId,
                     'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
                 ],
                 [
-                    'status' => empty($deltas)
-                        ? NhlGameValidation::STATUS_APPROVED
-                        : NhlGameValidation::STATUS_FAILED,
+                    'status' => $status,
                     'mismatch_count' => count($deltas),
                     'checked_at' => now(),
-                    'approved_at' => empty($deltas) ? now() : null,
+                    'approved_at' => $status === NhlGameValidation::STATUS_APPROVED ? now() : null,
                     'approved_by' => null,
                 ]
             );
@@ -73,6 +73,22 @@ class ValidateNhlGameSummary
         }
 
         return $validation;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function validationStatus(int $gameId, array $deltas): string
+    {
+        if (! empty($deltas)) {
+            return NhlGameValidation::STATUS_FAILED;
+        }
+
+        if (! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
+            return NhlGameValidation::STATUS_INCOMPLETE;
+        }
+
+        return NhlGameValidation::STATUS_APPROVED;
     }
 
     private function stringValue(mixed $value): ?string

@@ -3,6 +3,7 @@ type: Queue Orchestration Pattern
 location:
   - app/Support/NhlImportStages.php
   - app/Services/NhlImportOrchestrator.php
+  - app/Services/NhlGameSourcePreflight.php
   - app/Repositories/NhlImportProgressRepo.php
   - app/Jobs/NhlOrchestratorJob.php
   - app/Jobs/ImportPbpNhlJob.php
@@ -27,6 +28,9 @@ rules:
   - Jobs must report success and failure through the orchestrator or repository contract.
   - Import status values must remain aligned with docs/ENUMS.md.
   - Jobs must only perform work that has already been atomically claimed as running.
+  - The PBP stage must pass core NHL source preflight before the game pipeline claims or dispatches any stage.
+  - Source preflight gaps must leave provider-source details in nhl_game_source_statuses.
+  - Missing shiftcharts must skip only shift-derived on-ice stages and allow validation to run for comparable core fields.
   - Season stat rollups must wait until terminal summary validation stages have completed.
 public_interface:
   - NhlImportOrchestrator::processScheduled()

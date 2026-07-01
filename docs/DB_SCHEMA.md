@@ -46,6 +46,7 @@ Migrations remain the **sole source of truth**.
 - memberships
 - nhl_boxscores
 - nhl_game_import_runs
+- nhl_game_source_statuses
 - nhl_game_summaries
 - nhl_games
 - nhl_import_progress
@@ -1063,7 +1064,7 @@ Migrations remain the **sole source of truth**.
 | game_type | unsignedTinyInteger | Yes | NHL game type |
 | import_type | enum | No | `pbp`, `summary`, `boxscore`, `shifts`, `shift-units`, `connect-events`, `sum-game-units`, `validate-summary` |
 | items_count | unsignedInteger | No | Defaults to `0` |
-| status | enum | No | `scheduled`, `running`, `error`, `completed`; defaults to `scheduled` |
+| status | enum | No | `scheduled`, `running`, `error`, `completed`, `skipped`; defaults to `scheduled` |
 | discovered_at | timestamp | Yes | Discovery timestamp |
 | last_error | text | Yes | Last import error |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -1081,6 +1082,42 @@ Migrations remain the **sole source of truth**.
 ### Behavioral Notes
 
 - `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> game unit summaries -> validation.
+
+---
+
+## nhl_game_source_statuses
+
+**Organization-owned:** No
+**Purpose:** Provider source availability status for NHL game import preflight checks.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | unsignedBigInteger | No | NHL game ID |
+| source | string(32) | No | `pbp`, `boxscore`, or `shifts` |
+| status | string(32) | No | `available`, `empty`, or `unavailable` |
+| reason | string(120) | Yes | Source-specific block reason |
+| url | text | No | Exact provider URL checked |
+| details | json | Yes | Source-specific counts or error metadata |
+| checked_at | timestamp | Yes | Last source check time |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(nhl_game_id, source)`
+- Index: `(status, source)`
+- Index: `(nhl_game_id, status)`
+
+### Behavioral Notes
+
+- PBP, boxscore, and shiftchart source rows are refreshed before the PBP stage is claimed.
+- PBP or boxscore rows that are not `available` skip all scheduled/running pipeline stages for that game.
+- Shiftchart rows that are not `available` skip only shift-derived on-ice stages.
+- Rows intentionally do not foreign-key to `nhl_games` because PBP may not have imported the game row yet.
 
 ---
 
@@ -1134,7 +1171,7 @@ Migrations remain the **sole source of truth**.
 | id | bigint | No | Primary key |
 | nhl_game_id | bigint | No | FK to `nhl_games.nhl_game_id` |
 | validation_type | string | No | `summary_boxscore` |
-| status | enum | No | `approved`, `failed`, `accepted_exception` |
+| status | enum | No | `approved`, `failed`, `accepted_exception`, `incomplete` |
 | mismatch_count | unsignedInteger | No | Count of persisted blocking deltas |
 | checked_at | timestamp | Yes | Validation execution timestamp |
 | approved_at | timestamp | Yes | Approval or exception timestamp |

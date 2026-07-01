@@ -386,8 +386,8 @@ describe('admin-hub import listeners', () => {
 
     it('loads game imports when the game imports tab is selected', async () => {
         const adminHub = await loadAdminHub();
-        global.fetch = vi.fn(() =>
-            Promise.resolve({
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
                 ok: true,
                 json: () => Promise.resolve({
                     processable: { date_count: 2 },
@@ -408,18 +408,35 @@ describe('admin-hub import listeners', () => {
                     ],
                 }),
             })
-        );
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    gaps: [
+                        {
+                            game_id: 2026020001,
+                            sources: [{ source: 'shifts', status: 'empty' }],
+                        },
+                    ],
+                }),
+            });
 
-        const instance = adminHub({ gameImportStatusUrl: '/admin/nhl-game-imports/status' });
+        const instance = adminHub({
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+            gameImportSourceGapsUrl: '/admin/nhl-game-imports/source-gaps',
+        });
 
         await instance.setTab('game-imports');
 
-        expect(fetch).toHaveBeenCalledWith('/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
             headers: { Accept: 'application/json' },
         });
         expect(instance.gameImports.runs).toHaveLength(1);
         expect(instance.gameImports.runs[0].id).toBe(12);
         expect(instance.gameImports.processableDateCount).toBe(2);
+        expect(instance.gameImports.sourceGaps.items).toHaveLength(1);
 
         instance.gameImports.loading = false;
         await instance.loadGameImports({ background: true });
@@ -519,6 +536,7 @@ describe('admin-hub import listeners', () => {
                     total_stage_rows: 8,
                     completed_stage_rows: 4,
                     running_stage_rows: 1,
+                    skipped_stage_rows: 0,
                     failed_stage_rows: 0,
                     percentage: 50,
                 },
@@ -533,8 +551,10 @@ describe('admin-hub import listeners', () => {
 
         expect(instance.isGameImportRunExpanded(run)).toBe(true);
         expect(instance.gameImportGames(run)).toHaveLength(1);
-        expect(instance.gameImportGameLabel(run.games[0])).toBe('MTL @ TOR');
-        expect(instance.gameImportGameMeta(run.games[0])).toBe('Jan 15, 2026');
+        expect(instance.gameImportGameLabel(run.games[0])).toBe('MTL vs TOR');
+        expect(instance.gameImportGameMeta(run.games[0])).toBe('2026020001 · Jan 15, 2026');
+        expect(instance.gameImportGameLabel({ game_id: '2026020953', game_date: '2026-03-03' })).toBe('2026020953');
+        expect(instance.gameImportGameMeta({ game_id: '2026020953', game_date: '2026-03-03' })).toBe('Mar 3, 2026');
         expect(instance.gameImportGameProgressPercentage(run.games[0])).toBe(50);
         expect(instance.gameImportGameProgressClass(run.games[0])).toBe('bg-indigo-600');
         expect(instance.gameImportGameProgressClass({
@@ -551,7 +571,57 @@ describe('admin-hub import listeners', () => {
             failed_stage_rows: 0,
             percentage: 100,
         })).toBe('bg-lime-500');
+        expect(instance.gameImportGameProgressClass({
+            total_stage_rows: 8,
+            completed_stage_rows: 4,
+            running_stage_rows: 0,
+            skipped_stage_rows: 4,
+            failed_stage_rows: 0,
+            percentage: 100,
+        })).toBe('bg-yellow-400');
         expect(instance.gameImportGameProgressText(run.games[0])).toBe('4 / 8 stages completed · 1 active · 0 failed');
+        expect(instance.gameImportGameProgressText({
+            total_stage_rows: 8,
+            completed_stage_rows: 4,
+            running_stage_rows: 0,
+            skipped_stage_rows: 4,
+            failed_stage_rows: 0,
+        })).toBe('4 / 8 stages completed · 0 active · 4 skipped · 0 failed');
+        expect(instance.gameImportBlockedSources({
+            blocked_sources: [
+                {
+                    source: 'shifts',
+                    status: 'empty',
+                    reason: 'empty_shiftcharts',
+                    url: 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020959',
+                },
+            ],
+        })).toHaveLength(1);
+        expect(instance.gameImportSourceStatusLabel({
+            source: 'shifts',
+            status: 'empty',
+            reason: 'empty_shiftcharts',
+        })).toBe('shifts empty · empty_shiftcharts');
+
+        const gap = {
+            game_id: '2026020959',
+            sources: [
+                { source: 'shifts', status: 'empty', reason: 'empty_shiftcharts' },
+                { source: 'boxscore', status: 'unavailable', reason: 'http_404' },
+            ],
+        };
+
+        expect(instance.sourceGapsAccordionId()).toBe('game-import-source-gaps');
+        expect(instance.isGameImportSourceGapsExpanded()).toBe(true);
+        expect(instance.gameImportSourceGapSummaryText(gap)).toBe('2 sources missing');
+
+        instance.toggleGameImportSourceGaps();
+
+        expect(instance.isGameImportSourceGapsExpanded()).toBe(false);
+        expect(instance.gameImportSourceGapSummaryText({
+            game_id: '2026020960',
+            sources: [{ source: 'shifts', status: 'empty' }],
+        })).toBe('1 source missing');
     });
 
     it('opens and closes the game import drawer without mutating the form', async () => {
@@ -640,6 +710,50 @@ describe('admin-hub import listeners', () => {
             body: JSON.stringify({ run_id: 23, start: '2026-01-17', end: '2026-01-15' }),
         });
         expect(instance.gameImports.runs[0].id).toBe(23);
+    });
+
+    it('reruns a source gap and refreshes source gaps plus game imports', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ status: 'shift_stages_queued' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ gaps: [] }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 24, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportSourceGapsUrl: '/admin/nhl-game-imports/source-gaps',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+
+        await instance.rerunGameImportSourceGap({ game_id: 2026020001 });
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/source-gaps/2026020001/rerun', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({}),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.sourceGaps.items).toHaveLength(0);
+        expect(instance.gameImports.runs[0].id).toBe(24);
+        expect(instance.gameImports.sourceGaps.rerunning[2026020001]).toBeUndefined();
     });
 
     it('shows validation errors from game import JSON responses', async () => {

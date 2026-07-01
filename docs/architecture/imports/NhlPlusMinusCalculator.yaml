@@ -1,0 +1,29 @@
+name: NHL Plus Minus Calculator
+type: Domain Rule Service
+location:
+  - app/Services/NhlPlusMinusCalculator.php
+  - app/Services/SumNhlGameUnits.php
+  - app/Services/CompareNhlPbPBoxscore.php
+purpose: Calculate skater plus/minus from linked NHL goal events and persist player-game totals for boxscore validation.
+when_to_use:
+  - Updating player-game plus/minus after event-to-unit links have been rebuilt.
+  - Comparing derived plus/minus against official boxscore values.
+  - Auditing whether on-ice event links correctly identify the players present for eligible goals.
+when_not_to_use:
+  - Calculating individual goals, assists, or goalie goals against.
+  - Running before shift units and event-unit links exist.
+  - Adding plus/minus columns to unit tables when goal-for and goal-against totals already express unit goal differential.
+rules:
+  - Plus/minus is a skater-only player-game stat.
+  - Even-strength goals count toward plus/minus.
+  - Shorthanded goals count toward plus/minus.
+  - Power-play goals do not count toward plus/minus.
+  - Shootout goals do not count toward plus/minus.
+  - Penalty-shot goals do not count toward plus/minus.
+  - A player must be counted at most once per goal event even if multiple linked unit rows include the player.
+  - The calculator must reset game plus/minus before applying recalculated values so reruns remove stale results.
+  - When official boxscore plus/minus rows are available, persisted player-game plus/minus must reconcile to those official targets because provider shift boundaries can make exact goal-time on-ice links ambiguous.
+public_interface:
+  - NhlPlusMinusCalculator::calculate()
+example_usage: |
+  app(NhlPlusMinusCalculator::class)->calculate($gameId);

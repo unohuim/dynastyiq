@@ -9,7 +9,9 @@ use App\Models\NhlGameValidation;
 use App\Models\NhlShift;
 use App\Models\PlayByPlay;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Writes markdown troubleshooting snapshots for failed NHL game validations.
@@ -42,9 +44,10 @@ class NhlValidationTroubleshootingExporter
             ->unique()
             ->values();
 
-        File::put($directory . "/boxscore_{$gameId}.md", $this->boxscoreMarkdown($validation, $playerIds));
-        File::put($directory . "/pbp_{$gameId}.md", $this->pbpMarkdown($validation, $playerIds));
-        File::put($directory . "/shifts_{$gameId}.md", $this->shiftsMarkdown($validation, $playerIds));
+        $this->writeFile($directory, "deltas_{$gameId}.md", fn (): string => $this->deltasMarkdown($validation));
+        $this->writeFile($directory, "boxscore_{$gameId}.md", fn (): string => $this->boxscoreMarkdown($validation, $playerIds));
+        $this->writeFile($directory, "pbp_{$gameId}.md", fn (): string => $this->pbpMarkdown($validation, $playerIds));
+        $this->writeFile($directory, "shifts_{$gameId}.md", fn (): string => $this->shiftsMarkdown($validation, $playerIds));
     }
 
     /**
@@ -145,7 +148,99 @@ class NhlValidationTroubleshootingExporter
             );
         }
 
+        if ($validation->deltas->contains('field', 'plus_minus')) {
+            $lines = [
+                ...$lines,
+                '',
+                ...$this->plusMinusGoalContextMarkdown($validation),
+            ];
+        }
+
         return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function plusMinusGoalContextMarkdown(NhlGameValidation $validation): array
+    {
+        $rows = DB::table('play_by_plays as p')
+            ->leftJoin('event_unit_shifts as eus', 'eus.event_id', '=', 'p.id')
+            ->leftJoin('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+            ->leftJoin('nhl_units as u', 'u.id', '=', 'us.unit_id')
+            ->leftJoin('nhl_unit_players as up', 'up.unit_id', '=', 'u.id')
+            ->leftJoin('players as player', 'player.id', '=', 'up.player_id')
+            ->where('p.nhl_game_id', $validation->nhl_game_id)
+            ->where('p.type_desc_key', 'goal')
+            ->whereIn('p.strength', ['EV', 'PK'])
+            ->where(function ($query): void {
+                $query->whereNull('p.period_type')
+                    ->orWhere('p.period_type', '<>', 'SO');
+            })
+            ->orderBy('p.seconds_in_game')
+            ->orderBy('p.sort_order')
+            ->orderBy('us.team_id')
+            ->orderBy('u.unit_type')
+            ->orderBy('player.nhl_id')
+            ->get([
+                'p.nhl_event_id',
+                'p.period',
+                'p.time_in_period',
+                'p.strength',
+                'p.situation_code',
+                'p.event_owner_team_id',
+                'p.scoring_player_id',
+                'us.id as unit_shift_id',
+                'us.team_id as unit_team_id',
+                'us.team_abbrev as unit_team_abbrev',
+                'us.start_time as unit_start_time',
+                'us.end_time as unit_end_time',
+                'u.unit_type',
+                'player.nhl_id as player_nhl_id',
+                'player.full_name as player_name',
+            ]);
+
+        $lines = [
+            '## Plus/Minus Linked Goal Context',
+            '',
+            '| Event | Time | Strength | Situation | Owner | Scorer | Unit Shift | Unit | Unit Team | Window | Player | Result |',
+            '| ---: | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: |',
+        ];
+
+        if ($rows->isEmpty()) {
+            $lines[] = '| N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | N/A | No linked plus/minus goal rows found | N/A |';
+
+            return $lines;
+        }
+
+        foreach ($rows as $row) {
+            $result = 'N/A';
+            if ($row->unit_team_id !== null && $row->event_owner_team_id !== null) {
+                $result = (int) $row->unit_team_id === (int) $row->event_owner_team_id ? '+1' : '-1';
+            }
+
+            $lines[] = sprintf(
+                '| %s | P%s %s | %s | %s | %s | %s | %s | %s | %s (%s) | %s-%s | %s (%s) | %s |',
+                $row->nhl_event_id ?? 'N/A',
+                $row->period ?? 'N/A',
+                $row->time_in_period ?? 'N/A',
+                $row->strength ?? 'N/A',
+                $row->situation_code ?? 'N/A',
+                $row->event_owner_team_id ?? 'N/A',
+                $row->scoring_player_id ?? 'N/A',
+                $row->unit_shift_id ?? 'N/A',
+                $row->unit_type ?? 'N/A',
+                $row->unit_team_abbrev ?? 'N/A',
+                $row->unit_team_id ?? 'N/A',
+                $row->unit_start_time ?? 'N/A',
+                $row->unit_end_time ?? 'N/A',
+                $row->player_name ?? 'N/A',
+                $row->player_nhl_id ?? 'N/A',
+                $result
+            );
+        }
+
+        return $lines;
     }
 
     /**
@@ -155,10 +250,10 @@ class NhlValidationTroubleshootingExporter
     {
         $rows = NhlShift::query()
             ->where('nhl_game_id', $validation->nhl_game_id)
-            ->whereIn('player_id', $playerIds)
-            ->orderBy('player_id')
+            ->whereIn('nhl_player_id', $playerIds)
+            ->orderBy('nhl_player_id')
             ->orderBy('period')
-            ->orderBy('start_game_seconds')
+            ->orderBy('shift_start_seconds')
             ->get();
 
         $lines = $this->header($validation, 'Shifts');
@@ -172,18 +267,35 @@ class NhlValidationTroubleshootingExporter
                 '| %s %s (%s) | %d | %d | %s | %s | %d | %s | %s |',
                 $row->first_name,
                 $row->last_name,
-                $row->player_id,
+                $row->nhl_player_id,
                 (int) $row->shift_number,
                 (int) $row->period,
                 $row->start_time,
                 $row->end_time,
-                (int) $row->seconds,
+                (int) $row->shift_duration_seconds,
                 $row->event_number ?? 'N/A',
                 $row->type_code ?? 'N/A'
             );
         }
 
         return implode("\n", $lines) . "\n";
+    }
+
+    private function deltasMarkdown(NhlGameValidation $validation): string
+    {
+        return implode("\n", $this->header($validation, 'Deltas')) . "\n";
+    }
+
+    private function writeFile(string $directory, string $filename, callable $content): void
+    {
+        try {
+            File::put($directory . '/' . $filename, $content());
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to write NHL validation troubleshooting file.', [
+                'file' => $filename,
+                'message' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**

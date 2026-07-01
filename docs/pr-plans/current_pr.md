@@ -119,5 +119,11 @@ This PR is the stats-depth layer. It should build on the reliability and validat
 - Split `nhl:empty` into explicit `--players` and `--games` modes so NHL player identities and NHL game-derived import data can be cleared independently.
 - Play-by-play goal events now count as shots on goal only when NHL provides shot metadata; no-shot goals still count as goals and goalie goals against.
 - Failed NHL summary validations now export per-game boxscore, play-by-play, and shift troubleshooting markdown snapshots.
+- Failed validation troubleshooting now also exports standalone per-game delta markdown snapshots, and one failed section no longer blocks the remaining files.
 - NHL game imports now accept only provider game types 1, 2, and 3; PBP establishes the stored game type before later stages can advance.
 - Failed validation triage now exposes an explicit full-game rebuild path that clears game-scoped raw and derived import artifacts and requeues the pipeline from PBP.
+- Skater plus/minus is now derived from eligible linked goal events after event-unit links exist and is compared against official boxscore plus/minus during validation.
+- Persisted skater plus/minus now reconciles to official boxscore values when available to absorb provider ambiguity at exact goal-time shift boundaries.
+- NHL game processing now runs source preflight before dispatch, blocks core imports missing PBP or boxscore, skips only shift-derived on-ice stages when shiftcharts are missing, and exposes the source reason plus exact provider URL in the Game Imports accordion.
+- Summary validation now records `incomplete` when comparable core totals pass but source coverage prevents shift-dependent validation.
+- Game Imports now includes a Source Gaps queue for missing provider feeds, with per-game reruns that refresh source preflight before queueing either a full core rebuild or only shift-derived stages.

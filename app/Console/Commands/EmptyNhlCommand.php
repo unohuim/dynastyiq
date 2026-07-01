@@ -104,6 +104,7 @@ class EmptyNhlCommand extends Command
             'nhl_season_stats',
             'nhl_import_progress',
             'nhl_game_import_runs',
+            'nhl_game_source_statuses',
             'nhl_games',
         ];
     }

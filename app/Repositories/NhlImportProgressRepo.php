@@ -110,6 +110,50 @@ class NhlImportProgressRepo
         }
     }
 
+    /** Mark all not-yet-completed rows for a game as failed with the same message. */
+    public function markGameError(int $gameId, string $message, $code = null): void
+    {
+        $msg = trim(($code !== null ? '[' . (string) $code . '] ' : '') . $message);
+        $updated = DB::table('nhl_import_progress')
+            ->where('game_id', $gameId)
+            ->whereIn('status', ['scheduled', 'running'])
+            ->update([
+                'status' => 'error',
+                'last_error' => mb_substr($msg, 0, 1000),
+                'updated_at' => now(),
+            ]);
+
+        if ($updated > 0) {
+            broadcast(new NhlGameImportStatusUpdated('game-error', gameId: $gameId));
+        }
+    }
+
+    /**
+     * Mark scheduled/running source-incomplete stages as skipped without flagging the game as failed.
+     *
+     * @param array<int,string> $types
+     */
+    public function markSkipped(int $gameId, array $types, string $message): void
+    {
+        if ($types === []) {
+            return;
+        }
+
+        $updated = DB::table('nhl_import_progress')
+            ->where('game_id', $gameId)
+            ->whereIn('import_type', $types)
+            ->whereIn('status', ['scheduled', 'running'])
+            ->update([
+                'status' => 'skipped',
+                'last_error' => mb_substr($message, 0, 1000),
+                'updated_at' => now(),
+            ]);
+
+        if ($updated > 0) {
+            broadcast(new NhlGameImportStatusUpdated('stage-skipped', gameId: $gameId));
+        }
+    }
+
     /** Does a scheduled row exist for this (gameId,type)? */
     public function scheduledExists(int $gameId, string $type): bool
     {
@@ -130,7 +174,7 @@ class NhlImportProgressRepo
         return (int) DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->whereIn('import_type', $deps)
-            ->where('status', 'completed')
+            ->whereIn('status', ['completed', 'skipped'])
             ->count();
     }
 
