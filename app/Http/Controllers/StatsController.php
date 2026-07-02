@@ -12,7 +12,6 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\View\View;
@@ -1131,17 +1130,9 @@ class StatsController extends BaseController
 
     private function isProspectsPerspective(Perspective $p, array $filters): bool
     {
-        $name = Str::lower($p->name ?? '');
-        $slug = Str::lower($p->slug ?? '');
-        if (Str::contains($name, 'prospect') || Str::contains($slug, 'prospect')) return true;
+        $slug = strtolower((string) ($p->slug ?? ''));
 
-        $leagueFilter = $filters['league_abbrev'] ?? null;
-        if ($leagueFilter) {
-            $op  = $leagueFilter['operator'] ?? '=';
-            $val = $leagueFilter['value'] ?? null;
-            return ($op === '!=' && $val === 'NHL') || ($val && strtoupper($val) !== 'NHL');
-        }
-        return false;
+        return in_array($slug, ['prospects', 'prospects-goalies'], true);
     }
 
 

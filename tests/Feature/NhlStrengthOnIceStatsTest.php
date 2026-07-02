@@ -918,8 +918,8 @@ it('limits the prospects perspective to players marked as prospects', function (
     ]);
 
     Perspective::create([
-        'name' => 'Prospects Test',
-        'slug' => 'prospects-test',
+        'name' => 'Prospects',
+        'slug' => 'prospects',
         'visibility' => 'public_guest',
         'sport' => 'hockey',
         'settings' => [
@@ -943,7 +943,7 @@ it('limits the prospects perspective to players marked as prospects', function (
     ]);
 
     $response = $this->getJson(route('api.stats', [
-        'perspective' => 'prospects-test',
+        'perspective' => 'prospects',
         'season_id' => '20262027',
     ]));
 
@@ -987,8 +987,8 @@ it('exposes prospect goalie stats from legacy stats goalie columns', function ()
     ]);
 
     Perspective::create([
-        'name' => 'Prospect Goalies Test',
-        'slug' => 'prospect-goalies-test',
+        'name' => 'Prospects - Goalies',
+        'slug' => 'prospects-goalies',
         'visibility' => 'public_guest',
         'sport' => 'hockey',
         'is_slicable' => false,
@@ -1027,7 +1027,7 @@ it('exposes prospect goalie stats from legacy stats goalie columns', function ()
     ]);
 
     $response = $this->getJson(route('api.stats', [
-        'perspective' => 'prospect-goalies-test',
+        'perspective' => 'prospects-goalies',
         'season_id' => '20262027',
     ]));
 
@@ -1100,8 +1100,8 @@ it('groups prospect stats by player and league while summing same league teams',
     ]);
 
     Perspective::create([
-        'name' => 'Prospects League Test',
-        'slug' => 'prospects-league-test',
+        'name' => 'Prospects',
+        'slug' => 'prospects',
         'visibility' => 'public_guest',
         'sport' => 'hockey',
         'is_slicable' => false,
@@ -1130,7 +1130,7 @@ it('groups prospect stats by player and league while summing same league teams',
     ]);
 
     $response = $this->getJson(route('api.stats', [
-        'perspective' => 'prospects-league-test',
+        'perspective' => 'prospects',
         'season_id' => '20262027',
     ]));
 
@@ -1150,7 +1150,7 @@ it('groups prospect stats by player and league while summing same league teams',
         ->and($ahl['pts'])->toBe(3);
 
     $filtered = $this->getJson(route('api.stats', [
-        'perspective' => 'prospects-league-test',
+        'perspective' => 'prospects',
         'season_id' => '20262027',
         'league' => ['AHL'],
     ]));
