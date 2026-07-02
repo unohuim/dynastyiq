@@ -46,6 +46,7 @@ rules:
   - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.
+  - Penalty-shot attempts must preserve the raw attempt situation code but derive stored strength from the same-clock penalty-shot penalty row when the attempt situation is reset to penalty-shot-only manpower.
   - Core NHL game import stages require PBP and boxscore feeds.
   - Shift-derived on-ice stages additionally require the shiftcharts feed.
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
@@ -55,6 +56,7 @@ rules:
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
   - Shift imports may use already-imported official boxscore shifts and time on ice to choose between provider shiftchart alternatives, including exact duplicate-row TOI credits that do not change shift count, but must not mutate raw provider event fields.
   - Goalie shift imports may use official goalie boxscore time on ice as a reconciliation target for dropping exact-duration malformed shiftchart artifacts because official goalie boxscore shift counts are zero; they must still store time on ice from the remaining normalized raw shift rows.
+  - Shift imports may drop skater rows that create impossible team skater counts under play-by-play situation codes only when the same row also exactly reconciles that player's official boxscore shift count and time on ice.
   - Summary validation compares official boxscore totals against computed summaries before downstream trust.
   - Game stage stoppages should write raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
   - Failed or invalidated summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.

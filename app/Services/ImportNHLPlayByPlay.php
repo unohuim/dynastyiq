@@ -45,6 +45,83 @@ class ImportNHLPlayByPlay
         return 'EV';
     }
 
+    /**
+     * Index same-clock penalty-shot penalty situations before importing attempts.
+     *
+     * @param array<int,array<string,mixed>> $plays
+     * @return array<string,string>
+     */
+    private function penaltyShotSituationCodesByKey(array $plays): array
+    {
+        $situations = [];
+
+        foreach ($plays as $event) {
+            if (! $this->isPenaltyShotPenalty($event)) {
+                continue;
+            }
+
+            $key = $this->playClockKey($event);
+            $situationCode = isset($event['situationCode']) ? (string) $event['situationCode'] : null;
+
+            if ($key !== null && $situationCode !== null && strlen($situationCode) === 4) {
+                $situations[$key] = $situationCode;
+            }
+        }
+
+        return $situations;
+    }
+
+    /**
+     * Resolve the live manpower situation for a penalty-shot attempt.
+     *
+     * @param array<string,mixed> $event
+     * @param array<string,string> $penaltyShotSituationCodes
+     */
+    private function penaltyShotAttemptSituationCode(array $event, array $penaltyShotSituationCodes): ?string
+    {
+        if (! in_array($event['typeDescKey'] ?? null, ['goal', 'shot-on-goal', 'missed-shot'], true)) {
+            return null;
+        }
+
+        $key = $this->playClockKey($event);
+
+        return $key !== null ? ($penaltyShotSituationCodes[$key] ?? null) : null;
+    }
+
+    /**
+     * Return the stable same-clock key used to pair penalty-shot events.
+     *
+     * @param array<string,mixed> $event
+     */
+    private function playClockKey(array $event): ?string
+    {
+        $period = $event['periodDescriptor']['number'] ?? null;
+        $timeInPeriod = $event['timeInPeriod'] ?? null;
+
+        if ($period === null || $timeInPeriod === null) {
+            return null;
+        }
+
+        return ((string) $period) . '|' . ((string) $timeInPeriod);
+    }
+
+    /**
+     * Determine whether the event is the penalty row for a penalty shot.
+     *
+     * @param array<string,mixed> $event
+     */
+    private function isPenaltyShotPenalty(array $event): bool
+    {
+        if (($event['typeDescKey'] ?? null) !== 'penalty') {
+            return false;
+        }
+
+        $details = $event['details'] ?? [];
+
+        return strtoupper((string) ($details['typeCode'] ?? '')) === 'PS'
+            || str_starts_with(strtolower((string) ($details['descKey'] ?? '')), 'ps-');
+    }
+
     public function import($gameId): int
     {
         $shotGeometryService = app(ShotGeometryService::class);
@@ -129,6 +206,8 @@ class ImportNHLPlayByPlay
             );
 
             $playCount = 0;
+            $penaltyShotSituationCodes = $this->penaltyShotSituationCodesByKey($response['plays']);
+
             foreach ($response['plays'] as $event) {
                 $details = $event['details'] ?? [];
 
@@ -203,8 +282,11 @@ class ImportNHLPlayByPlay
                     ],
                 ];
 
+                $strengthSituationCode = $this->penaltyShotAttemptSituationCode($event, $penaltyShotSituationCodes)
+                    ?? $data['situation_code'];
+
                 $data['strength'] = $this->determineStrength(
-                    $data['situation_code'],
+                    $strengthSituationCode,
                     $data['event_owner_team_id'],
                     $homeTeamId,
                     $awayTeamId,

@@ -451,6 +451,101 @@ it('persists raw play-by-play event metadata during import', function (): void {
         ->and($play->metadata['details']['homeSOG'])->toBe(23);
 });
 
+it('uses penalty shot penalty situation to classify same-clock goal strength', function (): void {
+    ($this->makePlayer)(8478398, [
+        'first_name' => 'Kyle',
+        'last_name' => 'Connor',
+        'full_name' => 'Kyle Connor',
+        'team_abbrev' => 'WPG',
+    ]);
+    ($this->makePlayer)(8481668, [
+        'first_name' => 'Arturs',
+        'last_name' => 'Silovs',
+        'full_name' => 'Arturs Silovs',
+        'position' => 'G',
+        'team_abbrev' => 'PIT',
+    ]);
+
+    $importer = new class extends ImportNHLPlayByPlay {
+        public function getAPIData(
+            string $service,
+            string $endpointKey,
+            array $replacements = [],
+            array $query = [],
+            bool $decodeJson = true
+        ): array|string {
+            return [
+                'season' => 20262027,
+                'gameType' => 2,
+                'gameDate' => '2026-10-01',
+                'homeTeam' => ['id' => 52, 'score' => 4, 'sog' => 20, 'abbrev' => 'WPG'],
+                'awayTeam' => ['id' => 5, 'score' => 0, 'sog' => 10, 'abbrev' => 'PIT'],
+                'plays' => [
+                    [
+                        'eventId' => 31,
+                        'periodDescriptor' => ['number' => 2, 'periodType' => 'REG'],
+                        'timeInPeriod' => '12:13',
+                        'timeRemaining' => '07:47',
+                        'situationCode' => '1541',
+                        'typeCode' => 509,
+                        'typeDescKey' => 'penalty',
+                        'sortOrder' => 398,
+                        'details' => [
+                            'typeCode' => 'PS',
+                            'descKey' => 'ps-throwing-object-at-puck',
+                            'duration' => 0,
+                            'committedByPlayerId' => 8481668,
+                            'eventOwnerTeamId' => 5,
+                        ],
+                    ],
+                    [
+                        'eventId' => 160,
+                        'periodDescriptor' => ['number' => 2, 'periodType' => 'REG'],
+                        'timeInPeriod' => '12:13',
+                        'timeRemaining' => '07:47',
+                        'situationCode' => '1010',
+                        'typeCode' => 505,
+                        'typeDescKey' => 'goal',
+                        'sortOrder' => 402,
+                        'details' => [
+                            'xCoord' => 76,
+                            'yCoord' => 0,
+                            'zoneCode' => 'O',
+                            'shotType' => 'backhand',
+                            'scoringPlayerId' => 8478398,
+                            'scoringPlayerTotal' => 7,
+                            'eventOwnerTeamId' => 52,
+                            'goalieInNetId' => 8481668,
+                            'awayScore' => 0,
+                            'homeScore' => 4,
+                        ],
+                    ],
+                ],
+            ];
+        }
+    };
+
+    expect($importer->import(2026020001))->toBe(2);
+
+    $goal = \App\Models\PlayByPlay::where('nhl_game_id', 2026020001)
+        ->where('nhl_event_id', 160)
+        ->firstOrFail();
+
+    expect($goal->situation_code)->toBe('1010')
+        ->and($goal->strength)->toBe('PK');
+
+    expect(app(SumNHLPlayByPlay::class)->summarize(2026020001))->toBeGreaterThan(0);
+
+    $goalieSummary = DB::table('nhl_game_summaries')
+        ->where('nhl_game_id', 2026020001)
+        ->where('nhl_player_id', '8481668')
+        ->first();
+
+    expect($goalieSummary)->not->toBeNull()
+        ->and((int) $goalieSummary->evga)->toBe(0)
+        ->and((int) $goalieSummary->pkga)->toBe(1);
+});
+
 it('counts match penalties as duration plus ten penalty minutes in player summaries', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8479393, [
@@ -2721,6 +2816,145 @@ it('drops a thirty-two-second shift artifact when official targets exactly prove
         'nhl_player_id' => 8477021,
         'event_number' => 436,
     ]);
+});
+
+it('drops impossible over-cap skater shifts when pbp manpower and boxscore targets prove the artifact', function (): void {
+    ($this->insertGame)(2026020001, [
+        'home_team_id' => 14,
+        'home_team_abbrev' => 'TBL',
+        'away_team_id' => 5,
+        'away_team_abbrev' => 'PIT',
+    ]);
+
+    foreach ([
+        8477465 => ['Tristan', 'Jarry', 'G'],
+        8481481 => ['Blake', 'Lizotte', 'C'],
+        8478450 => ['Parker', 'Wotherspoon', 'D'],
+        8474578 => ['Erik', 'Karlsson', 'D'],
+        8475810 => ['Bryan', 'Rust', 'R'],
+        8471675 => ['Sidney', 'Crosby', 'C'],
+        8471215 => ['Evgeni', 'Malkin', 'C'],
+        8477511 => ['Anthony', 'Mantha', 'R'],
+    ] as $nhlId => [$firstName, $lastName, $position]) {
+        ($this->makePlayer)((int) $nhlId, [
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'full_name' => "{$firstName} {$lastName}",
+            'position' => $position,
+            'team_abbrev' => 'PIT',
+        ]);
+    }
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => 1234,
+        'period' => 3,
+        'period_type' => 'REG',
+        'time_in_period' => '19:16',
+        'time_remaining' => '00:44',
+        'seconds_in_period' => 1156,
+        'seconds_in_game' => 3556,
+        'seconds_remaining' => 44,
+        'situation_code' => '1560',
+        'type_code' => 503,
+        'type_desc_key' => 'hit',
+        'sort_order' => 778,
+        'event_owner_team_id' => 5,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    foreach ([
+        [8477465, '20:00', 1200, 0, 'G'],
+        [8481481, '02:15', 135, 1, 'C'],
+        [8478450, '01:18', 78, 1, 'D'],
+        [8474578, '01:17', 77, 1, 'D'],
+        [8475810, '01:17', 77, 1, 'R'],
+        [8471675, '01:07', 67, 1, 'C'],
+        [8471215, '00:10', 10, 1, 'C'],
+        [8477511, '00:10', 10, 1, 'R'],
+    ] as [$nhlId, $toi, $toiSeconds, $shifts, $position]) {
+        ($this->insertBoxscore)(2026020001, $nhlId, [
+            'toi' => $toi,
+            'toi_seconds' => $toiSeconds,
+            'shifts' => $shifts,
+            'position' => $position,
+        ]);
+    }
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(8477465, 3, '00:00', '20:00', '20:00', 845, 3, 'Tristan', 'Jarry'),
+                    $this->shift(8481481, 24, '17:45', '20:00', '02:15', 1203, 3, 'Blake', 'Lizotte'),
+                    $this->shift(8478450, 26, '18:42', '20:00', '01:18', 1214, 3, 'Parker', 'Wotherspoon'),
+                    $this->shift(8474578, 25, '18:43', '20:00', '01:17', 1215, 3, 'Erik', 'Karlsson'),
+                    $this->shift(8475810, 27, '18:43', '20:00', '01:17', 1215, 3, 'Bryan', 'Rust'),
+                    $this->shift(8471675, 25, '18:53', '20:00', '01:07', 1223, 3, 'Sidney', 'Crosby'),
+                    $this->shift(8471215, 19, '16:53', '17:03', '00:10', 1194, 3, 'Evgeni', 'Malkin'),
+                    $this->shift(8471215, 20, '19:04', '20:00', '00:56', 1221, 3, 'Evgeni', 'Malkin'),
+                    $this->shift(8477511, 18, '16:53', '17:03', '00:10', 1194, 3, 'Anthony', 'Mantha'),
+                    $this->shift(8477511, 19, '19:04', '20:00', '00:56', 1221, 3, 'Anthony', 'Mantha'),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(
+            int $playerId,
+            int $shiftNumber,
+            string $start,
+            string $end,
+            string $duration,
+            int $eventNumber,
+            int $period,
+            string $firstName,
+            string $lastName
+        ): array {
+            return [
+                'playerId' => $playerId,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'PIT',
+                'teamName' => 'Pittsburgh Penguins',
+                'firstName' => $firstName,
+                'lastName' => $lastName,
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(8);
+
+    foreach ([8471215, 8477511] as $playerId) {
+        $this->assertDatabaseMissing('nhl_shifts', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'event_number' => 1221,
+        ]);
+        $this->assertDatabaseHas('nhl_game_summaries', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'toi' => 10,
+            'shifts' => 1,
+        ]);
+    }
+
+    foreach ([8481481, 8478450, 8474578, 8475810, 8471675] as $playerId) {
+        $this->assertDatabaseHas('nhl_shifts', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'shift_end_seconds' => 3600,
+        ]);
+    }
 });
 
 it('documents validate-summary in the canonical stage order', function (): void {

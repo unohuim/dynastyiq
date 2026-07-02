@@ -99,6 +99,7 @@ class ImportNhlShifts
             $boxscoreTargets
         );
         $normalizedShifts = $this->removeGoalieEmptyNetArtifacts($normalizedShifts, $nhlGame);
+        $normalizedShifts = $this->removeImpossibleOverCapSkaterArtifacts($normalizedShifts, $nhlGame, $boxscoreTargets);
         $duplicateToiCredits = $this->duplicateToiCreditsForTargets(
             $normalizedShifts,
             $candidateShifts,
@@ -514,6 +515,141 @@ class ImportNhlShifts
             (string) $resolvedShift['shift_start_seconds'],
             (string) ($shift['teamAbbrev'] ?? ''),
         ]);
+    }
+
+    /**
+     * Remove skater rows that make a team's on-ice count impossible under PBP manpower.
+     *
+     * @param array<int,array<string,mixed>> $resolvedShifts
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
+     * @return array<int,array<string,mixed>>
+     */
+    private function removeImpossibleOverCapSkaterArtifacts(
+        array $resolvedShifts,
+        NhlGame $game,
+        array $boxscoreTargets
+    ): array {
+        if ($boxscoreTargets === [] || $resolvedShifts === []) {
+            return $resolvedShifts;
+        }
+
+        $artifactKeys = $this->impossibleOverCapSkaterArtifactKeys($resolvedShifts, $game, $boxscoreTargets);
+
+        if ($artifactKeys === []) {
+            return $resolvedShifts;
+        }
+
+        return collect($resolvedShifts)
+            ->reject(fn (array $resolvedShift): bool => isset($artifactKeys[$this->resolvedShiftIdentity($resolvedShift)]))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build exact artifact identities for impossible team skater counts.
+     *
+     * @param array<int,array<string,mixed>> $resolvedShifts
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
+     * @return array<string,bool>
+     */
+    private function impossibleOverCapSkaterArtifactKeys(
+        array $resolvedShifts,
+        NhlGame $game,
+        array $boxscoreTargets
+    ): array {
+        $plays = PlayByPlay::query()
+            ->where('nhl_game_id', $game->nhl_game_id)
+            ->whereNotNull('seconds_in_game')
+            ->whereNotNull('situation_code')
+            ->orderBy('seconds_in_game')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['id', 'period', 'seconds_in_game', 'situation_code'])
+            ->values();
+
+        if ($plays->isEmpty()) {
+            return [];
+        }
+
+        $playerTotals = collect($resolvedShifts)
+            ->groupBy(fn (array $shift): int => (int) $shift['player_id'])
+            ->map(fn ($playerShifts): array => [
+                'shifts' => $playerShifts->count(),
+                'toi' => $this->shiftDurationTotal($playerShifts->values()->all()),
+            ]);
+        $artifactKeys = [];
+
+        foreach ($plays as $play) {
+            $playSecond = (int) $play->seconds_in_game;
+
+            foreach ([(int) $game->away_team_id, (int) $game->home_team_id] as $teamId) {
+                $teamAbbrev = $this->teamAbbrevForGameTeam($teamId, $game);
+                $maxSkaters = $this->maxSkatersForSituation((string) $play->situation_code, $teamId, $game);
+
+                if ($teamAbbrev === null || $maxSkaters === null) {
+                    continue;
+                }
+
+                $activeSkaters = collect($resolvedShifts)
+                    ->filter(fn (array $shift): bool => (string) ($shift['shift']['teamAbbrev'] ?? '') === $teamAbbrev)
+                    ->filter(fn (array $shift): bool => !($boxscoreTargets[(int) $shift['player_id']]['is_goalie'] ?? false))
+                    ->filter(fn (array $shift): bool => (int) $shift['shift_start_seconds'] <= $playSecond
+                        && (int) $shift['shift_end_seconds'] > $playSecond)
+                    ->values();
+                $excessSkaters = $activeSkaters->count() - $maxSkaters;
+
+                if ($excessSkaters <= 0) {
+                    continue;
+                }
+
+                $exactArtifactRows = $activeSkaters
+                    ->filter(function (array $shift) use ($boxscoreTargets, $playerTotals): bool {
+                        $playerId = (int) $shift['player_id'];
+                        $target = $boxscoreTargets[$playerId] ?? null;
+                        $total = $playerTotals->get($playerId);
+
+                        if (!$target || !$total) {
+                            return false;
+                        }
+
+                        return ((int) $total['shifts'] - 1) === (int) $target['shifts']
+                            && ((int) $total['toi'] - (int) $shift['shift_duration_seconds']) === (int) $target['toi'];
+                    })
+                    ->values();
+
+                if ($exactArtifactRows->count() !== $excessSkaters) {
+                    continue;
+                }
+
+                foreach ($exactArtifactRows as $artifactRow) {
+                    $artifactKeys[$this->resolvedShiftIdentity($artifactRow)] = true;
+                }
+            }
+        }
+
+        return $artifactKeys;
+    }
+
+    /**
+     * Return the max skater count for a team from NHL situation code.
+     */
+    private function maxSkatersForSituation(string $situationCode, int $teamId, NhlGame $game): ?int
+    {
+        $code = substr($situationCode, 0, 4);
+
+        if (strlen($code) !== 4) {
+            return null;
+        }
+
+        if ($teamId === (int) $game->away_team_id) {
+            return (int) $code[1];
+        }
+
+        if ($teamId === (int) $game->home_team_id) {
+            return (int) $code[2];
+        }
+
+        return null;
     }
 
     /**
