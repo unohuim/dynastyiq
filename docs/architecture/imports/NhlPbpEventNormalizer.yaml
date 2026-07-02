@@ -17,6 +17,8 @@ when_not_to_use:
 rules:
   - Raw imported provider fields must remain provider-faithful.
   - Derived player and unit summaries must use the same event classification rules.
+  - Play-by-play situation and goalie state is authoritative for empty-net semantics in derived calculations.
+  - Normalized shift-derived outputs may exclude proven goalie empty-net shiftchart artifacts, but raw provider event and source payload data must remain auditable.
   - Shootout events must not contribute to boxscore-comparable skater or goalie totals.
   - Goal events count as shots on goal only when the provider supplies shot metadata.
   - Provider penalty minute codes with special semantics must be normalized only in derived calculations.

@@ -9,6 +9,7 @@ use App\Models\Player;
 use App\Classes\ImportNHLPlayer;
 use App\Models\NhlGame;
 use App\Models\NhlBoxscore;
+use App\Models\PlayByPlay;
 
 class ImportNhlShifts
 {
@@ -97,6 +98,7 @@ class ImportNhlShifts
             $candidateShifts,
             $boxscoreTargets
         );
+        $normalizedShifts = $this->removeGoalieEmptyNetArtifacts($normalizedShifts, $nhlGame);
 
         foreach ($normalizedShifts as $resolvedShift) {
             $shift = $resolvedShift['shift'];
@@ -327,6 +329,185 @@ class ImportNhlShifts
             ->reject(fn (array $resolvedShift): bool => isset($discardKeys[$this->resolvedShiftIdentity($resolvedShift)]))
             ->values()
             ->all();
+    }
+
+    /**
+     * Remove goalie shiftchart rows that PBP proves are empty-net artifacts.
+     *
+     * @param array<int,array<string,mixed>> $resolvedShifts
+     * @return array<int,array<string,mixed>>
+     */
+    private function removeGoalieEmptyNetArtifacts(array $resolvedShifts, NhlGame $game): array
+    {
+        $artifactKeys = $this->goalieEmptyNetArtifactKeys($game);
+
+        if ($artifactKeys === []) {
+            return $resolvedShifts;
+        }
+
+        return collect($resolvedShifts)
+            ->reject(fn (array $resolvedShift): bool => isset($artifactKeys[$this->goalieEmptyNetShiftKey($resolvedShift)]))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build shift identities for goalies who were in net for a goal, then empty net immediately after it.
+     *
+     * @return array<string,bool>
+     */
+    private function goalieEmptyNetArtifactKeys(NhlGame $game): array
+    {
+        $plays = PlayByPlay::query()
+            ->where('nhl_game_id', $game->nhl_game_id)
+            ->orderBy('seconds_in_game')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get([
+                'id',
+                'event_owner_team_id',
+                'period',
+                'seconds_in_game',
+                'type_desc_key',
+                'goalie_in_net_player_id',
+                'situation_code',
+            ])
+            ->values();
+
+        if ($plays->isEmpty()) {
+            return [];
+        }
+
+        $artifactKeys = [];
+
+        foreach ($plays as $index => $play) {
+            if (
+                $play->type_desc_key !== 'goal'
+                || empty($play->goalie_in_net_player_id)
+                || $play->seconds_in_game === null
+                || $play->period === null
+            ) {
+                continue;
+            }
+
+            $goalieTeamId = $this->goalieTeamIdForGoal($play, $game);
+
+            if ($goalieTeamId === null) {
+                continue;
+            }
+
+            $emptyNetPlay = $plays
+                ->slice($index + 1)
+                ->first(fn (PlayByPlay $nextPlay): bool => $nextPlay->seconds_in_game !== null
+                    && (int) $nextPlay->seconds_in_game === (int) $play->seconds_in_game
+                    && $this->teamHasEmptyNet($nextPlay->situation_code, $goalieTeamId, $game));
+
+            if (!$emptyNetPlay) {
+                continue;
+            }
+
+            $teamAbbrev = $this->teamAbbrevForGameTeam($goalieTeamId, $game);
+
+            if ($teamAbbrev === null) {
+                continue;
+            }
+
+            $artifactKeys[implode('|', [
+                (string) $play->goalie_in_net_player_id,
+                (string) $play->period,
+                (string) $play->seconds_in_game,
+                $teamAbbrev,
+            ])] = true;
+        }
+
+        return $artifactKeys;
+    }
+
+    /**
+     * Determine the team of the goalie who allowed the goal.
+     *
+     * @param PlayByPlay $play
+     * @param NhlGame $game
+     * @return int|null
+     */
+    private function goalieTeamIdForGoal(PlayByPlay $play, NhlGame $game): ?int
+    {
+        $eventOwnerTeamId = (int) ($play->event_owner_team_id ?? 0);
+
+        if ($eventOwnerTeamId === (int) $game->home_team_id) {
+            return (int) $game->away_team_id;
+        }
+
+        if ($eventOwnerTeamId === (int) $game->away_team_id) {
+            return (int) $game->home_team_id;
+        }
+
+        return null;
+    }
+
+    /**
+     * Determine whether a situation code has no goalie for the given game team.
+     *
+     * @param string|null $situationCode
+     * @param int $teamId
+     * @param NhlGame $game
+     * @return bool
+     */
+    private function teamHasEmptyNet(?string $situationCode, int $teamId, NhlGame $game): bool
+    {
+        $code = substr((string) $situationCode, 0, 4);
+
+        if (strlen($code) !== 4) {
+            return false;
+        }
+
+        if ($teamId === (int) $game->away_team_id) {
+            return $code[0] === '0';
+        }
+
+        if ($teamId === (int) $game->home_team_id) {
+            return $code[3] === '0';
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the stored abbreviation for a game team id.
+     *
+     * @param int $teamId
+     * @param NhlGame $game
+     * @return string|null
+     */
+    private function teamAbbrevForGameTeam(int $teamId, NhlGame $game): ?string
+    {
+        if ($teamId === (int) $game->home_team_id) {
+            return $game->home_team_abbrev;
+        }
+
+        if ($teamId === (int) $game->away_team_id) {
+            return $game->away_team_abbrev;
+        }
+
+        return null;
+    }
+
+    /**
+     * Build the identity used to compare a shift row against empty-net artifact timestamps.
+     *
+     * @param array<string,mixed> $resolvedShift
+     * @return string
+     */
+    private function goalieEmptyNetShiftKey(array $resolvedShift): string
+    {
+        $shift = $resolvedShift['shift'];
+
+        return implode('|', [
+            (string) $resolvedShift['player_id'],
+            (string) ($shift['period'] ?? ''),
+            (string) $resolvedShift['shift_start_seconds'],
+            (string) ($shift['teamAbbrev'] ?? ''),
+        ]);
     }
 
     /**

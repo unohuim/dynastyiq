@@ -19,6 +19,7 @@ when_not_to_use:
 rules:
   - Exact comparable fields may auto-approve only when no blocking deltas exist.
   - Failed validations must persist deltas before the pipeline stage is marked failed.
+  - Validation deltas must drive processing fixes, source-gap handling, preseason invalidation, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values.
   - Preseason game type 1 validations with deltas must persist deltas as invalidated and may continue without marking the pipeline stage failed.
   - Regular season and playoff game types must keep validation deltas as failed hard stops.
   - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.

@@ -1817,6 +1817,115 @@ it('ignores shiftchart rows for teams outside the imported game', function (): v
     ]);
 });
 
+it('drops goalie shiftchart artifacts when pbp proves the goalie was empty net after a goal', function (): void {
+    ($this->insertGame)(2025020031, [
+        'season_id' => '20252026',
+        'game_date' => '2025-10-11',
+        'game_dow' => 'Sat',
+        'game_month' => 'Oct',
+        'home_team_id' => 16,
+        'home_team_abbrev' => 'CHI',
+        'away_team_id' => 8,
+        'away_team_abbrev' => 'MTL',
+    ]);
+    ($this->makePlayer)(8481519, [
+        'first_name' => 'Spencer',
+        'last_name' => 'Knight',
+        'full_name' => 'Spencer Knight',
+        'position' => 'G',
+        'team_abbrev' => 'CHI',
+    ]);
+    ($this->insertBoxscore)(2025020031, 8481519, [
+        'nhl_team_id' => 16,
+        'toi' => '59:45',
+        'toi_seconds' => 3585,
+        'shifts' => 0,
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        [
+            'nhl_game_id' => 2025020031,
+            'nhl_player_id' => 8471675,
+            'event_owner_team_id' => 8,
+            'period' => 3,
+            'time_in_period' => '19:45',
+            'seconds_in_period' => 1185,
+            'seconds_in_game' => 3585,
+            'type_desc_key' => 'goal',
+            'situation_code' => '1551',
+            'sort_order' => 1108,
+            'goalie_in_net_player_id' => 8481519,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2025020031,
+            'nhl_player_id' => 8484185,
+            'event_owner_team_id' => 16,
+            'period' => 3,
+            'time_in_period' => '19:45',
+            'seconds_in_period' => 1185,
+            'seconds_in_game' => 3585,
+            'type_desc_key' => 'faceoff',
+            'situation_code' => '1560',
+            'sort_order' => 1109,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(1, 1, '00:00', '20:00', '20:00', 6),
+                    $this->shift(2, 2, '00:00', '20:00', '20:00', 435),
+                    $this->shift(3, 3, '00:00', '19:45', '19:45', 832),
+                    $this->shift(4, 3, '19:45', '20:00', '00:15', 1112),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(int $shiftNumber, int $period, string $start, string $end, string $duration, int $eventNumber): array
+        {
+            return [
+                'playerId' => 8481519,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'CHI',
+                'teamName' => 'Chicago Blackhawks',
+                'firstName' => 'Spencer',
+                'lastName' => 'Knight',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2025020031'))->toBe(3);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2025020031,
+        'nhl_player_id' => 8481519,
+        'nhl_team_id' => 16,
+        'toi' => 3585,
+        'shifts' => 3,
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2025020031,
+        'nhl_player_id' => 8481519,
+        'shift_number' => 4,
+        'event_number' => 1112,
+    ]);
+});
+
 it('reconciles shiftchart artifacts against boxscore shift targets when available', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8476473, [
