@@ -32,6 +32,11 @@ class SumNHLPlayByPlay
             [$gwgByPlayer, $otgByPlayer, $otaByPlayer] = $this->computeGwgAndOtg($plays);
             [$shogByPlayer, $shogwgByPlayer] = $this->computeShogAndWinner($plays);
             [$psByPlayer, $psgByPlayer] = $this->computePenaltyShots($plays);
+            $firstGoalPid = $this->computeFirstGoalScorer($plays);
+            $playsByPlayerId = $this->playsByPlayerId($plays);
+            $nonSOPlaysByStrength = $plays
+                ->filter(fn ($p) => $this->normalizer->isBoxscoreComparable($p))
+                ->groupBy('strength');
             // -------------------------------------------------------------------
 
             $playerIds = $plays->pluck('nhl_player_id')
@@ -51,29 +56,13 @@ class SumNHLPlayByPlay
                 ->unique()
                 ->values();
 
-            $byStr = fn (string $s) => $plays->filter(fn ($p) => $p->strength === $s);
-
             $playerCount = 0;
 
             foreach ($playerIds as $playerId) {
-                $P = fn () => $plays->filter(
-                    fn ($p) => in_array($playerId, [
-                        $p->nhl_player_id, $p->scoring_player_id, $p->assist1_player_id, $p->assist2_player_id,
-                        $p->committed_by_player_id, $p->drawn_by_player_id, $p->blocking_player_id,
-                        $p->hitting_player_id, $p->hittee_player_id, $p->shooting_player_id,
-                        $p->goalie_in_net_player_id, $p->fo_winning_player_id, $p->fo_losing_player_id,
-                    ], true)
-                );
-
-                $pp = fn () => $byStr('PP');
-                $ev = fn () => $byStr('EV');
-                $pk = fn () => $byStr('PK');
-
-                $playerPlays = $P();
+                $playerId = (int) $playerId;
+                $playerPlays = $playsByPlayerId[$playerId] ?? collect();
                 $nonSO = $playerPlays->filter(fn ($p) => $this->normalizer->isBoxscoreComparable($p));
-                $nonSOByStr = fn (string $strength) => $plays->filter(
-                    fn ($p) => $this->normalizer->isBoxscoreComparable($p) && $p->strength === $strength
-                );
+                $nonSOForStrength = fn (string $strength) => $nonSOPlaysByStrength->get($strength, collect());
 
                 // Fights
                 $f = $playerPlays
@@ -97,22 +86,22 @@ class SumNHLPlayByPlay
                 $isShooter = fn ($p) => (int) ($p->shooting_player_id ?? $p->scoring_player_id ?? 0) === (int) $playerId;
 
                 $sog   = $nonSO->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
-                $ppsog = $nonSOByStr('PP')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
-                $evsog = $nonSOByStr('EV')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
-                $pksog = $nonSOByStr('PK')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $ppsog = $nonSOForStrength('PP')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $evsog = $nonSOForStrength('EV')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
+                $pksog = $nonSOForStrength('PK')->filter(fn ($p) => $isShooter($p) && $isSOG($p))->count();
 
 
                 // Missed shots
                 $sm   = $nonSO->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
-                $ppsm = $nonSOByStr('PP')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
-                $evsm = $nonSOByStr('EV')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
-                $pksm = $nonSOByStr('PK')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
+                $ppsm = $nonSOForStrength('PP')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
+                $evsm = $nonSOForStrength('EV')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
+                $pksm = $nonSOForStrength('PK')->where('shooting_player_id', $playerId)->where('type_desc_key', 'missed-shot')->count();
 
                 // Blocked shots (by opponent)
                 $sb   = $nonSO->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
-                $ppsb = $nonSOByStr('PP')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
-                $evsb = $nonSOByStr('EV')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
-                $pksb = $nonSOByStr('PK')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
+                $ppsb = $nonSOForStrength('PP')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
+                $evsb = $nonSOForStrength('EV')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
+                $pksb = $nonSOForStrength('PK')->where('shooting_player_id', $playerId)->where('type_desc_key', 'blocked-shot')->count();
 
                 // Shot attempts (skater) = sog + sm + sb
                 $sat   = $sog + $sm + $sb;
@@ -121,24 +110,22 @@ class SumNHLPlayByPlay
                 $pksat = $pksog + $pksm + $pksb;
 
                 // Goals / Assists / Points (exclude SO from G/A/PTS)
-                $firstGoalPid = $this->computeFirstGoalScorer($plays);
-
                 $g   = $nonSO->where('scoring_player_id', $playerId)->count();
-                $evg = $nonSOByStr('EV')->where('scoring_player_id', $playerId)->count();
-                $ppg = $nonSOByStr('PP')->where('scoring_player_id', $playerId)->count();
-                $pkg = $nonSOByStr('PK')->where('scoring_player_id', $playerId)->count();
+                $evg = $nonSOForStrength('EV')->where('scoring_player_id', $playerId)->count();
+                $ppg = $nonSOForStrength('PP')->where('scoring_player_id', $playerId)->count();
+                $pkg = $nonSOForStrength('PK')->where('scoring_player_id', $playerId)->count();
 
                 $a   = $nonSO->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
-                $eva = $nonSOByStr('EV')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
-                $ppa = $nonSOByStr('PP')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
+                $eva = $nonSOForStrength('EV')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
+                $ppa = $nonSOForStrength('PP')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
 
                 $a1   = $nonSO->where('assist1_player_id', $playerId)->count();
-                $eva1 = $nonSOByStr('EV')->where('assist1_player_id', $playerId)->count();
-                $ppa1 = $nonSOByStr('PP')->where('assist1_player_id', $playerId)->count();
+                $eva1 = $nonSOForStrength('EV')->where('assist1_player_id', $playerId)->count();
+                $ppa1 = $nonSOForStrength('PP')->where('assist1_player_id', $playerId)->count();
 
                 $a2   = $nonSO->where('assist2_player_id', $playerId)->count();
-                $eva2 = $nonSOByStr('EV')->where('assist2_player_id', $playerId)->count();
-                $ppa2 = $nonSOByStr('PP')->where('assist2_player_id', $playerId)->count();
+                $eva2 = $nonSOForStrength('EV')->where('assist2_player_id', $playerId)->count();
+                $ppa2 = $nonSOForStrength('PP')->where('assist2_player_id', $playerId)->count();
 
                 $pts   = $g + $a;
                 $evpts = $evg + $eva;
@@ -173,31 +160,31 @@ class SumNHLPlayByPlay
 
                 // Goalie stats
                 $sv   = $nonSO->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $evsv = $nonSOByStr('EV')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $ppsv = $nonSOByStr('PP')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $pksv = $nonSOByStr('PK')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
+                $evsv = $nonSOForStrength('EV')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
+                $ppsv = $nonSOForStrength('PP')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
+                $pksv = $nonSOForStrength('PK')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
 
                 $ga = $nonSO
                     ->where('goalie_in_net_player_id', $playerId)
                     ->where('type_desc_key', 'goal')
                     ->count();
-                $evga = $nonSOByStr('EV')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
-                $ppga = $nonSOByStr('PP')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
-                $pkga = $nonSOByStr('PK')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
+                $evga = $nonSOForStrength('EV')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
+                $ppga = $nonSOForStrength('PP')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
+                $pkga = $nonSOForStrength('PK')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'goal')->count();
 
                 $sa = $nonSO
                     ->where('goalie_in_net_player_id', $playerId)
                     ->filter(fn ($p) => $this->normalizer->isShotOnGoal($p))
                     ->count();
-                $evsa = $nonSOByStr('EV')
+                $evsa = $nonSOForStrength('EV')
                     ->where('goalie_in_net_player_id', $playerId)
                     ->filter(fn ($p) => $this->normalizer->isShotOnGoal($p))
                     ->count();
-                $ppsa = $nonSOByStr('PP')
+                $ppsa = $nonSOForStrength('PP')
                     ->where('goalie_in_net_player_id', $playerId)
                     ->filter(fn ($p) => $this->normalizer->isShotOnGoal($p))
                     ->count();
-                $pksa = $nonSOByStr('PK')
+                $pksa = $nonSOForStrength('PK')
                     ->where('goalie_in_net_player_id', $playerId)
                     ->filter(fn ($p) => $this->normalizer->isShotOnGoal($p))
                     ->count();
@@ -361,6 +348,54 @@ class SumNHLPlayByPlay
         foreach ($otgByPlayer as $pid => $_) $gwgByPlayer[$pid] = 1;
 
         return [$gwgByPlayer, $otgByPlayer, $otaByPlayer];
+    }
+
+    /**
+     * Index every play by each related player id so per-player summaries avoid full-game scans.
+     *
+     * @param Collection<int,PlayByPlay> $plays
+     * @return array<int,Collection<int,PlayByPlay>>
+     */
+    private function playsByPlayerId(Collection $plays): array
+    {
+        $playerIdFields = [
+            'nhl_player_id',
+            'scoring_player_id',
+            'assist1_player_id',
+            'assist2_player_id',
+            'committed_by_player_id',
+            'drawn_by_player_id',
+            'blocking_player_id',
+            'hitting_player_id',
+            'hittee_player_id',
+            'shooting_player_id',
+            'goalie_in_net_player_id',
+            'fo_winning_player_id',
+            'fo_losing_player_id',
+        ];
+
+        $playsByPlayerId = [];
+
+        foreach ($plays as $play) {
+            $playPlayerIds = [];
+
+            foreach ($playerIdFields as $field) {
+                $playerId = (int) ($play->{$field} ?? 0);
+
+                if ($playerId > 0) {
+                    $playPlayerIds[$playerId] = true;
+                }
+            }
+
+            foreach (array_keys($playPlayerIds) as $playerId) {
+                $playsByPlayerId[$playerId][] = $play;
+            }
+        }
+
+        return array_map(
+            fn (array $playerPlays): Collection => collect($playerPlays),
+            $playsByPlayerId
+        );
     }
 
     /**

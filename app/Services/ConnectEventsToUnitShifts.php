@@ -26,6 +26,10 @@ class ConnectEventsToUnitShifts
             ->orderBy('seconds_in_game')
             ->get();
 
+        if ($events->isEmpty()) {
+            return 0;
+        }
+
         DB::table('event_unit_shifts')
             ->whereIn('event_id', $events->pluck('id'))
             ->delete();
@@ -33,52 +37,89 @@ class ConnectEventsToUnitShifts
         $criticalStoppage = ['stoppage', 'penalty', 'goal', 'period-end', 'game-end'];
         $criticalStart = ['period-start', 'faceoff'];
 
-        
+        $startsBySecond = [];
+        $endsBySecond = [];
+        $unitShiftRows = $unitShifts->all();
+
+        foreach ($unitShiftRows as $shift) {
+            $startsBySecond[(int) $shift->start_game_seconds][] = (int) $shift->id;
+            $endsBySecond[(int) $shift->end_game_seconds][] = (int) $shift->id;
+        }
 
         $eventsCount = 0;
-        
+        $startIndex = 0;
+        $activeShifts = [];
+        $pivotRowsByKey = [];
+        $now = now();
+
         foreach ($events as $event) {
             $isCriticalStoppage = in_array($event->type_desc_key, $criticalStoppage);
             $isCriticalStart = in_array($event->type_desc_key, $criticalStart);
+            $eventTime = (int) $event->seconds_in_game;
 
             // 1. Core shifts: start < event time AND end > event time
-            $coreShifts = $unitShifts->filter(fn($shift) =>
-                $shift->start_game_seconds < $event->seconds_in_game &&
-                $shift->end_game_seconds > $event->seconds_in_game
-            );
+            while (
+                isset($unitShiftRows[$startIndex])
+                && (int) $unitShiftRows[$startIndex]->start_game_seconds < $eventTime
+            ) {
+                $shift = $unitShiftRows[$startIndex];
+                $activeShifts[(int) $shift->id] = $shift;
+                $startIndex++;
+            }
 
+            foreach ($activeShifts as $shiftId => $shift) {
+                if ((int) $shift->end_game_seconds <= $eventTime) {
+                    unset($activeShifts[$shiftId]);
+                    continue;
+                }
 
-            foreach ($coreShifts as $shift) {
-                $shift->events()->syncWithoutDetaching($event->id);
+                $this->queuePivotRow($pivotRowsByKey, (int) $event->id, (int) $shiftId, $now);
             }
 
             // 2. If critical stoppage event, assign to shifts ending exactly at event time
             if ($isCriticalStoppage) {
-                $criticalShifts = $unitShifts->filter(fn($shift) =>
-                    $shift->end_game_seconds === $event->seconds_in_game
-                );
-            
-                foreach ($criticalShifts as $shift) {
-                    $shift->events()->syncWithoutDetaching($event->id);
+                foreach ($endsBySecond[$eventTime] ?? [] as $shiftId) {
+                    $this->queuePivotRow($pivotRowsByKey, (int) $event->id, (int) $shiftId, $now);
                 }
             }
 
 
             // 3. If critical start event, assign to shifts starting exactly at event time
             if ($isCriticalStart) {
-                $startShifts = $unitShifts->filter(fn($shift) =>
-                    $shift->start_game_seconds === $event->seconds_in_game
-                );
-
-                foreach ($startShifts as $shift) {
-                    $shift->events()->syncWithoutDetaching($event->id);
+                foreach ($startsBySecond[$eventTime] ?? [] as $shiftId) {
+                    $this->queuePivotRow($pivotRowsByKey, (int) $event->id, (int) $shiftId, $now);
                 }
             }
 
             $eventsCount++;
         }
 
+        foreach (array_chunk(array_values($pivotRowsByKey), 1000) as $rows) {
+            DB::table('event_unit_shifts')->insert($rows);
+        }
+
         return $eventsCount;
+    }
+
+    /**
+     * Queue a unique event/unit-shift pivot row for batched insertion.
+     *
+     * @param array<string,array<string,mixed>> $rows
+     */
+    private function queuePivotRow(array &$rows, int $eventId, int $shiftId, \DateTimeInterface $now): void
+    {
+        $key = $eventId . ':' . $shiftId;
+
+        if (isset($rows[$key])) {
+            return;
+        }
+
+        $rows[$key] = [
+            'event_id' => $eventId,
+            'unit_shift_id' => $shiftId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
     }
 
 
