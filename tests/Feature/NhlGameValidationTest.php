@@ -2957,6 +2957,153 @@ it('drops impossible over-cap skater shifts when pbp manpower and boxscore targe
     }
 });
 
+it('borrows official skater shift count when shiftcharts are missing one count-only row', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8482176, [
+        'first_name' => 'Wyatt',
+        'last_name' => 'Kaiser',
+        'full_name' => 'Wyatt Kaiser',
+        'position' => 'D',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8482176, [
+        'toi' => '19:51',
+        'toi_seconds' => 1191,
+        'shifts' => 23,
+        'position' => 'D',
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            $rows = [];
+
+            for ($shiftNumber = 1; $shiftNumber <= 22; $shiftNumber++) {
+                $start = ($shiftNumber - 1) * 54;
+                $duration = $shiftNumber === 22 ? 56 : 54;
+                $rows[] = [
+                    'playerId' => 8482176,
+                    'shiftNumber' => $shiftNumber,
+                    'period' => 1,
+                    'startTime' => sprintf('%02d:%02d', intdiv($start, 60), $start % 60),
+                    'endTime' => sprintf('%02d:%02d', intdiv($start + $duration, 60), ($start + $duration) % 60),
+                    'duration' => sprintf('%02d:%02d', intdiv($duration, 60), $duration % 60),
+                    'teamAbbrev' => 'TOR',
+                    'teamName' => 'Toronto Maple Leafs',
+                    'firstName' => 'Wyatt',
+                    'lastName' => 'Kaiser',
+                    'eventNumber' => 100 + $shiftNumber,
+                    'typeCode' => 517,
+                ];
+            }
+
+            return ['data' => $rows];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(22);
+    $this->assertDatabaseCount('nhl_shifts', 22);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8482176,
+        'toi' => 1190,
+        'shifts' => 23,
+    ]);
+});
+
+it('transfers summary-only toi between paired skaters when boxscore proves source misallocation', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8480064, [
+        'first_name' => 'Josh',
+        'last_name' => 'Norris',
+        'full_name' => 'Josh Norris',
+        'position' => 'C',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->makePlayer)(8479359, [
+        'first_name' => 'Beck',
+        'last_name' => 'Malenstyn',
+        'full_name' => 'Beck Malenstyn',
+        'position' => 'L',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8480064, [
+        'toi' => '13:07',
+        'toi_seconds' => 787,
+        'shifts' => 21,
+        'position' => 'C',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8479359, [
+        'toi' => '13:36',
+        'toi_seconds' => 816,
+        'shifts' => 20,
+        'position' => 'L',
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => array_merge(
+                    $this->rowsForPlayer(8480064, 'Josh', 'Norris', 21, 38, 57),
+                    $this->rowsForPlayer(8479359, 'Beck', 'Malenstyn', 19, 40, 66)
+                ),
+            ];
+        }
+
+        /**
+         * @return array<int,array<string,mixed>>
+         */
+        private function rowsForPlayer(
+            int $playerId,
+            string $firstName,
+            string $lastName,
+            int $shiftCount,
+            int $defaultSeconds,
+            int $lastSeconds
+        ): array {
+            $rows = [];
+            $start = 0;
+
+            for ($shiftNumber = 1; $shiftNumber <= $shiftCount; $shiftNumber++) {
+                $duration = $shiftNumber === $shiftCount ? $lastSeconds : $defaultSeconds;
+                $rows[] = [
+                    'playerId' => $playerId,
+                    'shiftNumber' => $shiftNumber,
+                    'period' => 1,
+                    'startTime' => sprintf('%02d:%02d', intdiv($start, 60), $start % 60),
+                    'endTime' => sprintf('%02d:%02d', intdiv($start + $duration, 60), ($start + $duration) % 60),
+                    'duration' => sprintf('%02d:%02d', intdiv($duration, 60), $duration % 60),
+                    'teamAbbrev' => 'TOR',
+                    'teamName' => 'Toronto Maple Leafs',
+                    'firstName' => $firstName,
+                    'lastName' => $lastName,
+                    'eventNumber' => ($playerId % 1000) + $shiftNumber,
+                    'typeCode' => 517,
+                ];
+                $start += $duration + 1;
+            }
+
+            return $rows;
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(40);
+    $this->assertDatabaseCount('nhl_shifts', 40);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8480064,
+        'toi' => 787,
+        'shifts' => 21,
+    ]);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8479359,
+        'toi' => 816,
+        'shifts' => 20,
+    ]);
+});
+
 it('documents validate-summary in the canonical stage order', function (): void {
     expect(NhlImportStages::ordered())->toContain(NhlImportStages::VALIDATE_SUMMARY);
 });

@@ -152,9 +152,14 @@ class ImportNhlShifts
             ->selectRaw('nhl_player_id, team_abbrev, SUM(shift_duration_seconds) as total_toi, COUNT(*) as shifts')
             ->groupBy('nhl_player_id', 'team_abbrev')
             ->get();
+        $summaryTotals = $this->summaryTotalsForTargets($toiSums, $duplicateToiCredits, $boxscoreTargets);
 
         foreach ($toiSums as $toi) {
             $player = Player::where('nhl_id', $toi->nhl_player_id)->first();
+            $summaryTotal = $summaryTotals[(int) $toi->nhl_player_id] ?? [
+                'toi' => (int) $toi->total_toi,
+                'shifts' => (int) $toi->shifts,
+            ];
 
             if (!isset($player)) {
                 $playerImport = new ImportNHLPlayer;
@@ -179,9 +184,8 @@ class ImportNhlShifts
                     'nhl_player_id' => $toi->nhl_player_id,
                 ],
                 [
-                    'toi' => (int) $toi->total_toi
-                        + (int) ($duplicateToiCredits[(int) $toi->nhl_player_id] ?? 0),
-                    'shifts' => (int) $toi->shifts,
+                    'toi' => (int) $summaryTotal['toi'],
+                    'shifts' => (int) $summaryTotal['shifts'],
                     'nhl_team_id' => $teamId,
                 ]
             );
@@ -218,6 +222,124 @@ class ImportNhlShifts
 
         return $teamAbbrev !== ''
             && $game->getTeamIdByAbbrev($teamAbbrev) !== null;
+    }
+
+    /**
+     * Build summary totals after applying tightly-scoped boxscore-backed corrections.
+     *
+     * @param \Illuminate\Support\Collection<int,object> $toiSums
+     * @param array<int,int> $duplicateToiCredits
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
+     * @return array<int,array{team_abbrev:string,toi:int,shifts:int}>
+     */
+    private function summaryTotalsForTargets(
+        \Illuminate\Support\Collection $toiSums,
+        array $duplicateToiCredits,
+        array $boxscoreTargets
+    ): array {
+        $totals = [];
+
+        foreach ($toiSums as $toi) {
+            $playerId = (int) $toi->nhl_player_id;
+            $derivedToi = (int) $toi->total_toi + (int) ($duplicateToiCredits[$playerId] ?? 0);
+            $derivedShifts = (int) $toi->shifts;
+
+            $totals[$playerId] = [
+                'team_abbrev' => (string) $toi->team_abbrev,
+                'toi' => $derivedToi,
+                'shifts' => $this->summaryShiftCountForTarget(
+                    $playerId,
+                    $derivedShifts,
+                    $derivedToi,
+                    $boxscoreTargets,
+                ),
+            ];
+        }
+
+        return $this->reconcileSummaryOnlyToiTransfers($totals, $boxscoreTargets);
+    }
+
+    /**
+     * Transfer summary-only TOI when paired player totals prove a source misallocation.
+     *
+     * @param array<int,array{team_abbrev:string,toi:int,shifts:int}> $totals
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
+     * @return array<int,array{team_abbrev:string,toi:int,shifts:int}>
+     */
+    private function reconcileSummaryOnlyToiTransfers(array $totals, array $boxscoreTargets): array
+    {
+        $underByTeamAndDelta = [];
+        $overByTeamAndDelta = [];
+
+        foreach ($totals as $playerId => $total) {
+            $target = $boxscoreTargets[$playerId] ?? null;
+
+            if (!$target || $target['is_goalie']) {
+                continue;
+            }
+
+            $toiDelta = (int) $total['toi'] - (int) $target['toi'];
+            $shiftDelta = (int) $total['shifts'] - (int) $target['shifts'];
+
+            if ($toiDelta > 0 && $toiDelta <= self::SHORT_ARTIFACT_MAX_SECONDS && $shiftDelta === 0) {
+                $overByTeamAndDelta[$total['team_abbrev'] . '|' . $toiDelta][] = $playerId;
+                continue;
+            }
+
+            if ($toiDelta < 0 && abs($toiDelta) <= self::SHORT_ARTIFACT_MAX_SECONDS && $shiftDelta === -1) {
+                $underByTeamAndDelta[$total['team_abbrev'] . '|' . abs($toiDelta)][] = $playerId;
+            }
+        }
+
+        $usedOverPlayers = [];
+
+        foreach ($underByTeamAndDelta as $key => $underPlayers) {
+            $overPlayers = array_values(array_filter(
+                $overByTeamAndDelta[$key] ?? [],
+                fn (int $playerId): bool => !isset($usedOverPlayers[$playerId])
+            ));
+
+            if (count($underPlayers) !== 1 || count($overPlayers) !== 1) {
+                continue;
+            }
+
+            [, $delta] = explode('|', $key, 2);
+            $deltaSeconds = (int) $delta;
+            $underPlayerId = (int) $underPlayers[0];
+            $overPlayerId = (int) $overPlayers[0];
+
+            $totals[$overPlayerId]['toi'] -= $deltaSeconds;
+            $totals[$underPlayerId]['toi'] += $deltaSeconds;
+            $totals[$underPlayerId]['shifts'] += 1;
+            $usedOverPlayers[$overPlayerId] = true;
+        }
+
+        return $totals;
+    }
+
+    /**
+     * Borrow official shift count when the feed is missing one count-only skater shift.
+     *
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
+     */
+    private function summaryShiftCountForTarget(
+        int $playerId,
+        int $derivedShifts,
+        int $derivedToi,
+        array $boxscoreTargets
+    ): int {
+        $target = $boxscoreTargets[$playerId] ?? null;
+
+        if (
+            !$target
+            || $target['is_goalie']
+            || $target['shifts'] !== $derivedShifts + 1
+            || abs($target['toi'] - $derivedToi) > 1
+        ) {
+            return $derivedShifts;
+        }
+
+        return $target['shifts'];
     }
 
     /**
