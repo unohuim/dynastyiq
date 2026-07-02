@@ -84,6 +84,20 @@ describe('stats page prospect controls', () => {
     expect(shell.supportsDateRange()).toBe(false);
   });
 
+  it('falls back to skaters when the selected perspective is missing from server config', async () => {
+    const shell = await createShell({
+      config: {
+        selectedPerspective: undefined,
+        perspectives: [
+          { slug: 'prospects', name: 'Prospects' },
+          { slug: 'skaters', name: 'Skaters' },
+        ],
+      },
+    });
+
+    expect(shell.state.perspective).toBe('skaters');
+  });
+
   it('defaults to supporting date ranges when metadata is absent', async () => {
     const shell = await createShell({ meta: { supportsDateRange: undefined } });
 

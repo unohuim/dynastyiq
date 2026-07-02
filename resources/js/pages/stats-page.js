@@ -92,12 +92,16 @@ export class StatsPageShell {
     this.payload = normalizePayload(this.config.initialPayload || {});
     this.perspectives = Array.isArray(this.config.perspectives) ? this.config.perspectives : [];
     this.connectedLeagues = Array.isArray(this.config.connectedLeagues) ? this.config.connectedLeagues : [];
+    this.defaultPerspective = this.perspectives.find((perspective) => perspective?.slug === 'skaters')?.slug
+      || this.perspectives.find((perspective) => perspective?.name === 'Skaters')?.slug
+      || this.perspectives[0]?.slug
+      || '';
 
     const meta = this.payload.meta || {};
     const settings = this.payload.settings || {};
 
     this.state = {
-      perspective: this.config.selectedPerspective || this.perspectives[0]?.slug || '',
+      perspective: this.config.selectedPerspective || this.defaultPerspective,
       period: 'season',
       slice: settings.slice || 'total',
       seasonId: String(meta.season ?? ''),

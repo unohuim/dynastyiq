@@ -36,9 +36,12 @@ class StatsController extends BaseController
         ])->values();
 
         $requestedPerspective = (string) $request->query('perspective', '');
+        $defaultPerspective = $perspModels->firstWhere('slug', 'skaters')
+            ?? $perspModels->firstWhere('name', 'Skaters')
+            ?? $perspModels->first();
         $first = $requestedPerspective !== ''
-            ? ($perspModels->firstWhere('slug', $requestedPerspective) ?? $perspModels->firstWhere('name', $requestedPerspective) ?? $perspModels->first())
-            : $perspModels->first();
+            ? ($perspModels->firstWhere('slug', $requestedPerspective) ?? $perspModels->firstWhere('name', $requestedPerspective) ?? $defaultPerspective)
+            : $defaultPerspective;
         $selectedPerspectiveId = $first?->id;
         $selectedSlug          = $first?->slug ?? $first?->name ?? null;
         $seasonFilter          = $request->query('season_id', $request->query('season'));

@@ -708,6 +708,102 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ->and($row['ozs_pct'])->toBe(0.8);
 });
 
+it('defaults the stats page to skaters instead of the first visible perspective id', function (): void {
+    $skater = ($this->makePlayer)(201, 'Season Skater');
+    $prospect = ($this->makePlayer)(202, 'Draft Prospect');
+    $prospect->update([
+        'is_prospect' => true,
+        'current_league_abbrev' => 'WHL',
+    ]);
+
+    DB::table('stats')->insert([
+        'player_id' => $prospect->id,
+        'is_prospect' => true,
+        'player_name' => 'Draft Prospect',
+        'season_id' => '20262027',
+        'league_abbrev' => 'WHL',
+        'team_name' => 'Seattle',
+        'game_type_id' => 2,
+        'gp' => 10,
+        'pts' => 99,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_season_stats')->insert([
+        'season_id' => '20262027',
+        'nhl_player_id' => $skater->nhl_id,
+        'nhl_team_id' => 1,
+        'gp' => 10,
+        'game_type' => 2,
+        'pts' => 12,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Perspective::create([
+        'name' => 'Prospects',
+        'slug' => 'prospects',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => false,
+        'settings' => [
+            'columns' => [
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'pts',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'league_abbrev' => [
+                    'operator' => '!=',
+                    'value' => 'NHL',
+                    'locked' => true,
+                ],
+                'is_prospect' => [
+                    'value' => true,
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'pts',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'pos_type' => [
+                    'operator' => '!=',
+                    'value' => 'G',
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->get(route('stats.index'));
+
+    $response->assertOk()
+        ->assertViewHas('selectedSlug', 'skaters')
+        ->assertViewHas('payload', function (array $payload): bool {
+            $names = collect($payload['data'])->pluck('name')->all();
+
+            return $names === ['Season Skater'];
+        });
+});
+
 it('uses official boxscore toi for stats page per-60 rate calculations', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(201, 'Boxscore Toi');
