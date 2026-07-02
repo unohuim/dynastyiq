@@ -216,7 +216,10 @@ class NhlGameValidationController extends Controller
     {
         $validation = $validator->validate((int) $validation->nhl_game_id);
 
-        if ($validation->status === NhlGameValidation::STATUS_APPROVED) {
+        if (in_array($validation->status, [
+            NhlGameValidation::STATUS_APPROVED,
+            NhlGameValidation::STATUS_INVALIDATED,
+        ], true)) {
             $orchestrator->onSuccess(
                 (int) $validation->nhl_game_id,
                 NhlImportStages::VALIDATE_SUMMARY,

@@ -19,6 +19,7 @@ class NhlGameValidation extends Model
     public const STATUS_FAILED = 'failed';
     public const STATUS_ACCEPTED_EXCEPTION = 'accepted_exception';
     public const STATUS_INCOMPLETE = 'incomplete';
+    public const STATUS_INVALIDATED = 'invalidated';
 
     protected $guarded = [];
 

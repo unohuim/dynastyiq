@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Writes markdown troubleshooting snapshots for failed NHL game validations.
+ * Writes markdown troubleshooting snapshots for NHL game validations with deltas.
  */
 class NhlValidationTroubleshootingExporter
 {
@@ -24,7 +24,7 @@ class NhlValidationTroubleshootingExporter
     }
 
     /**
-     * Export boxscore, play-by-play, and shift context for a failed validation.
+     * Export boxscore, play-by-play, and shift context for a validation with deltas.
      */
     public function export(NhlGameValidation $validation): void
     {

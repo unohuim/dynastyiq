@@ -394,6 +394,7 @@ Do not introduce new enum values without updating this document.
 - `failed`
 - `accepted_exception`
 - `incomplete`
+- `invalidated`
 
 **Semantic meaning:**
 
@@ -401,11 +402,13 @@ Do not introduce new enum values without updating this document.
 - `failed`: One or more durable validation deltas exist.
 - `accepted_exception`: An admin reviewed and accepted the failed validation as a known exception.
 - `incomplete`: Comparable core totals passed, but at least one source-dependent field group could not be validated.
+- `invalidated`: Preseason or exhibition validation produced deltas; deltas remain auditable, but the game may continue through import flow.
 
 **Notes:**
 
 - `failed` validation status blocks downstream import stages until rerun approval or accepted exception.
 - `incomplete` does not mean parser failure; it indicates provider source coverage is incomplete.
+- `invalidated` is allowed only for NHL game type `1`; game types `2` and `3` must continue to hard fail on validation deltas.
 
 ### NHL Game Validation Delta Severity
 

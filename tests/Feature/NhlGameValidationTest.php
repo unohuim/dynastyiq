@@ -19,6 +19,7 @@ use App\Services\ConnectEventsToUnitShifts;
 use App\Services\CompareNhlPbPBoxscore;
 use App\Services\ImportNHLPlayByPlay;
 use App\Services\ImportNhlShifts;
+use App\Services\NhlGameImportEligibility;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Services\SumNhlGameUnits;
@@ -59,8 +60,8 @@ beforeEach(function (): void {
         return $user;
     };
 
-    $this->insertGame = static function (int $gameId = 2026020001): void {
-        DB::table('nhl_games')->insert([
+    $this->insertGame = static function (int $gameId = 2026020001, array $overrides = []): void {
+        DB::table('nhl_games')->insert(array_merge([
             'nhl_game_id' => $gameId,
             'season_id' => '20262027',
             'game_type' => 2,
@@ -73,7 +74,7 @@ beforeEach(function (): void {
             'away_team_abbrev' => 'MTL',
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ], $overrides));
     };
 
     $this->makePlayer = static function (int $nhlId = 8478402, array $overrides = []): Player {
@@ -1200,6 +1201,96 @@ it('persists a failed validation with field deltas', function (): void {
         'validation_id' => $validation->id,
         'field' => 'goals',
         'severity' => NhlGameValidationDelta::SEVERITY_ERROR,
+    ]);
+});
+
+it('persists an invalidated validation with field deltas for preseason games', function (): void {
+    ($this->insertGame)(2026010001, ['game_type' => 1]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026010001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026010001, 8478402);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026010001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
+        ->and($validation->mismatch_count)->toBe(1)
+        ->and($validation->approved_at)->toBeNull();
+    $this->assertDatabaseHas('nhl_game_validation_deltas', [
+        'validation_id' => $validation->id,
+        'field' => 'goals',
+        'severity' => NhlGameValidationDelta::SEVERITY_ERROR,
+    ]);
+});
+
+it('keeps validation deltas as failed hard stops for regular season games', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026020001, 8478402);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and($validation->mismatch_count)->toBe(1);
+});
+
+it('keeps validation deltas as failed hard stops for playoff games', function (): void {
+    ($this->insertGame)(2026030001, ['game_type' => 3]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026030001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026030001, 8478402);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026030001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and($validation->mismatch_count)->toBe(1);
+});
+
+it('lets preseason invalidated validation jobs complete without failing the stage', function (): void {
+    ($this->insertGame)(2026010001, ['game_type' => 1]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026010001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026010001, 8478402);
+    ($this->insertProgress)(2026010001, NhlImportStages::VALIDATE_SUMMARY, 'running', ['game_type' => 1]);
+
+    (new ValidateNhlGameSummaryJob(2026010001))->handle(
+        app(NhlImportOrchestrator::class),
+        app(NhlGameImportEligibility::class)
+    );
+
+    $this->assertDatabaseHas('nhl_game_validations', [
+        'nhl_game_id' => 2026010001,
+        'status' => NhlGameValidation::STATUS_INVALIDATED,
+        'mismatch_count' => 1,
+    ]);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026010001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'completed',
+    ]);
+});
+
+it('keeps regular season validation jobs failed when deltas exist', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026020001, 8478402);
+    ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
+
+    (new ValidateNhlGameSummaryJob(2026020001))->handle(
+        app(NhlImportOrchestrator::class),
+        app(NhlGameImportEligibility::class)
+    );
+
+    $this->assertDatabaseHas('nhl_game_validations', [
+        'nhl_game_id' => 2026020001,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 1,
+    ]);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'error',
     ]);
 });
 
@@ -2436,6 +2527,26 @@ it('reruns validation and keeps failed validation progress in error', function (
         'game_id' => '2026020001',
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
         'status' => 'error',
+    ]);
+});
+
+it('reruns invalidated preseason validation and marks validation progress completed', function (): void {
+    ($this->insertGame)(2026010001, ['game_type' => 1]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026010001, 8478402, ['goals' => 2]);
+    ($this->insertSummary)(2026010001, 8478402);
+    ($this->insertProgress)(2026010001, NhlImportStages::VALIDATE_SUMMARY, 'error', ['game_type' => 1]);
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026010001);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-validations.rerun', $validation))
+        ->assertOk()
+        ->assertJsonPath('status', NhlGameValidation::STATUS_INVALIDATED);
+
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026010001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'completed',
     ]);
 });
 

@@ -46,6 +46,7 @@ rules:
   - Shift-derived on-ice stages additionally require the shiftcharts feed.
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
   - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
+  - Summary validation may return invalidated for game type 1 when preseason provider deltas exist but the game import should continue.
   - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
   - Shift imports may use already-imported official boxscore shifts and time on ice to reconcile provider shiftchart artifacts, but must not mutate raw provider event fields.

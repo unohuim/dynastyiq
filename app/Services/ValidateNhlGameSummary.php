@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\NhlGameValidation;
 use App\Models\NhlGameValidationDelta;
+use App\Models\NhlGame;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -81,6 +82,14 @@ class ValidateNhlGameSummary
     private function validationStatus(int $gameId, array $deltas): string
     {
         if (! empty($deltas)) {
+            $gameType = NhlGame::query()
+                ->where('nhl_game_id', $gameId)
+                ->value('game_type');
+
+            if ((int) $gameType === 1) {
+                return NhlGameValidation::STATUS_INVALIDATED;
+            }
+
             return NhlGameValidation::STATUS_FAILED;
         }
 
