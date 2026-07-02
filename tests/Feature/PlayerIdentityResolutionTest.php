@@ -218,6 +218,87 @@ it('calculates goalie saves save percentage and gaa from landing season totals',
         ->and($stat->goals_against)->toBe(10);
 });
 
+it('deduplicates repeated nhl landing season total rows before writing stats', function () {
+    $seasonTotal = [
+        'teamName' => ['default' => 'Moncton Wildcats'],
+        'season' => 20252026,
+        'gameTypeId' => 2,
+        'sequence' => 11,
+        'leagueAbbrev' => 'QMJHL',
+        'gamesPlayed' => 63,
+        'goals' => 13,
+        'assists' => 68,
+        'points' => 81,
+    ];
+
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'seasonTotals' => [
+            $seasonTotal,
+            $seasonTotal,
+        ],
+    ]));
+
+    app(ImportNHLPlayer::class)->import('8478402', true);
+
+    expect(Stat::query()
+        ->where('season_id', 20252026)
+        ->where('league_abbrev', 'QMJHL')
+        ->where('team_name', 'Moncton Wildcats')
+        ->where('game_type_id', 2)
+        ->where('sequence', 11)
+        ->count())->toBe(1);
+});
+
+it('keeps the last provider row when duplicate nhl landing stat identities conflict', function () {
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'seasonTotals' => [
+            [
+                'teamName' => ['default' => 'Seattle Thunderbirds'],
+                'season' => 20252026,
+                'gameTypeId' => 2,
+                'sequence' => 11,
+                'leagueAbbrev' => 'WHL',
+                'gamesPlayed' => 59,
+                'goals' => 3,
+                'assists' => 10,
+                'points' => 13,
+            ],
+            [
+                'teamName' => ['default' => 'Seattle Thunderbirds'],
+                'season' => 20252026,
+                'gameTypeId' => 2,
+                'sequence' => 11,
+                'leagueAbbrev' => 'WHL',
+                'gamesPlayed' => 59,
+                'goals' => 4,
+                'assists' => 13,
+                'points' => 17,
+            ],
+        ],
+    ]));
+
+    app(ImportNHLPlayer::class)->import('8478402', true);
+
+    $stat = Stat::query()
+        ->where('season_id', 20252026)
+        ->where('league_abbrev', 'WHL')
+        ->where('team_name', 'Seattle Thunderbirds')
+        ->where('game_type_id', 2)
+        ->where('sequence', 11)
+        ->firstOrFail();
+
+    expect(Stat::query()
+        ->where('season_id', 20252026)
+        ->where('league_abbrev', 'WHL')
+        ->where('team_name', 'Seattle Thunderbirds')
+        ->where('game_type_id', 2)
+        ->where('sequence', 11)
+        ->count())->toBe(1)
+        ->and($stat->g)->toBe(4)
+        ->and($stat->a)->toBe(13)
+        ->and($stat->pts)->toBe(17);
+});
+
 it('resolves canonical nhl team id from abbrev when player landing omits team id', function () {
     NhlTeam::create([
         'nhl_id' => 10,

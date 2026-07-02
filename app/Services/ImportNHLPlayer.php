@@ -8,6 +8,7 @@ use App\Models\Player;
 use App\Models\Stat;
 use App\Observers\PlayerNhlIdentityObserver;
 use App\Traits\HasAPITrait;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Class ImportNHLPlayer
@@ -118,7 +119,7 @@ class ImportNHLPlayer
      */
     private function importStats(Player $player, array $seasonTotals): void
     {
-        foreach ($seasonTotals as $row) {
+        foreach ($this->uniqueSeasonTotals($player, $seasonTotals) as $row) {
             $gp     = (int)($row['gamesPlayed'] ?? 0);
             $toiRaw = $row['avgToi'] ?? $row['timeOnIce'] ?? null;
             $toiMin = parseToiMinutes($toiRaw);
@@ -142,24 +143,16 @@ class ImportNHLPlayer
                 $goalsAgainstAverage = round($goalsAgainst / ($toiMin / 60), 3);
             }
 
-            $key = [
-                'player_id'    => $player->id,
-                'team_name'    => $row['teamName']['default'] ?? 'Unknown',
-                'season_id'    => $row['season'],
-                'game_type_id' => $row['gameTypeId'],
-                'sequence'     => $row['sequence'],
-            ];
+            $key = $this->statIdentityKey($player, $row);
 
-            $stat = Stat::firstOrNew($key);
-
-            $stat->fill([
+            $stat = Stat::updateOrCreate($key, [
                 // IDs and player info
                 'is_prospect'         => $player->is_prospect,
                 'nhl_team_id'         => $player->nhl_team_id,
                 'nhl_team_abbrev'     => $player->team_abbrev,
                 'player_name'         => $player->full_name,
-                'league_abbrev'       => $row['leagueAbbrev'] ?? null,
-                'team_name'           => $row['teamName']['default'] ?? null,
+                'league_abbrev'       => $key['league_abbrev'],
+                'team_name'           => $key['team_name'],
 
                 // Raw stats
                 'gp'                  => $gp,
@@ -205,13 +198,106 @@ class ImportNHLPlayer
                 'goals_against'       => $goalsAgainst,
             ]);
 
-            $stat->save();
-
             if ($player->is_prospect) {
                 $player->current_league_abbrev = $stat->league_abbrev;
                 $player->save();
             }
         }
+    }
+
+    /**
+     * Return one authoritative source row for each NHL season total identity.
+     *
+     * @param Player $player
+     * @param array<int,array<string,mixed>> $seasonTotals
+     * @return array<int,array<string,mixed>>
+     */
+    private function uniqueSeasonTotals(Player $player, array $seasonTotals): array
+    {
+        $uniqueRows = [];
+
+        foreach ($seasonTotals as $row) {
+            $identity = $this->statIdentityKey($player, $row);
+            $hash = $this->statIdentityHash($identity);
+
+            if (
+                isset($uniqueRows[$hash])
+                && $this->seasonTotalFingerprint($uniqueRows[$hash]) !== $this->seasonTotalFingerprint($row)
+            ) {
+                Log::warning('Duplicate NHL landing season total identity had conflicting values; keeping last row.', [
+                    'player_id' => $player->id,
+                    'nhl_id' => $player->nhl_id,
+                    'identity' => $identity,
+                ]);
+            }
+
+            $uniqueRows[$hash] = $row;
+        }
+
+        return array_values($uniqueRows);
+    }
+
+    /**
+     * Build the persisted stat identity used for NHL landing season totals.
+     *
+     * @param Player $player
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private function statIdentityKey(Player $player, array $row): array
+    {
+        return [
+            'player_id' => $player->id,
+            'season_id' => (string)($row['season'] ?? ''),
+            'league_abbrev' => (string)($row['leagueAbbrev'] ?? ''),
+            'team_name' => (string)($row['teamName']['default'] ?? 'Unknown'),
+            'game_type_id' => array_key_exists('gameTypeId', $row) ? (int)$row['gameTypeId'] : null,
+            'sequence' => array_key_exists('sequence', $row) ? (int)$row['sequence'] : null,
+        ];
+    }
+
+    /**
+     * Convert a stat identity to a deterministic string key.
+     *
+     * @param array<string,mixed> $identity
+     * @return string
+     */
+    private function statIdentityHash(array $identity): string
+    {
+        return implode('|', array_map(
+            static fn ($value): string => $value === null ? '__NULL__' : (string)$value,
+            $identity,
+        ));
+    }
+
+    /**
+     * Build a stable fingerprint for comparing duplicate source rows.
+     *
+     * @param array<string,mixed> $row
+     * @return string
+     */
+    private function seasonTotalFingerprint(array $row): string
+    {
+        return json_encode($this->sortArrayRecursively($row)) ?: '';
+    }
+
+    /**
+     * Sort nested arrays so equivalent NHL source rows compare consistently.
+     *
+     * @param array<string|int,mixed> $value
+     * @return array<string|int,mixed>
+     */
+    private function sortArrayRecursively(array $value): array
+    {
+        foreach ($value as $key => $nestedValue) {
+            if (is_array($nestedValue)) {
+                $value[$key] = $this->sortArrayRecursively($nestedValue);
+            }
+        }
+
+        ksort($value);
+
+        return $value;
     }
 
     /**
