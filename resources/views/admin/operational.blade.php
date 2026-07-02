@@ -457,7 +457,7 @@
                                                     </div>
                                                     <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-200">
                                                         <div
-                                                            class="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+                                                            class="h-full rounded-full transition-[width,background-color] duration-1000 ease-out"
                                                             :class="gameImportGameProgressClass(game)"
                                                             x-bind:style="`width: ${gameImportGameProgressPercentage(game)}%`"
                                                         ></div>

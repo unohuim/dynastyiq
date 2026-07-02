@@ -829,7 +829,90 @@ describe('admin-hub import listeners', () => {
         expect(instance.gameImportGames(instance.gameImports.runs[0])).toEqual([
             { game_id: '2026020002' },
         ]);
-        expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41, 43]);
+        expect(instance.gameImportGames(instance.gameImports.runs[1])).toEqual([]);
+        expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41, 42, 43]);
+    });
+
+    it('fades completed game progress toward gray before permanently removing it', async () => {
+        vi.useFakeTimers();
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const completedGame = {
+            game_id: '2026020001',
+            total_stage_rows: 8,
+            completed_stage_rows: 8,
+            running_stage_rows: 0,
+            skipped_stage_rows: 0,
+            failed_stage_rows: 0,
+            percentage: 100,
+        };
+        instance.gameImports.runs = [
+            {
+                id: 41,
+                action: 'process',
+                games: [completedGame],
+            },
+        ];
+
+        instance.syncCompletedGameFadeState();
+
+        expect(instance.gameImportGames(instance.gameImports.runs[0])).toHaveLength(1);
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-lime-500');
+
+        vi.advanceTimersByTime(1000);
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-lime-300');
+
+        vi.advanceTimersByTime(1000);
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-green-100');
+
+        vi.advanceTimersByTime(1000);
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-gray-100');
+
+        vi.advanceTimersByTime(1000);
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-gray-200');
+
+        vi.advanceTimersByTime(1000);
+
+        expect(instance.gameImportGames(instance.gameImports.runs[0])).toHaveLength(0);
+        expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41]);
+        expect(JSON.parse(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:completed-games-dismissed'))).toEqual(['2026020001']);
+
+        const reloaded = adminHub();
+        reloaded.gameImports.runs = instance.gameImports.runs;
+
+        expect(reloaded.gameImportGames(reloaded.gameImports.runs[0])).toHaveLength(0);
+        expect(reloaded.gameImportVisibleRuns().map((run) => run.id)).toEqual([41]);
+    });
+
+    it('keeps stopped failed games visible instead of fading them out', async () => {
+        vi.useFakeTimers();
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const failedGame = {
+            game_id: '2026020002',
+            total_stage_rows: 8,
+            completed_stage_rows: 7,
+            running_stage_rows: 0,
+            skipped_stage_rows: 0,
+            failed_stage_rows: 1,
+            percentage: 100,
+        };
+        instance.gameImports.runs = [
+            {
+                id: 42,
+                action: 'process',
+                games: [failedGame],
+            },
+        ];
+
+        instance.syncCompletedGameFadeState();
+        vi.advanceTimersByTime(6000);
+
+        expect(instance.gameImportGames(instance.gameImports.runs[0])).toEqual([failedGame]);
+        expect(instance.gameImportGameProgressClass(failedGame)).toBe('bg-red-500');
+        expect(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:completed-games-dismissed')).toBeNull();
     });
 
     it('keeps dismissed NHL season sync progress cards hidden after reload-style initialization', async () => {
