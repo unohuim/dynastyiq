@@ -40,6 +40,7 @@ class NhlUnit extends Model
      */
     protected $casts = [
         'player_ids' => 'array',
+        'composition_player_ids' => 'array',
     ];
 
     /**

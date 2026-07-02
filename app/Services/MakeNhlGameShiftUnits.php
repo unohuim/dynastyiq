@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\NhlGame;
 use App\Models\NhlUnit;
-use App\Models\NhlUnitPlayer;
 use App\Models\NhlUnitShift;
 use App\Models\NhlShift;
 use App\Models\Player;
@@ -12,6 +11,13 @@ use Illuminate\Support\Collection;
 
 class MakeNhlGameShiftUnits
 {
+    /**
+     * Create the service with deterministic unit resolution.
+     */
+    public function __construct(private readonly ResolveNhlUnit $unitResolver)
+    {
+    }
+
     public function make(int $gameId): int
     {
         $game = NhlGame::find($gameId);
@@ -306,32 +312,7 @@ class MakeNhlGameShiftUnits
 
     protected function findOrCreateUnit(string $unitType, array $playerNhlIds, ?string $teamAbbrev): NhlUnit
     {
-        $units = NhlUnit::where('unit_type', $unitType)
-            ->when($teamAbbrev, fn($q) => $q->where('team_abbrev', $teamAbbrev))
-            ->get();
-
-        foreach ($units as $unit) {
-            $existing = $unit->players()->pluck('nhl_id')->sort()->values()->all();
-            if ($existing === $playerNhlIds) {
-                return $unit;
-            }
-        }
-
-        $unit = NhlUnit::create(['unit_type' => $unitType, 'team_abbrev' => $teamAbbrev]);
-
-        foreach ($playerNhlIds as $nhlId) {
-            $player = Player::where('nhl_id', $nhlId)->first();
-            if (!$player && class_exists(\App\Services\ImportNHLPlayer::class)) {
-                $importer = new \App\Services\ImportNHLPlayer();
-                $importer->import($nhlId);
-                $player = Player::where('nhl_id', $nhlId)->first();
-            }
-            if ($player) {
-                NhlUnitPlayer::create(['unit_id' => $unit->id, 'player_id' => $player->id]);
-            }
-        }
-
-        return $unit;
+        return $this->unitResolver->resolve($unitType, $playerNhlIds, $teamAbbrev);
     }
 
     protected function sortedIdsFromPlayers(Collection $players): array

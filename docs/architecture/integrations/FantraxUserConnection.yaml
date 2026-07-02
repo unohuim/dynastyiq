@@ -1,0 +1,36 @@
+name: Fantrax User Connection
+type: External Platform Integration Pattern
+location:
+  - app/Http/Controllers/FantraxUserController.php
+  - app/Models/IntegrationSecret.php
+  - app/Support/FantasyProvider.php
+  - app/Services/FantasyIntegrationState.php
+  - app/Services/ImportUserFantraxLeagues.php
+  - app/Events/FantraxUserConnected.php
+  - app/Listeners/HandleFantraxUserConnected.php
+purpose: Store a user's Fantrax integration secret and trigger Fantrax league and team imports for that user.
+when_to_use:
+  - Connecting a user's Fantrax account.
+  - Disconnecting a user's Fantrax account.
+  - Refreshing a user's Fantrax leagues.
+when_not_to_use:
+  - Organization-owned provider accounts.
+  - Patreon sync.
+  - Discord OAuth login.
+rules:
+  - Fantrax credentials belong in IntegrationSecret.
+  - Fantrax user-facing readiness state must be exposed through FantasyIntegrationState, not inferred directly from a saved secret.
+  - The Leagues navigation affordance must be controlled by the shared FantasyProviderLeagueAccess pattern.
+  - Direct Leagues route access must enforce the same Fantrax readiness rule as navigation visibility.
+  - Disconnecting Fantrax must remove the user credential and deactivate that user's Fantrax league_user_teams assignments.
+  - User connection events trigger downstream Fantrax imports.
+  - Fantrax connection state must not be treated as application authentication.
+public_interface:
+  - integrations.fantrax.save
+  - integrations.fantrax.disconnect
+  - IntegrationSecret
+  - FantasyProvider::FANTRAX
+  - FantasyIntegrationState
+  - FantraxUserConnected
+example_usage: |
+  $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider::FANTRAX);

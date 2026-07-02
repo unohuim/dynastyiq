@@ -1,0 +1,31 @@
+name: Platform League Roster Slots
+type: External Platform Integration Pattern
+location:
+  - app/Models/PlatformLeagueRosterSlot.php
+  - app/Models/PlatformLeague.php
+  - app/Http/Controllers/LeagueController.php
+  - app/Services/YahooFantasyLeagueService.php
+  - database/migrations/*_create_platform_league_roster_slots_table.php
+purpose: Store provider-neutral roster slot order and counts for platform leagues so roster displays can follow league settings.
+when_to_use:
+  - Importing league roster position settings from external fantasy providers.
+  - Sorting platform roster memberships for league roster display.
+  - Preserving provider roster slot payloads for audit and later provider-specific behavior.
+when_not_to_use:
+  - Storing current player roster memberships.
+  - Storing scoring categories, stat modifiers, standings, or transactions.
+  - Guessing Fantrax roster settings without a real provider payload.
+rules:
+  - One row represents one provider roster slot within one platform league.
+  - A platform league may have only one row for a given provider slot.
+  - The sort order must reflect the provider roster settings order when the provider exposes one.
+  - Platform roster memberships store the current player slot, while platform league roster slots define the league slot metadata and display order.
+  - Unknown membership slots must render after configured slots using a stable fallback order.
+  - Provider-specific parsing must remain inside provider sync services before data enters this model.
+public_interface:
+  - PlatformLeagueRosterSlot
+  - PlatformLeague::rosterSlots()
+  - platform_league_roster_slots
+example_usage: |
+  $slotOrder = $league->rosterSlots()
+      ->pluck('sort_order', 'slot');

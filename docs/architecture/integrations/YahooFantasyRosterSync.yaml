@@ -1,0 +1,39 @@
+name: Yahoo Fantasy Roster Sync
+type: External Platform Sync Pattern
+location:
+  - app/Jobs/SyncYahooTeamRosterJob.php
+  - app/Events/LeagueSyncStatusUpdated.php
+  - app/Services/YahooFantasyRosterService.php
+  - app/Services/YahooFantasyClient.php
+  - app/Services/PlayerIdentityResolver.php
+  - app/Models/YahooPlayer.php
+  - app/Models/PlatformTeam.php
+  - database/migrations/*_create_platform_roster_memberships.php
+purpose: Map Yahoo Fantasy team rosters through Yahoo player staging and canonical identities into platform roster memberships.
+when_to_use:
+  - Syncing current Yahoo rosters for owned Yahoo teams.
+  - Creating Yahoo player staging rows from roster payloads.
+  - Updating platform_roster_memberships for Yahoo teams.
+when_not_to_use:
+  - Discovering Yahoo leagues and teams.
+  - Importing all Yahoo player collection pages.
+  - Rendering league roster UI directly from Yahoo XML.
+rules:
+  - Yahoo roster sync must fetch roster players from Yahoo team roster resources.
+  - PlatformTeam::league must resolve through platform_teams.platform_league_id so roster jobs can verify provider ownership before calling Yahoo.
+  - Yahoo roster sync may use an active connected Yahoo owner assignment for the parent league when syncing opponent teams.
+  - Yahoo roster players must upsert yahoo_players before identity resolution.
+  - Yahoo roster memberships may only be created for players resolved to canonical players.
+  - Unresolved Yahoo roster players must remain in provider-owned staging storage for triage or future resolution.
+  - Current Yahoo roster snapshots must close stale open Yahoo platform_roster_memberships for the synced team.
+  - Yahoo roster sync must report payload, resolution, membership insert/update, and stale-close counts.
+  - Yahoo roster sync skipped states must include a status and skip reason in the returned summary.
+  - The latest Yahoo roster sync summary may be persisted on platform_teams.extras for diagnostics without changing roster membership authority.
+  - The Leagues UI must continue reading provider-neutral platform_roster_memberships.
+  - User-triggered Yahoo roster sync jobs may broadcast LeagueSyncStatusUpdated events to the requesting user's private channel for transient Leagues UI feedback.
+public_interface:
+  - LeagueSyncStatusUpdated
+  - SyncYahooTeamRosterJob
+  - YahooFantasyRosterService::syncTeam()
+example_usage: |
+  SyncYahooTeamRosterJob::dispatch($platformTeam->id);

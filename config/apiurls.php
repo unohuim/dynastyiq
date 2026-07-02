@@ -55,10 +55,31 @@ return [
             'roster_current' => '/roster/{teamAbbrev}/current',
             'roster_season'  => '/roster/{teamAbbrev}/{seasonId}',
             'prospects'      => '/prospects/{teamAbbrev}',
+            'draft_picks'    => '/draft/picks/{year}/all',
             'standings_now'  => '/standings/now',
             'pbp'            => '/gamecenter/{gameId}/play-by-play',
             'boxscore'       => '/gamecenter/{gameId}/boxscore',
             'dailyscores'    => '/score/{date}',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | NHL Stats API Configuration
+    |--------------------------------------------------------------------------
+    |
+    | The NHL stats API is a separate namespace from the web API above.
+    |
+    */
+    'nhl_stats' => [
+        'base'      => env('NHL_STATS_BASE_URL', 'https://api.nhle.com/stats/rest/en'),
+        'auth'      => [
+            'in'   => 'none',
+        ],
+        'endpoints' => [
+            'teams' => '/team',
+            'team'  => '/team/id/{teamId}',
+            'players' => '/players',
         ],
     ],
 
@@ -78,11 +99,14 @@ return [
         ],
         'endpoints' => [
             'players'           => '/general/getPlayerIds?sport=NHL',
+            'adp'               => '/general/getAdp',
             'player_data'       => '/general/getPlayerProfile?leagueId={leagueId}&playerId={playerId}',
             'user_leagues'      => '/general/getLeagues?userSecretId={userSecretId}',
             'league_info'       => '/general/getLeagueInfo?leagueId={leagueId}',
-            'team_rosters'      => '/general/getTeamRosters?leagueId={leagueId}'
-
+            'draft_picks'       => '/general/getDraftPicks?leagueId={leagueId}',
+            'draft_results'     => '/general/getDraftResults?leagueId={leagueId}',
+            'team_rosters'      => '/general/getTeamRosters?leagueId={leagueId}',
+            'standings'         => '/general/getStandings?leagueId={leagueId}',
         ],
     ],
 

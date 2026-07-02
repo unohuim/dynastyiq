@@ -1,0 +1,26 @@
+name: League Show View Model
+type: View Model / DTO Pattern
+location:
+  - app/ViewModels/LeagueShowViewModel.php
+  - app/DTO/LeagueShowDto.php
+  - app/Http/Controllers/LeagueController.php
+  - app/Http/Controllers/CommunityLeagues.php
+purpose: Prepare league detail data for Blade without spreading query and transformation logic through views.
+when_to_use:
+  - League detail pages needing organization context.
+  - League detail pages needing platform league data.
+  - League detail pages needing teams, roster, or availability context.
+when_not_to_use:
+  - Raw API endpoints.
+  - Import services.
+  - Low-level model relationships.
+rules:
+  - League detail transformation belongs in the view model or DTO, not in Blade.
+  - DTO shape must remain stable for consuming views.
+  - Domain queries should not be duplicated in league detail templates.
+public_interface:
+  - LeagueShowViewModel
+  - LeagueShowDto
+example_usage: |
+  $dto = $leagueShowViewModel->toDto();
+

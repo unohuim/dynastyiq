@@ -1,0 +1,29 @@
+name: Discord Bot Runtime
+type: External Node Service
+location:
+  - diq-bot/bot.js
+  - diq-bot/features/user-teams.js
+  - diq-bot/features/assign-fantrax-roles.js
+purpose: Run Discord-specific behavior outside Laravel while consuming Laravel HTTP APIs and broadcast events.
+when_to_use:
+  - Discord slash or context commands.
+  - Discord guild-member event handling.
+  - Discord role assignment.
+  - Bot-side realtime reactions to Laravel events.
+when_not_to_use:
+  - Laravel web routes.
+  - Domain persistence.
+  - Application authorization rules.
+rules:
+  - Bot code must treat Laravel APIs as the domain authority.
+  - Bot code must not duplicate Laravel authorization or persistence rules.
+  - Bot behavior that depends on app state must read that state through documented API or broadcast interfaces.
+public_interface:
+  - diq-bot/bot.js
+  - diq-bot/features/user-teams.js
+  - diq-bot/features/assign-fantrax-roles.js
+  - /api/discord/users/{discord_id}
+  - /api/diq/is-fantrax
+example_usage: |
+  The Discord bot resolves user team data through Laravel API endpoints instead of querying the application database directly.
+

@@ -31,8 +31,12 @@ return [
     'max_shifts_seconds'            => env('MAX_SHIFTS_SECONDS', 7200),
     'max_boxscore_seconds'          => env('MAX_BOXSCORE_SECONDS', 7200),
     'max_game_summaries_seconds'    => env('MAX_GAME_SUMMARIES_SECONDS', 7200),
+    'max_validate_summary_seconds'  => env('MAX_VALIDATE_SUMMARY_SECONDS', 7200),
     'max_shift_units_seconds'       => env('MAX_SHIFT_UNITS_SECONDS', 7200),
     'max_connect_events_seconds'    => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
     'max_sum_game_units_seconds'    => env('MAX_SUM_GAME_UNITS_SECONDS', 7200),
+    'draft_years_back'              => (int) env('NHL_DRAFT_YEARS_BACK', 8),
+    'player_landing_retry_delays'   => [2, 5, 10],
+    'validation_troubleshooting_path' => env('NHL_VALIDATION_TROUBLESHOOTING_PATH', base_path('docs/troubleshooting')),
 
 ];

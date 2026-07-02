@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Events\ImportStreamEvent;
+use App\Events\PlayersAvailable;
+use App\Jobs\ImportFantraxPlayerJob;
+use App\Models\FantraxPlayer;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Log;
-use App\Jobs\ImportFantraxPlayerJob;
 
 /**
  * Fetches Fantrax player metadata and dispatches a per-player job.
@@ -18,12 +21,12 @@ class ImportFantraxPlayers
     /**
      * Fetch all Fantrax player entries and queue per-player imports.
      */
-    public function import(): void
+    public function import(?int $importRunId = null): void
     {
-        $entries = $this->getAPIData('fantrax', 'players');
+        $entries = $this->fetchEntries();
 
-        if (!is_array($entries)) {
-            Log::error('[Fantrax] Unexpected response format', ['response' => $entries]);
+        if ($importRunId !== null) {
+            $this->importChunk($entries, $importRunId);
             return;
         }
 
@@ -37,5 +40,63 @@ class ImportFantraxPlayers
                 ]);
             }
         }
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    public function fetchEntries(): array
+    {
+        $entries = $this->getAPIData('fantrax', 'players');
+
+        if (! is_array($entries)) {
+            Log::error('[Fantrax] Unexpected response format', ['response' => $entries]);
+            return [];
+        }
+
+        return array_values($entries);
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $entries
+     */
+    public function importChunk(array $entries, ?int $importRunId = null): void
+    {
+        $fantraxPlayersExistedBefore = FantraxPlayer::query()->exists();
+        $playerImport = new ImportFantraxPlayer();
+
+        foreach ($entries as $entry) {
+            $fantraxId = $entry['fantraxId'] ?? 'unknown';
+            $fantraxName = $entry['name'] ?? 'no-name';
+
+            ImportStreamEvent::dispatch('fantrax', "Importing Fantrax player {$fantraxId} - {$fantraxName}", 'started');
+
+            try {
+                $result = $playerImport->syncOne($entry);
+                $this->recordProcessedRecord($importRunId, $result);
+
+                if (! $fantraxPlayersExistedBefore && FantraxPlayer::query()->exists()) {
+                    broadcast(new PlayersAvailable('fantrax', FantraxPlayer::query()->count()));
+                    $fantraxPlayersExistedBefore = true;
+                }
+            } catch (\Throwable $e) {
+                $this->recordProcessedRecord($importRunId, 'failed');
+
+                Log::error('[Fantrax] Inline player import failed', [
+                    'fantraxId' => $entry['fantraxId'] ?? null,
+                    'name' => $entry['name'] ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    private function recordProcessedRecord(?int $importRunId, string $result): void
+    {
+        if ($importRunId === null) {
+            return;
+        }
+
+        \App\Models\ImportRun::query()->find($importRunId)?->recordProcessed($result);
     }
 }

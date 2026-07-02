@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Events\LeagueSyncStatusUpdated;
+use App\Models\PlatformLeague;
 use App\Services\SyncFantraxLeague;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -17,8 +19,10 @@ final class SyncFantraxLeagueJob implements ShouldQueue
     use InteractsWithQueue;
     use SerializesModels;
 
-    public function __construct(public int $platformLeagueId)
-    {
+    public function __construct(
+        public int $platformLeagueId,
+        public ?int $userId = null,
+    ) {
         $this->afterCommit = true;
     }
 
@@ -45,6 +49,37 @@ final class SyncFantraxLeagueJob implements ShouldQueue
 
     public function handle(SyncFantraxLeague $service): void
     {
-        $service->sync($this->platformLeagueId);
+        $this->broadcastStatus('processing');
+
+        try {
+            $service->sync($this->platformLeagueId);
+            $this->broadcastStatus('completed');
+        } catch (\Throwable $throwable) {
+            $this->broadcastStatus('failed');
+
+            throw $throwable;
+        }
+    }
+
+    private function broadcastStatus(string $status): void
+    {
+        if ($this->userId === null) {
+            return;
+        }
+
+        $league = PlatformLeague::query()
+            ->select('id', 'platform')
+            ->find($this->platformLeagueId);
+
+        if (! $league instanceof PlatformLeague) {
+            return;
+        }
+
+        LeagueSyncStatusUpdated::dispatch(
+            $this->userId,
+            $league->id,
+            (string) $league->platform,
+            $status,
+        );
     }
 }

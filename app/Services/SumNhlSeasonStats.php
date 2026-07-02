@@ -73,7 +73,15 @@ class SumNhlSeasonStats
                 SUM(gs.sa)  as sa,      SUM(gs.evsa) as evsa,     SUM(gs.ppsa) as ppsa,     SUM(gs.pksa) as pksa,
                 SUM(gs.sv)  as sv,      SUM(gs.evsv) as evsv,     SUM(gs.ppsv) as ppsv,     SUM(gs.pksv) as pksv,
                 SUM(gs.ga)  as ga,      SUM(gs.evga) as evga,     SUM(gs.ppga) as ppga,     SUM(gs.pkga) as pkga,
-                SUM(gs.shosv) as shosv, SUM(gs.so) as so
+                SUM(gs.shosv) as shosv, SUM(gs.so) as so,
+
+                SUM(CASE WHEN gs.goalie_decision = \'W\' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN gs.goalie_decision = \'L\' THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN gs.goalie_decision = \'OTL\' THEN 1 ELSE 0 END) as ot_losses,
+                SUM(CASE WHEN gs.goalie_started THEN 1 ELSE 0 END) as starts,
+                SUM(CASE WHEN gs.goalie_decision IS NOT NULL AND gs.toi > 0 AND NOT gs.goalie_started THEN 1 ELSE 0 END) as relief_appearances,
+                SUM(CASE WHEN gs.quality_start THEN 1 ELSE 0 END) as quality_starts,
+                SUM(CASE WHEN gs.really_bad_start THEN 1 ELSE 0 END) as really_bad_starts
             ')
             ->groupBy('gs.nhl_player_id', 'g.game_type')
             ->get();
@@ -125,6 +133,9 @@ class SumNhlSeasonStats
             $sv=(int)$r->sv; $evsv=(int)$r->evsv; $ppsv=(int)$r->ppsv; $pksv=(int)$r->pksv;
             $ga=(int)$r->ga; $evga=(int)$r->evga; $ppga=(int)$r->ppga; $pkga=(int)$r->pkga;
             $shosv=(int)$r->shosv; $so=(int)$r->so;
+            $wins=(int)$r->wins; $losses=(int)$r->losses; $ot_losses=(int)$r->ot_losses;
+            $starts=(int)$r->starts; $relief_appearances=(int)$r->relief_appearances;
+            $quality_starts=(int)$r->quality_starts; $really_bad_starts=(int)$r->really_bad_starts;
 
             $sog_p   = $this->pct($g,   $sog);
             $ppsog_p = $this->pct($ppg, $ppsog);
@@ -137,6 +148,12 @@ class SumNhlSeasonStats
             $pksat_p = $this->pct($pkg, $pksat);
 
             $fow_percentage = ($fow + $fol) > 0 ? round(($fow / ($fow + $fol)) * 100, 2) : 0.0;
+            $sv_pct = $sa > 0 ? round($sv / $sa, 3) : 0.0;
+            $gaa = $toi > 0 ? round(($ga * 3600) / $toi, 3) : 0.0;
+            $ev_sv_pct = $evsa > 0 ? round($evsv / $evsa, 3) : 0.0;
+            $pp_sv_pct = $ppsa > 0 ? round($ppsv / $ppsa, 3) : 0.0;
+            $pk_sv_pct = $pksa > 0 ? round($pksv / $pksa, 3) : 0.0;
+            $quality_start_percentage = $starts > 0 ? round($quality_starts / $starts, 3) : 0.0;
 
             $g_pg   = $this->perGame($g,   $gp);
             $a_pg   = $this->perGame($a,   $gp);
@@ -202,6 +219,12 @@ class SumNhlSeasonStats
                 'sv'=>$sv,'evsv'=>$evsv,'ppsv'=>$ppsv,'pksv'=>$pksv,
                 'ga'=>$ga,'evga'=>$evga,'ppga'=>$ppga,'pkga'=>$pkga,
                 'shosv'=>$shosv,'so'=>$so,
+                'wins'=>$wins,'losses'=>$losses,'ot_losses'=>$ot_losses,
+                'starts'=>$starts,'relief_appearances'=>$relief_appearances,
+                'quality_starts'=>$quality_starts,'really_bad_starts'=>$really_bad_starts,
+                'quality_start_percentage'=>$quality_start_percentage,
+                'sv_pct'=>$sv_pct,'gaa'=>$gaa,
+                'ev_sv_pct'=>$ev_sv_pct,'pp_sv_pct'=>$pp_sv_pct,'pk_sv_pct'=>$pk_sv_pct,
 
                 'sog_p'=>$sog_p,'ppsog_p'=>$ppsog_p,'evsog_p'=>$evsog_p,'pksog_p'=>$pksog_p,
                 'sat_p'=>$sat_p,'ppsat_p'=>$ppsat_p,'evsat_p'=>$evsat_p,'pksat_p'=>$pksat_p,

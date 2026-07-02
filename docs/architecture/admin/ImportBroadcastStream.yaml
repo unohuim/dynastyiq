@@ -1,0 +1,37 @@
+name: Import Broadcast Stream
+type: Realtime Feedback Pattern
+location:
+  - app/Support/ImportBroadcast.php
+  - app/Events/ImportStreamEvent.php
+  - app/Events/NhlGameImportStatusUpdated.php
+  - app/Models/ImportRun.php
+  - resources/js/admin/admin-hub.js
+purpose: Publish import progress and operational messages to admin UI consumers.
+when_to_use:
+  - Long-running import workflows that should surface progress without a manual refresh.
+  - Admin import command output.
+  - Import lifecycle status feedback.
+  - NHL game import status invalidation events for admin UI refreshes.
+when_not_to_use:
+  - Domain events that should not be displayed as import-stream UI messages.
+  - Browser-only toast feedback.
+rules:
+  - Import stream events must be scoped to import feedback.
+  - Command output should pass through ImportBroadcast output handling when user-visible.
+  - ImportRun rows must be created with status working when an admin import starts and updated when the real import work completes or fails.
+  - ImportRun duration_seconds must be derived from started_at and finished_at.
+  - ImportRun progress fields may be polled by the admin UI for progress bars; terminal output remains a separate raw message stream.
+  - Chunked imports may broadcast lightweight progress events, but the admin UI must still read import_runs as the authoritative progress state.
+  - Import status values must remain aligned with docs/ENUMS.md.
+  - NHL game import status broadcasts must be treated as invalidation signals; the browser should reload authoritative status from the admin endpoint.
+public_interface:
+  - ImportBroadcast::started()
+  - ImportBroadcast::finished()
+  - ImportBroadcast::failed()
+  - ImportBroadcast::output()
+  - ImportStreamEvent
+  - NhlGameImportStatusUpdated
+  - ImportRun
+example_usage: |
+  $broadcast = new ImportBroadcast('fantrax', $batchId);
+  $broadcast->started();

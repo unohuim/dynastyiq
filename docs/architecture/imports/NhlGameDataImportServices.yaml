@@ -1,0 +1,83 @@
+name: NHL Game Data Import Services
+type: Domain Import Services
+location:
+  - app/Console/Commands/EmptyNhlCommand.php
+  - app/Services/ImportNHLPlayByPlay.php
+  - app/Services/NhlPbpEventNormalizer.php
+  - app/Services/NhlGameImportEligibility.php
+  - app/Services/NhlGameImportRebuilder.php
+  - app/Services/NhlGameSourcePreflight.php
+  - app/Services/NhlPlusMinusCalculator.php
+  - app/Services/SumNHLPlayByPlay.php
+  - app/Services/ImportNhlShifts.php
+  - app/Services/ImportNhlBoxscore.php
+  - app/Services/CompareNhlPbPBoxscore.php
+  - app/Services/ValidateNhlGameSummary.php
+  - app/Services/NhlValidationTroubleshootingExporter.php
+  - app/Services/MakeNhlGameShiftUnits.php
+  - app/Services/ConnectEventsToUnitShifts.php
+  - app/Services/SumNhlGameUnits.php
+  - app/Services/SumNhlGameStrengthUnits.php
+  - app/Services/SumNhlSeasonStats.php
+purpose: Own the NHL data transformations used by queued import jobs and admin commands.
+when_to_use:
+  - Implementing a single NHL import stage.
+  - Changing a single NHL import transformation.
+  - Reusing an import transformation from a job or command.
+when_not_to_use:
+  - Coordinating stage order.
+  - Tracking import progress state.
+  - Discovering games.
+rules:
+  - Stage services own transformation behavior only.
+  - Stage ordering belongs to NhlImportOrchestrator.
+  - Progress persistence belongs to NhlImportProgressRepo.
+  - Import upserts must use stable provider or derived natural identities.
+  - Play-by-play events are naturally identified by nhl_game_id plus nhl_event_id.
+  - Play-by-play imports must preserve raw provider event and details payloads in play_by_plays.metadata for audit and validation context.
+  - Derived play-by-play summaries must use NhlPbpEventNormalizer for boxscore-comparable shot, shootout, empty-net, and penalty-minute semantics.
+  - Player game summaries are naturally identified by nhl_game_id plus nhl_player_id.
+  - Raw shift imports must update player game summary time on ice and shift counts for the same game and player.
+  - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
+  - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
+  - Play-by-play import must establish the provider game type before later stages advance.
+  - Later game import stages must not run unless PBP has stored an allowed game type for the game.
+  - Core NHL game import stages require PBP and boxscore feeds.
+  - Shift-derived on-ice stages additionally require the shiftcharts feed.
+  - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
+  - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
+  - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
+  - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
+  - Shift imports may use already-imported official boxscore shifts and time on ice to reconcile provider shiftchart artifacts, but must not mutate raw provider event fields.
+  - Summary validation compares official boxscore totals against computed summaries before downstream trust.
+  - Failed summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
+  - Unit shifts are naturally identified by unit_id plus nhl_game_id plus start_game_seconds.
+  - Event-unit links are naturally identified by event_id plus unit_shift_id.
+  - Skater plus/minus must be calculated from eligible linked goal events after event-unit links exist.
+  - Plus/minus calculations must count even-strength and shorthanded goals, exclude power-play goals, exclude shootout goals, exclude penalty-shot goals, and deduplicate a player once per goal event.
+  - Persisted player-game plus/minus must reconcile to official boxscore values when available because exact goal-time shift boundaries can be provider-ambiguous.
+  - Strength-aware on-ice summaries are naturally identified by game plus unit or player plus strength.
+  - nhl:empty --games may remove NHL game-derived import data, progress, admin run ledgers, and validations, but must not delete canonical players, NHL team reference data, or NHL player external identities.
+  - nhl:empty --games must clear game-derived tables with visible per-table progress rather than one long silent transaction.
+  - nhl:empty --players may remove only NHL and NHL draft player external identities, and must not delete game-derived import data.
+public_interface:
+  - EmptyNhlCommand
+  - ImportNHLPlayByPlay
+  - NhlPbpEventNormalizer
+  - NhlGameImportEligibility
+  - NhlGameImportRebuilder
+  - NhlGameSourcePreflight
+  - NhlPlusMinusCalculator
+  - SumNHLPlayByPlay
+  - ImportNhlShifts
+  - ImportNhlBoxscore
+  - CompareNhlPbPBoxscore
+  - ValidateNhlGameSummary
+  - NhlValidationTroubleshootingExporter
+  - MakeNhlGameShiftUnits
+  - ConnectEventsToUnitShifts
+  - SumNhlGameUnits
+  - SumNhlGameStrengthUnits
+  - SumNhlSeasonStats
+example_usage: |
+  app(ImportNHLPlayByPlay::class)->import($gameId);

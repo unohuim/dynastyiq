@@ -1,0 +1,52 @@
+name: Yahoo Fantasy Player Import
+type: External Platform Import Pattern
+location:
+  - app/Models/YahooFantasyConnection.php
+  - app/Models/YahooPlayer.php
+  - app/Console/Commands/EmptyYahooCommand.php
+  - app/Services/FantasyIntegrationState.php
+  - app/Services/YahooFantasyClient.php
+  - app/Services/YahooFantasyPlayerImporter.php
+  - app/Jobs/ImportYahooPlayersPageJob.php
+  - app/Http/Controllers/Admin/YahooOAuthProbeController.php
+  - app/Http/Controllers/Admin/YahooPlayerImportController.php
+  - database/migrations/*_create_yahoo_fantasy_connections_table.php
+  - database/migrations/*_create_yahoo_players_table.php
+purpose: Persist user-owned Yahoo Fantasy OAuth access and stage Yahoo Fantasy hockey player records before matching them to canonical DynastyIQ players.
+when_to_use:
+  - Connecting a user's Yahoo Fantasy Sports OAuth grant.
+  - Importing Yahoo Fantasy hockey player collection pages.
+  - Preserving Yahoo player resource keys and raw payloads for later identity matching.
+when_not_to_use:
+  - Yahoo league, team, roster, standings, scoring settings, or transaction sync.
+  - Creating canonical players directly from Yahoo player records.
+rules:
+  - Yahoo OAuth grants must be persisted in yahoo_fantasy_connections before any Yahoo API workflow relies on them.
+  - Yahoo user-facing readiness state must be exposed through FantasyIntegrationState using the same payload shape as other fantasy providers.
+  - Yahoo connection tokens must be refreshed through YahooFantasyClient before Fantasy API calls when near expiry.
+  - Yahoo player collection requests must use Yahoo's semicolon-delimited collection parameters.
+  - Yahoo player records must preserve the Yahoo player_key and game_key separately.
+  - yahoo_players is provider-owned staging storage and must not overwrite canonical player attributes.
+  - Imported Yahoo player rows must link to player_external_identities with provider yahoo.
+  - Yahoo admin-triggered all-player imports must queue page-level jobs and must not depend on one browser request staying open.
+  - Yahoo queued player imports must continue dispatching pages until Yahoo returns a short or empty players collection page.
+  - Yahoo may appear in the admin import card list through a direct endpoint that queues work backed by the current super-admin user's Yahoo connection.
+  - Yahoo player identity matching must flow through player_external_identities before mutating canonical player links.
+  - Yahoo league and owned-team sync belongs to the Yahoo Fantasy League Sync pattern, not the player importer.
+  - yahoo:empty may remove Yahoo staged player rows and Yahoo provider identities, but must not delete canonical players or Yahoo OAuth connections.
+public_interface:
+  - integrations.yahoo.redirect
+  - integrations.yahoo.callback
+  - admin.yahoo.oauth.redirect
+  - admin.yahoo.oauth.callback
+  - admin.yahoo.players.import
+  - ImportYahooPlayersPageJob
+  - yahoo:empty
+  - FantasyIntegrationState::forProvider()
+  - YahooFantasyConnection
+  - YahooFantasyClient::fantasyXmlForConnection()
+  - YahooPlayer
+  - YahooFantasyPlayerImporter::importPage()
+  - YahooFantasyPlayerImporter::import()
+example_usage: |
+  ImportYahooPlayersPageJob::dispatch($connection->id, $importRun->id, 0, 25);

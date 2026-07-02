@@ -1,0 +1,23 @@
+name: New League Modal
+type: Blade / Alpine Component
+location:
+  - resources/views/components/new-league-modal.blade.php
+  - resources/views/leagues.blade.php
+  - resources/views/communities/leagues/show.blade.php
+purpose: Provide a reusable modal for creating league records from league-oriented pages.
+when_to_use:
+  - League creation flows that reuse the same form.
+  - League creation flows that post to the same server route.
+when_not_to_use:
+  - Non-league creation flows.
+  - New multi-field create flows that should use a page-module pattern.
+rules:
+  - League creation UI must use the shared modal while this legacy pattern remains active.
+  - Backend route handling remains the persistence authority.
+  - Future migrations should align this component with docs/UI_DESIGN.md modal and page-module rules.
+public_interface:
+  - <x-new-league-modal>
+  - organizations.leagues.store
+example_usage: |
+  <x-new-league-modal :organization="$organization" />
+

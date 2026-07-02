@@ -1,0 +1,28 @@
+name: Social Account Identity
+type: OAuth Identity Pattern
+location:
+  - app/Models/SocialAccount.php
+  - app/Http/Controllers/Auth/SocialiteCallbackController.php
+  - routes/web.php
+purpose: Link external OAuth identities, currently Discord, to application users.
+when_to_use:
+  - Discord login.
+  - External identity lookup for app authentication.
+  - Future first-party OAuth provider account linkage that authenticates users.
+when_not_to_use:
+  - Organization-owned service connections.
+  - Patreon provider accounts.
+  - Fantrax user integration secrets.
+rules:
+  - Social accounts identify users for authentication.
+  - Provider service connections that sync organization data must use provider-specific models.
+  - OAuth callback handling must remain server-owned.
+public_interface:
+  - /auth/discord/redirect
+  - /auth/discord/callback
+  - SocialAccount
+example_usage: |
+  return Socialite::driver('discord')
+      ->scopes(['identify', 'email'])
+      ->redirect();
+

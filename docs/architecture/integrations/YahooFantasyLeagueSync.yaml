@@ -1,0 +1,45 @@
+name: Yahoo Fantasy League Sync
+type: External Platform Sync Pattern
+location:
+  - app/Jobs/SyncYahooTeamRosterJob.php
+  - app/Services/YahooFantasyLeagueService.php
+  - app/Services/YahooFantasyClient.php
+  - app/Models/YahooFantasyConnection.php
+  - app/Models/PlatformLeague.php
+  - app/Models/PlatformLeagueRosterSlot.php
+  - app/Models/PlatformTeam.php
+  - app/Http/Controllers/LeagueController.php
+  - app/Http/Controllers/Admin/YahooOAuthProbeController.php
+purpose: Map a connected Yahoo Fantasy user's hockey leagues, roster settings, and teams into platform-neutral league tables.
+when_to_use:
+  - Syncing Yahoo leagues after a user connects Yahoo OAuth.
+  - Refreshing Yahoo league and owned-team assignments.
+  - Importing Yahoo league roster position settings for roster display order.
+  - Making Yahoo leagues available to the shared Leagues experience.
+when_not_to_use:
+  - Importing Yahoo player collections.
+  - Syncing standings, scoring settings, scoreboard data, or transactions.
+  - Replacing provider-neutral Leagues route access checks.
+rules:
+  - Yahoo league discovery must use user-scoped Yahoo Fantasy API resources.
+  - Yahoo league records must persist to platform_leagues with platform yahoo.
+  - Yahoo roster position settings must persist to provider-neutral roster slot rows before roster display relies on provider slot order.
+  - Yahoo teams must persist to platform_teams using Yahoo team_key as the provider team id.
+  - User-owned Yahoo teams must attach through league_user_teams.
+  - Yahoo teams discovered during league sync should queue Yahoo roster sync so opponent rosters are available in league views.
+  - User-owned Yahoo teams must be the only teams attached through league_user_teams.
+  - Stale Yahoo league_user_teams assignments for the synced user must be deactivated when absent from the latest owned-team payload.
+  - Yahoo league sync must feed FantasyProviderLeagueAccess instead of adding Yahoo-specific Leagues route behavior.
+  - User-triggered Yahoo league refresh may be exposed from the Leagues UI and must use the stored connected Yahoo OAuth grant instead of forcing OAuth.
+  - Yahoo-specific XML parsing must remain inside Yahoo integration services.
+public_interface:
+  - SyncYahooTeamRosterJob
+  - PlatformLeague::rosterSlots()
+  - YahooFantasyLeagueService::syncForConnection()
+  - YahooFantasyClient::fantasyXmlForConnection()
+  - integrations.yahoo.callback
+  - admin.yahoo.oauth.callback
+  - leagues.resync
+  - leagues.yahoo.resync
+example_usage: |
+  $summary = app(YahooFantasyLeagueService::class)->syncForConnection($connection);

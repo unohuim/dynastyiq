@@ -7,6 +7,8 @@ namespace Tests\Feature;
 use App\Events\FantraxUserConnected;
 use App\Http\Controllers\FantraxUserController;
 use App\Models\IntegrationSecret;
+use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
 use App\Models\User;
 use App\Services\FantraxLeagueService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,8 +59,13 @@ class FantraxUserControllerTest extends TestCase
         $response->assertOk()
             ->assertJson([
                 'ok' => true,
-                'leagues_count' => 1,
-                'status' => 'connected',
+                'integration' => [
+                    'provider' => 'fantrax',
+                    'status' => 'connected',
+                    'connected' => true,
+                    'leagues_count' => 0,
+                    'show_leagues' => false,
+                ],
             ]);
 
         $secret = IntegrationSecret::where('user_id', $user->id)
@@ -236,11 +243,33 @@ class FantraxUserControllerTest extends TestCase
             'secret' => 'secret-key',
             'status' => 'connected',
         ]);
+        $league = PlatformLeague::create([
+            'platform' => 'fantrax',
+            'platform_league_id' => 'league-1',
+            'name' => 'League One',
+            'sport' => 'hockey',
+        ]);
+        $team = PlatformTeam::create([
+            'platform_league_id' => $league->id,
+            'platform_team_id' => 'team-1',
+            'name' => 'Team One',
+        ]);
+        $user->platformLeagues()->attach($league->id, [
+            'team_id' => $team->id,
+            'is_active' => true,
+            'extras' => json_encode(['provider' => 'fantrax']),
+            'synced_at' => now(),
+        ]);
 
         $response = $this->from('/settings')->actingAs($user)->post(route('integrations.fantrax.disconnect'));
 
         $response->assertRedirect('/settings');
         $response->assertSessionHas('status', 'Fantrax disconnected.');
         $this->assertDatabaseCount('integration_secrets', 0);
+        $this->assertDatabaseHas('league_user_teams', [
+            'user_id' => $user->id,
+            'platform_league_id' => $league->id,
+            'is_active' => false,
+        ]);
     }
 }

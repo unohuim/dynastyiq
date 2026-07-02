@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Events\ImportStreamEvent;
 use App\Jobs\ImportNHLPlayerJob;
+use App\Jobs\ImportNhlDraftPicksJob;
 use App\Jobs\ImportPlayersJob;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -148,22 +149,72 @@ it('keeps import run caches isolated per importRunId', function () {
 it('dispatches a job per team when the import command is executed', function () {
     Event::fake();
     Bus::fake();
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/team' => Http::response([
+            'data' => collect([
+                'ANA',
+                'ARI',
+                'BOS',
+                'BUF',
+                'CAR',
+                'CBJ',
+                'CGY',
+                'CHI',
+                'COL',
+                'DAL',
+                'DET',
+                'EDM',
+                'FLA',
+                'LAK',
+                'MIN',
+                'MTL',
+                'NJD',
+                'NSH',
+                'NYI',
+                'NYR',
+                'OTT',
+                'PHI',
+                'PIT',
+                'SEA',
+                'SJS',
+                'STL',
+                'TBL',
+                'TOR',
+                'UTA',
+                'VAN',
+                'VGK',
+                'WPG',
+                'WSH',
+            ])->map(fn (string $abbrev, int $index): array => [
+                'id' => $index + 1,
+                'triCode' => $abbrev,
+                'fullName' => "{$abbrev} Test Club",
+            ])->all(),
+        ]),
+    ]);
 
     $this->artisan('nhl:import', ['--players' => true])->assertOk();
 
-    $dispatched = Bus::dispatched(ImportPlayersJob::class);
-    expect($dispatched)->toHaveCount(33);
+    $runIds = collect();
 
-    $runIds = $dispatched->map(function ($call) {
-        /** @var ImportPlayersJob $job */
-        $job = is_array($call) ? $call[0] : $call;
-        $ref = new ReflectionClass($job);
-        $prop = $ref->getProperty('importRunId');
-        $prop->setAccessible(true);
+    Bus::assertBatched(function ($batch) use ($runIds): bool {
+        $jobs = collect($batch->jobs)
+            ->filter(fn ($job): bool => $job instanceof ImportPlayersJob)
+            ->values();
 
-        return $prop->getValue($job);
+        $jobs->each(function (ImportPlayersJob $job) use ($runIds): void {
+            $ref = new ReflectionClass($job);
+            $prop = $ref->getProperty('importRunId');
+            $prop->setAccessible(true);
+
+            $runIds->push($prop->getValue($job));
+        });
+
+        return $batch->name === 'NHLImport:PlayersThenDraftPicks'
+            && $jobs->count() === 33;
     });
+    Bus::assertNotDispatched(ImportNhlDraftPicksJob::class);
 
     expect($runIds)->each->toBeString();
-    expect($runIds->unique()->count())->toBe($runIds->count());
+    expect($runIds->unique()->count())->toBe(1);
 });

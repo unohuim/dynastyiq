@@ -1,6 +1,6 @@
 {{-- resources/views/stats-view.blade.php --}}
 <x-app-layout>
-  @php $mobileBreakpoint = config('viewports.mobile', 768); @endphp
+  @php $nonDesktopBreakpoint = config('viewports.desktop', 1024); @endphp
 
   <style>
     [x-cloak]{display:none!important}
@@ -60,6 +60,7 @@
       window.__stats = @json($payload);
       window.api = { stats: "{{ url('/api/stats') }}" };
       window.__connectedLeagues = @json($connectedLeagues);
+      window.__statsMobileBreakpoint = @json($nonDesktopBreakpoint);
 
       // ensure every row has row.stats{}
       function normalizeStatsPayload(payload){
@@ -99,7 +100,7 @@
             <div class="-mr-px grid grow grid-cols-1">
               {{-- Perspective select lives in the bar (not inside drawer) --}}
               <select x-model="perspective" @change="fetchPayload()"
-                      class="col-start-1 row-start-1 block w-full -md bg-white py-1.5 pl-10 pr-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:outline-indigo-600 sm:pl-9 sm:text-sm/6">
+                      class="col-start-1 row-start-1 block w-full -md bg-white py-1.5 pl-10 pr-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:outline-indigo-600">
                 <template x-for="p in availablePerspectives" :key="p.slug">
                   <option :value="p.slug" x-text="p.name"></option>
                 </template>
@@ -110,7 +111,7 @@
       </template>
 
       {{-- =============== DESKTOP BAR =============== --}}
-      <div class="hidden sm:block px-4">
+      <div x-show="!isMobile" x-cloak class="px-4">
         <div class="relative z-30 overflow-visible rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2">
           <div class="flex flex-wrap justify-between items-center gap-3 p-3">
 
@@ -252,30 +253,16 @@
 
             <!-- Positions + Actions (desktop bar, single row) -->
             <div class="w-full flex items-center gap-2 pb-3">
-                <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
+                <template x-for="p in positionButtons" :key="'pos-'+p">
                     <button type="button"
                             class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                            :class="filters.pos.includes(p)
+                            :class="isPositionButtonActive(p)
                             ? 'bg-indigo-600 text-white ring-indigo-600/30'
                             : 'bg-white text-gray-700 hover:bg-gray-50'"
-                            @click="togglePos(p); fetchPayload()"
+                            :aria-label="positionButtonLabel(p)"
+                            @click="togglePositionButton(p); fetchPayload()"
                             x-text="p"></button>
                 </template>
-
-                <button type="button"
-                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                        :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                        @click="togglePosType('F'); fetchPayload()">F</button>
-
-                <button type="button"
-                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                        :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                        @click="togglePosType('D'); fetchPayload()">D</button>
-
-                <button type="button"
-                        class="h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors"
-                        :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                        @click="togglePosType('G'); fetchPayload()">G</button>
 
 
                 <!-- Actions on far right -->
@@ -300,11 +287,11 @@
 
 
       {{-- Mount point for the list/table --}}
-      <div id="stats-page" class="sm:px-4"></div>
+      <div id="stats-page" :class="isMobile ? '' : 'px-4'"></div>
 
       <!-- ======================= MOBILE DRAWER ======================= -->
       <template x-if="isMobile">
-        <div x-cloak class="sm:hidden">
+        <div x-cloak>
           <!-- Backdrop -->
           <div
             x-show="isFilterOpen"
@@ -348,37 +335,17 @@
                 <label class="block text-[11px] text-gray-500 mb-1">Positions</label>
 
                 <div class="gap-2 pb-2">
-                  <!-- LW, C, RW use pos[] -->
                   <div class="flex space-x-4">
-                    <template x-for="p in ['LW','C','RW']" :key="'pos-'+p">
+                    <template x-for="p in positionButtons" :key="'pos-'+p">
                       <span class="flex-row">
                         <button type="button"
                                 class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                                :class="filters.pos.includes(p) ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                                @click="togglePos(p)"
+                                :class="isPositionButtonActive(p) ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                :aria-label="positionButtonLabel(p)"
+                                @click="togglePositionButton(p)"
                                 x-text="p"></button>
                       </span>
                     </template>
-
-                    <!-- F, D, G use pos_type[] -->
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('F') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('F')">F</button>
-                    </span>
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('D') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('D')">D</button>
-                    </span>
-                    <span class="flex">
-                      <button type="button"
-                              class="h-8 w-8 rounded-full text-[11px] font-semibold ring-1 ring-gray-200 transition-colors"
-                              :class="filters.pos_type.includes('G') ? 'bg-indigo-600 text-white ring-indigo-600/30' : 'bg-white text-gray-700 hover:bg-gray-50'"
-                              @click="togglePosType('G')">G</button>
-                    </span>
                   </div>
                 </div>
               </div>
@@ -514,7 +481,7 @@
 
       {{-- ================= DESKTOP FILTERS DRAWER (SLIDERS ONLY) ================= --}}
       <template x-if="!isMobile">
-        <div x-cloak class="hidden sm:block">
+        <div x-cloak>
           <!-- Backdrop -->
           <div
             x-show="isFilterOpen"
@@ -687,7 +654,7 @@
 
 
         /* layout */
-        isMobile: window.innerWidth < {{ $mobileBreakpoint }} ,
+        isMobile: window.innerWidth < {{ $nonDesktopBreakpoint }} ,
 
         /* controller defaults */
         perspective: @js($selectedSlug),
@@ -701,6 +668,7 @@
         availablePerspectives: @js($perspectives),
         availableSeasons: (@js($payload['meta']['availableSeasons'] ?? [])).map(String),
         availableGameTypes: (@js($payload['meta']['availableGameTypes'] ?? [2])).map(String),
+        positionButtons: (@js($payload['meta']['positionButtons'] ?? ['LW','C','RW','F','D','G'])).map(String),
         canSlice: Boolean(@js($payload['meta']['canSlice'] ?? true)),
 
         /* state */
@@ -786,6 +754,31 @@
         },
 
         /* position pills */
+        togglePositionButton(p) {
+          if (['F', 'D', 'G'].includes(p)) {
+            this.togglePosType(p);
+            return;
+          }
+
+          this.togglePos(p);
+        },
+        isPositionButtonActive(p) {
+          if (['F', 'D', 'G'].includes(p)) {
+            return (this.filters.pos_type || []).includes(p);
+          }
+
+          return (this.filters.pos || []).includes(p);
+        },
+        positionButtonLabel(p) {
+          return {
+            F: 'Forwards',
+            C: 'Centers',
+            LW: 'Left wings',
+            RW: 'Right wings',
+            D: 'Defense',
+            G: 'Goalies'
+          }[p] || p;
+        },
         togglePos(p) {
           this.filters.pos_type = (this.filters.pos_type || []).filter(t => t !== 'G' && t !== 'D');
           this.filters.pos      = (this.filters.pos      || []).filter(v => v !== 'G');
@@ -850,7 +843,7 @@
 
         /* meta sync */
         init(){
-          window.addEventListener('resize', ()=>{ this.isMobile = window.innerWidth < {{ $mobileBreakpoint }}; });
+          window.addEventListener('resize', ()=>{ this.isMobile = window.innerWidth < {{ $nonDesktopBreakpoint }}; });
 
 
           window.addEventListener('statsUpdated', (e) => {
@@ -868,6 +861,7 @@
             if (meta.season    != null) this.season_id = String(meta.season);
             if (meta.game_type != null) this.game_type = String(meta.game_type);
             if (typeof meta.canSlice === 'boolean') this.canSlice = meta.canSlice;
+            if (Array.isArray(meta.positionButtons)) this.positionButtons = meta.positionButtons.map(String);
 
 
             // reflect server echo back into the dropdown

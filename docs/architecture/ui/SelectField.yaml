@@ -1,0 +1,28 @@
+name: Select Field
+type: Frontend Component
+location:
+  - resources/js/components/SelectField/select-field.js
+purpose: Provide a reusable Tailwind-styled native select enhancement for page-local modules.
+when_to_use:
+  - Native select controls that should emit page-local JavaScript events.
+  - Short option lists where browser select behavior remains sufficient.
+  - Pages that need multiple distinguishable select inputs without global state.
+when_not_to_use:
+  - Searchable option pickers or custom menu behavior.
+  - Domain-specific filtering, API calls, URL state, or rendering.
+  - App-wide state, routing, or component registry behavior.
+rules:
+  - SelectField must remain provider- and page-agnostic.
+  - SelectField must use Tailwind utility classes only.
+  - SelectField must enhance a native select instead of replacing it with custom menu behavior.
+  - SelectField must emit DOM events with name, value, label, scope, and id fields.
+  - SelectField must not own API calls, URL state, domain events, or domain rendering.
+  - Multiple SelectField instances on one page must remain distinguishable by emitted payload fields.
+public_interface:
+  - SelectField
+  - mountSelectFields()
+  - select-field:change
+example_usage: |
+  <div data-select-field data-select-field-name="source" data-select-field-scope="player-triage">
+      <select name="source"></select>
+  </div>

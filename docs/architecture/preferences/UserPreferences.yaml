@@ -1,0 +1,27 @@
+name: User Preferences
+type: User Settings Pattern
+location:
+  - app/Http/Controllers/UserPreferencesController.php
+  - database/migrations/2025_09_07_222339_create_user_preferences.php
+  - resources/views/nav/partials/_right-account-drawer-notifications.blade.php
+purpose: Persist user-level UI and notification preferences separately from core identity fields.
+when_to_use:
+  - User-specific settings that should survive sessions.
+  - User notification preferences.
+  - User UI preferences that do not belong on users.
+when_not_to_use:
+  - Organization settings.
+  - Provider connection state.
+  - Authorization data.
+rules:
+  - Preferences must remain user-owned.
+  - Preferences must not replace authorization or organization settings.
+  - Preference values that behave like enums must be documented in docs/ENUMS.md.
+public_interface:
+  - user.preferences.update
+  - user_preferences
+  - UserPreferencesController
+example_usage: |
+  Route::put('/me/preferences', [UserPreferencesController::class, 'upsert'])
+      ->name('user.preferences.update');
+

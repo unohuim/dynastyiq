@@ -1,0 +1,30 @@
+name: Leagues Hub Layout
+type: UI Layout Pattern
+location:
+  - app/View/Components/LeaguesHubLayout.php
+  - resources/views/components/leagues-hub-layout.blade.php
+  - resources/js/components/LeaguesHubLayout.js
+  - resources/js/leagues-hub.js
+purpose: Provide a reusable shell for league hub pages and progressive enhancement behavior.
+when_to_use:
+  - League hub views.
+  - League pages that need shared page chrome.
+  - League pages that need shared JavaScript behavior.
+when_not_to_use:
+  - Community-only pages.
+  - Generic stats pages.
+rules:
+  - League hub pages should use the shared layout instead of duplicating shell markup.
+  - League hub behavior must remain scoped to league pages.
+  - League navigation items should show the platform provider when platform leagues can come from more than one provider.
+  - League provider refresh actions should live in the shared left navigation header when they affect the visible league list.
+  - League sync status feedback should remain transient in the shared left navigation, be driven by LeagueSyncStatusUpdated broadcasts, and use per-league bottom progress bars rather than row-level badges or border states.
+  - New or materially touched league hub UI must comply with docs/UI_DESIGN.md where feasible.
+public_interface:
+  - <x-leagues-hub-layout>
+  - resources/js/leagues-hub.js
+  - resources/js/components/LeaguesHubLayout.js
+example_usage: |
+  <x-leagues-hub-layout>
+      ...
+  </x-leagues-hub-layout>

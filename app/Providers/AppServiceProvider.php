@@ -2,6 +2,12 @@
 
 namespace App\Providers;
 
+use App\Events\PlayerExternalIdentityLinked;
+use App\Listeners\QueueCapWagesContractRefresh;
+use App\Listeners\QueueNhlIdentityResolution;
+use App\Listeners\SyncFantraxRosterMembershipsForLinkedIdentity;
+use App\Models\Player;
+use App\Observers\PlayerNhlIdentityObserver;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
@@ -44,6 +50,11 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(function (\SocialiteProviders\Manager\SocialiteWasCalled $event) {
             $event->extendSocialite('discord', \SocialiteProviders\Discord\Provider::class);
         });
+
+        Event::listen(PlayerExternalIdentityLinked::class, QueueCapWagesContractRefresh::class);
+        Event::listen(PlayerExternalIdentityLinked::class, QueueNhlIdentityResolution::class);
+        Event::listen(PlayerExternalIdentityLinked::class, SyncFantraxRosterMembershipsForLinkedIdentity::class);
+        Player::observe(PlayerNhlIdentityObserver::class);
 
 
 

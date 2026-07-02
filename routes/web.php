@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\PlayByPlayController;
 use App\Http\Controllers\PlayerImportController;
+use App\Http\Controllers\NhlPlayerTransactionController;
 use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
@@ -42,6 +43,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/api/stats', [StatsController::class, 'payload'])
         ->middleware('web')
         ->name('stats.payload');
+
+    Route::get('/transactions', [NhlPlayerTransactionController::class, 'index'])
+        ->name('transactions.index');
+
+    Route::get('/transactions/payload', [NhlPlayerTransactionController::class, 'payload'])
+        ->name('transactions.payload');
 
     // Discord Server joins
     Route::middleware('auth')->get('/auth/discord-server/redirect/{organization}', function (Organization $organization) {
@@ -94,6 +101,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->name('admin.dashboard');
+
+        // Yahoo user integration
+        Route::get('/integrations/yahoo/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])
+            ->name('integrations.yahoo.redirect');
+        Route::get('/integrations/yahoo/callback', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'callback'])
+            ->name('integrations.yahoo.callback');
 
         // Communities
         Route::get('/communities', [CommunitiesController::class, 'index'])
@@ -187,19 +200,70 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.imports');
                 Route::post('/imports/{key}/run', [\App\Http\Controllers\Admin\ImportsController::class, 'run'])
                     ->name('admin.imports.run');
+                Route::get('/imports/{key}/status', [\App\Http\Controllers\Admin\ImportsController::class, 'status'])
+                    ->name('admin.imports.status');
                 Route::post('/imports/{key}/retry', [\App\Http\Controllers\Admin\ImportsController::class, 'retry'])
                     ->name('admin.imports.retry');
+
+                // Yahoo OAuth proof
+                Route::get('/yahoo/oauth/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])
+                    ->name('admin.yahoo.oauth.redirect');
+                Route::get('/yahoo/oauth/callback', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'callback'])
+                    ->name('admin.yahoo.oauth.callback');
+                Route::post('/yahoo/players/import', \App\Http\Controllers\Admin\YahooPlayerImportController::class)
+                    ->name('admin.yahoo.players.import');
+
+                // NHL game import orchestration
+                Route::get('/nhl-game-imports/status', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'status'])
+                    ->name('admin.nhl-game-imports.status');
+                Route::get('/nhl-game-imports/source-gaps', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'sourceGaps'])
+                    ->name('admin.nhl-game-imports.source-gaps');
+                Route::post('/nhl-game-imports/source-gaps/{gameId}/rerun', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunSourceGap'])
+                    ->whereNumber('gameId')
+                    ->name('admin.nhl-game-imports.source-gaps.rerun');
+                Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
+                    ->name('admin.nhl-game-imports.discover');
+                Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])
+                    ->name('admin.nhl-game-imports.process');
+                Route::post('/nhl-game-imports/season-sync', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'seasonSync'])
+                    ->name('admin.nhl-game-imports.season-sync');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])
                     ->name('admin.player-triage');
+                Route::get('/player-triage/identities/{identity}/detail', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'detail'])
+                    ->name('admin.player-triage.detail');
 
-                Route::post('/player-triage/{platform}/{id}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
+                Route::post('/player-triage/identities/{identity}/link', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'link'])
                     ->name('admin.player-triage.link');
-                Route::post('/player-triage/{platform}/{id}/variant', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'addVariant'])
-                    ->name('admin.player-triage.variant');
-                Route::post('/player-triage/{platform}/{id}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
+                Route::post('/player-triage/identities/{identity}/link-matching-source', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'linkMatchingSource'])
+                    ->name('admin.player-triage.link-matching-source');
+                Route::post('/player-triage/identities/{identity}/link-external-source', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'linkExternalSource'])
+                    ->name('admin.player-triage.link-external-source');
+                Route::post('/player-triage/identities/{identity}/create-canonical', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'createCanonical'])
+                    ->name('admin.player-triage.create-canonical');
+                Route::post('/player-triage/identities/{identity}/resolve', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'resolve'])
+                    ->name('admin.player-triage.resolve');
+                Route::post('/player-triage/identities/{identity}/ignore', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'ignore'])
+                    ->name('admin.player-triage.ignore');
+                Route::post('/player-triage/identities/{identity}/defer', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'defer'])
                     ->name('admin.player-triage.defer');
+
+                // NHL game validation triage
+                Route::get('/nhl-validations', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'index'])
+                    ->name('admin.nhl-validations.index');
+                Route::get('/nhl-validations/{validation}', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'show'])
+                    ->name('admin.nhl-validations.show');
+                Route::post('/nhl-validations/{validation}/accept-exception', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acceptException'])
+                    ->name('admin.nhl-validations.accept-exception');
+                Route::post('/nhl-validations/{validation}/rerun', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerun'])
+                    ->name('admin.nhl-validations.rerun');
+                Route::post('/nhl-validations/{validation}/rerun-summary', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerunSummary'])
+                    ->name('admin.nhl-validations.rerun-summary');
+                Route::post('/nhl-validations/{validation}/rerun-boxscore', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerunBoxscore'])
+                    ->name('admin.nhl-validations.rerun-boxscore');
+                Route::post('/nhl-validations/{validation}/rebuild-game', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rebuildGame'])
+                    ->name('admin.nhl-validations.rebuild-game');
 
                 // Scheduler
                 Route::get('/scheduler', [\App\Http\Controllers\Admin\SchedulerController::class, 'index'])
@@ -233,6 +297,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         // Leagues
         Route::get('/leagues', [LeagueController::class, 'index'])
             ->name('leagues.index');
+        Route::post('/leagues/resync', [LeagueController::class, 'resync'])
+            ->name('leagues.resync');
+        Route::post('/leagues/yahoo/resync', [LeagueController::class, 'resyncYahoo'])
+            ->name('leagues.yahoo.resync');
         Route::get('/leagues/{league_id}', [LeagueController::class, 'show'])
             ->name('leagues.show');
         Route::get('/leagues/{league_id}/panel', [LeagueController::class, 'panel'])

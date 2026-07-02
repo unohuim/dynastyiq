@@ -9,6 +9,14 @@ class NhlGameSummary extends Model
 {
     protected $guarded = [];
 
+    protected $casts = [
+        'goalie_started' => 'boolean',
+        'quality_start' => 'boolean',
+        'really_bad_start' => 'boolean',
+        'sv_pct' => 'float',
+        'gaa' => 'float',
+    ];
+
     public function game(): BelongsTo
     {
         return $this->belongsTo(NhlGame::class, 'nhl_game_id', 'nhl_game_id');

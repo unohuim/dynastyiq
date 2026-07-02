@@ -1,0 +1,23 @@
+name: Card Section Component
+type: Blade Component
+location:
+  - app/View/Components/CardSection.php
+  - resources/views/components/card-section.blade.php
+purpose: Render reusable collapsible or grouped card-like page sections.
+when_to_use:
+  - Existing views that need consistent section framing.
+  - Maintaining current section UI while awaiting alignment with docs/UI_DESIGN.md.
+when_not_to_use:
+  - New card-heavy dashboard layouts.
+  - UI that conflicts with docs/UI_DESIGN.md.
+rules:
+  - CardSection is an existing component, not a blanket approval for card-heavy new UI.
+  - New or materially touched usage must be checked against docs/UI_DESIGN.md.
+  - Section behavior should remain reusable rather than page-local duplicated markup.
+public_interface:
+  - <x-card-section>
+example_usage: |
+  <x-card-section title="Members">
+      ...
+  </x-card-section>
+

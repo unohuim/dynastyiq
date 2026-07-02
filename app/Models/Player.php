@@ -11,6 +11,7 @@ use App\Models\RankingProfile;
 use App\Models\Stat;
 use App\Models\Contract;
 use App\Models\NhlUnit;
+use App\Models\PlayerExternalIdentity;
 
 class Player extends Model
 {
@@ -20,6 +21,16 @@ class Player extends Model
      * @var array<int,string>
      */
     protected $guarded = [];
+
+    /**
+     * Attribute casts.
+     *
+     * @var array<string,string>
+     */
+    protected $casts = [
+        'is_goalie' => 'boolean',
+        'is_prospect' => 'boolean',
+    ];
 
     /**
      * The user's “current” ranking for this player (latest in their default profile).
@@ -77,6 +88,16 @@ class Player extends Model
     }
 
     /**
+     * Provider identities linked to this canonical player.
+     *
+     * @return HasMany<PlayerExternalIdentity>
+     */
+    public function externalIdentities(): HasMany
+    {
+        return $this->hasMany(PlayerExternalIdentity::class);
+    }
+
+    /**
      * Get the most recent Stat record where league_abbrev = 'NHL'.
      *
      * @return HasOne<Stat>
@@ -110,6 +131,17 @@ class Player extends Model
 
 
 
+    /**
+     * Get the player's age from the existing accessor.
+     */
+    public function age(): ?int
+    {
+        return $this->age;
+    }
+
+    /**
+     * Get the player's age.
+     */
     public function getAgeAttribute(): ?int
     {
         return $this->dob

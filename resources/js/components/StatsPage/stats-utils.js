@@ -2,8 +2,9 @@ export function sortData(data, sortKey, sortDirection = 'desc') {
     if (!sortKey) return data;
 
     return [...data].sort((a, b) => {
-        const aValue = a.stats?.[sortKey] ?? a[sortKey];
-        const bValue = b.stats?.[sortKey] ?? b[sortKey];
+        const key = sortKey === 'toi' ? 'toi_seconds' : sortKey;
+        const aValue = a.stats?.[key] ?? a[key];
+        const bValue = b.stats?.[key] ?? b[key];
 
         if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
@@ -18,13 +19,41 @@ export function formatContractValue(value) {
 
 export const statFormatters = {
     contract_value: val => formatContractValue(val),
+    league: val => formatLeagueName(val),
     shooting_percentage: val => typeof val === 'number' ? (val * 100).toFixed(1) + '%' : val,
+    ipp: val => formatPercentageTwoDecimals(val),
     avgPTSpGP: val => typeof val === 'number' ? Number(val).toFixed(2) : val,
+    g_per_gp: val => formatOneDecimalTruncated(val),
+    pts_per_gp: val => formatOneDecimalTruncated(val),
 };
 
 export function formatStatValue(key, val) {
     const formatter = statFormatters[key];
     return formatter ? formatter(val) : val ?? '';
+}
+
+function formatOneDecimalTruncated(value) {
+    const number = typeof value === 'number' ? value : Number(value);
+
+    if (!Number.isFinite(number)) {
+        return value ?? '';
+    }
+
+    return (Math.trunc(number * 10) / 10).toFixed(1);
+}
+
+function formatPercentageTwoDecimals(value) {
+    const number = typeof value === 'number' ? value : Number(value);
+
+    if (!Number.isFinite(number)) {
+        return value ?? '';
+    }
+
+    return `${(number * 100).toFixed(2)}%`;
+}
+
+function formatLeagueName(value) {
+    return String(value ?? '').slice(0, 8);
 }
 
 

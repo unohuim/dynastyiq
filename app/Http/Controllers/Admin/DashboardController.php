@@ -9,13 +9,13 @@ use App\Models\Player;
 use App\Services\AdminImports;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Str;
 
 class DashboardController extends Controller
 {
-    public function __construct(private AdminImports $imports)
-    {
+    public function __construct(
+        private AdminImports $imports,
+    ) {
     }
 
     public function index(Request $request)
@@ -33,28 +33,24 @@ class DashboardController extends Controller
             return [
                 'key' => $source['key'],
                 'label' => $source['label'],
-                'last_run' => $lastRun?->ran_at?->toDateTimeString(),
-                'run_url' => route('admin.imports.run', ['key' => $source['key']]),
+                'last_run' => ($lastRun?->finished_at ?? $lastRun?->started_at)?->toIso8601String(),
+                'status' => $lastRun?->status,
+                'started_at' => $lastRun?->started_at?->toIso8601String(),
+                'finished_at' => $lastRun?->finished_at?->toIso8601String(),
+                'duration_seconds' => $lastRun?->duration_seconds,
+                'run_url' => isset($source['run_route'])
+                    ? route($source['run_route'])
+                    : route('admin.imports.run', ['key' => $source['key']]),
+                'status_url' => route('admin.imports.status', ['key' => $source['key']]),
+                'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
             ];
         });
 
-        $unmatchedPlayersCount = FantraxPlayer::query()->whereNull('player_id')->count();
         $hasPlayers = Player::query()->exists();
         $hasFantraxPlayers = FantraxPlayer::query()->exists();
 
-        $events = collect(Schedule::events())->map(function ($event) {
-            return [
-                'command' => $event->command ?? $event->description,
-                'expression' => $event->expression,
-                'next' => optional($event->nextRunDate())->toDateTimeString(),
-                'last' => method_exists($event, 'lastRunDate') ? optional($event->lastRunDate())->toDateTimeString() : null,
-            ];
-        });
-
         return view('admin.dashboard', [
             'imports' => $imports,
-            'unmatchedPlayersCount' => $unmatchedPlayersCount,
-            'events' => $events,
             'hasPlayers' => $hasPlayers,
             'hasFantraxPlayers' => $hasFantraxPlayers,
         ]);
@@ -109,5 +105,28 @@ class DashboardController extends Controller
                 'has_more' => ($offset + $perPage) < $total,
             ],
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function importProgressPayload(ImportRun $importRun): array
+    {
+        $total = $importRun->total_records;
+        $processed = $importRun->processed_records ?? 0;
+        $dynamicTotal = (bool) ($importRun->meta['dynamic_total'] ?? false);
+
+        return [
+            'label' => $importRun->progress_label,
+            'total_records' => $total,
+            'processed_records' => $processed,
+            'successful_records' => $importRun->successful_records ?? 0,
+            'failed_records' => $importRun->failed_records ?? 0,
+            'skipped_records' => $importRun->skipped_records ?? 0,
+            'dynamic_total' => $dynamicTotal,
+            'percentage' => $total && ! $dynamicTotal
+                ? min(100, (int) floor(($processed / max(1, $total)) * 100))
+                : null,
+        ];
     }
 }

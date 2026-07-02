@@ -1,0 +1,46 @@
+name: Admin NHL Game Imports
+type: Admin Queue Orchestration UI
+location:
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - app/Jobs/SeasonSumJob.php
+  - app/Models/NhlGameImportRun.php
+  - app/Events/NhlGameImportStatusUpdated.php
+  - database/migrations/2026_06_29_030000_create_nhl_game_import_runs_table.php
+  - resources/views/admin/operational.blade.php
+  - resources/js/admin/admin-hub.js
+purpose: Let super admins dispatch and monitor NHL game discovery, processing, and season stat rollup jobs from the admin control panel without shelling out to Artisan commands.
+when_to_use:
+  - Adding admin UI controls for NHL game discovery date windows.
+  - Adding admin UI controls for dispatching NHL game processing orchestrator jobs.
+  - Adding admin UI controls for dispatching season-level NHL stat rollups.
+  - Showing recent admin-queued NHL game import runs and their pipeline progress.
+when_not_to_use:
+  - Executing NHL import transformations synchronously during a web request.
+  - Replacing NhlImportOrchestrator stage ownership.
+  - Replacing nhl_import_progress as the pipeline stage state source of truth.
+rules:
+  - The admin controller dispatches existing NHL jobs directly instead of invoking Artisan commands.
+  - Discovery requests must queue discovery work and must not perform downstream import stages.
+  - Processing requests must queue orchestrator jobs and must not directly call import services.
+  - NhlGameImportRun records describe admin requests, not individual NHL stage rows.
+  - The admin status payload must derive pipeline progress from nhl_import_progress.
+  - Discovery rows should present known discovery facts until processing starts.
+  - Processing should be launched from a discovery run row so the selected date range is explicit.
+  - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
+  - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.
+  - Reverb updates should be lightweight invalidation signals and the browser must reload status from the admin status endpoint.
+  - Game import UI behavior must remain page-local in the adminHub module.
+  - Admin NHL game import routes must remain protected by admin middleware.
+public_interface:
+  - admin.nhl-game-imports.status
+  - admin.nhl-game-imports.discover
+  - admin.nhl-game-imports.process
+  - admin.nhl-game-imports.season-sync
+  - NhlGameImportController
+  - NhlGameImportRun
+  - NhlGameImportStatusUpdated
+  - adminHub gameImports state
+example_usage: |
+  NhlDiscoveryJob::dispatch($start, $end);
+  NhlOrchestratorJob::dispatch($gameDate);
+  SeasonSumJob::dispatch($seasonId, $runId);

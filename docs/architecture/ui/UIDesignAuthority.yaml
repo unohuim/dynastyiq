@@ -1,0 +1,24 @@
+name: UI Design Authority
+type: UI Governance Rule
+location:
+  - docs/UI_DESIGN.md
+  - docs/ui_backlog.md
+purpose: Define the required UI direction for new and materially touched UI while tracking existing deviations separately.
+when_to_use:
+  - Any UI change.
+  - Page migration.
+  - Blade component update.
+  - Frontend JavaScript work.
+when_not_to_use:
+  - Backend-only changes with no user-facing UI impact.
+rules:
+  - New UI must follow docs/UI_DESIGN.md.
+  - Materially touched UI must move toward docs/UI_DESIGN.md unless an explicit exception is documented.
+  - Existing deviations may remain only while tracked in docs/ui_backlog.md.
+  - UI constraints remain canonical in docs/UI_DESIGN.md and must not be duplicated in architecture files.
+public_interface:
+  - docs/UI_DESIGN.md
+  - docs/ui_backlog.md
+example_usage: |
+  New interactive pages must use the page module contract unless an approved exception is documented.
+

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\NhlDiscoveryJob;
+use App\Models\NhlGameImportRun;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -45,7 +47,9 @@ class NhlDiscoverCommand extends Command
 
         // 1) --date has absolute precedence
         if ($dateOpt) {
-            dispatch(new NhlDiscoveryJob($dateOpt, $dateOpt));
+            $this->queueDiscoveryRun($dateOpt, $dateOpt, NhlGameImportRun::MODE_DATE, [
+                'date' => $dateOpt->toDateString(),
+            ]);
             $this->info("Queued discovery (single day) {$dateOpt->toDateString()}.");
             return self::SUCCESS;
         }
@@ -57,7 +61,9 @@ class NhlDiscoverCommand extends Command
                 $this->error("Invalid season: {$season}");
                 return self::INVALID;
             }
-            dispatch(new NhlDiscoveryJob($seasonStart, $seasonEnd));
+            $this->queueDiscoveryRun($seasonStart, $seasonEnd, NhlGameImportRun::MODE_SEASON, [
+                'season' => $season,
+            ]);
             $this->info("Queued discovery for season {$season} ({$seasonStart->toDateString()} → {$seasonEnd->toDateString()}).");
             return self::SUCCESS;
         }
@@ -79,7 +85,9 @@ class NhlDiscoverCommand extends Command
                 [$start, $end] = [$end, $start];
             }
 
-            dispatch(new NhlDiscoveryJob($start, $end));
+            $this->queueDiscoveryRun($start, $end, NhlGameImportRun::MODE_NEWDAYS, [
+                'newdays' => $newDays,
+            ]);
             $this->info("Queued discovery via --newdays {$start->toDateString()} → {$end->toDateString()}.");
             return self::SUCCESS;
         }
@@ -111,7 +119,12 @@ class NhlDiscoverCommand extends Command
             [$start, $end] = [$end, $start];
         }
 
-        dispatch(new NhlDiscoveryJob($start, $end));
+        $this->queueDiscoveryRun(
+            $start,
+            $end,
+            $this->modeForOptions($startOpt, $endOpt, $days),
+            $this->payloadForOptions($startOpt, $endOpt, $days)
+        );
         $this->info("Queued discovery {$start->toDateString()} → {$end->toDateString()}.");
 
         return self::SUCCESS;
@@ -161,6 +174,59 @@ class NhlDiscoverCommand extends Command
     private function normalizeOrder(Carbon $a, Carbon $b): array
     {
         return $a->gte($b) ? [$a, $b] : [$b, $a];
+    }
+
+    /**
+     * Record an admin-visible discovery run and dispatch the queued discovery job.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function queueDiscoveryRun(Carbon $start, Carbon $end, string $mode, array $payload): void
+    {
+        $run = NhlGameImportRun::create([
+            'action' => NhlGameImportRun::ACTION_DISCOVER,
+            'mode' => $mode,
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'start_date' => $start->toDateString(),
+            'end_date' => $end->toDateString(),
+            'date_count' => (int) $end->diffInDays($start) + 1,
+            'queued_jobs' => 1,
+            'payload' => $payload,
+            'created_by' => null,
+        ]);
+
+        dispatch(new NhlDiscoveryJob($start, $end));
+        broadcast(new NhlGameImportStatusUpdated('discovery-queued', $run->id));
+    }
+
+    /**
+     * Determine the admin run mode for command options that use the default date-window branch.
+     */
+    private function modeForOptions(?Carbon $start, ?Carbon $end, ?int $days): string
+    {
+        if ($days !== null) {
+            return NhlGameImportRun::MODE_DAYS;
+        }
+
+        if ($start || $end) {
+            return NhlGameImportRun::MODE_RANGE;
+        }
+
+        return NhlGameImportRun::MODE_DEFAULT;
+    }
+
+    /**
+     * Build a compact payload that mirrors the command-line date options.
+     *
+     * @return array<string, mixed>
+     */
+    private function payloadForOptions(?Carbon $start, ?Carbon $end, ?int $days): array
+    {
+        return array_filter([
+            'start' => $start?->toDateString(),
+            'end' => $end?->toDateString(),
+            'days' => $days,
+        ], fn ($value): bool => $value !== null && $value !== '');
     }
 
     /**

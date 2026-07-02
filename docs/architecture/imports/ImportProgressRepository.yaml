@@ -1,0 +1,32 @@
+name: Import Progress Repository
+type: Persistence Abstraction
+location:
+  - app/Repositories/NhlImportProgressRepo.php
+  - database/migrations/2025_08_13_155830_nhl_import_progress.php
+purpose: Centralize reads and writes to nhl_import_progress for import claim, status, dependency, and stale-job behavior.
+when_to_use:
+  - Mutating NHL import progress state.
+  - Checking NHL import progress state.
+  - Implementing orchestrator progress behavior.
+when_not_to_use:
+  - Generic import runs.
+  - Admin batch history.
+  - Non-NHL queue status.
+rules:
+  - NHL import progress persistence must go through this repository when part of orchestration.
+  - Claim operations must remain atomic and must transition scheduled rows to running in the same write.
+  - Status values must remain aligned with docs/ENUMS.md.
+  - Base NHL import jobs must verify running state before performing stage work.
+  - Explicit admin reruns must reschedule progress rows through this repository.
+public_interface:
+  - NhlImportProgressRepo::claim()
+  - NhlImportProgressRepo::isRunning()
+  - NhlImportProgressRepo::markCompleted()
+  - NhlImportProgressRepo::reschedule()
+  - NhlImportProgressRepo::markError()
+  - NhlImportProgressRepo::scheduledExists()
+  - NhlImportProgressRepo::completedDepsCount()
+example_usage: |
+  if ($repo->claim($gameId, 'pbp')) {
+      dispatch(new ImportPbpNhlJob($gameId));
+  }

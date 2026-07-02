@@ -1,0 +1,30 @@
+name: Discord Server Connection
+type: External Platform Connection Pattern
+location:
+  - app/Models/DiscordServer.php
+  - app/Http/Controllers/Auth/DiscordServerCallbackController.php
+  - app/Http/Controllers/Api/DiscordWebhookController.php
+  - app/Events/DiscordMemberConnected.php
+  - app/Listeners/MarkDiscordConnected.php
+purpose: Attach Discord guilds to organizations and connect Discord member events to users, memberships, and bot behavior.
+when_to_use:
+  - Guild connection OAuth.
+  - Discord member join webhooks.
+  - Server-aware community features.
+when_not_to_use:
+  - General OAuth login.
+  - Fantrax role sync internals.
+  - Non-Discord provider data.
+rules:
+  - Discord server records represent organization-connected guilds.
+  - Discord member events must enter through server-side webhook handling.
+  - Discord connection state must not replace app authorization.
+public_interface:
+  - discord-server.redirect
+  - discord-server.callback
+  - discord.webhooks.memberJoined
+  - DiscordServer
+  - DiscordMemberConnected
+example_usage: |
+  event(new DiscordMemberConnected($user, $discordServer));
+

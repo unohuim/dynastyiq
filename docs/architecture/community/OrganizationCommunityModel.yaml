@@ -1,0 +1,35 @@
+name: Organization Community Model
+type: Domain Pattern
+location:
+  - app/Models/Organization.php
+  - app/Models/OrganizationLeague.php
+  - app/Models/Membership.php
+  - app/Models/MembershipTier.php
+  - app/Models/MemberProfile.php
+  - app/Http/Controllers/CommunitiesController.php
+  - app/Http/Controllers/CommunityMemberController.php
+  - app/Http/Controllers/CommunityTierController.php
+purpose: Represent communities as organizations with leagues, members, member profiles, membership tiers, and provider-backed memberships.
+when_to_use:
+  - Community hub pages.
+  - Organization-level league linkage.
+  - Member management.
+  - Tier management.
+when_not_to_use:
+  - User authentication identity.
+  - Raw Discord guild state.
+  - Provider-specific sync internals.
+rules:
+  - Organization is the community aggregate root for community-facing features.
+  - Membership and tier behavior must remain organization-scoped.
+  - Provider sync may update memberships but must not replace community authorization.
+public_interface:
+  - communities.index
+  - communities.members.*
+  - communities.tiers.*
+  - Organization
+  - Membership
+  - MembershipTier
+example_usage: |
+  $memberships = $organization->memberships()->with(['user', 'tier'])->get();
+

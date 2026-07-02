@@ -1,0 +1,31 @@
+name: NHL Game Import Eligibility
+type: Domain Rule Service
+location:
+  - app/Services/NhlGameImportEligibility.php
+  - app/Services/NhlDiscoverGames.php
+  - app/Services/TrackGamesImportProgressNhl.php
+  - app/Services/ImportNHLPlayByPlay.php
+  - app/Jobs/BaseNhlJob.php
+purpose: Centralize the supported NHL provider game types for game import discovery, play-by-play import, and later stage advancement.
+when_to_use:
+  - Filtering discovered NHL games before scheduling import progress rows.
+  - Validating the play-by-play provider payload before storing game-scoped data.
+  - Guarding non-PBP import stages that depend on a stored NHL game type.
+when_not_to_use:
+  - Defining canonical game type meanings, which belong in docs/ENUMS.md.
+  - Deciding import stage ordering or dependency completion.
+  - Validating fantasy stats request filters outside NHL game import processing.
+rules:
+  - Supported game type values must match docs/ENUMS.md.
+  - Discovery must not schedule unsupported game types.
+  - Play-by-play import must reject unsupported or missing provider game types.
+  - Non-PBP game import stages must not run until PBP has stored an allowed game type.
+public_interface:
+  - NhlGameImportEligibility::ALLOWED_GAME_TYPES
+  - NhlGameImportEligibility::allowsGameType()
+  - NhlGameImportEligibility::allowsStoredGame()
+  - NhlGameImportEligibility::allowedGameTypeList()
+example_usage: |
+  if (! $eligibility->allowsStoredGame($gameId)) {
+      throw new DomainException('Unsupported NHL game type.');
+  }

@@ -66,6 +66,10 @@ class TrackGamesImportProgressNhl
                 continue;
             }
 
+            if (! app(NhlGameImportEligibility::class)->allowsGameType($gameType)) {
+                continue;
+            }
+
             $dateOnly = Carbon::parse($gameDate)->toDateString();
 
             foreach ($this->importTypes as $type) {

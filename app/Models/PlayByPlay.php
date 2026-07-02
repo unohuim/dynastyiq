@@ -18,6 +18,10 @@ class PlayByPlay extends Model
     // Allow mass assignment on all attributes
     protected $guarded = [];
 
+    protected $casts = [
+        'metadata' => 'array',
+    ];
+
     /**
      * Get the game associated with this play-by-play event.
      */

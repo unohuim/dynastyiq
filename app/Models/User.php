@@ -8,6 +8,7 @@ namespace App\Models;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -119,6 +120,16 @@ class User extends Authenticatable
     public function fantraxSecret()
     {
         return $this->hasOne(IntegrationSecret::class)->where('provider', 'fantrax');
+    }
+
+    /**
+     * Connected Yahoo Fantasy OAuth grant for this user.
+     *
+     * @return HasOne<YahooFantasyConnection,User>
+     */
+    public function yahooFantasyConnection(): HasOne
+    {
+        return $this->hasOne(YahooFantasyConnection::class);
     }
 
     // --- Domain helpers -----------------------------------------------------

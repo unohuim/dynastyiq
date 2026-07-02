@@ -1,0 +1,30 @@
+name: NHL Player Transactions
+type: Import History Pattern
+location:
+  - app/Models/NhlPlayerTransaction.php
+  - app/Services/ImportCapWagesPlayer.php
+  - database/migrations/*_create_nhl_player_transactions_table.php
+purpose: Store real hockey player movement history separately from fantasy roster transactions.
+when_to_use:
+  - Persisting provider-sourced NHL-domain player acquisition or movement events.
+  - Showing transaction history for a canonical player after provider identity linkage.
+  - Retaining transaction evidence for unlinked provider identities until a canonical player exists.
+when_not_to_use:
+  - Storing fantasy roster adds, drops, trades, waivers, or league-specific transactions.
+  - Replacing player_external_identities as the identity matching source of truth.
+  - Storing contract seasons or salary data that belongs in contracts and contract_seasons.
+rules:
+  - NHL-domain player transactions must be stored in nhl_player_transactions.
+  - Fantasy roster movement must use a separate fantasy transaction model when introduced.
+  - Transaction rows may reference player_external_identities before player_id is known.
+  - Transaction rows should update player_id when the linked provider identity gains a canonical player.
+  - Provider raw transaction payloads must be preserved for audit and future parsing.
+  - Provider transaction imports must be idempotent by source_key or a provider transaction id when one exists.
+public_interface:
+  - NhlPlayerTransaction
+  - ImportCapWagesPlayer::syncBySlug()
+example_usage: |
+  NhlPlayerTransaction::query()
+      ->where('player_id', $player->id)
+      ->orderByDesc('transaction_date')
+      ->get();

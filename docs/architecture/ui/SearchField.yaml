@@ -1,0 +1,30 @@
+name: Search Field
+type: Frontend Component
+location:
+  - resources/js/components/SearchField/search-field.js
+purpose: Provide a reusable Tailwind-styled search input enhancement for page-local modules.
+when_to_use:
+  - Debounced search inputs that should emit page-local JavaScript events.
+  - Search controls that need clear, loading, disabled, or inline error states.
+  - Pages that need multiple distinguishable search inputs without global state.
+when_not_to_use:
+  - Plain forms where browser submit behavior is sufficient.
+  - Domain-specific search rendering or API calls, which belong in page modules.
+  - App-wide state, routing, or component registry behavior.
+rules:
+  - SearchField must remain provider- and page-agnostic.
+  - SearchField must use Tailwind utility classes only.
+  - SearchField must default to a 300 millisecond debounce.
+  - SearchField must emit DOM events with name, value, scope, and id fields.
+  - SearchField must preserve input focus and caret position when emitting search-field:change.
+  - SearchField should render a leading magnifying-glass icon and an icon-only clear action.
+  - SearchField must not own API calls, URL state, or domain rendering.
+  - Multiple SearchField instances on one page must remain distinguishable by emitted payload fields.
+public_interface:
+  - SearchField
+  - mountSearchFields()
+  - search-field:change
+example_usage: |
+  <div data-search-field data-search-field-name="search" data-search-field-scope="player-triage">
+      <input name="search" />
+  </div>

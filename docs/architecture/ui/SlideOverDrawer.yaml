@@ -1,0 +1,31 @@
+name: Slide-Over Drawer
+type: Reusable Blade UI Component
+location:
+  - resources/views/components/ui/slide-over.blade.php
+  - resources/views/admin/operational.blade.php
+purpose: Provide a canonical right-side slide-over shell with consistent Tailwind transition timing, overlay behavior, and accessibility attributes.
+when_to_use:
+  - Long create or configuration forms that should open in a right-side panel.
+  - Admin or app workflows that need progressive disclosure without leaving the current page.
+  - Blade and Alpine surfaces that already own page-local open and close state.
+when_not_to_use:
+  - Short confirmation prompts that should use a modal.
+  - Dropdown menus or small popovers.
+  - Pages that need global JavaScript state to coordinate drawer visibility.
+rules:
+  - The component owns the fixed wrapper, overlay fade, panel transform transition, pointer-events pattern, Escape close, click-away close, role, aria-modal, and aria-labelledby attributes.
+  - Callers own the Alpine state expression, close action expression, title id, form submission, and drawer content.
+  - The overlay must fade separately from the panel transform.
+  - The panel must enter with a slower ease-out transform and leave with a shorter ease-in transform.
+  - Reduced-motion variants must remain part of the transform transition contract.
+  - Callers must provide a visible title element whose id matches the component title-id prop.
+public_interface:
+  - x-ui.slide-over
+  - show
+  - close-action
+  - title-id
+  - max-width
+example_usage: |
+  <x-ui.slide-over show="drawerOpen" close-action="drawerOpen = false" title-id="example-drawer-title">
+      <h3 id="example-drawer-title">Configure</h3>
+  </x-ui.slide-over>

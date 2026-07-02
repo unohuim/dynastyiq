@@ -37,25 +37,7 @@ class ImportUserFantraxLeagues
                 'leagueId' => $league->fantrax_league_id,
             ]);
 
-            $scoringSystemType       = data_get($resp, 'scoringSystem.type');
-            $scoringCategories       = data_get($resp, 'scoringSystem.scoringCategories', []);
-            $scoringCategorySettings = data_get($resp, 'scoringSystem.scoringCategorySettings', []);
-
-            $normalized = $this->normalizeScoring($resp ?? []);
-
-            if ($league->fantrax_league_id === 'tg011rysm9ym6xij') {
-                dd([
-                    'league' => [
-                        'id'                => $league->id,
-                        'name'              => $league->league_name ?? null,
-                        'fantrax_league_id' => $league->fantrax_league_id,
-                    ],
-                    'scoring_system_type'       => $scoringSystemType,
-                    'scoring_categories'        => $scoringCategories,
-                    'scoring_category_settings' => $scoringCategorySettings,
-                    'normalized'                => $normalized,
-                ]);
-            }
+            $this->normalizeScoring($resp ?? []);
         }
     }
 

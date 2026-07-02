@@ -10,15 +10,19 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ImportCapWagesJob;
 use App\Jobs\ImportFantraxPlayersJob;
+use App\Jobs\ImportNhlDraftPicksJob;
 use App\Jobs\ImportPlayersJob;
-use App\Traits\HasAPITrait;
+use App\Models\NhlTeam;
 use App\Services\ImportCapWages;
-
+use App\Services\ImportNhlTeams;
+use App\Traits\HasAPITrait;
+use Illuminate\Bus\Batch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Bus\Batch;
+use Illuminate\Support\Str;
 use Throwable;
 
 
@@ -42,8 +46,9 @@ class PlayerImportController extends Controller
     /**
      * Dispatch a daily chain of player import jobs in sequence:
      * 1. NHL player imports (one per team) are dispatched as a batch.
-     * 2. After all NHL jobs complete, Fantrax import is dispatched.
-     * 3. After Fantrax completes, CapWages import is dispatched.
+     * 2. After all NHL team jobs complete, NHL draft discovery is dispatched.
+     * 3. After NHL draft discovery completes, Fantrax import is dispatched.
+     * 4. After Fantrax completes, CapWages import is dispatched.
      *
      * Only accessible to users with the 'super-admin' role.
      *
@@ -57,23 +62,26 @@ class PlayerImportController extends Controller
             'Forbidden'
         );
 
-        $standings = $this->getAPIData('nhl', 'standings_now');
+        app(ImportNhlTeams::class)->sync();
 
-        $teams = collect($standings['standings'])
-            ->pluck('teamAbbrev.default')
+        $teams = NhlTeam::query()
+            ->orderBy('abbrev')
+            ->pluck('abbrev')
             ->filter()
-            ->unique()
             ->values();
+        $importRunId = (string) Str::uuid();
 
         $nhlJobs = $teams->map(
-            fn (string $abbrev) => new ImportPlayersJob($abbrev)
+            fn (string $abbrev) => new ImportPlayersJob($abbrev, $importRunId)
         )->all();
 
         Bus::batch($nhlJobs)
-            ->then(function (Batch $batch): void {
-                ImportFantraxPlayersJob::withChain([
+            ->allowFailures()
+            ->then(function (Batch $batch) use ($importRunId): void {
+                ImportNhlDraftPicksJob::withChain([
+                    new ImportFantraxPlayersJob(),
                     new ImportCapWagesJob(),
-                ])->dispatch();
+                ])->dispatch($importRunId);
             })
             ->catch(function (Batch $batch, Throwable $e): void {
                 logger()->error('NHL import batch failed', [
@@ -81,7 +89,7 @@ class PlayerImportController extends Controller
                     'batchId' => $batch->id,
                 ]);
             })
-            ->name('DailyImport:NHL → Fantrax → CapWages')
+            ->name('DailyImport:NHLPlayers → NHLDraft → Fantrax → CapWages')
             ->dispatch();
 
         return response()->json([
@@ -112,17 +120,32 @@ class PlayerImportController extends Controller
             'Forbidden'
         );
 
-        $standings = $this->getAPIData('nhl', 'standings_now');
+        app(ImportNhlTeams::class)->sync();
 
-        $teams = collect($standings['standings'])
-            ->pluck('teamAbbrev.default')
+        $teams = NhlTeam::query()
+            ->orderBy('abbrev')
+            ->pluck('abbrev')
             ->filter()
-            ->unique()
             ->values();
+        $importRunId = (string) Str::uuid();
 
-        foreach ($teams as $abbrev) {
-            ImportPlayersJob::dispatch($abbrev);
-        }
+        $nhlJobs = $teams->map(
+            fn (string $abbrev) => new ImportPlayersJob($abbrev, $importRunId)
+        )->all();
+
+        Bus::batch($nhlJobs)
+            ->allowFailures()
+            ->then(function (Batch $batch) use ($importRunId): void {
+                ImportNhlDraftPicksJob::dispatch($importRunId);
+            })
+            ->catch(function (Batch $batch, Throwable $e): void {
+                logger()->error('NHL import batch failed before draft discovery', [
+                    'error' => $e->getMessage(),
+                    'batchId' => $batch->id,
+                ]);
+            })
+            ->name('NHLImport:PlayersThenDraftPicks')
+            ->dispatch();
 
         return response()->json([
             'message' => 'NHL player imports queued',

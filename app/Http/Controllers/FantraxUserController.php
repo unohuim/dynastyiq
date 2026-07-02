@@ -6,12 +6,15 @@ namespace App\Http\Controllers;
 
 use App\Events\FantraxUserConnected;
 use App\Models\IntegrationSecret;
+use App\Services\FantasyIntegrationState;
 use App\Services\FantraxLeagueService;
+use App\Support\FantasyProvider;
 use App\Traits\HasAPITrait;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Client\RequestException;
 
@@ -63,8 +66,8 @@ class FantraxUserController extends Controller
         if ($request->ajax() || $request->wantsJson()) {
             return response()->json([
                 'ok' => true,
-                'leagues_count' => count($leagues),
-                'status' => 'connected',
+                'integration' => app(FantasyIntegrationState::class)
+                    ->forProvider(Auth::user(), FantasyProvider::FANTRAX),
             ]);
         }
 
@@ -86,6 +89,19 @@ class FantraxUserController extends Controller
         if ($secret) {
             $secret->delete();
         }
+
+        DB::table('league_user_teams')
+            ->where('user_id', Auth::id())
+            ->whereIn(
+                'platform_league_id',
+                DB::table('platform_leagues')
+                    ->select('id')
+                    ->where('platform', 'fantrax'),
+            )
+            ->update([
+                'is_active' => false,
+                'updated_at' => now(),
+            ]);
 
         return back()->with([
             'status' => 'Fantrax disconnected.',

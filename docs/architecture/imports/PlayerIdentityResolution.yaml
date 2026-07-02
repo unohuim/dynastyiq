@@ -1,0 +1,106 @@
+name: Player Identity Resolution
+type: Import Identity Pattern
+location:
+  - app/Models/PlayerExternalIdentity.php
+  - app/Events/PlayerExternalIdentityLinked.php
+  - app/Console/Commands/ResolveNhlCommand.php
+  - app/Jobs/ImportPlayersJob.php
+  - app/Jobs/ImportNhlDraftPicksJob.php
+  - app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php
+  - app/Jobs/RefreshNhlPlayerLandingJob.php
+  - app/Observers/PlayerNhlIdentityObserver.php
+  - app/Listeners/QueueNhlIdentityResolution.php
+  - app/Jobs/RefreshCapWagesContractsForIdentityJob.php
+  - app/Listeners/QueueCapWagesContractRefresh.php
+  - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
+  - app/Services/NhlPlayerIdentityLookup.php
+  - app/Services/PlayerIdentityNormalizer.php
+  - app/Services/PlayerIdentityResolver.php
+  - database/migrations/*_create_player_external_identities_table.php
+purpose: Preserve provider-sourced hockey player identities separately from canonical players so imports can be idempotent, auditable, and expandable across NHL, Fantrax, CapWages, and future providers.
+when_to_use:
+  - Importing player records from an external provider.
+  - Matching imported provider player IDs to canonical DynastyIQ players.
+  - Reviewing unmatched, candidate, conflicting, or ignored provider identities.
+when_not_to_use:
+  - Storing canonical DynastyIQ player attributes that belong on players.
+  - Storing league roster membership or fantasy-team assignment records.
+  - Replacing provider-specific import tables that own provider-only payload semantics.
+rules:
+  - Provider player identities must be upserted before an import creates or updates a canonical player.
+  - NHL is an authority provider and may create canonical players during import.
+  - NHL roster and prospect discovery must remember run-level normalized-name plus position-type fingerprints so later draft discovery can avoid duplicate canonical player creation without per-pick database checks.
+  - NHL roster and prospect landing imports must retry transient provider failures for the individual NHL player id and record persistent transient failures without aborting the whole team import.
+  - NHL roster, prospect, and draft per-player landing failures must be recorded and skipped without aborting the broader import run.
+  - NHL draft discovery must be dispatched only after the roster and prospect discovery batch completes for the same import run.
+  - NHL draft identities must check existing canonical players by normalized name and compatible position type before creating a minimal canonical prospect player.
+  - NHL draft identities may create minimal canonical prospect players with nhl_id null only when no matching roster or prospect fingerprint was seen in the same import run and resolver evidence finds no canonical player.
+  - NHL draft imports must resolve or create the canonical prospect before landing refresh, then use a draft payload NHL player id, an existing canonical nhl_id, or the NHL Stats cayenne lookup to refresh NHL landing metadata and upsert stats when an NHL id can be found.
+  - Non-authority providers must not create canonical players without an approved resolver rule or human match.
+  - Non-NHL provider identity links may queue asynchronous NHL identity enrichment when the linked canonical player has no nhl_id and has enough name and position evidence.
+  - Canonical player creates and identity-evidence updates must queue asynchronous NHL identity enrichment when the player has no nhl_id and has enough name and position evidence.
+  - The nhl:resolve --players command may queue asynchronous NHL identity enrichment for any canonical player with nhl_id null, even when no external identity is linked.
+  - NHL identity enrichment must not block the source provider import and must run from a queued job.
+  - NhlPlayerIdentityLookup is the single NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from a canonical player or first-name, last-name, and position-type evidence.
+  - NHL identity enrichment must search NHL Stats players by first and last name, filter candidates by compatible position type, and only mutate the canonical player when exactly one validated NHL landing payload remains.
+  - NHL identity enrichment must link the validated NHL identity to the existing canonical player before running the canonical NHL landing import so enrichment cannot create duplicate players for the resolved NHL id.
+  - A newly assigned players.nhl_id, whether on create or update, must queue a canonical NHL landing refresh that updates player metadata and upserts legacy stats rows from NHL landing seasonTotals.
+  - Canonical NHL landing imports already performing player metadata and stats upserts must suppress the assignment-triggered landing refresh hook to avoid duplicate refresh jobs.
+  - NHL identity enrichment must locally reject NHL Stats last-name spillover by exact normalized name before candidate counts are interpreted.
+  - NHL identity enrichment may reduce same-name ambiguity to a single current-team candidate when exactly one otherwise viable candidate has currentTeamId.
+  - NHL identity enrichment must not assign an NHL player id that is already owned by another canonical player; source identities for the duplicate target should become conflicts instead.
+  - NHL identity enrichment with multiple same-name and same-position candidates must upsert NHL candidate identities for triage without mutating players.nhl_id.
+  - Non-authority provider imports may auto-link only when an existing provider link, known durable ID, or provider-specific evidence score identifies exactly one canonical player at or above the provider threshold.
+  - Provider evidence scoring must treat exact normalized name as 75, exact normalized name plus one strong context match as 85, and exact normalized name plus birthdate or two strong context matches as 95.
+  - Provider identity matching may treat first-name y/i ending variants as compatible, such as Dmitry and Dmitri, only when last name matches and position type remains compatible.
+  - Strong context matches currently include position type and team abbreviation.
+  - Provider team strings should be normalized through NHL team reference data before being stored as matching evidence.
+  - Position type matching must compare goalies as G, defense as D, and L/C/R/LW/RW/F as F.
+  - When both the provider identity and canonical player have known position types, candidates with different position types must not count as viable candidates.
+  - Provider auto-link thresholds are NHL 85, NHL draft 85, Fantrax 85, and CapWages 75.
+  - Yahoo Fantasy player identities are non-authority provider identities with an automatic-link threshold of 85.
+  - Name-only matches below the provider threshold must remain candidate identities rather than mutating canonical player data.
+  - Multiple candidates at or above the provider threshold must become conflict identities rather than auto-linking.
+  - Provider identity rows must keep raw provider payloads for audit and future rematching.
+  - Provider aggregate rows, such as Fantrax team total entries, must be skipped before identity upsert.
+  - CapWages identities must only be upserted from detail payloads whose maximum parsed contract season key is at least the season key derived from the current calendar year.
+  - CapWages identities with an importable current-or-future contract season may create non-prospect canonical players with nhl_id null only when resolver evidence finds no canonical player.
+  - CapWages identities with a durable nhlId must link to an existing canonical player by players.nhl_id or remain unresolved; they must not create a provisional canonical player with nhl_id null.
+  - CapWages profile details belong in capwages_players, not on player_external_identities.
+  - CapWages contract rows and contract season rows must only be materialized after a CapWages identity has a non-null player_id.
+  - PlayerIdentityResolver::linkIdentityToPlayer() must dispatch PlayerExternalIdentityLinked when an identity transitions to a different player_id.
+  - CapWages must respond to PlayerExternalIdentityLinked by queuing RefreshCapWagesContractsForIdentityJob, which re-fetches CapWages detail before writing contracts.
+  - Fantrax must respond to PlayerExternalIdentityLinked by mirroring the canonical player_id to fantrax_players and queueing Fantrax league roster sync so platform_roster_memberships can be rebuilt from provider roster evidence.
+  - Matching status and unmatched reason values must remain aligned with docs/ENUMS.md.
+  - A matched identity must reference exactly one canonical player.
+  - A canonical player may have many provider identities, but a provider and provider_player_id pair must be unique.
+  - Normalized identity fields are matching aids and must not overwrite provider raw payloads.
+public_interface:
+  - PlayerExternalIdentity
+  - Player::externalIdentities()
+  - PlayerIdentityNormalizer::normalizeName()
+  - PlayerIdentityResolver::upsertNhlIdentity()
+  - PlayerIdentityResolver::upsertNhlDraftIdentity()
+  - ImportPlayersJob
+  - ImportNhlDraftPicksJob
+  - ResolveNhlCommand
+  - ResolveCanonicalPlayerNhlIdentityJob
+  - RefreshNhlPlayerLandingJob
+  - PlayerNhlIdentityObserver
+  - QueueNhlIdentityResolution
+  - NhlPlayerIdentityLookup::resolveForPlayer()
+  - NhlPlayerIdentityLookup::resolveForName()
+  - NhlPlayerIdentityLookup::hasLookupEvidence()
+  - PlayerIdentityResolver::upsertFantraxIdentity()
+  - PlayerIdentityResolver::upsertYahooIdentity()
+  - PlayerIdentityResolver::upsertCapWagesIdentity()
+  - PlayerIdentityResolver::resolveNonAuthorityIdentity()
+  - PlayerIdentityResolver::linkIdentityToPlayer()
+  - PlayerExternalIdentityLinked
+  - RefreshCapWagesContractsForIdentityJob
+  - SyncFantraxRosterMembershipsForLinkedIdentity
+  - PlayerIdentityResolver::statusCountsByProvider()
+example_usage: |
+  $identity = app(PlayerIdentityResolver::class)->upsertNhlIdentity($payload);
+  $player = Player::firstOrNew(['nhl_id' => $payload['playerId']]);
+  app(PlayerIdentityResolver::class)->linkIdentityToPlayer($identity, $player);

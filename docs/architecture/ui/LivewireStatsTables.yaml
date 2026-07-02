@@ -1,0 +1,26 @@
+name: Livewire Stats Tables
+type: Legacy / Active UI Pattern
+location:
+  - app/Livewire/PlayerStatsPage.php
+  - app/Livewire/PlayerStatsTable.php
+  - app/Livewire/PlayerRankingsTable.php
+  - resources/views/livewire/
+purpose: Render selected stats and ranking UI through Livewire components.
+when_to_use:
+  - Maintaining existing Livewire surfaces.
+  - Fixing bugs in current Livewire stats or ranking components.
+when_not_to_use:
+  - New interactive pages unless a deliberate exception to docs/UI_DESIGN.md is approved.
+  - Replacing page-module migration targets without approval.
+rules:
+  - Existing Livewire components may remain during staged UI migration.
+  - New Livewire expansion requires explicit approval.
+  - Material changes must consider docs/UI_DESIGN.md and docs/ui_backlog.md.
+public_interface:
+  - app/Livewire/PlayerStatsPage.php
+  - app/Livewire/PlayerStatsTable.php
+  - app/Livewire/PlayerRankingsTable.php
+  - resources/views/livewire/
+example_usage: |
+  <livewire:player-stats-table />
+

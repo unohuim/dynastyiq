@@ -57,6 +57,15 @@ class PlatformLeague extends Model
         return $this->hasMany(PlatformTeam::class, 'platform_league_id');
     }
 
+    /**
+     * Configured roster slots for this platform league.
+     */
+    public function rosterSlots(): HasMany
+    {
+        return $this->hasMany(PlatformLeagueRosterSlot::class, 'platform_league_id')
+            ->orderBy('sort_order');
+    }
+
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(

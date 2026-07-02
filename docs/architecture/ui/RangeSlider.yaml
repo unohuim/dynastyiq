@@ -1,0 +1,23 @@
+name: Range Slider
+type: Frontend Component
+location:
+  - resources/js/components/RangeSlider/range-slider.js
+  - resources/js/components/RangeSlider/range-slider.css
+purpose: Provide a reusable range slider interaction for filter-style UI.
+when_to_use:
+  - Range-based inputs where the existing component behavior is appropriate.
+  - Existing range slider UI maintenance.
+when_not_to_use:
+  - Simple numeric inputs.
+  - Hidden filters.
+  - New UI that can use native controls under docs/UI_DESIGN.md.
+rules:
+  - Range slider behavior must remain reusable.
+  - Range slider styling must be reviewed against docs/UI_DESIGN.md when materially touched.
+  - Do not introduce additional range slider implementations without documenting a replacement.
+public_interface:
+  - resources/js/components/RangeSlider/range-slider.js
+  - resources/js/components/RangeSlider/range-slider.css
+example_usage: |
+  Import the RangeSlider module from page code that mounts range-filter controls.
+

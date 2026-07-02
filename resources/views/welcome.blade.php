@@ -25,7 +25,7 @@
           class="inline-flex items-center rounded-full
                  bg-indigo-500/10 px-4 py-1.5 text-sm font-medium text-indigo-300
                  ring-1 ring-indigo-400/20 backdrop-blur">
-          Official Launch · February 2026
+          Official Launch · Oct 2026
         </span>
       </div>
 

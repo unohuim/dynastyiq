@@ -1,0 +1,45 @@
+name: CapWages Player Profiles
+type: Provider Detail Import Pattern
+location:
+  - app/Models/CapWagesPlayer.php
+  - app/Console/Commands/EmptyCapWagesCommand.php
+  - app/Services/ImportCapWagesPlayer.php
+  - database/migrations/*_create_capwages_players_table.php
+purpose: Store CapWages-owned player profile details separately from provider identity matching and canonical player contracts.
+when_to_use:
+  - Persisting CapWages player detail payload fields before a canonical player link exists.
+  - Showing or auditing CapWages provider profile data for unlinked identities.
+  - Refreshing CapWages profile data after a linked identity re-fetches player detail.
+when_not_to_use:
+  - Storing canonical DynastyIQ player attributes that belong on players.
+  - Storing match status, confidence, or unresolved reasons that belong on player_external_identities.
+  - Materializing contract rows before a CapWages identity has a player_id.
+rules:
+  - CapWages player profile rows must only be created when the same detail payload is eligible for a CapWages provider identity.
+  - CapWages provider identities are eligible only when the payload has a payable non-buyout contract season at least as recent as the current calendar-year season key.
+  - CapWages buyout and dead-cap-only rows must not qualify retired or inactive players for identity, profile, canonical player, or contract materialization.
+  - CapWages payloads with nhlId must not create provisional canonical players; they must link to an existing players.nhl_id row or remain unresolved until NHL import creates the authority row.
+  - capwages_players must link to player_external_identities through player_external_identity_id.
+  - player_external_identities must not store capwages_players ids or provider-specific detail table references.
+  - capwages_players.player_id may mirror the linked identity player_id after a canonical player link exists.
+  - CapWages contracts and contract seasons must remain in raw_payload until a non-null player_id exists.
+  - CapWages acquisition details may be materialized into nhl_player_transactions before player_id exists when linked to the provider identity.
+  - CapWages imports must use cached capwages_players.raw_payload before making a live provider detail request for the same slug.
+  - CapWages imports should process list pages sequentially without fixed delay on successful pages and should use 403 backoff only when the provider blocks a request.
+  - CapWages player detail 5xx responses and connection failures should be recorded on the import run and skipped so one provider-side player failure does not fail the whole page import.
+  - CapWages page jobs should process player details inline rather than fan out one detail job per listed player.
+  - CapWages player detail imports should prefer cached raw payloads to avoid unnecessary live provider requests.
+  - CapWages jobs must not sleep for long throttle waits inside worker execution.
+  - CapWages link handling should materialize contracts from cached capwages_players.raw_payload without scheduling live refresh when cached payload exists.
+  - CapWages refresh jobs may materialize contracts from cached capwages_players.raw_payload when live provider refresh is temporarily blocked.
+  - CapWages refresh jobs must be unique per player_external_identity id to avoid duplicate detail refreshes for the same identity.
+  - CapWages profile data remains provider-owned context and must not overwrite canonical player fields without an explicit resolver rule.
+  - cap:empty may remove CapWages profile rows, CapWages provider identities, and CapWages-sourced NHL player transactions, but must not delete canonical players or contracts.
+public_interface:
+  - CapWagesPlayer
+  - cap:empty
+  - ImportCapWagesPlayer::syncBySlug()
+  - ImportCapWagesPlayer::refreshContractsForLinkedIdentity()
+example_usage: |
+  $identity = app(PlayerIdentityResolver::class)->upsertCapWagesIdentity($slug, $payload);
+  app(ImportCapWagesPlayer::class)->syncBySlug($slug, false);

@@ -1,0 +1,49 @@
+name: Fantrax League Sync
+type: External Platform Sync Pattern
+location:
+  - app/Services/FantraxLeagueService.php
+  - app/Services/SyncFantraxLeague.php
+  - app/Services/ImportFantraxLeagues.php
+  - app/Services/ImportFantraxPlayers.php
+  - app/Http/Controllers/LeagueController.php
+  - routes/web.php
+  - app/Events/LeagueSyncStatusUpdated.php
+  - app/Jobs/SyncFantraxLeagueJob.php
+  - app/Jobs/SyncFantraxTeamJob.php
+  - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
+  - app/Models/PlatformLeague.php
+  - app/Models/PlatformTeam.php
+  - app/Models/PlatformRosterMembership.php
+  - app/Models/PlatformPlayerId.php
+purpose: Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
+when_to_use:
+  - Syncing Fantrax leagues.
+  - Updating Fantrax rosters.
+  - Resolving Fantrax player identity.
+  - Rendering league availability.
+when_not_to_use:
+  - NHL source-of-truth stats imports.
+  - Patreon membership syncing.
+rules:
+  - Fantrax-specific data must map into platform-neutral models when it powers app features.
+  - Roster sync must preserve canonical player identity links through platform player IDs.
+  - Roster sync must persist provider roster slot, membership status, and eligibility metadata when Fantrax exposes those values.
+  - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.
+  - Fantrax roster item status is authoritative for roster grouping; ACTIVE maps to active, RESERVE maps to reserve/bench, and MINORS maps to minor.
+  - Linking a Fantrax provider identity to a canonical player must update the staged Fantrax player row and queue roster syncs instead of directly guessing roster memberships.
+  - User-triggered league sync jobs may broadcast LeagueSyncStatusUpdated events to the requesting user's private channel for transient Leagues UI feedback.
+  - Fantrax enum-like values must remain documented in docs/ENUMS.md.
+public_interface:
+  - leagues.resync
+  - LeagueController::resync
+  - LeagueSyncStatusUpdated
+  - SyncFantraxLeagueJob
+  - SyncFantraxTeamJob
+  - SyncFantraxRosterMembershipsForLinkedIdentity
+  - FantraxLeagueService
+  - PlatformLeague
+  - PlatformTeam
+  - PlatformRosterMembership
+  - PlatformPlayerId
+example_usage: |
+  dispatch(new SyncFantraxLeagueJob($platformLeague->id));

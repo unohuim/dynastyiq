@@ -3,9 +3,11 @@ import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
 
 // import { PlayerStatsPage } from './components/PlayerStatsPage/player-stats-page.js';
-import { StatsPage } from './components/StatsPage/stats-page.js';
+import './components/StatsPage/stats-page.js';
 import './leagues-hub.js';
 import './community-hub.js';
+import './transactions.js';
+import './admin/player-triage.js';
 import './components/community-members-store';
 import { registerToastStack } from './components/toast-stack';
 import adminHub from './admin/admin-hub';

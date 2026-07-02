@@ -1,0 +1,27 @@
+name: Stats Page Renderer
+type: Frontend UI Pattern
+location:
+  - resources/js/components/StatsPage/stats-page.js
+  - resources/js/components/StatsPage/stats-desktop.js
+  - resources/js/components/StatsPage/stats-mobile.js
+  - resources/js/components/StatsPage/stats-utils.js
+  - resources/js/components/StatsPage/ui/
+purpose: Render desktop and mobile stats experiences from the stats payload while sharing utilities and UI primitives.
+when_to_use:
+  - Stats table rendering on /stats.
+  - Stats card rendering on /stats.
+  - Existing StatsPage module maintenance.
+when_not_to_use:
+  - Player-only stats pages.
+  - Admin import UI.
+  - Backend stat aggregation.
+rules:
+  - StatsPage owns /stats browser rendering.
+  - Shared utilities should remain inside the StatsPage module unless they become intentionally generic.
+  - New or materially touched rendering must comply with docs/UI_DESIGN.md where feasible.
+public_interface:
+  - StatsPage JavaScript module
+  - StatsController::payload()
+example_usage: |
+  The /stats page initializes the StatsPage renderer with server-provided payload data.
+

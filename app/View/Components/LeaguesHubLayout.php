@@ -30,17 +30,20 @@ final class LeaguesHubLayout extends Component
                 $id   = $l->getKey();
                 $name = (string) $l->getAttribute('name');
                 $slug = (string) ($l->getAttribute('slug') ?? $id);
+                $platform = (string) ($l->getAttribute('platform') ?? '');
             } else {
                 $a    = (array) $l;
                 $id   = $a['id'] ?? ($a['platform_league_id'] ?? null);
                 $name = (string) ($a['name'] ?? '');
                 $slug = (string) ($a['slug'] ?? $id);
+                $platform = (string) ($a['platform'] ?? '');
             }
 
             return (object) [
                 'id'         => $id,
                 'slug'       => $slug,
                 'name'       => $name,
+                'platform'   => $platform,
                 'short_name' => $name,
                 'href'       => route('leagues.index', ['active' => $id]),
                 'active'     => false,

@@ -1,0 +1,26 @@
+name: NHL Validation Troubleshooting Exporter
+type: Import Debugging Artifact
+location:
+  - app/Services/NhlValidationTroubleshootingExporter.php
+purpose: Write compact per-game markdown snapshots and raw provider payload text artifacts for failed NHL summary validations so boxscore, play-by-play, shift, and delta context can be reviewed together.
+when_to_use:
+  - A summary-boxscore validation fails.
+  - Investigating NHL provider semantics that need durable local context.
+  - Sharing failed-game evidence without rerunning imports.
+when_not_to_use:
+  - Replacing persisted validation deltas.
+  - Writing operational source data outside configured troubleshooting paths.
+  - Exporting public user-facing stats.
+rules:
+  - Exported files must be derived from persisted imported data.
+  - Exported files must include the failed deltas that caused the validation failure.
+  - Failed validations must emit separate deltas, boxscore, play-by-play, and shifts markdown files for the game when those sections can be built.
+  - Failed validations must emit raw provider payload text files for boxscore, play-by-play, and shiftcharts when troubleshooting export is configured.
+  - A failure writing one troubleshooting file must not prevent attempts to write the remaining troubleshooting files.
+  - Play-by-play exports must include event classification context such as strength, situation code, shot type, goalie id, and shot-on-goal classification.
+  - Exported files must not mutate source import tables.
+  - The output path must come from configuration.
+public_interface:
+  - NhlValidationTroubleshootingExporter::export()
+example_usage: |
+  app(NhlValidationTroubleshootingExporter::class)->export($validation);

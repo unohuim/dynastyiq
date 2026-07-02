@@ -1,0 +1,40 @@
+name: Patreon Provider Sync
+type: External Provider Sync Pattern
+location:
+  - app/Http/Controllers/PatreonConnectController.php
+  - app/Http/Controllers/PatreonSyncController.php
+  - app/Http/Controllers/PatreonWebhookController.php
+  - app/Services/Patreon/PatreonClient.php
+  - app/Services/Patreon/PatreonSyncService.php
+  - app/Services/Patreon/MembershipSyncService.php
+  - app/Services/Patreon/TierMapper.php
+  - app/Console/Commands/PatreonNightlySync.php
+  - app/Models/ProviderAccount.php
+  - app/Models/MembershipEvent.php
+purpose: Connect organization-owned Patreon accounts, sync campaign tiers and memberships, and process Patreon webhooks.
+when_to_use:
+  - Patreon OAuth.
+  - Manual Patreon sync.
+  - Nightly Patreon sync.
+  - Patreon webhook handling.
+  - Patreon tier mapping.
+when_not_to_use:
+  - User login OAuth.
+  - Fantrax imports.
+  - Manual community membership changes unrelated to provider sync.
+rules:
+  - Patreon provider state belongs to ProviderAccount.
+  - Provider sync may update membership and tier records through sync services.
+  - Patreon enum-like statuses must remain documented in docs/ENUMS.md.
+  - Webhooks must be processed server-side.
+public_interface:
+  - patreon.redirect
+  - patreon.callback
+  - patreon.sync
+  - patreon.webhook
+  - PatreonSyncService::syncProviderAccount()
+  - PatreonSyncService::handleWebhook()
+  - MembershipSyncService
+example_usage: |
+  app(PatreonSyncService::class)->syncProviderAccount($providerAccount);
+

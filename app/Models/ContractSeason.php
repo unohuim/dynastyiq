@@ -15,7 +15,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  *
  * @property int                             $id
  * @property int                             $contract_id
- * @property string                          $season
+ * @property string|null                     $season_key
+ * @property string|null                     $label
  * @property string|null                     $clause
  * @property int                             $cap_hit
  * @property int                             $aav
@@ -71,7 +72,6 @@ class ContractSeason extends Model
      */
     protected $casts = [
         'contract_id'          => 'integer',
-        'season'               => 'string',
         'clause'               => 'string',
         'cap_hit'              => 'integer',
         'aav'                  => 'integer',
@@ -81,6 +81,16 @@ class ContractSeason extends Model
         'total_salary'         => 'integer',
         'minors_salary'        => 'integer',
     ];
+
+    /**
+     * Preserve compatibility with callers that still pass the old season attribute.
+     */
+    public function setSeasonAttribute(?string $value): void
+    {
+        if ($value !== null && ! array_key_exists('label', $this->attributes)) {
+            $this->attributes['label'] = $value;
+        }
+    }
 
     /**
      * Get the contract that owns this season.
