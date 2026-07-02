@@ -66,7 +66,7 @@ rules:
   - Strength-aware on-ice summaries are naturally identified by game plus unit or player plus strength.
   - nhl:empty --games may remove NHL game-derived import data, progress, admin run ledgers, and validations, but must not delete canonical players, NHL team reference data, or NHL player external identities.
   - nhl:empty --games must clear game-derived tables with visible per-table progress rather than one long silent transaction.
-  - nhl:empty --players may remove only NHL and NHL draft player external identities, and must not delete game-derived import data.
+  - nhl:empty --players may remove imported NHL player stats and NHL/NHL draft player external identities, and must not delete canonical players, NHL team reference data, or game-derived import data.
 public_interface:
   - EmptyNhlCommand
   - ImportNHLPlayByPlay

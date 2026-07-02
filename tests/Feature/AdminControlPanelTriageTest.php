@@ -1786,16 +1786,36 @@ it('empties NHL player identities without deleting game import data', function (
         'created_at' => $now,
         'updated_at' => $now,
     ]);
+    DB::table('stats')->insert([
+        'player_id' => $player->id,
+        'is_prospect' => true,
+        'nhl_team_id' => 21,
+        'nhl_team_abbrev' => 'COL',
+        'player_name' => 'Nathan MacKinnon',
+        'season_id' => '20252026',
+        'league_abbrev' => 'NHL',
+        'team_name' => 'Colorado Avalanche',
+        'game_type_id' => 2,
+        'gp' => 82,
+        'g' => 40,
+        'a' => 60,
+        'pts' => 100,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
 
     $this->artisan('nhl:empty', ['--players' => true])
         ->assertOk()
+        ->expectsOutput('Clearing stats...')
+        ->expectsOutput('stats: 1')
         ->expectsOutput('Clearing player_external_identities...')
         ->expectsOutput('player_external_identities: 2')
-        ->expectsOutput('Removed NHL player external identities.')
+        ->expectsOutput('Removed NHL player stats and external identities.')
         ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
 
     expect(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
         ->and(DB::table('nhl_games')->where('nhl_game_id', 2025020001)->exists())->toBeTrue()
+        ->and(DB::table('stats')->count())->toBe(0)
         ->and(PlayerExternalIdentity::query()->whereKey($nhlIdentity->id)->exists())->toBeFalse()
         ->and(PlayerExternalIdentity::query()->whereKey($draftIdentity->id)->exists())->toBeFalse()
         ->and(PlayerExternalIdentity::query()->whereKey($fantraxIdentity->id)->exists())->toBeTrue();

@@ -19,7 +19,7 @@ class EmptyNhlCommand extends Command
      * @var string
      */
     protected $signature = 'nhl:empty
-        {--players : Remove NHL player external identities}
+        {--players : Remove NHL player stats and external identities}
         {--games : Remove NHL game-derived import data}';
 
     /**
@@ -46,6 +46,7 @@ class EmptyNhlCommand extends Command
         }
 
         if ($emptyPlayers) {
+            $this->emptyPlayerTables();
             $this->emptyPlayerIdentities();
         }
 
@@ -96,6 +97,18 @@ class EmptyNhlCommand extends Command
     }
 
     /**
+     * Return NHL-owned player import tables in dependency-safe delete order.
+     *
+     * @return array<int,string>
+     */
+    private function playerTables(): array
+    {
+        return [
+            'stats',
+        ];
+    }
+
+    /**
      * Clear NHL game-derived tables with per-table progress.
      *
      * @return array<string,int>
@@ -105,6 +118,30 @@ class EmptyNhlCommand extends Command
         $counts = [];
 
         foreach (array_merge($this->gameTables(), $this->progressTables()) as $table) {
+            $this->line("Clearing {$table}...");
+            $count = DB::table($table)->count();
+            $counts[$table] = $count;
+
+            if ($count > 0) {
+                $this->clearTable($table, $count);
+            }
+
+            $this->line("{$table}: {$count}");
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Clear NHL player import tables with per-table progress.
+     *
+     * @return array<string,int>
+     */
+    private function emptyPlayerTables(): array
+    {
+        $counts = [];
+
+        foreach ($this->playerTables() as $table) {
             $this->line("Clearing {$table}...");
             $count = DB::table($table)->count();
             $counts[$table] = $count;
@@ -192,11 +229,11 @@ class EmptyNhlCommand extends Command
     private function successMessage(bool $players, bool $games): string
     {
         if ($players && $games) {
-            return 'Removed NHL player identities and game import data.';
+            return 'Removed NHL player stats, identities, and game import data.';
         }
 
         if ($players) {
-            return 'Removed NHL player external identities.';
+            return 'Removed NHL player stats and external identities.';
         }
 
         return 'Removed NHL game import data.';
