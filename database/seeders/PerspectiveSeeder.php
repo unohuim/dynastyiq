@@ -30,18 +30,20 @@ class PerspectiveSeeder extends Seeder
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
-                'is_slicable' => false,
+                'is_slicable' => true,
                 'settings' => json_encode([
                     'columns' => [
+                        ['key' => 'toi', 'label' => 'TOI', 'type' => 'string'],
+                        ['key' => 'gp', 'label' => 'GP', 'type' => 'int'],
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
                         ['key' => 'ppp', 'label' => 'PPP', 'type' => 'int'],
                         ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
+                        ['key' => 'sat', 'label' => 'SAT', 'type' => 'int'],
                         ['key' => 'h', 'label' => 'Hits', 'type' => 'int'],
                         ['key' => 'b', 'label' => 'Blk', 'type' => 'int'],
                         ['key' => 'plus_minus', 'label' => '+/-', 'type' => 'int'],
-                        ['key' => 'shots_plus_blocks', 'label' => 'SOG+Blk', 'type' => 'int'],
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
@@ -66,15 +68,12 @@ class PerspectiveSeeder extends Seeder
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
-                'is_slicable' => false,
+                'is_slicable' => true,
                 'settings' => json_encode([
                     'columns' => [
                         ['key' => 'ipp', 'label' => 'IPP', 'type' => 'float'],
-                        ['key' => 'individual_g', 'label' => 'iG', 'type' => 'int'],
-                        ['key' => 'individual_pts', 'label' => 'iPTS', 'type' => 'int'],
                         ['key' => 'gf_pct', 'label' => 'GF%', 'type' => 'float'],
                         ['key' => 'cf_pct', 'label' => 'CF%', 'type' => 'float'],
-                        ['key' => 'sf_pct', 'label' => 'SF%', 'type' => 'float'],
                         ['key' => 'pdo', 'label' => 'PDO', 'type' => 'float'],
                         ['key' => 'ozs_pct', 'label' => 'OZS%', 'type' => 'float'],
                     ],
@@ -101,7 +100,7 @@ class PerspectiveSeeder extends Seeder
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
-                'is_slicable' => false,
+                'is_slicable' => true,
                 'settings' => json_encode([
                     'columns' => [
                         ['key' => 'wins', 'label' => 'W', 'type' => 'int'],
@@ -138,7 +137,7 @@ class PerspectiveSeeder extends Seeder
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
-                'is_slicable' => false,
+                'is_slicable' => true,
                 'settings' => json_encode([
                     'columns' => [
                         ['key' => 'evsv', 'label' => 'EVSV', 'type' => 'int'],
@@ -173,11 +172,14 @@ class PerspectiveSeeder extends Seeder
                 'organization_id' => 1,
                 'visibility' => 'public_guest',
                 'sport' => 'hockey',
+                'is_slicable' => false,
                 'settings' => json_encode([
                     'columns' => [
                         ['key' => 'g', 'label' => 'G', 'type' => 'int'],
                         ['key' => 'a', 'label' => 'A', 'type' => 'int'],
                         ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+                        ['key' => 'g_per_gp', 'label' => 'G/gp', 'type' => 'float'],
+                        ['key' => 'pts_per_gp', 'label' => 'PTS/gp', 'type' => 'float'],
                     ],
                     'sort' => [
                         'sortKey' => 'pts',
@@ -193,6 +195,58 @@ class PerspectiveSeeder extends Seeder
                             'value' => true,
                             'locked' => true,
                         ],
+                        'pos_type' => [
+                            'operator' => '!=',
+                            'value' => 'G',
+                            'locked' => true,
+                        ],
+                    ],
+                    'ui' => [
+                        'positionButtons' => ['F', 'C', 'LW', 'RW', 'D'],
+                    ],
+                ]),
+            ],
+            [
+                'name' => 'Prospects - Goalies',
+                'slug' => 'prospects-goalies',
+                'author_id' => 1,
+                'organization_id' => 1,
+                'visibility' => 'public_guest',
+                'sport' => 'hockey',
+                'is_slicable' => false,
+                'settings' => json_encode([
+                    'columns' => [
+                        ['key' => 'wins', 'label' => 'W', 'type' => 'int'],
+                        ['key' => 'losses', 'label' => 'L', 'type' => 'int'],
+                        ['key' => 'ot_losses', 'label' => 'OTL', 'type' => 'int'],
+                        ['key' => 'saves', 'label' => 'SV', 'type' => 'int'],
+                        ['key' => 'shots_against', 'label' => 'SA', 'type' => 'int'],
+                        ['key' => 'goals_against', 'label' => 'GA', 'type' => 'int'],
+                        ['key' => 'sv_pct', 'label' => 'SV%', 'type' => 'float'],
+                        ['key' => 'gaa', 'label' => 'GAA', 'type' => 'float'],
+                        ['key' => 'shutouts', 'label' => 'SO', 'type' => 'int'],
+                    ],
+                    'sort' => [
+                        'sortKey' => 'wins',
+                        'sortDirection' => 'desc',
+                    ],
+                    'filters' => [
+                        'league_abbrev' => [
+                            'operator' => '!=',
+                            'value' => 'NHL',
+                            'locked' => true,
+                        ],
+                        'is_prospect' => [
+                            'value' => true,
+                            'locked' => true,
+                        ],
+                        'pos_type' => [
+                            'value' => 'G',
+                            'locked' => true,
+                        ],
+                    ],
+                    'ui' => [
+                        'positionButtons' => [],
                     ],
                 ]),
             ],

@@ -4,8 +4,11 @@ location:
   - app/Models/PlayerExternalIdentity.php
   - app/Events/PlayerExternalIdentityLinked.php
   - app/Console/Commands/ResolveNhlCommand.php
+  - app/Jobs/ImportPlayersJob.php
   - app/Jobs/ImportNhlDraftPicksJob.php
   - app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php
+  - app/Jobs/RefreshNhlPlayerLandingJob.php
+  - app/Observers/PlayerNhlIdentityObserver.php
   - app/Listeners/QueueNhlIdentityResolution.php
   - app/Jobs/RefreshCapWagesContractsForIdentityJob.php
   - app/Listeners/QueueCapWagesContractRefresh.php
@@ -27,14 +30,22 @@ rules:
   - Provider player identities must be upserted before an import creates or updates a canonical player.
   - NHL is an authority provider and may create canonical players during import.
   - NHL roster and prospect discovery must remember run-level normalized-name plus position-type fingerprints so later draft discovery can avoid duplicate canonical player creation without per-pick database checks.
+  - NHL roster and prospect landing imports must retry transient provider failures for the individual NHL player id and record persistent transient failures without aborting the whole team import.
+  - NHL roster, prospect, and draft per-player landing failures must be recorded and skipped without aborting the broader import run.
   - NHL draft discovery must be dispatched only after the roster and prospect discovery batch completes for the same import run.
   - NHL draft identities must check existing canonical players by normalized name and compatible position type before creating a minimal canonical prospect player.
   - NHL draft identities may create minimal canonical prospect players with nhl_id null only when no matching roster or prospect fingerprint was seen in the same import run and resolver evidence finds no canonical player.
+  - NHL draft imports must resolve or create the canonical prospect before landing refresh, then use a draft payload NHL player id, an existing canonical nhl_id, or the NHL Stats cayenne lookup to refresh NHL landing metadata and upsert stats when an NHL id can be found.
   - Non-authority providers must not create canonical players without an approved resolver rule or human match.
   - Non-NHL provider identity links may queue asynchronous NHL identity enrichment when the linked canonical player has no nhl_id and has enough name and position evidence.
+  - Canonical player creates and identity-evidence updates must queue asynchronous NHL identity enrichment when the player has no nhl_id and has enough name and position evidence.
   - The nhl:resolve --players command may queue asynchronous NHL identity enrichment for any canonical player with nhl_id null, even when no external identity is linked.
   - NHL identity enrichment must not block the source provider import and must run from a queued job.
+  - NhlPlayerIdentityLookup is the single NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from a canonical player or first-name, last-name, and position-type evidence.
   - NHL identity enrichment must search NHL Stats players by first and last name, filter candidates by compatible position type, and only mutate the canonical player when exactly one validated NHL landing payload remains.
+  - NHL identity enrichment must link the validated NHL identity to the existing canonical player before running the canonical NHL landing import so enrichment cannot create duplicate players for the resolved NHL id.
+  - A newly assigned players.nhl_id, whether on create or update, must queue a canonical NHL landing refresh that updates player metadata and upserts legacy stats rows from NHL landing seasonTotals.
+  - Canonical NHL landing imports already performing player metadata and stats upserts must suppress the assignment-triggered landing refresh hook to avoid duplicate refresh jobs.
   - NHL identity enrichment must locally reject NHL Stats last-name spillover by exact normalized name before candidate counts are interpreted.
   - NHL identity enrichment may reduce same-name ambiguity to a single current-team candidate when exactly one otherwise viable candidate has currentTeamId.
   - NHL identity enrichment must not assign an NHL player id that is already owned by another canonical player; source identities for the duplicate target should become conflicts instead.
@@ -70,11 +81,16 @@ public_interface:
   - PlayerIdentityNormalizer::normalizeName()
   - PlayerIdentityResolver::upsertNhlIdentity()
   - PlayerIdentityResolver::upsertNhlDraftIdentity()
+  - ImportPlayersJob
   - ImportNhlDraftPicksJob
   - ResolveNhlCommand
   - ResolveCanonicalPlayerNhlIdentityJob
+  - RefreshNhlPlayerLandingJob
+  - PlayerNhlIdentityObserver
   - QueueNhlIdentityResolution
-  - NhlPlayerIdentityLookup
+  - NhlPlayerIdentityLookup::resolveForPlayer()
+  - NhlPlayerIdentityLookup::resolveForName()
+  - NhlPlayerIdentityLookup::hasLookupEvidence()
   - PlayerIdentityResolver::upsertFantraxIdentity()
   - PlayerIdentityResolver::upsertYahooIdentity()
   - PlayerIdentityResolver::upsertCapWagesIdentity()

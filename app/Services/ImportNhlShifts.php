@@ -40,6 +40,7 @@ class ImportNhlShifts
 
         $shiftsCount = 0;
         $resolvedShifts = [];
+        $candidateShifts = [];
 
         NhlShift::where('nhl_game_id', $nhlGameId)->delete();
 
@@ -59,6 +60,16 @@ class ImportNhlShifts
 
             $playerId = $shift['playerId'];
             $shiftKey = $this->shiftIntervalKey($shift, $shiftStartSeconds);
+            $candidateShift = [
+                'player_id' => $playerId,
+                'shift_number' => (int) $shift['shiftNumber'],
+                'shift_start_seconds' => $shiftStartSeconds,
+                'shift_end_seconds' => $shiftEndSeconds,
+                'shift_duration_seconds' => $durationSeconds ?? 0,
+                'shift' => $shift,
+            ];
+
+            $candidateShifts[] = $candidateShift;
 
             if (
                 isset($resolvedShifts[$shiftKey])
@@ -67,20 +78,14 @@ class ImportNhlShifts
                 continue;
             }
 
-            $resolvedShifts[$shiftKey] = [
-                'player_id' => $playerId,
-                'shift_number' => (int) $shift['shiftNumber'],
-                'shift_start_seconds' => $shiftStartSeconds,
-                'shift_end_seconds' => $shiftEndSeconds,
-                'shift_duration_seconds' => $durationSeconds ?? 0,
-                'shift' => $shift,
-            ];
+            $resolvedShifts[$shiftKey] = $candidateShift;
         }
 
         $boxscoreTargets = $this->boxscoreShiftTargets($nhlGameId);
+        $containedFilteredShifts = $this->removeContainedShiftIntervals($resolvedShifts);
         $normalizedShifts = $this->reconcileWithBoxscoreTargets(
-            $this->removeReusedShortShiftNumbers($this->removeContainedShiftIntervals($resolvedShifts)),
-            array_values($resolvedShifts),
+            $this->removeReusedShortShiftNumbers($containedFilteredShifts, $boxscoreTargets),
+            $candidateShifts,
             $boxscoreTargets
         );
 
@@ -247,11 +252,13 @@ class ImportNhlShifts
      * Remove tiny provider artifacts when the same shift number is reused later.
      *
      * @param array<int,array<string,mixed>> $resolvedShifts
+     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
      * @return array<int,array<string,mixed>>
      */
-    private function removeReusedShortShiftNumbers(array $resolvedShifts): array
+    private function removeReusedShortShiftNumbers(array $resolvedShifts, array $boxscoreTargets): array
     {
         $discardKeys = [];
+        $byPlayer = collect($resolvedShifts)->groupBy(fn (array $resolvedShift): int => (int) $resolvedShift['player_id']);
         $byPlayerShiftNumber = collect($resolvedShifts)->groupBy(
             fn (array $resolvedShift): string => implode('|', [
                 (string) $resolvedShift['player_id'],
@@ -275,6 +282,14 @@ class ImportNhlShifts
                 continue;
             }
 
+            if ($this->shortShiftDropWouldMissTarget(
+                $byPlayer->get((int) $firstShift['player_id'], collect())->values()->all(),
+                $firstShift,
+                $boxscoreTargets
+            )) {
+                continue;
+            }
+
             $discardKeys[$this->resolvedShiftIdentity($firstShift)] = true;
         }
 
@@ -282,6 +297,36 @@ class ImportNhlShifts
             ->reject(fn (array $resolvedShift): bool => isset($discardKeys[$this->resolvedShiftIdentity($resolvedShift)]))
             ->values()
             ->all();
+    }
+
+    /**
+     * Determine whether dropping a short reused-number shift moves away from official totals.
+     *
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array<string,mixed> $dropShift
+     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
+     * @return bool
+     */
+    private function shortShiftDropWouldMissTarget(array $playerShifts, array $dropShift, array $boxscoreTargets): bool
+    {
+        $target = $boxscoreTargets[(int) $dropShift['player_id']] ?? null;
+
+        if (!$target) {
+            return false;
+        }
+
+        $currentDistance = $this->targetDistance(
+            count($playerShifts),
+            $this->shiftDurationTotal($playerShifts),
+            $target
+        );
+        $afterDistance = $this->targetDistance(
+            max(0, count($playerShifts) - 1),
+            max(0, $this->shiftDurationTotal($playerShifts) - (int) $dropShift['shift_duration_seconds']),
+            $target
+        );
+
+        return $afterDistance >= $currentDistance;
     }
 
     /**
@@ -342,8 +387,13 @@ class ImportNhlShifts
                     $candidateByPlayer->get($playerId, collect())->values()->all(),
                     $target
                 );
+                $normalized = $this->dropShortRowsForTarget($normalized, $target);
 
-                return $this->dropShortRowsForTarget($normalized, $target);
+                return $this->replaceDuplicateAlternativesForTarget(
+                    $normalized,
+                    $candidateByPlayer->get($playerId, collect())->values()->all(),
+                    $target
+                );
             })
             ->sortBy([
                 ['player_id', 'asc'],
@@ -352,6 +402,112 @@ class ImportNhlShifts
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * Swap duplicate correction rows only when official boxscore totals prove the replacement.
+     *
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array<int,array<string,mixed>> $candidateShifts
+     * @param array{shifts:int,toi:int} $target
+     * @return array<int,array<string,mixed>>
+     */
+    private function replaceDuplicateAlternativesForTarget(
+        array $playerShifts,
+        array $candidateShifts,
+        array $target
+    ): array {
+        if (
+            count($playerShifts) !== $target['shifts']
+            || $this->shiftDurationTotal($playerShifts) === $target['toi']
+        ) {
+            return $playerShifts;
+        }
+
+        $candidateGroups = collect($candidateShifts)
+            ->groupBy(fn (array $shift): string => $this->duplicateCorrectionKey($shift))
+            ->filter(fn ($group): bool => $group->count() > 1);
+
+        if ($candidateGroups->isEmpty()) {
+            return $playerShifts;
+        }
+
+        $optionSets = [];
+        foreach ($playerShifts as $index => $selectedShift) {
+            $group = $candidateGroups->get($this->duplicateCorrectionKey($selectedShift));
+
+            if (!$group) {
+                continue;
+            }
+
+            $options = $group
+                ->unique(fn (array $shift): string => $this->resolvedShiftIdentity($shift))
+                ->values()
+                ->all();
+
+            if (count($options) < 2) {
+                continue;
+            }
+
+            $optionSets[] = [
+                'index' => $index,
+                'options' => $options,
+            ];
+        }
+
+        if ($optionSets === []) {
+            return $playerShifts;
+        }
+
+        return $this->findExactDuplicateReplacement($playerShifts, $optionSets, $target) ?? $playerShifts;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array<int,array{index:int,options:array<int,array<string,mixed>>}> $optionSets
+     * @param array{shifts:int,toi:int} $target
+     * @return array<int,array<string,mixed>>|null
+     */
+    private function findExactDuplicateReplacement(array $playerShifts, array $optionSets, array $target): ?array
+    {
+        return $this->findExactDuplicateReplacementRecursive($playerShifts, $optionSets, $target, 0);
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array<int,array{index:int,options:array<int,array<string,mixed>>}> $optionSets
+     * @param array{shifts:int,toi:int} $target
+     * @return array<int,array<string,mixed>>|null
+     */
+    private function findExactDuplicateReplacementRecursive(
+        array $playerShifts,
+        array $optionSets,
+        array $target,
+        int $offset
+    ): ?array {
+        if ($offset >= count($optionSets)) {
+            return $this->shiftDurationTotal($playerShifts) === $target['toi'] ? $playerShifts : null;
+        }
+
+        $optionSet = $optionSets[$offset];
+
+        foreach ($optionSet['options'] as $option) {
+            $candidate = $playerShifts;
+            $candidate[$optionSet['index']] = $option;
+
+            $result = $this->findExactDuplicateReplacementRecursive(
+                $candidate,
+                $optionSets,
+                $target,
+                $offset + 1
+            );
+
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -526,6 +682,16 @@ class ImportNhlShifts
     }
 
     /**
+     * Calculate distance from official boxscore shift and TOI targets.
+     *
+     * @param array{shifts:int,toi:int} $target
+     */
+    private function targetDistance(int $shifts, int $toi, array $target): int
+    {
+        return abs($shifts - $target['shifts']) + abs($toi - $target['toi']);
+    }
+
+    /**
      * Build an in-memory identity for a resolved shift row.
      *
      * @param array<string,mixed> $resolvedShift
@@ -542,6 +708,25 @@ class ImportNhlShifts
             (string) $resolvedShift['shift_start_seconds'],
             (string) $resolvedShift['shift_end_seconds'],
             (string) ($shift['eventNumber'] ?? ''),
+        ]);
+    }
+
+    /**
+     * Build the correction identity NHL reuses when publishing alternate end/duration rows.
+     *
+     * @param array<string,mixed> $resolvedShift
+     * @return string
+     */
+    private function duplicateCorrectionKey(array $resolvedShift): string
+    {
+        $shift = $resolvedShift['shift'];
+
+        return implode('|', [
+            (string) $resolvedShift['player_id'],
+            (string) ($shift['period'] ?? ''),
+            (string) $resolvedShift['shift_start_seconds'],
+            (string) ($shift['eventNumber'] ?? ''),
+            (string) ($shift['typeCode'] ?? ''),
         ]);
     }
 }

@@ -13,6 +13,7 @@ const MOBILE_IDENTITY_KEYS = new Set([
   'name',
   'age',
   'team',
+  'league',
   'pos',
   'position',
   'pos_type',
@@ -28,6 +29,7 @@ const NEVER_DISPLAY_KEYS = new Set([
   'name',
   'age',
   'team',
+  'league',
   'pos',
   'position',
   'pos_type',
@@ -74,6 +76,74 @@ function emptyState(message) {
   node.textContent = message;
 
   return node;
+}
+
+const playerInitials = (name = '') => String(name)
+  .trim()
+  .split(/\s+/)
+  .slice(0, 2)
+  .map((part) => part.charAt(0).toUpperCase())
+  .join('') || '?';
+
+function buildMobileAvatar(player) {
+  const name = player?.name ?? 'Unknown';
+  const avatarUrl = player?.avatar_url || player?.head_shot_url;
+  const wrap = document.createElement('span');
+  wrap.className = 'inline-flex h-7 w-7 shrink-0 items-center justify-center self-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200';
+
+  if (!avatarUrl) {
+    wrap.textContent = playerInitials(name);
+    return wrap;
+  }
+
+  const img = document.createElement('img');
+  img.src = avatarUrl;
+  img.alt = '';
+  img.loading = 'lazy';
+  img.className = 'h-7 w-7 rounded-full object-cover';
+  img.addEventListener('error', () => {
+    img.remove();
+    wrap.textContent = playerInitials(name);
+  });
+  wrap.appendChild(img);
+
+  return wrap;
+}
+
+function buildMobilePosShape(raw, rawType) {
+  const value = displayPosition(raw);
+  const shapeType = displayPosition(rawType);
+  const wrap = document.createElement('span');
+  wrap.className = 'inline-flex h-6 w-6 shrink-0 items-center justify-center self-center';
+
+  const marker = document.createElement('span');
+  marker.className = 'inline-flex h-6 w-6 items-center justify-center text-[9px] font-bold leading-none text-gray-600';
+
+  if (shapeType === 'F') {
+    marker.classList.add('rounded-[3px]', 'border');
+    marker.style.borderColor = '#7CCCF2';
+    marker.textContent = value || 'F';
+  } else if (shapeType === 'D') {
+    marker.classList.add('rounded-[3px]', 'border');
+    marker.style.borderColor = '#FAE919';
+    marker.textContent = value || 'D';
+  } else if (shapeType === 'G') {
+    marker.classList.add('rounded-full', 'border-2');
+    marker.style.borderColor = '#fecaca';
+    marker.textContent = value || 'G';
+  } else {
+    marker.classList.add('rounded-[3px]', 'border-2', 'border-gray-200');
+    marker.textContent = value || '-';
+  }
+
+  wrap.appendChild(marker);
+  return wrap;
+}
+
+function displayPosition(raw) {
+  const first = String(raw ?? '').split(/[,\s/]+/).find(Boolean)?.trim().toUpperCase() || '';
+
+  return first;
 }
 
 function getOrCreateElement(id) {
@@ -133,25 +203,31 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         const contentWrapper = document.createElement('div');
         contentWrapper.className = 'player-stats-content-mobile';
 
+        const iconRail = document.createElement('span');
+        iconRail.className = 'player-stats-icon-rail-mobile';
+        iconRail.appendChild(buildMobilePosShape(player?.pos ?? player?.position ?? player?.pos_type, player?.pos_type));
+        iconRail.appendChild(buildMobileAvatar(player));
+        contentWrapper.appendChild(iconRail);
+
         const topRow = document.createElement('div');
         topRow.className = 'player-stats-top-row-mobile';
 
         const leftSide = document.createElement('div');
-        leftSide.className = 'min-w-0 flex-1';
+        leftSide.className = 'min-w-0 flex flex-1 self-stretch';
 
         const leftInner = document.createElement('div');
-        leftInner.className = 'flex min-w-0 flex-1 items-center gap-1';
-
-        const posTag = document.createElement('span');
-        posTag.className = 'player-stats-pos-tag-mobile';
-        posTag.textContent = (player?.pos ?? player?.pos_type ?? '').toString() || '-';
+        leftInner.className = 'player-stats-identity-mobile';
 
         const name = document.createElement('span');
         name.className = 'player-stats-name-mobile';
         name.textContent = player?.name ?? 'Unknown';
 
+        const nameLine = document.createElement('span');
+        nameLine.className = 'player-stats-name-line-mobile';
+        nameLine.appendChild(name);
+
         const ageStat = document.createElement('div');
-        ageStat.className = 'player-stats-stat-key-mobile shrink-0';
+        ageStat.className = 'player-stats-age-mobile';
         ageStat.textContent = player?.age ? `Age ${player.age}` : '';
 
         const aav = document.createElement('span');
@@ -167,10 +243,29 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         const lastYear = String(player?.contract_last_year ?? '').trim();
         aav.textContent = `$${(millions ?? 0).toFixed(1)}M${lastYear ? ` | ${lastYear}` : ''}`;
 
-        leftInner.appendChild(posTag);
-        leftInner.appendChild(name);
-        leftInner.appendChild(ageStat);
-        leftInner.appendChild(aav);
+        const meta = document.createElement('span');
+        meta.className = 'player-stats-meta-mobile';
+        meta.appendChild(ageStat);
+        meta.appendChild(aav);
+
+        const nameBlock = document.createElement('span');
+        nameBlock.className = 'player-stats-name-stack-mobile';
+        nameBlock.appendChild(nameLine);
+
+        const detailLine = document.createElement('span');
+        detailLine.className = 'player-stats-detail-line-mobile';
+
+        const leagueName = formatStatValue('league', player?.league);
+        if (leagueName) {
+          const league = document.createElement('span');
+          league.className = 'player-stats-league-mobile';
+          league.textContent = leagueName;
+          detailLine.appendChild(league);
+        }
+        detailLine.appendChild(meta);
+        nameBlock.appendChild(detailLine);
+
+        leftInner.appendChild(nameBlock);
         leftSide.appendChild(leftInner);
 
         const rightSide = document.createElement('div');
@@ -319,7 +414,7 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
     headings.forEach((heading) => {
       const key = String(heading?.key ?? '');
       const label = String(heading?.label ?? heading?.key ?? '');
-      if (!key || ['team', 'pos', 'position', 'pos_type'].includes(key.toLowerCase())) return;
+      if (!key || ['team', 'league', 'pos', 'position', 'pos_type'].includes(key.toLowerCase())) return;
 
       const active = key === settings.sortKey;
       const button = document.createElement('button');

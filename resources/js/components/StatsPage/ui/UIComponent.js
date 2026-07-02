@@ -56,7 +56,7 @@ export class UI {
     const svgButtonSort = document.createElement('button');
     svgButtonSort.type = "button";
     svgButtonSort.className = "searchbar-button-mobile";
-
+    svgButtonSort.setAttribute('aria-label', 'Sort stats');
 
     const svgIconSort = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svgIconSort.setAttribute('viewBox', '0 0 24 24');
@@ -65,21 +65,15 @@ export class UI {
     svgIconSort.setAttribute('data-slot', 'icon');
     svgIconSort.setAttribute('aria-hidden', true);
     svgIconSort.setAttribute('class', 'searchbar-svg-mobile');
-    
 
     const pathSort = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    pathSort.setAttribute("d", "M3 4.5h14.25M3 9h9.75M3 13.5h9.75m4.5-4.5v12m0 0-3.75-3.75M17.25 21 21 17.25");
-    pathSort.setAttribute("clip-rule", "evenodd");
-    pathSort.setAttribute("fill-rule", "evenodd");
+    pathSort.setAttribute("stroke-linecap", "round");
+    pathSort.setAttribute("stroke-linejoin", "round");
+    pathSort.setAttribute("d", "M3 4.5h14.25M3 9h9.75M3 13.5h5.25m5.25-9v15m0 0-3.75-3.75M13.5 19.5l3.75-3.75");
 
-
-    // svgIconFilter.appendChild(path);
     svgIconSort.appendChild(pathSort);
-
-    // svgButton.appendChild(svgIconFilter);
     svgButtonSort.appendChild(svgIconSort);
 
-    // fire a custom event that bubbles up to the container
     svgButtonSort.addEventListener('click', (e) => {
       e.preventDefault();
       parentContainer.dispatchEvent(

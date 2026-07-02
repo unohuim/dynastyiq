@@ -14,9 +14,11 @@ use App\Traits\HasAPITrait;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Orchestrates a single NHL player import run for a team.
@@ -196,13 +198,46 @@ class ImportPlayersJob implements ShouldQueue
     private function importPlayerInline(string $playerId, bool $isProspect): void
     {
         $playersExistedBefore = Player::query()->exists();
+        $retryDelays = $this->playerLandingRetryDelays();
+        $transientFailures = 0;
 
-        try {
-            (new ImportNHLPlayer())->import($playerId, $isProspect);
-            $this->recordProcessedRecord('successful');
-        } catch (\Throwable $throwable) {
-            $this->recordProcessedRecord('failed');
-            throw $throwable;
+        while (true) {
+            try {
+                (new ImportNHLPlayer())->import($playerId, $isProspect);
+                $this->recordProcessedRecord('successful');
+                break;
+            } catch (RequestException $exception) {
+                if (! $this->isTransientPlayerLandingFailure($exception)) {
+                    $this->recordPlayerLandingFailure($playerId, $isProspect, $exception, 'player_landing_failures');
+                    return;
+                }
+
+                if ($transientFailures < count($retryDelays)) {
+                    $delaySeconds = $retryDelays[$transientFailures];
+                    $transientFailures++;
+
+                    Log::warning('NHL player landing transient failure; retrying player import', [
+                        'team' => $this->teamAbbrev,
+                        'nhl_player_id' => $playerId,
+                        'is_prospect' => $isProspect,
+                        'status' => $exception->response?->status(),
+                        'attempt' => $transientFailures,
+                        'delay_seconds' => $delaySeconds,
+                    ]);
+
+                    if ($delaySeconds > 0) {
+                        sleep($delaySeconds);
+                    }
+
+                    continue;
+                }
+
+                $this->recordTransientPlayerLandingFailure($playerId, $isProspect, $exception, $transientFailures + 1);
+                return;
+            } catch (\Throwable $throwable) {
+                $this->recordPlayerLandingFailure($playerId, $isProspect, $throwable, 'player_landing_failures');
+                return;
+            }
         }
 
         if (! $playersExistedBefore && Player::query()->exists()) {
@@ -234,6 +269,102 @@ class ImportPlayersJob implements ShouldQueue
             ?->recordProcessed($result);
 
         $this->broadcastProgress();
+    }
+
+    private function recordTransientPlayerLandingFailure(
+        string $playerId,
+        bool $isProspect,
+        RequestException $exception,
+        int $attempts,
+    ): void {
+        $this->recordProcessedRecord('failed');
+
+        Log::warning('NHL player landing transient failure persisted; skipping player', [
+            'team' => $this->teamAbbrev,
+            'nhl_player_id' => $playerId,
+            'is_prospect' => $isProspect,
+            'status' => $exception->response?->status(),
+            'attempts' => $attempts,
+        ]);
+
+        $this->appendImportRunMeta('transient_player_landing_failures', [
+            'team' => $this->teamAbbrev,
+            'nhl_player_id' => $playerId,
+            'is_prospect' => $isProspect,
+            'status' => $exception->response?->status(),
+            'attempts' => $attempts,
+            'error' => $exception->getMessage(),
+        ]);
+    }
+
+    private function recordPlayerLandingFailure(
+        string $playerId,
+        bool $isProspect,
+        \Throwable $throwable,
+        string $metaKey,
+    ): void {
+        $this->recordProcessedRecord('failed');
+
+        Log::warning('NHL player landing failure; skipping player', [
+            'team' => $this->teamAbbrev,
+            'nhl_player_id' => $playerId,
+            'is_prospect' => $isProspect,
+            'status' => $throwable instanceof RequestException ? $throwable->response?->status() : null,
+            'error' => $throwable->getMessage(),
+        ]);
+
+        $this->appendImportRunMeta($metaKey, [
+            'team' => $this->teamAbbrev,
+            'nhl_player_id' => $playerId,
+            'is_prospect' => $isProspect,
+            'status' => $throwable instanceof RequestException ? $throwable->response?->status() : null,
+            'error' => $throwable->getMessage(),
+        ]);
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function playerLandingRetryDelays(): array
+    {
+        $delays = config('apiImportNhl.player_landing_retry_delays', [2, 5, 10]);
+
+        if (! is_array($delays)) {
+            return [2, 5, 10];
+        }
+
+        return array_values(array_map(
+            static fn (mixed $delay): int => max(0, (int) $delay),
+            $delays,
+        ));
+    }
+
+    private function isTransientPlayerLandingFailure(RequestException $exception): bool
+    {
+        return in_array($exception->response?->status(), [408, 429, 500, 502, 503, 504], true);
+    }
+
+    /**
+     * @param array<string,mixed> $entry
+     */
+    private function appendImportRunMeta(string $key, array $entry): void
+    {
+        if ($this->adminImportRunId === null) {
+            return;
+        }
+
+        $importRun = ImportRun::query()->find($this->adminImportRunId);
+
+        if ($importRun === null) {
+            return;
+        }
+
+        $meta = $importRun->meta ?? [];
+        $items = is_array($meta[$key] ?? null) ? $meta[$key] : [];
+        $items[] = $entry;
+        $meta[$key] = $items;
+
+        $importRun->forceFill(['meta' => $meta])->save();
     }
 
     private function broadcastProgress(): void

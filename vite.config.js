@@ -8,7 +8,7 @@ const hmrHost = process.env.VITE_HMR_HOST ?? 'dynastyiq.test';
 export default defineConfig({
     plugins: [
         laravel({
-            input: ['resources/css/app.css', 'resources/js/app.js'],
+            input: ['resources/css/app.css', 'resources/js/app.js', 'resources/js/pages/stats-page.js'],
             refresh: true,
         }),
     ],

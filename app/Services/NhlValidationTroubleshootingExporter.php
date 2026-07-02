@@ -11,6 +11,7 @@ use App\Models\PlayByPlay;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -48,6 +49,84 @@ class NhlValidationTroubleshootingExporter
         $this->writeFile($directory, "boxscore_{$gameId}.md", fn (): string => $this->boxscoreMarkdown($validation, $playerIds));
         $this->writeFile($directory, "pbp_{$gameId}.md", fn (): string => $this->pbpMarkdown($validation, $playerIds));
         $this->writeFile($directory, "shifts_{$gameId}.md", fn (): string => $this->shiftsMarkdown($validation, $playerIds));
+        $this->writeRawProviderFiles($directory, $gameId);
+    }
+
+    /**
+     * Write raw provider payloads as pretty JSON text files.
+     */
+    private function writeRawProviderFiles(string $directory, int $gameId): void
+    {
+        foreach ($this->rawProviderUrls($gameId) as $key => $url) {
+            $this->writeFile(
+                $directory,
+                "raw_{$key}_{$gameId}.txt",
+                fn (): string => $this->rawProviderPayloadText($key, $url)
+            );
+        }
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    private function rawProviderUrls(int $gameId): array
+    {
+        return [
+            'boxscore' => $this->configuredNhlUrl('boxscore', $gameId),
+            'pbp' => $this->configuredNhlUrl('pbp', $gameId),
+            'shifts' => "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId={$gameId}",
+        ];
+    }
+
+    /**
+     * Build a configured NHL web API URL.
+     */
+    private function configuredNhlUrl(string $endpoint, int $gameId): string
+    {
+        $base = rtrim((string) config('apiurls.nhl.base'), '/');
+        $path = (string) config("apiurls.nhl.endpoints.{$endpoint}");
+
+        return $base . '/' . ltrim(str_replace('{gameId}', (string) $gameId, $path), '/');
+    }
+
+    /**
+     * Fetch and format one raw provider payload.
+     */
+    private function rawProviderPayloadText(string $source, string $url): string
+    {
+        try {
+            $payload = Http::timeout(30)->acceptJson()->get($url)->throw()->json();
+
+            return $this->prettyJson([
+                'source' => $source,
+                'url' => $url,
+                'payload' => $payload,
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to fetch raw NHL validation troubleshooting payload.', [
+                'source' => $source,
+                'url' => $url,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return $this->prettyJson([
+                'source' => $source,
+                'url' => $url,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Encode payloads for readable troubleshooting text files.
+     *
+     * @param array<string,mixed> $payload
+     */
+    private function prettyJson(array $payload): string
+    {
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        return ($json === false ? '{}' : $json) . "\n";
     }
 
     /**

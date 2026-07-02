@@ -19,6 +19,14 @@ const posTextColor = (p) => {
     return TXT_COLOUR_POS;
 };
 
+const displayPosition = (raw) => {
+    const first = String(raw ?? "")
+        .split(/[,\s/]+/)
+        .find(Boolean)?.trim().toUpperCase() || "";
+
+    return first;
+};
+
 // AAV helpers
 const isAAVKey = (k = "") =>
     ["aav", "contract_value", "contract_value_num"].includes(
@@ -38,6 +46,57 @@ const formatAAV = (val) => {
     return `$${n.toFixed(1)}`;
 };
 
+const formatDesktopNumber = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return new Intl.NumberFormat("en-US", {
+            maximumFractionDigits: 3,
+        }).format(value);
+    }
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+            return new Intl.NumberFormat("en-US", {
+                maximumFractionDigits: 3,
+            }).format(Number(trimmed));
+        }
+    }
+
+    return value ?? "";
+};
+
+const playerInitials = (name = "") => String(name)
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "?";
+
+const buildPlayerAvatar = (row, name) => {
+    const avatarUrl = row?.avatar_url || row?.head_shot_url;
+    const wrap = document.createElement("span");
+    wrap.className =
+        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200";
+
+    if (!avatarUrl) {
+        wrap.textContent = playerInitials(name);
+        return wrap;
+    }
+
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = "";
+    img.loading = "lazy";
+    img.className = "h-7 w-7 rounded-full object-cover";
+    img.addEventListener("error", () => {
+        img.remove();
+        wrap.textContent = playerInitials(name);
+    });
+    wrap.appendChild(img);
+
+    return wrap;
+};
+
 // Persist filters per-container across re-renders
 const desktopState = new WeakMap();
 
@@ -53,6 +112,7 @@ export function renderStatsDesktop(
     const state = {
         nameFilter: typeof prev.nameFilter === "string" ? prev.nameFilter : "",
         teamFilter: typeof prev.teamFilter === "string" ? prev.teamFilter : "",
+        leagueFilter: typeof prev.leagueFilter === "string" ? prev.leagueFilter : "",
     };
     desktopState.set(container, state);
 
@@ -72,6 +132,9 @@ export function renderStatsDesktop(
     const teamIdx = displayHeadings.findIndex(
         (h) => String(h.key).toLowerCase() === "team"
     );
+    const leagueIdx = displayHeadings.findIndex(
+        (h) => String(h.key).toLowerCase() === "league"
+    );
     const typeIdx = displayHeadings.findIndex((h) =>
         ["type", "pos_type"].includes(String(h.key).toLowerCase())
     );
@@ -82,8 +145,9 @@ export function renderStatsDesktop(
     const gridCols = displayHeadings
         .map((_, i) => {
             if (i === rkIdx) return "44px";
-            if (i === typeIdx) return "52px";
+            if (i === typeIdx) return "36px";
             if (i === teamIdx) return "76px";
+            if (i === leagueIdx) return "72px";
             if (i === playerIdx) return "190px";
             return "72px";
         })
@@ -94,6 +158,13 @@ export function renderStatsDesktop(
         new Set(
             (Array.isArray(data) ? data : [])
                 .map((p) => (p?.team ?? "").toString().trim())
+                .filter(Boolean)
+        )
+    ).sort((a, b) => a.localeCompare(b));
+    const leagues = Array.from(
+        new Set(
+            (Array.isArray(data) ? data : [])
+                .map((p) => (p?.league ?? "").toString().trim())
                 .filter(Boolean)
         )
     ).sort((a, b) => a.localeCompare(b));
@@ -139,6 +210,26 @@ export function renderStatsDesktop(
     });
     teamSelect.value = state.teamFilter;
     controls.appendChild(teamSelect);
+
+    let leagueSelect = null;
+    if (leagues.length > 0) {
+        leagueSelect = document.createElement("select");
+        leagueSelect.className =
+            "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
+            "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        const optAllLeagues = document.createElement("option");
+        optAllLeagues.value = "";
+        optAllLeagues.textContent = "All Leagues";
+        leagueSelect.appendChild(optAllLeagues);
+        leagues.forEach((league) => {
+            const opt = document.createElement("option");
+            opt.value = league;
+            opt.textContent = league;
+            leagueSelect.appendChild(opt);
+        });
+        leagueSelect.value = state.leagueFilter;
+        controls.appendChild(leagueSelect);
+    }
 
     // Columns header (original height, sticky under controls)
     const headerRow = document.createElement("div");
@@ -187,69 +278,34 @@ export function renderStatsDesktop(
     const bodyWrap = document.createElement("div");
 
     // POS shape
-    const buildPosShape = (raw) => {
-        const v = String(raw ?? "")
-            .trim()
-            .toUpperCase();
+    const buildPosShape = (raw, rawType) => {
+        const v = displayPosition(raw);
+        const shapeType = displayPosition(rawType);
         const wrap = document.createElement("div");
-        wrap.className = "h-10 w-full flex items-center justify-center";
+        wrap.className = "h-8 w-full flex items-center justify-center";
         const box = document.createElement("div");
-        box.className = "h-8 w-8 flex items-center justify-center";
+        box.className = "h-5 w-5 flex items-center justify-center";
         wrap.appendChild(box);
-
-        if (v === "F") {
-            const svg = document.createElementNS(
-                "http://www.w3.org/2000/svg",
-                "svg"
-            );
-            svg.setAttribute("viewBox", "0 0 100 100");
-            svg.setAttribute("width", "100%");
-            svg.setAttribute("height", "100%");
-
-            const poly = document.createElementNS(
-                "http://www.w3.org/2000/svg",
-                "polygon"
-            );
-            poly.setAttribute("points", "50,3 3,97 97,97");
-            poly.setAttribute("fill", "none");
-            poly.setAttribute("stroke", BORDER_COLOUR_F);
-            poly.setAttribute("stroke-width", "2");
-            poly.setAttribute("stroke-linejoin", "round");
-
-            const txt = document.createElementNS(
-                "http://www.w3.org/2000/svg",
-                "text"
-            );
-            txt.setAttribute("x", "50");
-            txt.setAttribute("y", "66");
-            txt.setAttribute("text-anchor", "middle");
-            txt.setAttribute("dominant-baseline", "middle");
-            txt.setAttribute("fill", posTextColor("F"));
-            txt.setAttribute("font-size", "32");
-            txt.setAttribute("font-weight", "700");
-            txt.textContent = "F";
-
-            svg.appendChild(poly);
-            svg.appendChild(txt);
-            box.appendChild(svg);
-            return wrap;
-        }
 
         const inner = document.createElement("div");
         inner.className =
-            "h-full w-full flex items-center justify-center border-2 font-semibold text-[12px]";
-        inner.style.color = posTextColor(v);
+            "h-full w-full flex items-center justify-center font-semibold text-[9px]";
+        inner.style.color = posTextColor(shapeType);
 
-        if (v === "D") {
-            inner.className += " rounded-[6px] transform scale-110";
+        if (shapeType === "F") {
+            inner.className += " rounded-[6px] border transform scale-110";
+            inner.style.borderColor = BORDER_COLOUR_F;
+            inner.textContent = v || "F";
+        } else if (shapeType === "D") {
+            inner.className += " rounded-[6px] border transform scale-110";
             inner.style.borderColor = BORDER_COLOUR_D;
-            inner.textContent = "D";
-        } else if (v === "G") {
-            inner.className += " rounded-full";
+            inner.textContent = v || "D";
+        } else if (shapeType === "G") {
+            inner.className += " rounded-full border-2";
             inner.style.borderColor = BORDER_COLOUR_G;
-            inner.textContent = "G";
+            inner.textContent = v || "G";
         } else {
-            inner.className += " rounded";
+            inner.className += " rounded border-2";
             inner.style.borderColor = "#e5e7eb";
             inner.textContent = v || "—";
         }
@@ -262,12 +318,15 @@ export function renderStatsDesktop(
     const applyFilters = (rows) => {
         const nameQ = state.nameFilter.trim().toLowerCase();
         const teamQ = state.teamFilter.trim().toUpperCase();
+        const leagueQ = state.leagueFilter.trim().toUpperCase();
         return rows.filter((r) => {
             const name = String(r?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
             const hitTeam =
                 !teamQ || String(r?.team ?? "").toUpperCase() === teamQ;
-            return hitName && hitTeam;
+            const hitLeague =
+                !leagueQ || String(r?.league ?? "").toUpperCase() === leagueQ;
+            return hitName && hitTeam && hitLeague;
         });
     };
 
@@ -278,7 +337,7 @@ export function renderStatsDesktop(
         rows.forEach((row, idx) => {
             const tr = document.createElement("div");
             tr.className =
-                "grid border-t px-4 py-3 text-sm hover:bg-gray-50 transition-colors";
+                "grid border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
             tr.style.gridTemplateColumns = gridCols;
 
             displayHeadings.forEach(({ key }, i) => {
@@ -291,18 +350,25 @@ export function renderStatsDesktop(
                 } else if (i === teamIdx) {
                     const badge = document.createElement("div");
                     badge.className =
-                        "inline-flex h-8 px-3 rounded-md items-center justify-center " +
+                        "inline-flex h-7 px-3 rounded-md items-center justify-center " +
                         "text-white font-semibold text-xs tracking-wide shadow-sm";
                     badge.style.background = teamBg(row?.team);
                     badge.textContent = row?.team ?? "—";
                     cell.className =
                         "flex items-center justify-center text-gray-500";
                     cell.appendChild(badge);
+                } else if (i === leagueIdx) {
+                    const rawVal = row.stats?.[key] ?? row[key];
+                    const val = formatStatValue(key, rawVal);
+                    cell.className =
+                        "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
+                    cell.textContent = val ?? "";
                 } else if (i === typeIdx) {
-                    const val = row[key] ?? row.pos_type ?? row.type;
+                    const val = row.pos ?? row.position ?? row[key] ?? row.pos_type ?? row.type;
+                    const typeVal = row.pos_type ?? row.type;
                     cell.className =
                         "flex items-center justify-center text-gray-500";
-                    cell.appendChild(buildPosShape(val));
+                    cell.appendChild(buildPosShape(val, typeVal));
                 } else if (isAAVKey(key)) {
                     const raw = row.stats?.[key] ?? row[key];
                     cell.className =
@@ -312,19 +378,23 @@ export function renderStatsDesktop(
                     const rawVal = row.stats?.[key] ?? row[key];
                     const val = formatStatValue(key, rawVal);
                     cell.className =
-                        "flex min-w-0 items-center justify-start whitespace-nowrap overflow-hidden text-ellipsis pr-2 text-gray-700";
+                        "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
                     cell.title = String(val ?? "");
-                    cell.textContent = val ?? "";
+                    const name = document.createElement("span");
+                    name.className = "min-w-0 overflow-hidden text-ellipsis";
+                    name.textContent = val ?? "";
+                    cell.appendChild(buildPlayerAvatar(row, val));
+                    cell.appendChild(name);
                 } else {
                     const rawVal = row.stats?.[key] ?? row[key];
                     const val = formatStatValue(key, rawVal);
                     const common =
-                        "flex items-center justify-center whitespace-nowrap tabular-nums text-gray-500";
+                        "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
                     cell.className =
                         settings.sortKey === key
                             ? `${common} font-semibold`
-                            : `${common} text-[13px]`;
-                    cell.textContent = val ?? "";
+                            : common;
+                    cell.textContent = formatDesktopNumber(val);
                 }
 
                 tr.appendChild(cell);
@@ -342,6 +412,11 @@ export function renderStatsDesktop(
     });
     teamSelect.addEventListener("change", () => {
         state.teamFilter = teamSelect.value || "";
+        desktopState.set(container, state);
+        renderRows();
+    });
+    leagueSelect?.addEventListener("change", () => {
+        state.leagueFilter = leagueSelect.value || "";
         desktopState.set(container, state);
         renderRows();
     });

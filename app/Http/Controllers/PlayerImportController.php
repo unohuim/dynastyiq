@@ -76,6 +76,7 @@ class PlayerImportController extends Controller
         )->all();
 
         Bus::batch($nhlJobs)
+            ->allowFailures()
             ->then(function (Batch $batch) use ($importRunId): void {
                 ImportNhlDraftPicksJob::withChain([
                     new ImportFantraxPlayersJob(),
@@ -133,6 +134,7 @@ class PlayerImportController extends Controller
         )->all();
 
         Bus::batch($nhlJobs)
+            ->allowFailures()
             ->then(function (Batch $batch) use ($importRunId): void {
                 ImportNhlDraftPicksJob::dispatch($importRunId);
             })

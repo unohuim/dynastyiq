@@ -708,11 +708,175 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ->and($row['ozs_pct'])->toBe(0.8);
 });
 
+it('uses official boxscore toi for stats page per-60 rate calculations', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(201, 'Boxscore Toi');
+
+    DB::table('nhl_season_stats')->insert([
+        'season_id' => '20262027',
+        'nhl_player_id' => 201,
+        'nhl_team_id' => 1,
+        'gp' => 1,
+        'game_type' => 2,
+        'toi' => 0,
+        'g' => 1,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_boxscores')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 201,
+        'nhl_team_id' => 1,
+        'toi' => '20:00',
+        'toi_seconds' => null,
+        'position' => 'C',
+        'player_name' => 'Boxscore Toi',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Perspective::create([
+        'name' => 'Boxscore Toi Test',
+        'slug' => 'boxscore-toi-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'toi', 'label' => 'TOI', 'type' => 'string'],
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'g',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'pos_type' => [
+                    'operator' => '!=',
+                    'value' => 'G',
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('api.stats', [
+        'perspective' => 'boxscore-toi-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'slice' => 'p60',
+    ]));
+
+    $response->assertOk();
+
+    $row = $response->json('data.0');
+
+    expect($row['toi'])->toBe('20:00')
+        ->and($row['g'])->toBe(3.0);
+});
+
+it('maps wing position filters to stored NHL left and right position codes', function (): void {
+    $leftWing = ($this->makePlayer)(101, 'Left Wing');
+    $leftWing->update(['position' => 'L', 'pos_type' => 'F']);
+    $center = ($this->makePlayer)(102, 'Center Skater');
+    $center->update(['position' => 'C', 'pos_type' => 'F']);
+    $rightWing = ($this->makePlayer)(103, 'Right Wing');
+    $rightWing->update(['position' => 'R', 'pos_type' => 'F']);
+
+    DB::table('nhl_season_stats')->insert([
+        [
+            'season_id' => '20262027',
+            'nhl_player_id' => 101,
+            'nhl_team_id' => 1,
+            'gp' => 1,
+            'game_type' => 2,
+            'pts' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'season_id' => '20262027',
+            'nhl_player_id' => 102,
+            'nhl_team_id' => 1,
+            'gp' => 1,
+            'game_type' => 2,
+            'pts' => 2,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'season_id' => '20262027',
+            'nhl_player_id' => 103,
+            'nhl_team_id' => 1,
+            'gp' => 1,
+            'game_type' => 2,
+            'pts' => 3,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    Perspective::create([
+        'name' => 'Position Filter Test',
+        'slug' => 'position-filter-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'settings' => [
+            'columns' => [
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'pts',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'pos_type' => [
+                    'operator' => '!=',
+                    'value' => 'G',
+                    'locked' => true,
+                ],
+            ],
+            'ui' => [
+                'positionButtons' => ['F', 'C', 'LW', 'RW', 'D'],
+            ],
+        ],
+    ]);
+
+    $lw = $this->getJson(route('api.stats', [
+        'perspective' => 'position-filter-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['LW'],
+    ]));
+    $c = $this->getJson(route('api.stats', [
+        'perspective' => 'position-filter-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['C'],
+    ]));
+    $rw = $this->getJson(route('api.stats', [
+        'perspective' => 'position-filter-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['RW'],
+    ]));
+
+    $lw->assertOk();
+    $c->assertOk();
+    $rw->assertOk();
+
+    expect(collect($lw->json('data'))->pluck('name')->all())->toBe(['Left Wing'])
+        ->and(collect($c->json('data'))->pluck('name')->all())->toBe(['Center Skater'])
+        ->and(collect($rw->json('data'))->pluck('name')->all())->toBe(['Right Wing']);
+});
+
 it('limits the prospects perspective to players marked as prospects', function (): void {
     $prospect = ($this->makePlayer)(101, 'Future Prospect');
     $prospect->update([
         'is_prospect' => true,
         'current_league_abbrev' => 'OHL',
+        'head_shot_url' => 'https://example.test/future-prospect.png',
     ]);
     $olderNonProspect = ($this->makePlayer)(102, 'Older Nonprospect');
     $olderNonProspect->update([
@@ -787,4 +951,212 @@ it('limits the prospects perspective to players marked as prospects', function (
 
     expect(collect($response->json('data'))->pluck('name')->all())
         ->toBe(['Future Prospect']);
+    expect($response->json('data.0.avatar_url'))
+        ->toBe('https://example.test/future-prospect.png');
+});
+
+it('exposes prospect goalie stats from legacy stats goalie columns', function (): void {
+    $goalie = ($this->makePlayer)(201, 'Future Goalie');
+    $goalie->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+        'is_goalie' => true,
+        'is_prospect' => true,
+        'current_league_abbrev' => 'WHL',
+    ]);
+
+    DB::table('stats')->insert([
+        'player_id' => $goalie->id,
+        'is_prospect' => true,
+        'player_name' => 'Future Goalie',
+        'season_id' => '20262027',
+        'league_abbrev' => 'WHL',
+        'team_name' => 'Seattle',
+        'game_type_id' => 2,
+        'gp' => 5,
+        'wins' => 3,
+        'losses' => 2,
+        'saves' => null,
+        'shots_against' => 100,
+        'goals_against' => 10,
+        'sv_pct' => null,
+        'gaa' => null,
+        'toi_minutes' => 300,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Perspective::create([
+        'name' => 'Prospect Goalies Test',
+        'slug' => 'prospect-goalies-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => false,
+        'settings' => [
+            'columns' => [
+                ['key' => 'wins', 'label' => 'W', 'type' => 'int'],
+                ['key' => 'saves', 'label' => 'SV', 'type' => 'int'],
+                ['key' => 'shots_against', 'label' => 'SA', 'type' => 'int'],
+                ['key' => 'goals_against', 'label' => 'GA', 'type' => 'int'],
+                ['key' => 'sv_pct', 'label' => 'SV%', 'type' => 'float'],
+                ['key' => 'gaa', 'label' => 'GAA', 'type' => 'float'],
+            ],
+            'sort' => [
+                'sortKey' => 'wins',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'league_abbrev' => [
+                    'operator' => '!=',
+                    'value' => 'NHL',
+                    'locked' => true,
+                ],
+                'is_prospect' => [
+                    'value' => true,
+                    'locked' => true,
+                ],
+                'pos_type' => [
+                    'value' => 'G',
+                    'locked' => true,
+                ],
+            ],
+            'ui' => [
+                'positionButtons' => [],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('api.stats', [
+        'perspective' => 'prospect-goalies-test',
+        'season_id' => '20262027',
+    ]));
+
+    $response->assertOk();
+
+    $row = $response->json('data.0');
+
+    expect($row['name'])->toBe('Future Goalie')
+        ->and($row['saves'])->toBe(90)
+        ->and($row['shots_against'])->toBe(100)
+        ->and($row['goals_against'])->toBe(10)
+        ->and($row['sv_pct'])->toBe(0.9)
+        ->and($row['gaa'])->toBe(2.0);
+});
+
+it('groups prospect stats by player and league while summing same league teams', function (): void {
+    $player = ($this->makePlayer)(301, 'League Split Prospect');
+    $player->update([
+        'is_prospect' => true,
+        'team_abbrev' => 'CHI',
+        'current_league_abbrev' => 'WHL',
+    ]);
+
+    DB::table('stats')->insert([
+        [
+            'player_id' => $player->id,
+            'is_prospect' => true,
+            'player_name' => 'League Split Prospect',
+            'season_id' => '20262027',
+            'league_abbrev' => 'WHL',
+            'team_name' => 'Seattle',
+            'game_type_id' => 2,
+            'gp' => 10,
+            'g' => 4,
+            'a' => 6,
+            'pts' => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'player_id' => $player->id,
+            'is_prospect' => true,
+            'player_name' => 'League Split Prospect',
+            'season_id' => '20262027',
+            'league_abbrev' => 'WHL',
+            'team_name' => 'Wenatchee',
+            'game_type_id' => 2,
+            'gp' => 12,
+            'g' => 5,
+            'a' => 7,
+            'pts' => 12,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'player_id' => $player->id,
+            'is_prospect' => true,
+            'player_name' => 'League Split Prospect',
+            'season_id' => '20262027',
+            'league_abbrev' => 'AHL',
+            'team_name' => 'Rockford',
+            'game_type_id' => 2,
+            'gp' => 3,
+            'g' => 1,
+            'a' => 2,
+            'pts' => 3,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    Perspective::create([
+        'name' => 'Prospects League Test',
+        'slug' => 'prospects-league-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => false,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+                ['key' => 'a', 'label' => 'A', 'type' => 'int'],
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'pts',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [
+                'league_abbrev' => [
+                    'operator' => '!=',
+                    'value' => 'NHL',
+                    'locked' => true,
+                ],
+                'is_prospect' => [
+                    'value' => true,
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('api.stats', [
+        'perspective' => 'prospects-league-test',
+        'season_id' => '20262027',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('meta.availableLeagues', ['AHL', 'WHL']);
+
+    $rows = collect($response->json('data'));
+    $whl = $rows->firstWhere('league', 'WHL');
+    $ahl = $rows->firstWhere('league', 'AHL');
+
+    expect($rows)->toHaveCount(2)
+        ->and($whl['team'])->toBe('CHI')
+        ->and($whl['gp'])->toBe(22)
+        ->and($whl['pts'])->toBe(22)
+        ->and($ahl['team'])->toBe('CHI')
+        ->and($ahl['gp'])->toBe(3)
+        ->and($ahl['pts'])->toBe(3);
+
+    $filtered = $this->getJson(route('api.stats', [
+        'perspective' => 'prospects-league-test',
+        'season_id' => '20262027',
+        'league' => ['AHL'],
+    ]));
+
+    $filtered->assertOk();
+
+    expect($filtered->json('data'))->toHaveCount(1)
+        ->and($filtered->json('data.0.league'))->toBe('AHL');
 });

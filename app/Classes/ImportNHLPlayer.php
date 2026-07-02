@@ -17,9 +17,9 @@ class ImportNHLPlayer
      * @param string $playerId NHL.com player ID
      * @param bool $isProspect Whether this player is a prospect
      */
-    public function import(string $playerId, bool $isProspect = false): void
+    public function import(string $playerId, bool $isProspect = false): \App\Models\Player
     {
-        app(ImportNHLPlayerService::class)->import($playerId, $isProspect);
+        return app(ImportNHLPlayerService::class)->import($playerId, $isProspect);
     }
 
     /**

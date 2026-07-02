@@ -880,7 +880,7 @@ $validation = app(ValidateNhlGameSummary::class)->validate($gameId);
 - `docs/architecture/imports/NhlValidationTroubleshootingExporter.yaml`
 
 **Purpose:**
-Write compact per-game markdown snapshots for failed NHL summary validations so standalone delta, raw boxscore, play-by-play, and shift context can be reviewed together.
+Write compact per-game markdown snapshots and raw provider payload text artifacts for failed NHL summary validations so standalone delta, boxscore, play-by-play, and shift context can be reviewed together.
 
 **When to Use:**
 Failed summary-boxscore validations that need durable local troubleshooting evidence.
@@ -975,8 +975,11 @@ if ($repo->claim($gameId, 'pbp')) {
 - `app/Models/PlayerExternalIdentity.php`
 - `app/Events/PlayerExternalIdentityLinked.php`
 - `app/Console/Commands/ResolveNhlCommand.php`
+- `app/Jobs/ImportPlayersJob.php`
 - `app/Jobs/ImportNhlDraftPicksJob.php`
 - `app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php`
+- `app/Jobs/RefreshNhlPlayerLandingJob.php`
+- `app/Observers/PlayerNhlIdentityObserver.php`
 - `app/Listeners/QueueNhlIdentityResolution.php`
 - `app/Jobs/RefreshCapWagesContractsForIdentityJob.php`
 - `app/Listeners/QueueCapWagesContractRefresh.php`
@@ -996,7 +999,14 @@ Storing canonical player attributes, fantasy roster membership, or provider-only
 
 **Rules:**
 NHL draft identities check existing canonical players by normalized name and compatible position type before creating minimal prospect rows with `nhl_id = NULL`.
+NHL draft imports resolve or create the canonical prospect before landing refresh, then use a draft payload NHL player id, an existing canonical `nhl_id`, or the NHL Stats cayenne lookup to refresh NHL landing metadata and upsert stats when an NHL id can be found.
+NHL roster and prospect landing imports retry transient provider failures for the individual NHL player id and record persistent transient failures without aborting the whole team import.
+NHL roster, prospect, and draft per-player landing failures are recorded and skipped without aborting the broader import run.
 Non-NHL provider identity links may queue asynchronous NHL identity enrichment for canonical players without `nhl_id`; enrichment only updates the canonical player after exactly one NHL Stats player candidate is validated through the NHL player landing endpoint.
+Canonical player creates and identity-evidence updates may queue the same asynchronous NHL identity enrichment when `nhl_id` is null and first-name, last-name, and position-type evidence is usable.
+`NhlPlayerIdentityLookup` is the shared NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from either a canonical player or first-name, last-name, and position-type evidence.
+When an NHL id is newly assigned to a canonical player, the assignment must queue `RefreshNhlPlayerLandingJob` so the canonical NHL landing import refreshes player metadata and upserts legacy `stats` rows from `seasonTotals`.
+NHL identity enrichment links the validated NHL identity to the existing canonical player before running the canonical NHL landing import so the refresh updates that player instead of creating a duplicate NHL row.
 NHL identity enrichment rejects NHL Stats last-name spillover by exact normalized name and may reduce same-name ambiguity to a single current-team candidate.
 NHL identity enrichment must not assign an NHL player id already owned by another canonical player.
 NHL player resolution can be queued from the admin import registry with `nhl:resolve --players` to reconcile existing canonical players whose `nhl_id` is null.
@@ -1008,10 +1018,15 @@ NHL player resolution can be queued from the admin import registry with `nhl:res
 - `PlayerIdentityResolver::upsertNhlIdentity()`
 - `PlayerIdentityResolver::upsertNhlDraftIdentity()`
 - `ResolveNhlCommand`
+- `ImportPlayersJob`
 - `ImportNhlDraftPicksJob`
 - `ResolveCanonicalPlayerNhlIdentityJob`
+- `RefreshNhlPlayerLandingJob`
+- `PlayerNhlIdentityObserver`
 - `QueueNhlIdentityResolution`
-- `NhlPlayerIdentityLookup`
+- `NhlPlayerIdentityLookup::resolveForPlayer()`
+- `NhlPlayerIdentityLookup::resolveForName()`
+- `NhlPlayerIdentityLookup::hasLookupEvidence()`
 - `PlayerIdentityResolver::upsertFantraxIdentity()`
 - `PlayerIdentityResolver::upsertYahooIdentity()`
 - `PlayerIdentityResolver::upsertCapWagesIdentity()`
@@ -1597,6 +1612,7 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 **Type:** Admin Queue Orchestration UI
 **Location:**
 - `app/Http/Controllers/Admin/NhlGameImportController.php`
+- `app/Jobs/SeasonSumJob.php`
 - `app/Models/NhlGameImportRun.php`
 - `app/Events/NhlGameImportStatusUpdated.php`
 - `resources/views/admin/operational.blade.php`
@@ -1604,10 +1620,10 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery and processing jobs from the admin control panel.
+Dispatch and monitor NHL game discovery, processing, and season stat rollup jobs from the admin control panel.
 
 **When to Use:**
-Admin-triggered NHL game discovery, discovery-row processing actions, and recent orchestration progress display.
+Admin-triggered NHL game discovery, discovery-row processing actions, season stat rollups, and recent orchestration progress display.
 
 **When Not to Use:**
 Synchronous web-request imports, NHL stage transformation ownership, or replacing `nhl_import_progress`.
@@ -1616,12 +1632,14 @@ Synchronous web-request imports, NHL stage transformation ownership, or replacin
 - `admin.nhl-game-imports.status`
 - `admin.nhl-game-imports.discover`
 - `admin.nhl-game-imports.process`
+- `admin.nhl-game-imports.season-sync`
 - `NhlGameImportRun`
 - `NhlGameImportStatusUpdated`
 
 **Example Usage:**
 ```php
 NhlOrchestratorJob::dispatch($gameDate);
+SeasonSumJob::dispatch($seasonId, $runId);
 ```
 
 ---

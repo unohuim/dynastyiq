@@ -33,6 +33,7 @@ class ResolveCanonicalPlayerNhlIdentityJob implements ShouldQueue, ShouldBeUniqu
         public readonly int $playerId,
         public readonly ?int $sourceIdentityId = null,
     ) {
+        $this->onConnection('database');
     }
 
     public function handle(NhlPlayerIdentityLookup $lookup): void

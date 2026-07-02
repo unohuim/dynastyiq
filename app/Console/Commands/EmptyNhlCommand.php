@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
  */
 class EmptyNhlCommand extends Command
 {
+    private const GAME_DELETE_CHUNK_SIZE = 5000;
+
     /**
      * @var string
      */
@@ -39,42 +41,15 @@ class EmptyNhlCommand extends Command
             return self::INVALID;
         }
 
-        $counts = DB::transaction(function () use ($emptyPlayers, $emptyGames): array {
-            $counts = [];
-
-            if ($emptyGames) {
-                foreach ($this->gameTables() as $table) {
-                    $counts[$table] = DB::table($table)->count();
-                }
-            }
-
-            if ($emptyPlayers) {
-                $counts['player_external_identities'] = DB::table('player_external_identities')
-                    ->whereIn('provider', $this->identityProviders())
-                    ->count();
-            }
-
-            if ($emptyGames) {
-                foreach ($this->gameTables() as $table) {
-                    DB::table($table)->delete();
-                }
-            }
-
-            if ($emptyPlayers) {
-                DB::table('player_external_identities')
-                    ->whereIn('provider', $this->identityProviders())
-                    ->delete();
-            }
-
-            return $counts;
-        });
-
-        $this->info($this->successMessage($emptyPlayers, $emptyGames));
-
-        foreach ($counts as $table => $count) {
-            $this->line("{$table}: {$count}");
+        if ($emptyGames) {
+            $this->emptyGameTables();
         }
 
+        if ($emptyPlayers) {
+            $this->emptyPlayerIdentities();
+        }
+
+        $this->info($this->successMessage($emptyPlayers, $emptyGames));
         $this->line('Canonical players and NHL team reference data were not deleted.');
 
         return self::SUCCESS;
@@ -107,6 +82,97 @@ class EmptyNhlCommand extends Command
             'nhl_game_source_statuses',
             'nhl_games',
         ];
+    }
+
+    /**
+     * Clear NHL game-derived tables with per-table progress.
+     *
+     * @return array<string,int>
+     */
+    private function emptyGameTables(): array
+    {
+        $counts = [];
+
+        foreach ($this->gameTables() as $table) {
+            $this->line("Clearing {$table}...");
+            $count = DB::table($table)->count();
+            $counts[$table] = $count;
+
+            if ($count > 0) {
+                $this->clearTable($table, $count);
+            }
+
+            $this->line("{$table}: {$count}");
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Clear a table in chunks when a known key is available.
+     */
+    private function clearTable(string $table, int $total): void
+    {
+        $key = $this->deleteKeyForTable($table);
+
+        if ($key === null) {
+            DB::table($table)->delete();
+
+            return;
+        }
+
+        $deleted = 0;
+
+        do {
+            $ids = DB::table($table)
+                ->orderBy($key)
+                ->limit(self::GAME_DELETE_CHUNK_SIZE)
+                ->pluck($key)
+                ->all();
+
+            if ($ids === []) {
+                break;
+            }
+
+            $deleted += DB::table($table)
+                ->whereIn($key, $ids)
+                ->delete();
+
+            $this->line("{$table}: cleared {$deleted} / {$total}");
+        } while (count($ids) === self::GAME_DELETE_CHUNK_SIZE);
+    }
+
+    /**
+     * Return the key used for chunked full-table cleanup.
+     */
+    private function deleteKeyForTable(string $table): ?string
+    {
+        return match ($table) {
+            'nhl_games' => 'nhl_game_id',
+            default => 'id',
+        };
+    }
+
+    /**
+     * Remove NHL-owned player identity links while preserving players.
+     */
+    private function emptyPlayerIdentities(): int
+    {
+        $this->line('Clearing player_external_identities...');
+
+        return DB::transaction(function (): int {
+            $query = DB::table('player_external_identities')
+                ->whereIn('provider', $this->identityProviders());
+            $count = $query->count();
+
+            if ($count > 0) {
+                $query->delete();
+            }
+
+            $this->line("player_external_identities: {$count}");
+
+            return $count;
+        });
     }
 
     /**

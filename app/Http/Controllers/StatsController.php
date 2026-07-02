@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\DB;
 
 class StatsController extends BaseController
 {
-    public function index(): View
+    public function index(Request $request): View
     {
         $user = Auth::user();
 
@@ -36,17 +36,23 @@ class StatsController extends BaseController
             'is_slicable' => (bool)($p->is_slicable ?? true),
         ])->values();
 
-        $first = $perspModels->first();
+        $requestedPerspective = (string) $request->query('perspective', '');
+        $first = $requestedPerspective !== ''
+            ? ($perspModels->firstWhere('slug', $requestedPerspective) ?? $perspModels->firstWhere('name', $requestedPerspective) ?? $perspModels->first())
+            : $perspModels->first();
         $selectedPerspectiveId = $first?->id;
         $selectedSlug          = $first?->slug ?? $first?->name ?? null;
+        $seasonFilter          = $request->query('season_id', $request->query('season'));
+        $slice                 = (string) $request->query('slice', 'total');
+        $gameType              = (int) $request->query('game_type', 2);
 
         if ($selectedPerspectiveId) {
             [$payload] = $this->buildAndFormatPlayersPayload(
                 $user,
                 $selectedPerspectiveId,
-                null,
-                'total',
-                2,
+                is_string($seasonFilter) ? $seasonFilter : null,
+                in_array($slice, ['total', 'pgp', 'p60'], true) ? $slice : 'total',
+                in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
                 null
             );
         } else {
@@ -71,11 +77,12 @@ class StatsController extends BaseController
                     'pos'                => [],
                     'pos_type'           => [],
                     'positionButtons'    => ['LW', 'C', 'RW', 'F', 'D', 'G'],
+                    'supportsDateRange'  => true,
                 ],
             ];
         }
 
-        return view('stats-view', [
+        return view('stats.index', [
             'payload'               => $payload,
             'perspectives'          => $perspectives,
             'selectedPerspectiveId' => $selectedPerspectiveId,
@@ -157,12 +164,20 @@ class StatsController extends BaseController
         }
 
         \Log::info('api request: ', ['request' => $request]);
+        $settings = is_array($perspective->settings)
+            ? $perspective->settings
+            : (json_decode($perspective->settings ?? '[]', true) ?: []);
+        $isProspects = $this->isProspectsPerspective($perspective, $settings['filters'] ?? []);
         $season         = $request->input('season_id', $request->input('season'));
         $sliceParam     = $request->input('slice', 'total');
         $gameType       = (int) $request->input('game_type', 2);
         $period         = (string) $request->input('period', 'season');
         $canSlice       = (bool)($perspective->is_slicable ?? true);
         $effectiveSlice = $canSlice ? $sliceParam : 'total';
+
+        if ($isProspects) {
+            $period = 'season';
+        }
 
         if ($period === 'season') {
             [$payload] = $this->buildAndFormatPlayersPayload(
@@ -304,8 +319,16 @@ class StatsController extends BaseController
             ['key' => 'gp',                 'label' => 'GP'],
         ];
 
+        if ($isProspects) {
+            array_splice($identityCols, 3, 0, [[
+                'key' => 'league',
+                'label' => 'League',
+            ]]);
+        }
+
         $rows = collect();
         $availableSeasons   = [];
+        $availableLeagues   = [];
         $availableGameTypes = $isProspects ? [2] : [1, 2, 3];
         $effectiveGameType  = 2;
 
@@ -316,16 +339,24 @@ class StatsController extends BaseController
                 ->where('league_abbrev', '!=', 'NHL')
                 ->whereHas('player', fn ($query) => $query->where('is_prospect', true));
 
-            if ($season) $base->where('season_id', $season);
-
             $base->select($base->getModel()->getTable() . '.*');
 
             [$schema, $applied] = $this->buildSchemaAndApplyFilters($base, $columns, $request, $filters);
+            $availableLeagues = $this->leagueOptionsForBase($base);
 
-            $stats = $base->get();
-            $availableSeasons = $stats->pluck('season_id')->unique()->sortDesc()->values()->all();
+            $availableSeasons = (clone $base)
+                ->reorder()
+                ->select('stats.season_id')
+                ->distinct()
+                ->pluck('stats.season_id')
+                ->sortDesc()
+                ->values()
+                ->all();
             if (!$season) $season = $availableSeasons[0] ?? null;
 
+            if ($season) $base->where('season_id', $season);
+
+            $stats = $base->get();
             $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'prospects');
             $effectiveGameType = 2;
         } else {
@@ -349,7 +380,10 @@ class StatsController extends BaseController
             $availableSeasons = NhlSeasonStat::query()
                 ->select('season_id')->distinct()->pluck('season_id')->sortDesc()->values()->all();
 
-            $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'season');
+            $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'season', [
+                'season_id' => $season,
+                'game_type' => $effectiveGameType,
+            ]);
             $rows = $this->appendOnIceRows($rows, $columns, [
                 'season_id' => $season,
                 'game_type' => $effectiveGameType,
@@ -393,6 +427,7 @@ class StatsController extends BaseController
             ],
             'meta' => [
                 'availableSeasons'   => $availableSeasons,
+                'availableLeagues'   => $availableLeagues,
                 'availableGameTypes' => $availableGameTypes,
                 'season'             => $season,
                 'game_type'          => $effectiveGameType,
@@ -404,6 +439,7 @@ class StatsController extends BaseController
                 'availability'       => $avail,
                 'league_id'          => $leagueIdMeta,
                 'positionButtons'    => $this->positionButtons($settings),
+                'supportsDateRange'  => ! $isProspects,
             ],
         ];
 
@@ -455,7 +491,11 @@ class StatsController extends BaseController
         [$schema, $applied] = $this->buildSchemaAndApplyFilters($base, $columns, $request, $settings['filters'] ?? []);
 
         $results = $base->get();
-        $rows    = $this->assembleRowsFromCollection($results, $columns, $slice, $canSlice, 'range');
+        $rows    = $this->assembleRowsFromCollection($results, $columns, $slice, $canSlice, 'range', [
+            'game_type' => $gameType,
+            'date_from' => $from?->toDateString(),
+            'date_to' => $to?->toDateString(),
+        ]);
         $rows    = $this->appendOnIceRows($rows, $columns, [
             'game_type' => $gameType,
             'date_from' => $from?->toDateString(),
@@ -510,6 +550,7 @@ class StatsController extends BaseController
                 'availability' => $avail,
                 'league_id'    => $leagueIdMeta,
                 'positionButtons' => $this->positionButtons($settings),
+                'supportsDateRange'  => true,
             ],
         ];
 
@@ -522,11 +563,21 @@ class StatsController extends BaseController
         array $columns,
         string $slice,
         bool $canSlice,
-        string $mode
+        string $mode,
+        array $filters = []
     ): Collection {
         $rows = collect();
+        $officialToiByPlayer = $this->officialBoxscoreToiByPlayer($collection, $mode, $filters);
 
-        $grouped = $collection->groupBy(fn ($row) => $row->player_id ?? $row->nhl_player_id);
+        $grouped = $collection->groupBy(function ($row) use ($mode): string {
+            $playerId = (string) ($row->player_id ?? $row->nhl_player_id ?? '');
+
+            if ($mode === 'prospects') {
+                return $playerId . '|' . (string) ($row->league_abbrev ?? '');
+            }
+
+            return $playerId;
+        });
 
         foreach ($grouped as $playerStats) {
             $entry    = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
@@ -571,12 +622,21 @@ class StatsController extends BaseController
                 }
             }
 
+            $nhlPlayerId = (int) ($player?->nhl_id ?? $entry->nhl_player_id ?? 0);
+            $officialToiSec = (int) ($officialToiByPlayer->get($nhlPlayerId) ?? 0);
+            if ($officialToiSec > 0) {
+                $toiSec = $officialToiSec;
+            }
+
             $toiPerGameSec = ($gpSum > 0) ? (int) floor($toiSec / $gpSum) : 0;
 
             $row = [
                 'name'                   => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
+                'avatar_url'             => $player?->head_shot_url,
                 'age'                    => $this->playerAge($player),
                 'team'                   => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
+                'league'                 => $mode === 'prospects' ? ($entry->league_abbrev ?? null) : null,
+                'pos'                    => $player?->position,
                 'pos_type'               => $player?->pos_type,
                 'contract_value'         => $contractAav,
                 'contract_value_num'     => round($contractAavM, 1),
@@ -622,6 +682,80 @@ class StatsController extends BaseController
     }
 
     /**
+     * Load official boxscore TOI for read-only display/rate calculations.
+     *
+     * @param Collection<int,object> $collection
+     * @param array<string,mixed> $filters
+     * @return Collection<int,int>
+     */
+    private function officialBoxscoreToiByPlayer(Collection $collection, string $mode, array $filters): Collection
+    {
+        if ($mode === 'prospects' || $collection->isEmpty()) {
+            return collect();
+        }
+
+        $playerIds = $collection
+            ->map(function (object $row): int {
+                if (isset($row->nhl_player_id)) {
+                    return (int) $row->nhl_player_id;
+                }
+
+                $player = $row->player ?? null;
+
+                return (int) ($player?->nhl_id ?? 0);
+            })
+            ->filter(fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($playerIds->isEmpty()) {
+            return collect();
+        }
+
+        $query = DB::table('nhl_boxscores as b')
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'b.nhl_game_id')
+            ->whereIn('b.nhl_player_id', $playerIds->all())
+            ->select('b.nhl_player_id', 'b.toi_seconds', 'b.toi');
+
+        if (! empty($filters['season_id'])) {
+            $query->where('g.season_id', (string) $filters['season_id']);
+        }
+
+        if (! empty($filters['game_type'])) {
+            $query->where('g.game_type', (int) $filters['game_type']);
+        }
+
+        if (! empty($filters['date_from'])) {
+            $query->whereDate('g.game_date', '>=', (string) $filters['date_from']);
+        }
+
+        if (! empty($filters['date_to'])) {
+            $query->whereDate('g.game_date', '<=', (string) $filters['date_to']);
+        }
+
+        return $query->get()
+            ->groupBy(fn (object $row): int => (int) $row->nhl_player_id)
+            ->map(fn (Collection $rows): int => (int) $rows->sum(
+                fn (object $row): int => $this->boxscoreToiSeconds($row->toi_seconds, $row->toi)
+            ));
+    }
+
+    private function boxscoreToiSeconds(mixed $seconds, mixed $toi): int
+    {
+        if (is_numeric($seconds) && (int) $seconds > 0) {
+            return (int) $seconds;
+        }
+
+        if (! is_string($toi) || ! str_contains($toi, ':')) {
+            return 0;
+        }
+
+        [$minutes, $remainingSeconds] = array_pad(explode(':', $toi, 2), 2, '0');
+
+        return ((int) $minutes * 60) + (int) $remainingSeconds;
+    }
+
+    /**
      * Add native fantasy aliases that can be derived from already-loaded player totals.
      *
      * @param Collection<int,object> $playerStats
@@ -639,14 +773,40 @@ class StatsController extends BaseController
 
             return (float) $playerStats->sum($key);
         };
+        $totalFirstAvailable = function (array $keys) use ($playerStats, $isSeason): float {
+            if ($isSeason) {
+                $entry = $playerStats->first();
+
+                foreach ($keys as $key) {
+                    if (isset($entry->{$key}) && is_numeric($entry->{$key})) {
+                        return (float) $entry->{$key};
+                    }
+                }
+
+                return 0.0;
+            }
+
+            foreach ($keys as $key) {
+                $value = (float) $playerStats->sum($key);
+
+                if ($value !== 0.0) {
+                    return $value;
+                }
+            }
+
+            return 0.0;
+        };
 
         $sog = $total('sog');
         $sat = $total('sat');
         $hits = $total('h');
         $blocks = $total('b');
-        $shotsAgainst = $total('sa');
-        $saves = $total('sv');
-        $goalsAgainst = $total('ga');
+        $shotsAgainst = $totalFirstAvailable(['sa', 'shots_against']);
+        $goalsAgainst = $totalFirstAvailable(['ga', 'goals_against']);
+        $saves = $totalFirstAvailable(['sv', 'saves']);
+        if ($saves <= 0 && $shotsAgainst > 0) {
+            $saves = max(0, $shotsAgainst - $goalsAgainst);
+        }
         $evShotsAgainst = $total('evsa');
         $evSaves = $total('evsv');
         $ppShotsAgainst = $total('ppsa');
@@ -671,6 +831,9 @@ class StatsController extends BaseController
             'a2_per_60' => $this->per60Alias($total('a2'), $toiSeconds),
             'shots_plus_blocks' => (int) ($sog + $blocks),
             'hits_plus_blocks' => (int) ($hits + $blocks),
+            'saves' => (int) $saves,
+            'shots_against' => (int) $shotsAgainst,
+            'goals_against' => (int) $goalsAgainst,
             'sv_pct' => $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : (float) ($row['sv_pct'] ?? 0),
             'gaa' => $toiSeconds > 0 ? round(($goalsAgainst * 3600) / $toiSeconds, 3) : (float) ($row['gaa'] ?? 0),
             'ev_sv_pct' => $evShotsAgainst > 0 ? round($evSaves / $evShotsAgainst, 3) : (float) ($row['ev_sv_pct'] ?? 0),
@@ -1013,6 +1176,15 @@ class StatsController extends BaseController
             ['key' => 'pos',  'label' => 'Position', 'type' => 'enum', 'options' => $this->positionOptionsForBase($base)],
         ];
 
+        if ($table === 'stats') {
+            $schema[] = [
+                'key' => 'league',
+                'label' => 'League',
+                'type' => 'enum',
+                'options' => $this->leagueOptionsForBase($base),
+            ];
+        }
+
         // Perspective numeric columns -> add with bounds
         foreach ($columns as $col) {
             $key = $col['key'] ?? null;
@@ -1070,7 +1242,7 @@ class StatsController extends BaseController
         }
 
         if (!empty($applied['pos'])) {
-            $posU = array_map('strtoupper', $applied['pos']);
+            $posU = $this->expandPositionFilterValues($applied['pos']);
             if (array_diff($posU, ['G'])) {
                 $posU = array_values(array_diff($posU, ['G']));
             }
@@ -1088,6 +1260,12 @@ class StatsController extends BaseController
                 $base->whereIn('pf.team_abbrev', $teams);
             }
             $applied['filters']['team'] = $teams;
+        }
+
+        $leagues = array_values(array_filter((array)($request?->query('league', []) ?? []), 'strlen'));
+        if ($table === 'stats' && !empty($leagues)) {
+            $base->whereIn("{$table}.league_abbrev", $leagues);
+            $applied['filters']['league'] = $leagues;
         }
 
         // Age min/max -> pf.dob range (DB-agnostic)
@@ -1141,6 +1319,28 @@ class StatsController extends BaseController
         }
 
         return [$schema, $applied];
+    }
+
+    /**
+     * Expand UI position labels into stored NHL position variants.
+     *
+     * @param array<int,string> $positions
+     * @return array<int,string>
+     */
+    private function expandPositionFilterValues(array $positions): array
+    {
+        return collect($positions)
+            ->flatMap(function (string $position): array {
+                return match (strtoupper(trim($position))) {
+                    'LW' => ['LW', 'L'],
+                    'RW' => ['RW', 'R'],
+                    default => [strtoupper(trim($position))],
+                };
+            })
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**
@@ -1223,6 +1423,26 @@ class StatsController extends BaseController
             ->distinct()
             ->pluck('pf.team_abbrev')
             ->filter()->values()->all();
+    }
+
+    private function leagueOptionsForBase($base): array
+    {
+        $table = $base->getModel()->getTable();
+
+        if ($table !== 'stats') {
+            return [];
+        }
+
+        return (clone $base)
+            ->reorder()
+            ->select('league_abbrev')
+            ->whereNotNull('league_abbrev')
+            ->distinct()
+            ->pluck('league_abbrev')
+            ->filter()
+            ->sort()
+            ->values()
+            ->all();
     }
 
     private function positionOptionsForBase($base): array

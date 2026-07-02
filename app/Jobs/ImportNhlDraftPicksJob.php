@@ -8,9 +8,11 @@ use App\Events\ImportStreamEvent;
 use App\Models\ImportRun;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Services\ImportNHLPlayer;
+use App\Services\NhlPlayerIdentityLookup;
+use App\Services\NhlTeamReference;
 use App\Services\PlayerIdentityNormalizer;
 use App\Services\PlayerIdentityResolver;
-use App\Services\NhlTeamReference;
 use App\Traits\HasAPITrait;
 use Illuminate\Bus\Batchable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -19,6 +21,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
@@ -31,6 +34,10 @@ class ImportNhlDraftPicksJob implements ShouldQueue
     use SerializesModels;
     use HasAPITrait;
     use Batchable;
+
+    public int $timeout = 600;
+
+    public int $tries = 1;
 
     public function __construct(
         protected string $importRunId,
@@ -56,11 +63,18 @@ class ImportNhlDraftPicksJob implements ShouldQueue
                 $this->incrementProgressTotal();
 
                 try {
-                    $imported = $this->upsertDraftOnlyPlayer($pick, $year, $resolver, $normalizer, $teams);
-                    $this->recordProcessedRecord($imported ? 'successful' : 'skipped');
+                    $draftPlayer = $this->upsertDraftPlayer($pick, $year, $resolver, $normalizer, $teams);
+
+                    if ($draftPlayer === null) {
+                        $this->recordProcessedRecord('skipped');
+                        continue;
+                    }
+
+                    $this->refreshLandingStatsWhenResolvable($pick, $draftPlayer['player'], $draftPlayer['identity']);
+                    $this->recordProcessedRecord('successful');
                 } catch (Throwable $throwable) {
-                    $this->recordProcessedRecord('failed');
-                    throw $throwable;
+                    $this->recordDraftPickFailure($pick, $year, $throwable);
+                    continue;
                 }
             }
         }
@@ -162,25 +176,31 @@ class ImportNhlDraftPicksJob implements ShouldQueue
 
     /**
      * @param array<string,mixed> $pick
+     *
+     * @return array{player:Player,identity:PlayerExternalIdentity}|null
      */
-    private function upsertDraftOnlyPlayer(
+    private function upsertDraftPlayer(
         array $pick,
         int $year,
         PlayerIdentityResolver $resolver,
         PlayerIdentityNormalizer $normalizer,
         NhlTeamReference $teams,
-    ): bool {
+    ): ?array {
         $providerPlayerId = $this->draftProviderPlayerId($pick, $year, $normalizer);
         $identity = $resolver->upsertNhlDraftIdentity($providerPlayerId, $this->normalizedDraftPayload($pick, $year));
 
         if ($identity->player_id !== null) {
-            return false;
+            return $identity->player === null ? null : ['player' => $identity->player, 'identity' => $identity];
         }
 
         $identity = $resolver->resolveNonAuthorityIdentity($identity);
 
-        if ($identity->player_id !== null || $identity->match_status !== PlayerExternalIdentity::STATUS_UNMATCHED) {
-            return false;
+        if ($identity->player_id !== null) {
+            return $identity->player === null ? null : ['player' => $identity->player, 'identity' => $identity];
+        }
+
+        if ($identity->match_status !== PlayerExternalIdentity::STATUS_UNMATCHED) {
+            return null;
         }
 
         $displayName = (string) $identity->display_name;
@@ -205,7 +225,33 @@ class ImportNhlDraftPicksJob implements ShouldQueue
 
         $resolver->linkIdentityToPlayer($identity, $player);
 
-        return true;
+        return ['player' => $player, 'identity' => $identity->refresh()];
+    }
+
+    /**
+     * @param array<string,mixed> $pick
+     * @param Player $player
+     * @param PlayerExternalIdentity $draftIdentity
+     */
+    private function refreshLandingStatsWhenResolvable(
+        array $pick,
+        Player $player,
+        PlayerExternalIdentity $draftIdentity,
+    ): void
+    {
+        $nhlPlayerId = $this->draftNhlPlayerId($pick)
+            ?? ($player->nhl_id === null || $player->nhl_id === '' ? null : (int) $player->nhl_id);
+
+        if ($nhlPlayerId === null) {
+            app(NhlPlayerIdentityLookup::class)->enrich($player, $draftIdentity);
+            return;
+        }
+
+        $refreshedPlayer = app(ImportNHLPlayer::class)->importForPlayer($player, (string) $nhlPlayerId, true);
+
+        if ($refreshedPlayer->id !== $player->id) {
+            app(PlayerIdentityResolver::class)->linkIdentityToPlayer($draftIdentity, $refreshedPlayer);
+        }
     }
 
     /**
@@ -250,6 +296,44 @@ class ImportNhlDraftPicksJob implements ShouldQueue
     {
         $this->adminImportRun()?->recordProcessed($result);
         $this->broadcastProgress();
+    }
+
+    /**
+     * @param array<string,mixed> $pick
+     */
+    private function recordDraftPickFailure(array $pick, int $year, Throwable $throwable): void
+    {
+        $this->recordProcessedRecord('failed');
+
+        $entry = [
+            'draft_year' => $year,
+            'display_name' => $this->draftDisplayName($pick),
+            'nhl_player_id' => $this->draftNhlPlayerId($pick),
+            'provider_player_id' => $this->draftProviderPlayerId($pick, $year, app(PlayerIdentityNormalizer::class)),
+            'error' => $throwable->getMessage(),
+        ];
+
+        Log::warning('NHL draft pick import failure; skipping pick', $entry);
+        $this->appendImportRunMeta('draft_pick_failures', $entry);
+    }
+
+    /**
+     * @param array<string,mixed> $entry
+     */
+    private function appendImportRunMeta(string $key, array $entry): void
+    {
+        $importRun = $this->adminImportRun();
+
+        if ($importRun === null) {
+            return;
+        }
+
+        $meta = $importRun->meta ?? [];
+        $items = is_array($meta[$key] ?? null) ? $meta[$key] : [];
+        $items[] = $entry;
+        $meta[$key] = $items;
+
+        $importRun->forceFill(['meta' => $meta])->save();
     }
 
     private function broadcastProgress(): void
@@ -406,6 +490,14 @@ class ImportNhlDraftPicksJob implements ShouldQueue
         }
 
         return is_string($league) && trim($league) !== '' ? trim($league) : null;
+    }
+
+    /**
+     * @param array<string,mixed> $pick
+     */
+    private function draftNhlPlayerId(array $pick): ?int
+    {
+        return $this->integerValue($pick['playerId'] ?? $pick['nhlId'] ?? null);
     }
 
     private function positionType(?string $position): ?string

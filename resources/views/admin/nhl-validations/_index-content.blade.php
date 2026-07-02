@@ -40,21 +40,32 @@
                             <td class="px-4 py-3 text-gray-600">{{ optional($validation->checked_at)->toDateTimeString() ?? 'N/A' }}</td>
                             <td class="px-4 py-3 text-right">
                                 @if($embedded ?? false)
-                                    <button
-                                        type="button"
-                                        class="inline-flex h-8 w-8 items-center justify-center rounded text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
-                                        data-validation-toggle
-                                        data-validation-id="{{ $validation->id }}"
-                                        data-validation-url="{{ route('admin.nhl-validations.show', ['validation' => $validation->id, 'admin_panel' => 1]) }}"
-                                        aria-expanded="false"
-                                        aria-controls="validation-detail-{{ $validation->id }}"
-                                        title="Toggle validation details"
-                                    >
-                                        <span class="sr-only">Toggle validation details</span>
-                                        <svg class="h-4 w-4 transition-transform duration-300 ease-out motion-reduce:transition-none" data-validation-caret viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
-                                        </svg>
-                                    </button>
+                                    <div class="flex items-center justify-end gap-2">
+                                        <button
+                                            type="button"
+                                            class="inline-flex min-h-8 items-center justify-center rounded border border-gray-300 bg-white px-2 text-xs font-semibold text-gray-700 shadow-sm transition-colors duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                            data-validation-rebuild
+                                            data-validation-id="{{ $validation->id }}"
+                                            data-validation-rebuild-url="{{ route('admin.nhl-validations.rebuild-game', $validation) }}"
+                                        >
+                                            <span data-validation-rebuild-label>Re Run</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="inline-flex h-8 w-8 items-center justify-center rounded text-gray-500 transition-colors duration-150 hover:bg-gray-100 hover:text-gray-900"
+                                            data-validation-toggle
+                                            data-validation-id="{{ $validation->id }}"
+                                            data-validation-url="{{ route('admin.nhl-validations.show', ['validation' => $validation->id, 'admin_panel' => 1]) }}"
+                                            aria-expanded="false"
+                                            aria-controls="validation-detail-{{ $validation->id }}"
+                                            title="Toggle validation details"
+                                        >
+                                            <span class="sr-only">Toggle validation details</span>
+                                            <svg class="h-4 w-4 transition-transform duration-300 ease-out motion-reduce:transition-none" data-validation-caret viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                            </svg>
+                                        </button>
+                                    </div>
                                 @else
                                     <a href="{{ route('admin.nhl-validations.show', $validation) }}" class="font-medium text-gray-900 underline decoration-gray-300 underline-offset-4 hover:decoration-gray-900">
                                         Review

@@ -19,7 +19,7 @@ class NhlPlayerIdentityLookup
     public function __construct(
         private readonly PlayerIdentityNormalizer $normalizer,
         private readonly PlayerIdentityResolver $resolver,
-        private readonly NhlTeamReference $teams,
+        private readonly ImportNHLPlayer $playerImporter,
     ) {
     }
 
@@ -32,11 +32,93 @@ class NhlPlayerIdentityLookup
             return;
         }
 
+        $landing = $this->resolveLandingForPlayer($player, $sourceIdentity);
+
+        if ($landing === null) {
+            return;
+        }
+
+        if ($this->landingPlayerIdAlreadyOwned($landing, $player)) {
+            $this->markSourceIdentityConflict($sourceIdentity);
+            return;
+        }
+
+        $identity = $this->resolver->upsertNhlIdentity($landing);
+        $this->resolver->linkIdentityToPlayer($identity, $player);
+        $this->playerImporter->import((string) $landing['playerId'], (bool) $player->is_prospect);
+    }
+
+    /**
+     * Resolve the NHL player id for a canonical player without mutating the player.
+     */
+    public function resolveForPlayer(Player $player, ?PlayerExternalIdentity $sourceIdentity = null): ?int
+    {
+        if ($player->nhl_id !== null) {
+            return (int) $player->nhl_id;
+        }
+
+        $landing = $this->resolveLandingForPlayer($player, $sourceIdentity);
+        $playerId = $landing['playerId'] ?? null;
+
+        return $playerId === null || $playerId === '' ? null : (int) $playerId;
+    }
+
+    /**
+     * Resolve the NHL player id for first/last name plus optional position evidence.
+     */
+    public function resolveForName(string $firstName, string $lastName, ?string $positionType = null): ?int
+    {
+        $firstName = trim($firstName);
+        $lastName = trim($lastName);
+        $positionType = $this->positionType($positionType);
+
+        if ($firstName === '' || $lastName === '') {
+            return null;
+        }
+
+        $fullName = $this->normalizer->displayNameFromParts($firstName, $lastName) ?? trim("{$firstName} {$lastName}");
+        $candidates = $this->playerCandidates($firstName, $lastName, $fullName)
+            ->when($positionType !== null, fn ($items) => $items
+                ->filter(fn (array $candidate): bool => $this->positionType($candidate['positionCode'] ?? null) === $positionType)
+                ->values());
+        $candidates = $this->preferSingleCurrentTeamCandidate($candidates);
+
+        if ($candidates->count() !== 1) {
+            return null;
+        }
+
+        $landing = $this->landingPayload((string) $candidates->first()['id']);
+
+        if (! $this->landingMatchesName($landing, $fullName, $positionType)) {
+            return null;
+        }
+
+        $playerId = $landing['playerId'] ?? null;
+
+        return $playerId === null || $playerId === '' ? null : (int) $playerId;
+    }
+
+    /**
+     * Determine whether a player has enough local evidence for an NHL lookup.
+     */
+    public function hasLookupEvidence(Player $player, ?PlayerExternalIdentity $sourceIdentity = null): bool
+    {
+        return $this->nameParts($player, $sourceIdentity) !== null
+            && $this->evidencePositionType($player, $sourceIdentity) !== null;
+    }
+
+    /**
+     * Resolve one validated NHL landing payload for a canonical player.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function resolveLandingForPlayer(Player $player, ?PlayerExternalIdentity $sourceIdentity = null): ?array
+    {
         $name = $this->nameParts($player, $sourceIdentity);
         $positionType = $this->evidencePositionType($player, $sourceIdentity);
 
         if ($name === null || $positionType === null) {
-            return;
+            return null;
         }
 
         $candidates = $this->playerCandidates($name['first'], $name['last'], $name['full'])
@@ -49,24 +131,17 @@ class NhlPlayerIdentityLookup
 
             if (! $this->landingMatches($landing, $player, $sourceIdentity, $positionType)) {
                 $this->upsertCandidateIdentities($candidates, PlayerExternalIdentity::STATUS_CANDIDATE);
-                return;
+                return null;
             }
 
-            if ($this->landingPlayerIdAlreadyOwned($landing, $player)) {
-                $this->markSourceIdentityConflict($sourceIdentity);
-                return;
-            }
-
-            $this->applyLandingPayload($player, $landing);
-            $identity = $this->resolver->upsertNhlIdentity($landing);
-            $this->resolver->linkIdentityToPlayer($identity, $player);
-
-            return;
+            return $landing;
         }
 
         if ($candidates->count() > 1) {
             $this->upsertCandidateIdentities($candidates, PlayerExternalIdentity::STATUS_CONFLICT);
         }
+
+        return null;
     }
 
     /**
@@ -194,6 +269,27 @@ class NhlPlayerIdentityLookup
     }
 
     /**
+     * @param array<string,mixed> $landing
+     */
+    private function landingMatchesName(array $landing, string $fullName, ?string $positionType): bool
+    {
+        if (! isset($landing['playerId'])) {
+            return false;
+        }
+
+        $landingName = $this->normalizer->displayNameFromParts(
+            $this->normalizer->nhlLocalizedDefault($landing, 'firstName'),
+            $this->normalizer->nhlLocalizedDefault($landing, 'lastName'),
+        );
+
+        if ($this->normalizer->normalizeName($landingName) !== $this->normalizer->normalizeName($fullName)) {
+            return false;
+        }
+
+        return $positionType === null || $this->positionType($landing['position'] ?? null) === $positionType;
+    }
+
+    /**
      * @param \Illuminate\Support\Collection<int,array<string,mixed>> $candidates
      */
     private function upsertCandidateIdentities($candidates, string $status): void
@@ -260,33 +356,6 @@ class NhlPlayerIdentityLookup
             'last_seen_at' => Carbon::now(),
         ]);
         $sourceIdentity->save();
-    }
-
-    /**
-     * @param array<string,mixed> $payload
-     */
-    private function applyLandingPayload(Player $player, array $payload): void
-    {
-        $teamAbbrev = $payload['currentTeamAbbrev'] ?? null;
-        $position = $payload['position'] ?? null;
-
-        $player->fill([
-            'nhl_id' => $payload['playerId'],
-            'nhl_team_id' => $payload['currentTeamId'] ?? $this->teams->idForAbbrev($teamAbbrev),
-            'team_abbrev' => $teamAbbrev,
-            'first_name' => $this->normalizer->nhlLocalizedDefault($payload, 'firstName') ?? $player->first_name,
-            'last_name' => $this->normalizer->nhlLocalizedDefault($payload, 'lastName') ?? $player->last_name,
-            'dob' => $payload['birthDate'] ?? $player->dob,
-            'country_code' => $payload['birthCountry'] ?? $player->country_code,
-            'position' => $position,
-            'pos_type' => $this->positionType($position),
-            'current_league_abbrev' => 'NHL',
-            'head_shot_url' => $payload['headshot'] ?? $player->head_shot_url,
-            'hero_image_url' => $payload['heroImage'] ?? $player->hero_image_url,
-        ]);
-
-        $player->full_name = trim($player->first_name . ' ' . $player->last_name);
-        $player->save();
     }
 
     private function positionType(?string $position): ?string

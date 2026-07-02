@@ -39,15 +39,39 @@
 
 
   .player-stats-content-mobile {
-    @apply min-w-0 flex-1 w-full px-3 pt-1;
+    @apply relative min-w-0 flex-1 w-full pl-[4.5rem] pr-3;
   }
 
   .player-stats-top-row-mobile {
-    @apply flex w-full min-w-0 justify-between items-start gap-2 mb-2;
+    @apply flex w-full min-w-0 justify-between items-stretch gap-2 mb-1;
   }
 
   .player-stats-left-mobile {
     @apply flex w-full min-w-40 justify-between items-center;
+  }
+
+  .player-stats-identity-mobile {
+    @apply flex min-h-8 min-w-0 flex-1 items-stretch gap-1.5;
+  }
+
+  .player-stats-icon-rail-mobile {
+    @apply absolute inset-y-0 left-3 flex shrink-0 items-center gap-1;
+  }
+
+  .player-stats-name-stack-mobile {
+    @apply flex min-w-0 flex-1 translate-y-1.5 flex-col justify-center;
+  }
+
+  .player-stats-name-line-mobile {
+    @apply flex min-w-0 items-center gap-1;
+  }
+
+  .player-stats-detail-line-mobile {
+    @apply mt-1 flex min-w-0 items-center gap-1;
+  }
+
+  .player-stats-meta-mobile {
+    @apply inline-flex shrink-0 items-center gap-1;
   }
 
   .player-stats-pos-tag-mobile {
@@ -55,14 +79,115 @@
   }
 
   .player-stats-name-mobile {
-    @apply min-w-0 truncate text-xxs leading-tight;
+    @apply min-w-0 truncate text-xxs leading-none;
+  }
+
+  .player-stats-league-mobile {
+    @apply min-w-0 truncate text-xxs leading-none text-gray-400;
+  }
+
+  .player-stats-age-mobile {
+    @apply shrink-0 uppercase text-xxs leading-none text-gray-500;
   }
 
   .player-stats-aav-mobile{
-    @apply hidden bg-gray-100 text-gray-800 text-xxs ml-2 px-1 py-0.5 rounded min-[420px]:flex;
+    @apply hidden items-center rounded bg-gray-100 px-1 py-0.5 text-xxs leading-none text-gray-800 min-[420px]:inline-flex;
   }
   .player-stats-right-mobile {
     @apply flex min-w-40 items-center justify-between text-sm text-gray-600;
+  }
+
+  .filters-backdrop {
+    @apply fixed inset-0 bg-black/40;
+  }
+
+  .filters-drawer {
+    @apply fixed inset-y-0 right-0 flex w-[92vw] max-w-[480px] flex-col border-l bg-white shadow-xl;
+  }
+
+  .dual-slider {
+    position: relative;
+    height: 16px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .dual-slider .rail {
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    height: 2px;
+    border-radius: 9999px;
+    background: #e5e7eb;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .dual-slider .active {
+    position: absolute;
+    top: 50%;
+    height: 2px;
+    border-radius: 9999px;
+    background: #6366f1;
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+
+  .dual-slider input[type="range"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    outline: none;
+    pointer-events: none;
+    touch-action: none;
+  }
+
+  .dual-slider input[type="range"]::-webkit-slider-runnable-track {
+    background: transparent;
+    pointer-events: none;
+  }
+
+  .dual-slider input[type="range"]::-moz-range-track {
+    background: transparent;
+    border: 0;
+    pointer-events: none;
+  }
+
+  .dual-slider input[type="range"]::-webkit-slider-thumb {
+    appearance: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: #4f46e5;
+    border: 1px solid #fff;
+    box-shadow: 0 0 2px rgba(0, 0, 0, .25);
+    pointer-events: auto;
+    cursor: pointer;
+    margin: 0;
+    position: relative;
+  }
+
+  .dual-slider input[type="range"]::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: #4f46e5;
+    border: 1px solid #fff;
+    box-shadow: 0 0 2px rgba(0, 0, 0, .25);
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  .dual-slider input.min {
+    z-index: 30;
+  }
+
+  .dual-slider input.max {
+    z-index: 40;
   }
 
   .player-stats-sorted-label-mobile {
@@ -74,7 +199,7 @@
   }
 
   .player-stats-bottom-row-mobile {
-    @apply flex min-w-0 items-center mt-2 text-xxs text-gray-800 flex-wrap justify-end overflow-hidden;
+    @apply flex min-w-0 items-center mt-1 text-xxs text-gray-800 flex-wrap justify-end overflow-hidden;
   }
 
   .player-stats-stat-group-mobile {
@@ -116,7 +241,7 @@
   }
 
   .searchbar-button-mobile {
-    @apply flex px-3 py-1 shrink-0 items-center gap-x-1.5 bg-gray-900 text-xs font-semibold text-white border-l border-l border-gray-300; 
+    @apply flex w-11 shrink-0 items-center justify-center bg-gray-900 text-xs font-semibold text-white border-r border-gray-900;
     /*outline outline-1 -outline-offset-1 outline-gray-300;*/
   }
   .searchbar-button-mobile:focus {
@@ -127,7 +252,7 @@
   }
 
   .searchbar-svg-mobile {
-    @apply -ml-0.5 m-1 mb-1 pb-1 size-4 overflow-visible text-gray-200;
+    @apply block size-6 overflow-visible text-gray-200;
   }
 
 

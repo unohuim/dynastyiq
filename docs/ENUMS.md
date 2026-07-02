@@ -318,11 +318,13 @@ Do not introduce new enum values without updating this document.
 
 - `discover`
 - `process`
+- `season-sync`
 
 **Semantic meaning:**
 
 - `discover`: Admin queued NHL game discovery for a date selection.
 - `process`: Admin queued NHL game processing orchestrator jobs for a date selection.
+- `season-sync`: Admin queued a season-level rollup from game summaries into season stats.
 
 ### NHL Game Import Run Mode
 
@@ -360,9 +362,9 @@ Do not introduce new enum values without updating this document.
 **Semantic meaning:**
 
 - `queued`: Admin request has been accepted and jobs have been queued.
-- `running`: Related NHL import progress rows are scheduled, running, or partially completed.
-- `completed`: Related NHL import progress rows are all completed.
-- `failed`: At least one related NHL import progress row is in error.
+- `running`: Related NHL import progress rows are scheduled, running, or partially completed, or a season sync job is actively rolling up stats.
+- `completed`: Related NHL import progress rows are all completed, or a season sync job completed successfully.
+- `failed`: At least one related NHL import progress row is in error, or a season sync job failed.
 
 ---
 

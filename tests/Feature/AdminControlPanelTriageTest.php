@@ -6,6 +6,7 @@ use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\ImportYahooPlayersPageJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\SeasonSumJob;
 use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
@@ -189,6 +190,20 @@ it('blocks authenticated non-admin users from queuing NHL game processing', func
         ->assertForbidden();
 });
 
+it('blocks guests from queuing NHL season stat syncs', function () {
+    $this->postJson(route('admin.nhl-game-imports.season-sync'), [
+        'season' => '20252026',
+    ])->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from queuing NHL season stat syncs', function () {
+    $this->actingAs(User::factory()->create())
+        ->postJson(route('admin.nhl-game-imports.season-sync'), [
+            'season' => '20252026',
+        ])
+        ->assertForbidden();
+});
+
 it('allows super admins to queue NHL game discovery for a single date', function () {
     Bus::fake();
     Event::fake([NhlGameImportStatusUpdated::class]);
@@ -261,6 +276,57 @@ it('allows super admins to queue NHL game processing for each date in a range', 
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
         return $event->reason === 'processing-queued';
     });
+});
+
+it('allows super admins to queue NHL season stat syncs', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.season-sync'), [
+            'season' => '20252026',
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_SEASON_SYNC)
+        ->assertJsonPath('run.mode', NhlGameImportRun::MODE_SEASON)
+        ->assertJsonPath('run.status', NhlGameImportRun::STATUS_QUEUED)
+        ->assertJsonPath('run.start_date', '2026-08-31')
+        ->assertJsonPath('run.end_date', '2025-09-01')
+        ->assertJsonPath('run.queued_jobs', 1)
+        ->assertJsonPath('run.payload.season', '20252026')
+        ->assertJsonPath('run.payload.season_label', '2025-26');
+
+    $run = NhlGameImportRun::query()->firstOrFail();
+
+    $this->assertDatabaseHas('nhl_game_import_runs', [
+        'action' => NhlGameImportRun::ACTION_SEASON_SYNC,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+    ]);
+
+    Bus::assertDispatched(SeasonSumJob::class, function (SeasonSumJob $job) use ($run): bool {
+        return $job->seasonId === '20252026' && $job->runId === $run->id;
+    });
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'season-sync-queued' && $event->runId === $run->id;
+    });
+});
+
+it('rejects invalid NHL season stat sync selections', function () {
+    Bus::fake();
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.season-sync'), [
+            'season' => '2025',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('season');
+
+    Bus::assertNotDispatched(SeasonSumJob::class);
 });
 
 it('queues NHL game processing from a discovery run without creating a second run', function () {
@@ -452,6 +518,70 @@ it('returns discovered NHL game import runs as completed once pipeline rows exis
         ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_COMPLETED)
         ->assertJsonPath('runs.0.facts.total_stage_rows', 1)
         ->assertJsonPath('runs.0.facts.scheduled_stage_rows', 1);
+});
+
+it('returns NHL season options and season sync progress in game import status', function () {
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_SEASON_SYNC,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => [
+            'season' => '20252026',
+            'season_label' => '2025-26',
+            'rows_upserted' => 812,
+        ],
+    ]);
+
+    DB::table('nhl_games')->insert([
+        [
+            'nhl_game_id' => 2025020001,
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => '2026-01-15',
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+        [
+            'nhl_game_id' => 2024020001,
+            'season_id' => '20242025',
+            'game_type' => 2,
+            'game_date' => '2025-01-15',
+            'game_dow' => 'Wed',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->assertJsonPath('runs.0.id', $run->id)
+        ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_SEASON_SYNC)
+        ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_COMPLETED)
+        ->assertJsonPath('runs.0.progress.percentage', 100)
+        ->assertJsonPath('runs.0.progress.completed_stage_rows', 1)
+        ->assertJsonPath('runs.0.facts', [])
+        ->assertJsonPath('runs.0.games', [])
+        ->assertJsonPath('seasons.0.season', '20252026')
+        ->assertJsonPath('seasons.0.label', '2025-26')
+        ->assertJsonPath('seasons.1.season', '20242025')
+        ->assertJsonPath('seasons.1.label', '2024-25');
 });
 
 it('blocks guests from the user Yahoo OAuth redirect', function () {
@@ -1659,8 +1789,9 @@ it('empties NHL player identities without deleting game import data', function (
 
     $this->artisan('nhl:empty', ['--players' => true])
         ->assertOk()
-        ->expectsOutput('Removed NHL player external identities.')
+        ->expectsOutput('Clearing player_external_identities...')
         ->expectsOutput('player_external_identities: 2')
+        ->expectsOutput('Removed NHL player external identities.')
         ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
 
     expect(\App\Models\Player::query()->whereKey($player->id)->exists())->toBeTrue()
@@ -1866,12 +1997,16 @@ it('empties NHL game import data without deleting player identities', function (
 
     $this->artisan('nhl:empty', ['--games' => true])
         ->assertOk()
-        ->expectsOutput('Removed NHL game import data.')
+        ->expectsOutput('Clearing event_unit_shifts...')
         ->expectsOutput('event_unit_shifts: 1')
+        ->expectsOutput('Clearing nhl_game_validations...')
         ->expectsOutput('nhl_game_validations: 1')
+        ->expectsOutput('Clearing nhl_game_import_runs...')
         ->expectsOutput('nhl_game_import_runs: 1')
+        ->expectsOutput('Clearing nhl_game_source_statuses...')
         ->expectsOutput('nhl_game_source_statuses: 1')
         ->expectsOutput('nhl_games: 1')
+        ->expectsOutput('Removed NHL game import data.')
         ->expectsOutput('Canonical players and NHL team reference data were not deleted.');
 
     foreach ([

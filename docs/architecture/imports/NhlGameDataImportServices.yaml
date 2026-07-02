@@ -50,7 +50,7 @@ rules:
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
   - Shift imports may use already-imported official boxscore shifts and time on ice to reconcile provider shiftchart artifacts, but must not mutate raw provider event fields.
   - Summary validation compares official boxscore totals against computed summaries before downstream trust.
-  - Failed summary validations should write per-game troubleshooting snapshots for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
+  - Failed summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
   - Unit shifts are naturally identified by unit_id plus nhl_game_id plus start_game_seconds.
   - Event-unit links are naturally identified by event_id plus unit_shift_id.
   - Skater plus/minus must be calculated from eligible linked goal events after event-unit links exist.
@@ -58,6 +58,7 @@ rules:
   - Persisted player-game plus/minus must reconcile to official boxscore values when available because exact goal-time shift boundaries can be provider-ambiguous.
   - Strength-aware on-ice summaries are naturally identified by game plus unit or player plus strength.
   - nhl:empty --games may remove NHL game-derived import data, progress, admin run ledgers, and validations, but must not delete canonical players, NHL team reference data, or NHL player external identities.
+  - nhl:empty --games must clear game-derived tables with visible per-table progress rather than one long silent transaction.
   - nhl:empty --players may remove only NHL and NHL draft player external identities, and must not delete game-derived import data.
 public_interface:
   - EmptyNhlCommand

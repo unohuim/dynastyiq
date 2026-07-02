@@ -87,6 +87,7 @@ class ImportNhlPlayersCommand extends Command
         );
 
         $batch = Bus::batch($jobs)
+            ->allowFailures()
             ->then(function (Batch $batch) use ($importRunId, $adminImportRunId): void {
                 ImportNhlDraftPicksJob::dispatch($importRunId, $adminImportRunId);
             })

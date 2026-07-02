@@ -11,6 +11,7 @@
             gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
+            gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
         })"
         x-init="init()"
         x-cloak
@@ -127,6 +128,54 @@
                             </p>
                         </div>
                         <div class="flex flex-wrap gap-2">
+                            <div
+                                class="relative inline-flex rounded-md shadow-sm"
+                                @click.outside="closeGameImportSeasonDropdown()"
+                            >
+                                <button
+                                    type="button"
+                                    class="relative inline-flex items-center justify-center rounded-l-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10 disabled:cursor-not-allowed disabled:opacity-60"
+                                    @click="submitGameImportSeasonSync()"
+                                    :disabled="gameImports.syncingSeason || !gameImports.selectedSeason"
+                                >
+                                    <span x-text="gameImports.syncingSeason ? 'Queuing...' : gameImportSeasonSyncButtonText()"></span>
+                                </button>
+                                <div class="relative -ml-px block">
+                                    <button
+                                        type="button"
+                                        class="relative inline-flex min-h-[38px] items-center justify-center rounded-r-md bg-white px-2.5 py-2 text-sm text-gray-400 ring-1 ring-inset ring-gray-300 hover:bg-gray-50 focus:z-10"
+                                        aria-haspopup="menu"
+                                        :aria-expanded="gameImports.seasonDropdownOpen ? 'true' : 'false'"
+                                        @click="toggleGameImportSeasonDropdown()"
+                                    >
+                                        <span class="sr-only">Open season options</span>
+                                        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" class="h-5 w-5">
+                                            <path fill-rule="evenodd" clip-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" />
+                                        </svg>
+                                    </button>
+                                    <div
+                                        x-show="gameImports.seasonDropdownOpen"
+                                        x-cloak
+                                        class="absolute right-0 z-20 mt-2 w-56 origin-top-right rounded-md bg-white p-0 shadow-lg outline outline-1 outline-black/5 transition duration-200 ease-out motion-reduce:transition-none"
+                                        role="menu"
+                                    >
+                                        <div class="py-1">
+                                            <template x-if="gameImportSeasonOptions().length === 0">
+                                                <div class="px-4 py-2 text-sm text-gray-500">No imported seasons</div>
+                                            </template>
+                                            <template x-for="season in gameImportSeasonOptions()" :key="season.season">
+                                                <button
+                                                    type="button"
+                                                    class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 focus:bg-gray-100 focus:text-gray-900 focus:outline-none"
+                                                    role="menuitem"
+                                                    @click="selectGameImportSeason(season)"
+                                                    x-text="season.label"
+                                                ></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                             <button
                                 type="button"
                                 class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -143,6 +192,54 @@
                         class="border-t border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
                         x-text="gameImports.error"
                     ></div>
+
+                    <div
+                        x-show="shouldShowGameImportSeasonSync()"
+                        x-cloak
+                        class="border-t border-gray-200 bg-white px-4 py-3"
+                    >
+                        <template x-if="gameImportLatestSeasonSyncRun()">
+                            <div>
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <h4 class="text-xs font-semibold uppercase text-gray-500">Season Syncing</h4>
+                                        <p class="mt-0.5 text-xs text-gray-600">
+                                            <span x-text="gameImportLatestSeasonSyncRun().payload?.season_label ?? gameImportLatestSeasonSyncRun().payload?.season ?? 'Selected season'"></span>
+                                            <span> season stats rollup</span>
+                                        </p>
+                                    </div>
+                                    <button
+                                        x-show="['completed', 'failed'].includes(gameImportLatestSeasonSyncRun().status)"
+                                        x-cloak
+                                        type="button"
+                                        class="float-right rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                                        @click="dismissGameImportSeasonSync()"
+                                    >
+                                        <span class="sr-only">Hide season sync</span>
+                                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="mt-2 flex items-center justify-between gap-3 text-xs text-gray-600">
+                                    <span x-text="gameImportSummaryText(gameImportLatestSeasonSyncRun())"></span>
+                                    <span x-text="`${gameImportProgressPercentage(gameImportLatestSeasonSyncRun())}%`"></span>
+                                </div>
+                                <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-200">
+                                    <div
+                                        class="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+                                        :class="gameImportLatestSeasonSyncRun().status === 'failed' ? 'bg-red-500' : 'bg-indigo-600'"
+                                        x-bind:style="`width: ${gameImportProgressPercentage(gameImportLatestSeasonSyncRun())}%`"
+                                    ></div>
+                                </div>
+                                <div
+                                    x-show="gameImportLatestSeasonSyncRun().progress?.last_error"
+                                    class="mt-1 truncate text-[11px] text-red-600"
+                                    x-text="gameImportLatestSeasonSyncRun().progress?.last_error"
+                                ></div>
+                            </div>
+                        </template>
+                    </div>
 
                     <div class="border-t border-gray-200 bg-white px-4 py-3">
                         <button
@@ -252,12 +349,12 @@
                             <div class="h-10 animate-pulse rounded bg-white"></div>
                         </div>
 
-                        <div x-show="!gameImports.loading && gameImports.runs.length === 0" class="bg-white px-3 py-4 text-center text-xs text-gray-500">
+                        <div x-show="!gameImports.loading && gameImportVisibleRuns().length === 0" class="bg-white px-3 py-4 text-center text-xs text-gray-500">
                             No game import runs have been queued yet.
                         </div>
 
-                        <div x-show="!gameImports.loading && gameImports.runs.length > 0" class="space-y-1.5">
-                            <template x-for="run in gameImports.runs" :key="run.id">
+                        <div x-show="!gameImports.loading && gameImportVisibleRuns().length > 0" class="space-y-1.5">
+                            <template x-for="run in gameImportVisibleRuns()" :key="run.id">
                                 <div class="rounded-md bg-white px-3 py-2.5 shadow-sm">
                                     <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <div class="min-w-0">

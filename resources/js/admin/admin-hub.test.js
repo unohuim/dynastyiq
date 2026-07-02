@@ -9,6 +9,7 @@ describe('admin-hub import listeners', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         vi.useRealTimers();
+        globalThis.localStorage?.clear();
         global.window = {};
         global.fetch = vi.fn(() =>
             Promise.resolve({
@@ -384,6 +385,69 @@ describe('admin-hub import listeners', () => {
         expect(row.classList.contains('hidden')).toBe(true);
     });
 
+    it('queues a full game rebuild from an embedded validation row action', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = `
+            <meta name="csrf-token" content="csrf-token-value">
+            <div data-admin-validations-mount>
+                <button
+                    data-validation-rebuild
+                    data-validation-id="7"
+                    data-validation-rebuild-url="/admin/nhl-validations/7/rebuild-game"
+                >
+                    <span data-validation-rebuild-label>Re Run</span>
+                </button>
+            </div>
+        `;
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ status: 'game_rebuild_queued' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-triage-page>Reloaded validations</div>',
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 28, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            validationsUrl: '/admin/nhl-validations?admin_panel=1',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        const mount = document.querySelector('[data-admin-validations-mount]');
+        const trigger = document.querySelector('[data-validation-rebuild]');
+
+        instance.bindValidationDetailToggles(mount);
+        trigger.click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-validations/7/rebuild-game', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({}),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-validations?admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-validation-triage-page]')).not.toBeNull();
+        expect(instance.gameImports.runs[0].id).toBe(28);
+        expect(instance.validationRebuilds[7]).toBeUndefined();
+    });
+
     it('loads game imports when the game imports tab is selected', async () => {
         const adminHub = await loadAdminHub();
         global.fetch = vi.fn()
@@ -391,6 +455,9 @@ describe('admin-hub import listeners', () => {
                 ok: true,
                 json: () => Promise.resolve({
                     processable: { date_count: 2 },
+                    seasons: [
+                        { season: '20252026', label: '2025-26' },
+                    ],
                     runs: [
                         {
                             id: 12,
@@ -436,6 +503,7 @@ describe('admin-hub import listeners', () => {
         expect(instance.gameImports.runs).toHaveLength(1);
         expect(instance.gameImports.runs[0].id).toBe(12);
         expect(instance.gameImports.processableDateCount).toBe(2);
+        expect(instance.gameImports.seasons[0].label).toBe('2025-26');
         expect(instance.gameImports.sourceGaps.items).toHaveLength(1);
 
         instance.gameImports.loading = false;
@@ -612,16 +680,196 @@ describe('admin-hub import listeners', () => {
         };
 
         expect(instance.sourceGapsAccordionId()).toBe('game-import-source-gaps');
-        expect(instance.isGameImportSourceGapsExpanded()).toBe(true);
+        expect(instance.isGameImportSourceGapsExpanded()).toBe(false);
         expect(instance.gameImportSourceGapSummaryText(gap)).toBe('2 sources missing');
 
         instance.toggleGameImportSourceGaps();
 
-        expect(instance.isGameImportSourceGapsExpanded()).toBe(false);
+        expect(instance.isGameImportSourceGapsExpanded()).toBe(true);
         expect(instance.gameImportSourceGapSummaryText({
             game_id: '2026020960',
             sources: [{ source: 'shifts', status: 'empty' }],
         })).toBe('1 source missing');
+    });
+
+    it('selects NHL game import season sync options from the dropdown state', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.gameImports.seasons = [
+            { season: '20252026', label: '2025-26' },
+            { season: '20242025', label: '2024-25' },
+        ];
+
+        expect(instance.gameImportSeasonSyncButtonText()).toBe('Sync Season');
+        expect(instance.gameImportSeasonOptions()).toHaveLength(2);
+
+        instance.toggleGameImportSeasonDropdown();
+        expect(instance.gameImports.seasonDropdownOpen).toBe(true);
+
+        instance.selectGameImportSeason(instance.gameImports.seasons[0]);
+
+        expect(instance.gameImports.selectedSeason).toBe('20252026');
+        expect(instance.gameImports.seasonDropdownOpen).toBe(false);
+        expect(instance.gameImportSeasonSyncButtonText()).toBe('Sync 2025-26');
+
+        instance.closeGameImportSeasonDropdown();
+        expect(instance.gameImports.seasonDropdownOpen).toBe(false);
+    });
+
+    it('submits a selected NHL season sync and refreshes game imports', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Season sync queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    runs: [
+                        {
+                            id: 29,
+                            action: 'season-sync',
+                            status: 'queued',
+                            payload: { season: '20252026', season_label: '2025-26' },
+                        },
+                    ],
+                }),
+            });
+
+        const instance = adminHub({
+            gameImportSeasonSyncUrl: '/admin/nhl-game-imports/season-sync',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        instance.gameImports.seasons = [{ season: '20252026', label: '2025-26' }];
+        instance.selectGameImportSeason(instance.gameImports.seasons[0]);
+
+        await instance.submitGameImportSeasonSync();
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/season-sync', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ season: '20252026' }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.runs[0].id).toBe(29);
+        expect(instance.gameImports.syncingSeason).toBe(false);
+        expect(instance.shouldShowGameImportSeasonSync()).toBe(true);
+    });
+
+    it('formats and dismisses NHL season sync progress cards', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            id: 30,
+            action: 'season-sync',
+            status: 'completed',
+            payload: {
+                season: '20252026',
+                season_label: '2025-26',
+                rows_upserted: 812,
+            },
+            progress: { percentage: 100 },
+        };
+        instance.gameImports.runs = [
+            run,
+            { id: 31, action: 'process', status: 'running' },
+        ];
+
+        expect(instance.gameImportVisibleRuns()).toHaveLength(1);
+        expect(instance.gameImportLatestSeasonSyncRun().id).toBe(30);
+        expect(instance.gameImportSeasonSyncProgressText(run)).toBe('812 season stat rows synced');
+        expect(instance.gameImportSummaryText(run)).toBe('812 season stat rows synced');
+        expect(instance.gameImportProgressPercentage(run)).toBe(100);
+
+        instance.dismissGameImportSeasonSync();
+
+        expect(instance.shouldShowGameImportSeasonSync()).toBe(false);
+        expect(JSON.parse(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:season-sync-dismissed'))).toEqual(['30']);
+    });
+
+    it('removes source gap games from recent orchestration runs', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.gameImports.sourceGaps.items = [
+            { game_id: '2026020001' },
+            { game_id: 2026020003 },
+        ];
+        instance.gameImports.runs = [
+            {
+                id: 41,
+                action: 'process',
+                games: [
+                    { game_id: '2026020001' },
+                    { game_id: '2026020002' },
+                ],
+            },
+            {
+                id: 42,
+                action: 'process',
+                games: [
+                    { game_id: '2026020003' },
+                ],
+            },
+            {
+                id: 43,
+                action: 'discover',
+                processing_started: false,
+                games: [],
+            },
+        ];
+
+        expect(instance.gameImportGames(instance.gameImports.runs[0])).toEqual([
+            { game_id: '2026020002' },
+        ]);
+        expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41, 43]);
+    });
+
+    it('keeps dismissed NHL season sync progress cards hidden after reload-style initialization', async () => {
+        globalThis.localStorage.setItem(
+            'dynastyiq:admin:nhl-game-imports:season-sync-dismissed',
+            JSON.stringify(['30'])
+        );
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.gameImports.runs = [
+            {
+                id: 30,
+                action: 'season-sync',
+                status: 'completed',
+                payload: {
+                    season: '20252026',
+                    season_label: '2025-26',
+                    rows_upserted: 812,
+                },
+                progress: { percentage: 100 },
+            },
+        ];
+
+        expect(instance.shouldShowGameImportSeasonSync()).toBe(false);
+
+        instance.gameImports.runs = [
+            {
+                id: 31,
+                action: 'season-sync',
+                status: 'queued',
+                payload: {
+                    season: '20252026',
+                    season_label: '2025-26',
+                },
+                progress: { percentage: 0 },
+            },
+        ];
+
+        expect(instance.shouldShowGameImportSeasonSync()).toBe(true);
     });
 
     it('opens and closes the game import drawer without mutating the form', async () => {

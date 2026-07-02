@@ -10,6 +10,7 @@ use App\Jobs\ImportNHLPlayerJob;
 use App\Jobs\ImportNhlDraftPicksJob;
 use App\Jobs\ImportPlayersJob;
 use App\Jobs\RefreshCapWagesContractsForIdentityJob;
+use App\Jobs\RefreshNhlPlayerLandingJob;
 use App\Jobs\ResolveCanonicalPlayerNhlIdentityJob;
 use App\Jobs\SyncFantraxLeagueJob;
 use App\Listeners\QueueCapWagesContractRefresh;
@@ -19,11 +20,13 @@ use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\ContractSeason;
 use App\Models\FantraxPlayer;
+use App\Models\ImportRun;
 use App\Models\NhlPlayerTransaction;
 use App\Models\NhlTeam;
 use App\Models\PlatformLeague;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
+use App\Models\Stat;
 use App\Services\ImportCapWagesPlayer;
 use App\Services\ImportFantraxPlayer;
 use App\Services\ImportNHLPlayer;
@@ -182,6 +185,37 @@ it('creates a canonical player for a new nhl authority identity', function () {
     expect($player)->not->toBeNull();
     expect($player->nhl_id)->toBe(8478402);
     expect($player->full_name)->toBe('Auston Matthews');
+});
+
+it('calculates goalie saves save percentage and gaa from landing season totals', function () {
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'position' => 'G',
+        'seasonTotals' => [
+            [
+                'teamName' => ['default' => 'Goalie Club'],
+                'season' => 20252026,
+                'gameTypeId' => 2,
+                'sequence' => 1,
+                'leagueAbbrev' => 'WHL',
+                'gamesPlayed' => 5,
+                'timeOnIce' => '300:00',
+                'wins' => 3,
+                'losses' => 2,
+                'shots_against' => 100,
+                'goals_against' => 10,
+            ],
+        ],
+    ]));
+
+    app(ImportNHLPlayer::class)->import('8478402', true);
+
+    $stat = Stat::query()->firstOrFail();
+
+    expect($stat->saves)->toBe(90)
+        ->and((float) $stat->sv_pct)->toBe(0.9)
+        ->and((float) $stat->gaa)->toBe(2.0)
+        ->and($stat->shots_against)->toBe(100)
+        ->and($stat->goals_against)->toBe(10);
 });
 
 it('resolves canonical nhl team id from abbrev when player landing omits team id', function () {
@@ -833,7 +867,7 @@ it('nhl player import command dispatches team jobs from nhl team reference rows'
     expect(array_unique($runIds))->toHaveCount(1);
 });
 
-it('nhl draft import ignores player ids and creates one draft-only prospect per name position', function () {
+it('nhl draft import uses player ids to import landing stats after creating the canonical prospect', function () {
     Queue::fake([ImportNHLPlayerJob::class]);
     config(['apiImportNhl.draft_years_back' => 1]);
     Http::fake([
@@ -855,6 +889,29 @@ it('nhl draft import ignores player ids and creates one draft-only prospect per 
                 ],
             ],
         ]),
+        'https://api-web.nhle.com/v1/player/900001/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900001,
+            'currentTeamId' => 24,
+            'currentTeamAbbrev' => 'ANA',
+            'firstName' => ['default' => 'Resolvable'],
+            'lastName' => ['default' => 'Pick'],
+            'position' => 'C',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Draft Pick Club'],
+                    'season' => 20252026,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'WHL',
+                    'gamesPlayed' => 50,
+                    'avgToi' => '18:00',
+                    'goals' => 20,
+                    'assists' => 30,
+                    'points' => 50,
+                    'shots' => 140,
+                ],
+            ],
+        ])),
     ]);
 
     (new ImportNhlDraftPicksJob('draft-run'))->handle(
@@ -865,9 +922,19 @@ it('nhl draft import ignores player ids and creates one draft-only prospect per 
 
     Queue::assertNotPushed(ImportNHLPlayerJob::class);
     expect(Player::query()->count())->toBe(1);
-    expect(PlayerExternalIdentity::query()->count())->toBe(1);
+    expect(Player::first()->nhl_id)->toBe(900001);
     expect(Player::first()->full_name)->toBe('Resolvable Pick');
-    expect(PlayerExternalIdentity::first()->provider_player_id)->toBe('2026:1');
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)->count())->toBe(1);
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL)->count())->toBe(1);
+    expect(PlayerExternalIdentity::query()
+        ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+        ->first()
+        ->provider_player_id)->toBe('2026:1');
+    expect(Stat::query()
+        ->where('player_id', Player::first()->id)
+        ->where('league_abbrev', 'WHL')
+        ->where('pts', 50)
+        ->exists())->toBeTrue();
 });
 
 it('nhl draft import skips name position fingerprints already discovered in the same import run', function () {
@@ -897,6 +964,7 @@ it('nhl draft import skips name position fingerprints already discovered in the 
                 ],
             ],
         ]),
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response(['data' => []]),
     ]);
 
     (new ImportPlayersJob('ANA', 'shared-run'))->handle();
@@ -933,6 +1001,7 @@ it('nhl draft import creates a minimal canonical prospect for picks without nhl 
                 ],
             ],
         ]),
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response(['data' => []]),
     ]);
 
     (new ImportNhlDraftPicksJob('draft-only-run'))->handle(
@@ -959,7 +1028,80 @@ it('nhl draft import creates a minimal canonical prospect for picks without nhl 
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
 });
 
-it('nhl draft import links an existing player by name and position type before creating a prospect', function () {
+it('nhl draft import resolves missing player ids through cayenne and imports landing stats', function () {
+    Queue::fake([ImportNHLPlayerJob::class]);
+    config(['apiImportNhl.draft_years_back' => 1]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/draft/picks/2026/all' => Http::response([
+            'picks' => [
+                [
+                    'overallPick' => 14,
+                    'name' => 'Lookup Prospect',
+                    'teamAbbrev' => 'ANA',
+                    'position' => 'C',
+                    'countryCode' => 'CAN',
+                ],
+            ],
+        ]),
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 900014,
+                    'currentTeamId' => 24,
+                    'firstName' => 'Lookup',
+                    'fullName' => 'Lookup Prospect',
+                    'lastName' => 'Prospect',
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/900014/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900014,
+            'currentTeamId' => 24,
+            'currentTeamAbbrev' => 'ANA',
+            'firstName' => ['default' => 'Lookup'],
+            'lastName' => ['default' => 'Prospect'],
+            'position' => 'C',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Lookup Club'],
+                    'season' => 20252026,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'OHL',
+                    'gamesPlayed' => 60,
+                    'avgToi' => '18:00',
+                    'goals' => 22,
+                    'assists' => 38,
+                    'points' => 60,
+                    'shots' => 180,
+                ],
+            ],
+        ])),
+    ]);
+
+    (new ImportNhlDraftPicksJob('draft-cayenne-run'))->handle(
+        app(PlayerIdentityResolver::class),
+        app(PlayerIdentityNormalizer::class),
+        app(NhlTeamReference::class),
+    );
+
+    $player = Player::first();
+
+    Queue::assertNotPushed(ImportNHLPlayerJob::class);
+    expect($player->nhl_id)->toBe(900014);
+    expect($player->full_name)->toBe('Lookup Prospect');
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)->count())->toBe(1);
+    expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL)->count())->toBe(1);
+    expect(Stat::query()
+        ->where('player_id', $player->id)
+        ->where('league_abbrev', 'OHL')
+        ->where('pts', 60)
+        ->exists())->toBeTrue();
+});
+
+it('nhl draft import links an existing player by name and position type and refreshes landing stats', function () {
     Queue::fake([ImportNHLPlayerJob::class]);
     config(['apiImportNhl.draft_years_back' => 1]);
 
@@ -991,6 +1133,29 @@ it('nhl draft import links an existing player by name and position type before c
                 ],
             ],
         ]),
+        'https://api-web.nhle.com/v1/player/8482763/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 8482763,
+            'currentTeamId' => 6,
+            'currentTeamAbbrev' => 'BOS',
+            'firstName' => ['default' => 'Fabian'],
+            'lastName' => ['default' => 'Lysell'],
+            'position' => 'R',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Vancouver Giants'],
+                    'season' => 20252026,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'WHL',
+                    'gamesPlayed' => 44,
+                    'avgToi' => '18:00',
+                    'goals' => 18,
+                    'assists' => 26,
+                    'points' => 44,
+                    'shots' => 120,
+                ],
+            ],
+        ])),
     ]);
 
     (new ImportNhlDraftPicksJob('draft-existing-run'))->handle(
@@ -1009,6 +1174,11 @@ it('nhl draft import links an existing player by name and position type before c
     expect($identity->player_id)->toBe($existingPlayer->id);
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
     expect($identity->match_confidence)->toBe(95);
+    expect(Stat::query()
+        ->where('player_id', $existingPlayer->id)
+        ->where('league_abbrev', 'WHL')
+        ->where('pts', 44)
+        ->exists())->toBeTrue();
 });
 
 it('nhl player import job discovers roster and prospect players once per run', function () {
@@ -1071,6 +1241,220 @@ it('nhl player import job discovers roster and prospect players once per run', f
         return $playerId->getValue($job) === '2002'
             && $isProspect->getValue($job) === true;
     });
+});
+
+it('retries transient NHL player landing failures during inline player imports', function () {
+    config(['apiImportNhl.player_landing_retry_delays' => [0, 0]]);
+    $importRun = ImportRun::create([
+        'source' => 'nhl',
+        'status' => 'working',
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/roster/ANA/current' => Http::response([
+            'forwards' => [
+                [
+                    'id' => 900001,
+                    'firstName' => ['default' => 'Retry'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+                [
+                    'id' => 900002,
+                    'firstName' => ['default' => 'Next'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/roster/ANA/20242025' => Http::response([]),
+        'https://api-web.nhle.com/v1/prospects/ANA' => Http::response([]),
+        'https://api-web.nhle.com/v1/player/900001/landing' => Http::sequence()
+            ->push('bad gateway', 502)
+            ->push(($this->nhlPayload)([
+                'playerId' => 900001,
+                'firstName' => ['default' => 'Retry'],
+                'lastName' => ['default' => 'Player'],
+            ])),
+        'https://api-web.nhle.com/v1/player/900002/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900002,
+            'firstName' => ['default' => 'Next'],
+            'lastName' => ['default' => 'Player'],
+        ])),
+    ]);
+
+    (new ImportPlayersJob('ANA', 'inline-retry-run', $importRun->id))->handle();
+
+    $importRun->refresh();
+
+    expect(Player::query()->whereIn('nhl_id', [900001, 900002])->count())->toBe(2);
+    expect($importRun->processed_records)->toBe(2);
+    expect($importRun->successful_records)->toBe(2);
+    expect($importRun->failed_records)->toBe(0);
+    expect($importRun->meta['transient_player_landing_failures'] ?? null)->toBeNull();
+});
+
+it('records persistent transient NHL player landing failures and continues inline player imports', function () {
+    config(['apiImportNhl.player_landing_retry_delays' => [0, 0]]);
+    $importRun = ImportRun::create([
+        'source' => 'nhl',
+        'status' => 'working',
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/roster/ANA/current' => Http::response([
+            'forwards' => [
+                [
+                    'id' => 900001,
+                    'firstName' => ['default' => 'Broken'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+                [
+                    'id' => 900002,
+                    'firstName' => ['default' => 'Next'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/roster/ANA/20242025' => Http::response([]),
+        'https://api-web.nhle.com/v1/prospects/ANA' => Http::response([]),
+        'https://api-web.nhle.com/v1/player/900001/landing' => Http::sequence()
+            ->push('bad gateway', 502)
+            ->push('bad gateway', 502)
+            ->push('bad gateway', 502),
+        'https://api-web.nhle.com/v1/player/900002/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900002,
+            'firstName' => ['default' => 'Next'],
+            'lastName' => ['default' => 'Player'],
+        ])),
+    ]);
+
+    (new ImportPlayersJob('ANA', 'inline-persistent-failure-run', $importRun->id))->handle();
+
+    $importRun->refresh();
+    $failure = $importRun->meta['transient_player_landing_failures'][0] ?? null;
+
+    expect(Player::query()->where('nhl_id', 900001)->exists())->toBeFalse();
+    expect(Player::query()->where('nhl_id', 900002)->exists())->toBeTrue();
+    expect($importRun->processed_records)->toBe(2);
+    expect($importRun->successful_records)->toBe(1);
+    expect($importRun->failed_records)->toBe(1);
+    expect($failure['team'])->toBe('ANA');
+    expect($failure['nhl_player_id'])->toBe('900001');
+    expect($failure['is_prospect'])->toBeFalse();
+    expect($failure['status'])->toBe(502);
+    expect($failure['attempts'])->toBe(3);
+});
+
+it('records non transient NHL player landing failures and continues inline player imports', function () {
+    $importRun = ImportRun::create([
+        'source' => 'nhl',
+        'status' => 'working',
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/roster/ANA/current' => Http::response([
+            'forwards' => [
+                [
+                    'id' => 900101,
+                    'firstName' => ['default' => 'Missing'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+                [
+                    'id' => 900102,
+                    'firstName' => ['default' => 'Next'],
+                    'lastName' => ['default' => 'Player'],
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/roster/ANA/20242025' => Http::response([]),
+        'https://api-web.nhle.com/v1/prospects/ANA' => Http::response([]),
+        'https://api-web.nhle.com/v1/player/900101/landing' => Http::response('not found', 404),
+        'https://api-web.nhle.com/v1/player/900102/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900102,
+            'firstName' => ['default' => 'Next'],
+            'lastName' => ['default' => 'Player'],
+        ])),
+    ]);
+
+    (new ImportPlayersJob('ANA', 'inline-non-transient-failure-run', $importRun->id))->handle();
+
+    $importRun->refresh();
+    $failure = $importRun->meta['player_landing_failures'][0] ?? null;
+
+    expect(Player::query()->where('nhl_id', 900101)->exists())->toBeFalse();
+    expect(Player::query()->where('nhl_id', 900102)->exists())->toBeTrue();
+    expect($importRun->processed_records)->toBe(2);
+    expect($importRun->successful_records)->toBe(1);
+    expect($importRun->failed_records)->toBe(1);
+    expect($failure['team'])->toBe('ANA');
+    expect($failure['nhl_player_id'])->toBe('900101');
+    expect($failure['status'])->toBe(404);
+});
+
+it('records draft pick landing failures and continues importing later picks', function () {
+    $importRun = ImportRun::create([
+        'source' => 'nhl',
+        'status' => 'working',
+        'ran_at' => now(),
+        'started_at' => now(),
+    ]);
+
+    config(['apiImportNhl.draft_years_back' => 1]);
+    Http::fake([
+        'https://api-web.nhle.com/v1/draft/picks/2026/all' => Http::response([
+            'picks' => [
+                [
+                    'overallPick' => 1,
+                    'playerId' => 900201,
+                    'name' => 'Broken Draft',
+                    'teamAbbrev' => 'ANA',
+                    'position' => 'C',
+                ],
+                [
+                    'overallPick' => 2,
+                    'playerId' => 900202,
+                    'name' => 'Working Draft',
+                    'teamAbbrev' => 'ANA',
+                    'position' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/900201/landing' => Http::response('server error', 500),
+        'https://api-web.nhle.com/v1/player/900202/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900202,
+            'firstName' => ['default' => 'Working'],
+            'lastName' => ['default' => 'Draft'],
+            'position' => 'C',
+        ])),
+    ]);
+
+    (new ImportNhlDraftPicksJob('draft-failure-run', $importRun->id))->handle(
+        app(PlayerIdentityResolver::class),
+        app(PlayerIdentityNormalizer::class),
+        app(NhlTeamReference::class),
+    );
+
+    $importRun->refresh();
+    $failure = $importRun->meta['draft_pick_failures'][0] ?? null;
+
+    expect(Player::query()->where('nhl_id', 900202)->exists())->toBeTrue();
+    expect($importRun->processed_records)->toBe(2);
+    expect($importRun->successful_records)->toBe(1);
+    expect($importRun->failed_records)->toBe(1);
+    expect($failure['draft_year'])->toBe(2026);
+    expect($failure['display_name'])->toBe('Broken Draft');
+    expect($failure['nhl_player_id'])->toBe(900201);
 });
 
 it('capwages full team names normalize through nhl teams for name plus plus scoring', function () {
@@ -2110,6 +2494,81 @@ it('does not queue NHL identity resolution when the linked player already has an
     Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
 });
 
+it('queues NHL identity resolution when a canonical player without an NHL id is created', function () {
+    Queue::fake();
+
+    $player = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+
+    Queue::assertPushed(
+        ResolveCanonicalPlayerNhlIdentityJob::class,
+        fn (ResolveCanonicalPlayerNhlIdentityJob $job): bool => $job->playerId === $player->id
+            && $job->sourceIdentityId === null,
+    );
+});
+
+it('queues NHL identity resolution when canonical player lookup evidence changes', function () {
+    $player = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Old',
+        'last_name' => 'Name',
+        'full_name' => 'Old Name',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]));
+    Queue::fake();
+
+    $player->update([
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+    ]);
+
+    Queue::assertPushed(
+        ResolveCanonicalPlayerNhlIdentityJob::class,
+        fn (ResolveCanonicalPlayerNhlIdentityJob $job): bool => $job->playerId === $player->id
+            && $job->sourceIdentityId === null,
+    );
+});
+
+it('does not queue NHL identity resolution when unrelated canonical player fields change', function () {
+    $player = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'MTL',
+    ]));
+    Queue::fake();
+
+    $player->update(['team_abbrev' => 'LAV']);
+
+    Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
+});
+
+it('does not queue NHL identity resolution when a canonical player already has an NHL id', function () {
+    Queue::fake();
+
+    ($this->makePlayer)([
+        'nhl_id' => 8482184,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+
+    Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
+});
+
 it('resolves a provisional canonical player to one NHL stats player candidate', function () {
     $player = ($this->makePlayer)([
         'nhl_id' => null,
@@ -2242,6 +2701,70 @@ it('resolves a canonical player without a source identity to one NHL stats playe
         ->exists())->toBeTrue();
 });
 
+it('resolves an NHL player id from first last and position evidence', function () {
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8482184,
+                    'currentTeamId' => 17,
+                    'firstName' => 'Theo',
+                    'fullName' => 'Theo Rochette',
+                    'lastName' => 'Rochette',
+                    'positionCode' => 'C',
+                ],
+                [
+                    'id' => 8458849,
+                    'currentTeamId' => null,
+                    'firstName' => 'Eric',
+                    'fullName' => 'Eric Rochette',
+                    'lastName' => 'Rochette',
+                    'positionCode' => 'D',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/8482184/landing' => Http::response([
+            'playerId' => 8482184,
+            'currentTeamId' => 17,
+            'currentTeamAbbrev' => 'MTL',
+            'firstName' => ['default' => 'Theo'],
+            'lastName' => ['default' => 'Rochette'],
+            'position' => 'C',
+        ]),
+    ]);
+
+    $playerId = app(NhlPlayerIdentityLookup::class)->resolveForName('Theo', 'Rochette', 'F');
+
+    expect($playerId)->toBe(8482184);
+});
+
+it('returns null when NHL name position evidence has multiple viable candidates', function () {
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 8475789,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                ],
+                [
+                    'id' => 8499999,
+                    'firstName' => 'Jack',
+                    'lastName' => 'Campbell',
+                    'fullName' => 'Jack Campbell',
+                    'positionCode' => 'G',
+                ],
+            ],
+        ]),
+    ]);
+
+    $playerId = app(NhlPlayerIdentityLookup::class)->resolveForName('Jack', 'Campbell', 'G');
+
+    expect($playerId)->toBeNull();
+});
+
 it('filters NHL Stats last-name matches down to the exact current-team player', function () {
     $player = ($this->makePlayer)([
         'nhl_id' => null,
@@ -2295,6 +2818,21 @@ it('filters NHL Stats last-name matches down to the exact current-team player', 
             'birthDate' => '2002-02-20',
             'birthCountry' => 'CAN',
             'position' => 'C',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Quebec Remparts'],
+                    'season' => 20212022,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'QMJHL',
+                    'gamesPlayed' => 66,
+                    'avgToi' => '18:00',
+                    'goals' => 33,
+                    'assists' => 66,
+                    'points' => 99,
+                    'shots' => 220,
+                ],
+            ],
         ]),
     ]);
 
@@ -2313,6 +2851,12 @@ it('filters NHL Stats last-name matches down to the exact current-team player', 
         ->where('provider', PlayerExternalIdentity::PROVIDER_NHL)
         ->whereIn('provider_player_id', ['8457833', '8458849'])
         ->exists())->toBeFalse();
+    expect(Stat::query()
+        ->where('player_id', $player->id)
+        ->where('league_abbrev', 'QMJHL')
+        ->where('season_id', 20212022)
+        ->where('pts', 99)
+        ->exists())->toBeTrue();
 });
 
 it('does not assign an NHL id already owned by another canonical player', function () {
@@ -2490,28 +3034,139 @@ it('keeps NHL identity resolution jobs unique per canonical player', function ()
     expect($job)->toBeInstanceOf(ShouldBeUnique::class);
     expect($job->uniqueId())->toBe('123');
     expect($job->uniqueFor)->toBe(900);
+    expect($job->connection)->toBe('database');
 });
 
-it('queues NHL resolution jobs for canonical players without NHL ids', function () {
+it('keeps NHL landing refresh jobs unique per NHL player id', function () {
+    $job = new RefreshNhlPlayerLandingJob(8482184);
+
+    expect($job)->toBeInstanceOf(ShouldBeUnique::class);
+    expect($job->uniqueId())->toBe('8482184');
+    expect($job->uniqueFor)->toBe(900);
+    expect($job->connection)->toBe('database');
+});
+
+it('NHL landing refresh jobs preserve prospect status while importing stats', function () {
+    $player = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => 8482184,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'is_prospect' => true,
+    ]));
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'playerId' => 8482184,
+        'firstName' => ['default' => 'Theo'],
+        'lastName' => ['default' => 'Rochette'],
+        'position' => 'C',
+        'seasonTotals' => [
+            [
+                'teamName' => ['default' => 'Quebec Remparts'],
+                'season' => 20212022,
+                'gameTypeId' => 2,
+                'sequence' => 1,
+                'leagueAbbrev' => 'QMJHL',
+                'gamesPlayed' => 66,
+                'avgToi' => '18:00',
+                'goals' => 33,
+                'assists' => 66,
+                'points' => 99,
+                'shots' => 220,
+            ],
+        ],
+    ]), '8482184');
+
+    (new RefreshNhlPlayerLandingJob(8482184))->handle(app(ImportNHLPlayer::class));
+
+    expect($player->refresh()->is_prospect)->toBeTrue();
+    expect(Stat::query()
+        ->where('player_id', $player->id)
+        ->where('is_prospect', true)
+        ->where('league_abbrev', 'QMJHL')
+        ->where('pts', 99)
+        ->exists())->toBeTrue();
+});
+
+it('queues an NHL landing refresh when a player is created with an NHL id', function () {
     Queue::fake();
-    $queued = ($this->makePlayer)([
+
+    ($this->makePlayer)([
+        'nhl_id' => 8482184,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+
+    Queue::assertPushed(
+        RefreshNhlPlayerLandingJob::class,
+        fn (RefreshNhlPlayerLandingJob $job): bool => $job->nhlPlayerId === 8482184,
+    );
+    Queue::assertPushed(RefreshNhlPlayerLandingJob::class, 1);
+    Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
+});
+
+it('queues an NHL landing refresh when a player receives a new NHL id', function () {
+    $player = Player::withoutEvents(fn () => ($this->makePlayer)([
         'nhl_id' => null,
         'first_name' => 'Theo',
         'last_name' => 'Rochette',
         'full_name' => 'Theo Rochette',
-    ]);
-    ($this->makePlayer)([
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]));
+    Queue::fake();
+
+    $player->nhl_id = 8482184;
+    $player->save();
+
+    Queue::assertPushed(
+        RefreshNhlPlayerLandingJob::class,
+        fn (RefreshNhlPlayerLandingJob $job): bool => $job->nhlPlayerId === 8482184,
+    );
+    Queue::assertPushed(RefreshNhlPlayerLandingJob::class, 1);
+});
+
+it('does not queue an NHL landing refresh for unrelated player updates', function () {
+    $player = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => 8482184,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]));
+    Queue::fake();
+
+    $player->team_abbrev = 'MTL';
+    $player->save();
+
+    Queue::assertNotPushed(RefreshNhlPlayerLandingJob::class);
+});
+
+it('queues NHL resolution jobs for canonical players without NHL ids', function () {
+    $queued = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Theo',
+        'last_name' => 'Rochette',
+        'full_name' => 'Theo Rochette',
+    ]));
+    Player::withoutEvents(fn () => ($this->makePlayer)([
         'nhl_id' => null,
         'first_name' => '',
         'last_name' => '',
         'full_name' => 'Single',
-    ]);
-    ($this->makePlayer)([
+    ]));
+    Player::withoutEvents(fn () => ($this->makePlayer)([
         'nhl_id' => 8478402,
         'first_name' => 'Auston',
         'last_name' => 'Matthews',
         'full_name' => 'Auston Matthews',
-    ]);
+    ]));
+    Queue::fake();
 
     Artisan::call('nhl:resolve', ['--players' => true]);
 

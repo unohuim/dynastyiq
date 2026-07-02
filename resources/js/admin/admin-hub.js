@@ -2,6 +2,26 @@ import { bootPlayerTriage } from './player-triage.js';
 
 let importListenersRegistered = false;
 const validationDetailTransitionMs = 300;
+const seasonSyncDismissedStorageKey = 'dynastyiq:admin:nhl-game-imports:season-sync-dismissed';
+
+function readDismissedSeasonSyncRunIds() {
+    try {
+        const stored = globalThis.localStorage?.getItem(seasonSyncDismissedStorageKey);
+        const parsed = stored ? JSON.parse(stored) : [];
+
+        return Array.isArray(parsed) ? parsed.map((id) => String(id)) : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeDismissedSeasonSyncRunIds(ids) {
+    try {
+        globalThis.localStorage?.setItem(seasonSyncDismissedStorageKey, JSON.stringify(ids));
+    } catch {
+        // Browser storage is a convenience for UI dismissal, not required for operation.
+    }
+}
 
 export default function adminHub(options = {}) {
     const nhlAvailable = Boolean(options.hasPlayers);
@@ -26,23 +46,30 @@ export default function adminHub(options = {}) {
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
+        gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         triageLoaded: false,
         triageLoading: false,
         triageError: '',
         validationsLoaded: false,
         validationsLoading: false,
         validationsError: '',
+        validationRebuilds: {},
         validationDetails: {},
         gameImports: {
             drawerOpen: false,
             loading: false,
             discovering: false,
             processing: false,
+            syncingSeason: false,
             error: '',
             runs: [],
+            seasons: [],
             expandedRuns: {},
-            sourceGapsExpanded: true,
+            sourceGapsExpanded: false,
             processableDateCount: 0,
+            seasonDropdownOpen: false,
+            selectedSeason: '',
+            seasonSyncDismissedRunIds: readDismissedSeasonSyncRunIds(),
             sourceGaps: {
                 loading: false,
                 items: [],
@@ -194,12 +221,17 @@ export default function adminHub(options = {}) {
             }
         },
 
-        async loadValidations() {
-            if (this.validationsLoaded || this.validationsLoading) {
+        async loadValidations(options = {}) {
+            const force = Boolean(options.force);
+            const background = Boolean(options.background);
+
+            if ((!force && this.validationsLoaded) || this.validationsLoading) {
                 return;
             }
 
-            this.validationsLoading = true;
+            if (!background) {
+                this.validationsLoading = true;
+            }
             this.validationsError = '';
 
             try {
@@ -224,10 +256,13 @@ export default function adminHub(options = {}) {
                 mount.innerHTML = payload.html;
                 this.bindValidationDetailToggles(mount);
                 this.validationsLoaded = true;
+                this.validationDetails = {};
             } catch (error) {
                 this.validationsError = error.message ?? 'Unable to load validation triage';
             } finally {
-                this.validationsLoading = false;
+                if (!background) {
+                    this.validationsLoading = false;
+                }
             }
         },
 
@@ -238,6 +273,14 @@ export default function adminHub(options = {}) {
 
             mount.dataset.validationTogglesBound = 'true';
             mount.addEventListener('click', (event) => {
+                const rebuildTrigger = event.target?.closest?.('[data-validation-rebuild]');
+
+                if (rebuildTrigger) {
+                    event.preventDefault();
+                    void this.rebuildValidationGame(rebuildTrigger);
+                    return;
+                }
+
                 const trigger = event.target?.closest?.('[data-validation-toggle]');
 
                 if (!trigger) {
@@ -247,6 +290,43 @@ export default function adminHub(options = {}) {
                 event.preventDefault();
                 void this.toggleValidationDetail(trigger);
             });
+        },
+
+        async rebuildValidationGame(trigger) {
+            const validationId = trigger.dataset.validationId;
+            const url = trigger.dataset.validationRebuildUrl;
+
+            if (!validationId || !url || this.validationRebuilds[validationId] === true) {
+                return;
+            }
+
+            this.validationsError = '';
+            this.validationRebuilds = {
+                ...this.validationRebuilds,
+                [validationId]: true,
+            };
+            trigger.disabled = true;
+            const label = trigger.querySelector('[data-validation-rebuild-label]');
+            const previousLabel = label?.textContent ?? '';
+            if (label) {
+                label.textContent = 'Queuing...';
+            }
+
+            try {
+                await this.sendGameImportRequest(url, {});
+                await this.loadValidations({ force: true, background: true });
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.validationsError = error.message ?? 'Unable to queue game rebuild';
+            } finally {
+                const next = { ...this.validationRebuilds };
+                delete next[validationId];
+                this.validationRebuilds = next;
+                trigger.disabled = false;
+                if (label) {
+                    label.textContent = previousLabel || 'Re Run';
+                }
+            }
         },
 
         async toggleValidationDetail(trigger) {
@@ -350,6 +430,82 @@ export default function adminHub(options = {}) {
             this.gameImports.drawerOpen = false;
         },
 
+        gameImportSeasonOptions() {
+            return Array.isArray(this.gameImports.seasons) ? this.gameImports.seasons : [];
+        },
+
+        gameImportSelectedSeason() {
+            return this.gameImportSeasonOptions()
+                .find((season) => String(season.season) === String(this.gameImports.selectedSeason));
+        },
+
+        gameImportSeasonSyncButtonText() {
+            const selected = this.gameImportSelectedSeason();
+
+            return selected ? `Sync ${selected.label}` : 'Sync Season';
+        },
+
+        toggleGameImportSeasonDropdown() {
+            this.gameImports.seasonDropdownOpen = !this.gameImports.seasonDropdownOpen;
+        },
+
+        closeGameImportSeasonDropdown() {
+            this.gameImports.seasonDropdownOpen = false;
+        },
+
+        selectGameImportSeason(season) {
+            this.gameImports.selectedSeason = season?.season ? String(season.season) : '';
+            this.closeGameImportSeasonDropdown();
+        },
+
+        gameImportVisibleRuns() {
+            return this.gameImports.runs.filter((run) => {
+                if (run.action === 'season-sync') {
+                    return false;
+                }
+
+                if (run.action === 'discover' && !run.processing_started) {
+                    return true;
+                }
+
+                const games = Array.isArray(run.games) ? run.games : [];
+
+                return games.length === 0 || this.gameImportGames(run).length > 0;
+            });
+        },
+
+        gameImportLatestSeasonSyncRun() {
+            const run = this.gameImports.runs.find((item) => item.action === 'season-sync') ?? null;
+
+            if (!run || this.isGameImportSeasonSyncDismissed(run.id)) {
+                return null;
+            }
+
+            return run;
+        },
+
+        isGameImportSeasonSyncDismissed(runId) {
+            return this.gameImports.seasonSyncDismissedRunIds.includes(String(runId));
+        },
+
+        shouldShowGameImportSeasonSync() {
+            return this.gameImportLatestSeasonSyncRun() !== null;
+        },
+
+        dismissGameImportSeasonSync() {
+            const run = this.gameImportLatestSeasonSyncRun();
+
+            if (run) {
+                const dismissed = Array.from(new Set([
+                    ...this.gameImports.seasonSyncDismissedRunIds,
+                    String(run.id),
+                ]));
+
+                this.gameImports.seasonSyncDismissedRunIds = dismissed;
+                writeDismissedSeasonSyncRunIds(dismissed);
+            }
+        },
+
         gameImportPayload() {
             return Object.entries(this.gameImports.form).reduce((payload, [key, value]) => {
                 const normalized = typeof value === 'string' ? value.trim() : value;
@@ -382,6 +538,7 @@ export default function adminHub(options = {}) {
                 }
 
                 this.gameImports.runs = payload.runs ?? [];
+                this.gameImports.seasons = payload.seasons ?? [];
                 this.gameImports.processableDateCount = Number(payload.processable?.date_count) || 0;
                 this.scheduleGameImportPollIfNeeded();
             } catch (error) {
@@ -480,6 +637,30 @@ export default function adminHub(options = {}) {
                 this.gameImports.error = error.message ?? 'Unable to queue processing';
             } finally {
                 this.gameImports.processing = false;
+            }
+        },
+
+        async submitGameImportSeasonSync() {
+            const selected = this.gameImportSelectedSeason();
+
+            if (!selected) {
+                this.gameImports.error = 'Choose a season before syncing.';
+                return;
+            }
+
+            this.gameImports.syncingSeason = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(this.gameImportSeasonSyncUrl, {
+                    season: selected.season,
+                });
+
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue season sync';
+            } finally {
+                this.gameImports.syncingSeason = false;
             }
         },
 
@@ -635,6 +816,10 @@ export default function adminHub(options = {}) {
         },
 
         gameImportProgressText(run) {
+            if (run.action === 'season-sync') {
+                return this.gameImportSeasonSyncProgressText(run);
+            }
+
             const progress = run.progress ?? {};
             const total = Number(progress.total_stage_rows) || 0;
             const completed = Number(progress.completed_stage_rows) || 0;
@@ -647,6 +832,24 @@ export default function adminHub(options = {}) {
             }
 
             return this.stageProgressText(completed, total, running, failed, skipped);
+        },
+
+        gameImportSeasonSyncProgressText(run) {
+            const rows = Number(run.payload?.rows_upserted) || 0;
+
+            if (run.status === 'completed') {
+                return `${this.formatNumber(rows)} season stat rows synced`;
+            }
+
+            if (run.status === 'failed') {
+                return 'Season sync failed';
+            }
+
+            if (run.status === 'running') {
+                return 'Syncing season stats';
+            }
+
+            return 'Season sync queued';
         },
 
         gameImportSummaryText(run) {
@@ -690,8 +893,20 @@ export default function adminHub(options = {}) {
             return `${this.formatNumber(count)} ${count === 1 ? 'source' : 'sources'} missing`;
         },
 
+        gameImportSourceGapGameIds() {
+            const gaps = this.gameImports.sourceGaps?.items ?? [];
+
+            return new Set(gaps.map((gap) => String(gap.game_id)));
+        },
+
+        isGameImportSourceGapGame(game) {
+            return this.gameImportSourceGapGameIds().has(String(game?.game_id));
+        },
+
         gameImportGames(run) {
-            return Array.isArray(run.games) ? run.games : [];
+            const games = Array.isArray(run.games) ? run.games : [];
+
+            return games.filter((game) => !this.isGameImportSourceGapGame(game));
         },
 
         gameImportGameLabel(game) {

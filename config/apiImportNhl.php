@@ -36,6 +36,7 @@ return [
     'max_connect_events_seconds'    => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
     'max_sum_game_units_seconds'    => env('MAX_SUM_GAME_UNITS_SECONDS', 7200),
     'draft_years_back'              => (int) env('NHL_DRAFT_YEARS_BACK', 8),
+    'player_landing_retry_delays'   => [2, 5, 10],
     'validation_troubleshooting_path' => env('NHL_VALIDATION_TROUBLESHOOTING_PATH', base_path('docs/troubleshooting')),
 
 ];

@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameSourceStatus;
 use App\Repositories\NhlImportProgressRepo;
@@ -51,6 +52,7 @@ class NhlGameImportController extends Controller
             'processable' => [
                 'date_count' => $this->processableDateCount(),
             ],
+            'seasons' => $this->availableSeasons(),
         ]);
     }
 
@@ -185,6 +187,41 @@ class NhlGameImportController extends Controller
 
         return response()->json([
             'message' => 'Processing queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue a season-level rollup from game summaries into season stats.
+     */
+    public function seasonSync(Request $request): JsonResponse
+    {
+        $input = $request->validate([
+            'season' => ['required', 'digits:8'],
+        ]);
+        $seasonId = (string) $input['season'];
+        [$start, $end] = $this->seasonBounds($seasonId);
+
+        $run = NhlGameImportRun::create([
+            'action' => NhlGameImportRun::ACTION_SEASON_SYNC,
+            'mode' => NhlGameImportRun::MODE_SEASON,
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'start_date' => $start->toDateString(),
+            'end_date' => $end->toDateString(),
+            'date_count' => 1,
+            'queued_jobs' => 1,
+            'payload' => [
+                'season' => $seasonId,
+                'season_label' => $this->seasonLabel($seasonId),
+            ],
+            'created_by' => $request->user()?->id,
+        ]);
+
+        SeasonSumJob::dispatch($seasonId, $run->id);
+        broadcast(new NhlGameImportStatusUpdated('season-sync-queued', $run->id));
+
+        return response()->json([
+            'message' => 'Season sync queued.',
             'run' => $this->serializeRun($run->refresh()),
         ], 202);
     }
@@ -434,8 +471,8 @@ class NhlGameImportController extends Controller
             'created_at' => $run->created_at?->toIso8601String(),
             'updated_at' => $run->updated_at?->toIso8601String(),
             'progress' => $progress,
-            'facts' => $this->factsForRun($run),
-            'games' => $this->gamesForRun($run),
+            'facts' => $run->action === NhlGameImportRun::ACTION_SEASON_SYNC ? [] : $this->factsForRun($run),
+            'games' => $run->action === NhlGameImportRun::ACTION_SEASON_SYNC ? [] : $this->gamesForRun($run),
         ];
     }
 
@@ -446,6 +483,10 @@ class NhlGameImportController extends Controller
      */
     private function progressForRun(NhlGameImportRun $run): array
     {
+        if ($run->action === NhlGameImportRun::ACTION_SEASON_SYNC) {
+            return $this->seasonSyncProgressForRun($run);
+        }
+
         $rows = DB::table('nhl_import_progress')
             ->selectRaw('status, COUNT(*) as aggregate')
             ->whereBetween('game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()])
@@ -477,6 +518,33 @@ class NhlGameImportController extends Controller
             'failed_stage_rows' => $failed,
             'percentage' => $percentage,
             'last_error' => $lastError,
+        ];
+    }
+
+    /**
+     * Serialize progress for a season stats rollup run.
+     *
+     * @return array<string, mixed>
+     */
+    private function seasonSyncProgressForRun(NhlGameImportRun $run): array
+    {
+        $status = $run->status;
+        $percentage = match ($status) {
+            NhlGameImportRun::STATUS_COMPLETED, NhlGameImportRun::STATUS_FAILED => 100,
+            NhlGameImportRun::STATUS_RUNNING => 35,
+            default => 0,
+        };
+
+        return [
+            'status' => $status,
+            'total_stage_rows' => 1,
+            'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? 1 : 0,
+            'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? 1 : 0,
+            'completed_stage_rows' => $status === NhlGameImportRun::STATUS_COMPLETED ? 1 : 0,
+            'skipped_stage_rows' => 0,
+            'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
+            'percentage' => $percentage,
+            'last_error' => $run->last_error,
         ];
     }
 
@@ -655,6 +723,39 @@ class NhlGameImportController extends Controller
             ->where('status', 'scheduled')
             ->distinct()
             ->count('game_date');
+    }
+
+    /**
+     * Return seasons with imported NHL games for season-sync controls.
+     *
+     * @return array<int, array{season: string, label: string}>
+     */
+    private function availableSeasons(): array
+    {
+        return DB::table('nhl_games')
+            ->select('season_id')
+            ->whereNotNull('season_id')
+            ->distinct()
+            ->orderByDesc('season_id')
+            ->pluck('season_id')
+            ->map(fn ($seasonId): array => [
+                'season' => (string) $seasonId,
+                'label' => $this->seasonLabel((string) $seasonId),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Format an NHL season id for admin controls.
+     */
+    private function seasonLabel(string $seasonId): string
+    {
+        if (! preg_match('/^\d{8}$/', $seasonId)) {
+            return $seasonId;
+        }
+
+        return substr($seasonId, 0, 4) . '-' . substr($seasonId, 6, 2);
     }
 
     /**
