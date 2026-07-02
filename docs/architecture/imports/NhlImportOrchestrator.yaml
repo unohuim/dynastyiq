@@ -26,6 +26,7 @@ rules:
   - The orchestrator owns NHL import stage advancement.
   - Canonical stage order, dependencies, job mappings, and stale-timeout config keys must come from NhlImportStages.
   - Jobs must report success and failure through the orchestrator or repository contract.
+  - Jobs must attempt raw provider troubleshooting export before marking a game stage failed.
   - Import status values must remain aligned with docs/ENUMS.md.
   - Jobs must only perform work that has already been atomically claimed as running.
   - The PBP stage must pass core NHL source preflight before the game pipeline claims or dispatches any stage.

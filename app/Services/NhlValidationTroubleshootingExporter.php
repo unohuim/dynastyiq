@@ -53,6 +53,24 @@ class NhlValidationTroubleshootingExporter
     }
 
     /**
+     * Export raw provider payloads and stoppage context for any game import stoppage.
+     *
+     * @param array<string,mixed> $context
+     */
+    public function exportRawProviderPayloads(int $gameId, array $context = []): void
+    {
+        $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
+        if ($directory === '') {
+            return;
+        }
+
+        File::ensureDirectoryExists($directory);
+
+        $this->writeFile($directory, "stoppage_{$gameId}.md", fn (): string => $this->stoppageMarkdown($gameId, $context));
+        $this->writeRawProviderFiles($directory, $gameId);
+    }
+
+    /**
      * Write raw provider payloads as pretty JSON text files.
      */
     private function writeRawProviderFiles(string $directory, int $gameId): void
@@ -64,6 +82,28 @@ class NhlValidationTroubleshootingExporter
                 fn (): string => $this->rawProviderPayloadText($key, $url)
             );
         }
+    }
+
+    /**
+     * @param array<string,mixed> $context
+     */
+    private function stoppageMarkdown(int $gameId, array $context): string
+    {
+        $lines = [
+            "# Import Stoppage {$gameId}",
+            '',
+            'Checked: `' . now()->toDateTimeString() . '`  ',
+        ];
+
+        foreach ($context as $key => $value) {
+            if (is_array($value) || is_object($value)) {
+                $value = json_encode($value);
+            }
+
+            $lines[] = sprintf('%s: `%s`  ', ucfirst(str_replace('_', ' ', (string) $key)), (string) $value);
+        }
+
+        return implode("\n", $lines) . "\n";
     }
 
     /**

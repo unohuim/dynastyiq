@@ -111,6 +111,19 @@ class NhlGameImportController extends Controller
     }
 
     /**
+     * Queue a full rebuild for a stopped game import.
+     */
+    public function rerunStoppedGame(int $gameId, NhlGameImportRebuilder $rebuilder): JsonResponse
+    {
+        $rebuilder->rebuild($gameId);
+
+        return response()->json([
+            'status' => 'game_rebuild_queued',
+            'game_id' => $gameId,
+        ], 202);
+    }
+
+    /**
      * Queue NHL game discovery for a validated date selection.
      */
     public function discover(Request $request): JsonResponse

@@ -9,6 +9,7 @@
             validationsUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1])),
             gameImportStatusUrl: @js(route('admin.nhl-game-imports.status')),
             gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),
+            gameImportGameRerunUrl: @js(url('/admin/nhl-game-imports/games')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
@@ -304,13 +305,14 @@
                                             </div>
                                             <button
                                                 type="button"
-                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                class="inline-flex size-8 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                                                 @click="rerunGameImportSourceGap(gap)"
                                                 :disabled="gameImports.sourceGaps.rerunning[gap.game_id] === true"
+                                                :aria-label="`Rerun ${gameImportGameLabel(gap)}`"
                                             >
-                                                <span
-                                                    x-text="gameImports.sourceGaps.rerunning[gap.game_id] === true ? 'Checking...' : 'Rerun'"
-                                                ></span>
+                                                <svg class="h-4 w-4" :class="gameImports.sourceGaps.rerunning[gap.game_id] === true ? 'animate-spin' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fill-rule="evenodd" d="M15.312 11.424a.75.75 0 0 1 .523.923 6.5 6.5 0 1 1-1.778-6.284l.198.198V4.25a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.684l-.193-.193a5 5 0 1 0 1.393 4.094.75.75 0 0 1 .923-.523Z" clip-rule="evenodd" />
+                                                </svg>
                                             </button>
                                         </div>
 
@@ -436,7 +438,22 @@
                                                             <div class="truncate text-[11px] font-medium text-gray-900" x-text="gameImportGameLabel(game)"></div>
                                                             <div class="shrink-0 text-[11px] text-gray-500" x-text="gameImportGameMeta(game)"></div>
                                                         </div>
-                                                        <div class="text-[11px] font-medium text-gray-600" x-text="`${gameImportGameProgressPercentage(game)}%`"></div>
+                                                        <div class="flex shrink-0 items-center gap-1.5">
+                                                            <button
+                                                                type="button"
+                                                                x-show="canRerunStoppedGameImport(game)"
+                                                                x-cloak
+                                                                class="inline-flex size-7 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                                @click="rerunStoppedGameImport(game)"
+                                                                :disabled="gameImports.rerunningGames[game.game_id] === true"
+                                                                :aria-label="`Rerun ${gameImportGameLabel(game)}`"
+                                                            >
+                                                                <svg class="h-3.5 w-3.5" :class="gameImports.rerunningGames[game.game_id] === true ? 'animate-spin' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                                    <path fill-rule="evenodd" d="M15.312 11.424a.75.75 0 0 1 .523.923 6.5 6.5 0 1 1-1.778-6.284l.198.198V4.25a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.684l-.193-.193a5 5 0 1 0 1.393 4.094.75.75 0 0 1 .923-.523Z" clip-rule="evenodd" />
+                                                                </svg>
+                                                            </button>
+                                                            <div class="text-[11px] font-medium text-gray-600" x-text="`${gameImportGameProgressPercentage(game)}%`"></div>
+                                                        </div>
                                                     </div>
                                                     <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-gray-200">
                                                         <div

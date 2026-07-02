@@ -4,15 +4,17 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use Throwable;
+use App\Services\NhlGameImportEligibility;
+use App\Services\NhlImportOrchestrator;
+use App\Services\NhlValidationTroubleshootingExporter;
+use App\Support\NhlImportStages;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use App\Services\NhlImportOrchestrator;
-use App\Services\NhlGameImportEligibility;
-use App\Support\NhlImportStages;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Abstract base for NHL pipeline jobs.
@@ -81,6 +83,8 @@ abstract class BaseNhlJob implements ShouldQueue
 
             return;
         } catch (Throwable $e) {
+            $this->exportTroubleshootingPayloads($e);
+
             app(NhlImportOrchestrator::class)->onFailure(
                 $this->gameId,
                 $this->stageName(),
@@ -89,6 +93,27 @@ abstract class BaseNhlJob implements ShouldQueue
             );
 
             $this->fail($e);
+        }
+    }
+
+    /**
+     * Export raw provider payloads for any stage stoppage without masking the original failure.
+     */
+    private function exportTroubleshootingPayloads(Throwable $throwable): void
+    {
+        try {
+            app(NhlValidationTroubleshootingExporter::class)->exportRawProviderPayloads($this->gameId, [
+                'stage' => $this->stageName(),
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+                'code' => $throwable->getCode(),
+            ]);
+        } catch (Throwable $exportThrowable) {
+            Log::warning('Failed to export NHL import stoppage troubleshooting payloads.', [
+                'game_id' => $this->gameId,
+                'stage' => $this->stageName(),
+                'message' => $exportThrowable->getMessage(),
+            ]);
         }
     }
 

@@ -38,6 +38,7 @@ rules:
   - Derived play-by-play summaries must use NhlPbpEventNormalizer for boxscore-comparable shot, shootout, empty-net, and penalty-minute semantics.
   - Player game summaries are naturally identified by nhl_game_id plus nhl_player_id.
   - Raw shift imports must update player game summary time on ice and shift counts for the same game and player.
+  - Raw shift imports must ignore provider shift rows whose team abbreviation is not one of the stored game home or away teams.
   - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
   - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
   - Play-by-play import must establish the provider game type before later stages advance.
@@ -51,7 +52,8 @@ rules:
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
   - Shift imports may use already-imported official boxscore shifts and time on ice to reconcile provider shiftchart artifacts, but must not mutate raw provider event fields.
   - Summary validation compares official boxscore totals against computed summaries before downstream trust.
-  - Failed summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
+  - Game stage stoppages should write raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
+  - Failed or invalidated summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
   - Unit shifts are naturally identified by unit_id plus nhl_game_id plus start_game_seconds.
   - Event-unit links are naturally identified by event_id plus unit_shift_id.
   - Skater plus/minus must be calculated from eligible linked goal events after event-unit links exist.

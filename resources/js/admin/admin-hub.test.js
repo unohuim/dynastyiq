@@ -1004,6 +1004,50 @@ describe('admin-hub import listeners', () => {
         expect(instance.gameImports.sourceGaps.rerunning[2026020001]).toBeUndefined();
     });
 
+    it('reruns a stopped game and refreshes source gaps plus game imports', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ status: 'game_rebuild_queued' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ gaps: [] }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 25, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportGameRerunUrl: '/admin/nhl-game-imports/games',
+            gameImportSourceGapsUrl: '/admin/nhl-game-imports/source-gaps',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+
+        await instance.rerunStoppedGameImport({ game_id: 2026020001 });
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/games/2026020001/rerun', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({}),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.runs[0].id).toBe(25);
+        expect(instance.gameImports.rerunningGames[2026020001]).toBeUndefined();
+    });
+
     it('shows validation errors from game import JSON responses', async () => {
         const adminHub = await loadAdminHub();
         global.fetch = vi.fn(() =>

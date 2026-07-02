@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\PlayByPlay;
-use App\Models\NhlGameSummary;
-use App\Services\ImportNHLPlayer;
+use App\Models\NhlBoxscore;
 use App\Models\NhlGame;
+use App\Models\NhlGameSummary;
+use App\Models\PlayByPlay;
+use App\Models\Player;
+use App\Services\ImportNHLPlayer;
 use Illuminate\Support\Collection;
 
 class SumNHLPlayByPlay
@@ -222,7 +224,7 @@ class SumNHLPlayByPlay
                 $summary = [
                     'nhl_game_id'   => $nhlGameId,
                     'nhl_player_id' => (string)$playerId,
-                    'nhl_team_id'   => $playerPlays->first()->event_owner_team_id ?? null,
+                    'nhl_team_id'   => $this->resolvePlayerTeamId($nhlGameId, (int) $playerId, $playerPlays, $game),
 
                     // Goals / Assists / Points
                     'g' => $g, 'evg' => $evg, 'ppg' => $ppg, 'pkg' => $pkg,
@@ -359,6 +361,52 @@ class SumNHLPlayByPlay
         foreach ($otgByPlayer as $pid => $_) $gwgByPlayer[$pid] = 1;
 
         return [$gwgByPlayer, $otgByPlayer, $otaByPlayer];
+    }
+
+    /**
+     * Resolve the game team id for a player summary without allowing nullable writes.
+     *
+     * @param Collection<int,PlayByPlay> $playerPlays
+     */
+    private function resolvePlayerTeamId(int $nhlGameId, int $playerId, Collection $playerPlays, ?NhlGame $game): int
+    {
+        $boxscoreTeamId = NhlBoxscore::query()
+            ->where('nhl_game_id', $nhlGameId)
+            ->where('nhl_player_id', $playerId)
+            ->value('nhl_team_id');
+
+        if ($boxscoreTeamId !== null) {
+            return (int) $boxscoreTeamId;
+        }
+
+        $homeTeamId = (int) ($game->home_team_id ?? 0);
+        $awayTeamId = (int) ($game->away_team_id ?? 0);
+        $eventOwnerTeamId = $playerPlays
+            ->pluck('event_owner_team_id')
+            ->filter()
+            ->first();
+
+        if (in_array((int) $eventOwnerTeamId, [$homeTeamId, $awayTeamId], true)) {
+            return (int) $eventOwnerTeamId;
+        }
+
+        $teamAbbrev = Player::query()
+            ->where('nhl_id', $playerId)
+            ->value('team_abbrev');
+
+        if ($game && is_string($teamAbbrev) && $teamAbbrev !== '') {
+            $teamId = $game->getTeamIdByAbbrev($teamAbbrev);
+
+            if ($teamId !== null) {
+                return (int) $teamId;
+            }
+        }
+
+        throw new \RuntimeException(sprintf(
+            'Unable to resolve NHL team id for game %s PBP summary player %s.',
+            (string) $nhlGameId,
+            (string) $playerId
+        ));
     }
 
 

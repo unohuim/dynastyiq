@@ -44,6 +44,7 @@ export default function adminHub(options = {}) {
         validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
+        gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
@@ -65,6 +66,7 @@ export default function adminHub(options = {}) {
             runs: [],
             seasons: [],
             expandedRuns: {},
+            rerunningGames: {},
             sourceGapsExpanded: false,
             processableDateCount: 0,
             seasonDropdownOpen: false,
@@ -603,6 +605,32 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async rerunStoppedGameImport(game) {
+            const gameId = game?.game_id;
+
+            if (!gameId) {
+                return;
+            }
+
+            this.gameImports.error = '';
+            this.gameImports.rerunningGames = {
+                ...this.gameImports.rerunningGames,
+                [gameId]: true,
+            };
+
+            try {
+                await this.sendGameImportRequest(`${this.gameImportGameRerunUrl}/${gameId}/rerun`, {});
+                await this.loadGameImportSourceGaps({ background: true });
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to rerun game import';
+            } finally {
+                const next = { ...this.gameImports.rerunningGames };
+                delete next[gameId];
+                this.gameImports.rerunningGames = next;
+            }
+        },
+
         async submitGameImportDiscover() {
             this.gameImports.discovering = true;
             this.gameImports.error = '';
@@ -974,6 +1002,10 @@ export default function adminHub(options = {}) {
             }
 
             return this.stageProgressText(completed, total, running, failed, skipped);
+        },
+
+        canRerunStoppedGameImport(game) {
+            return Number(game?.failed_stage_rows) > 0;
         },
 
         stageProgressText(completed, total, running, failed, skipped = 0) {

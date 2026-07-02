@@ -27,6 +27,15 @@ class ImportNhlShifts
      */
     public function import(string $nhlGameId): int
     {
+        $nhlGame = NhlGame::find($nhlGameId);
+
+        if (!$nhlGame) {
+            throw new \RuntimeException(sprintf(
+                'Unable to import NHL shifts because game %s is not stored.',
+                (string) $nhlGameId
+            ));
+        }
+
         // Fetch shifts from the special base URL
         $response = $this->getAPIDataFullUrl(
             "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId={$nhlGameId}"
@@ -45,7 +54,7 @@ class ImportNhlShifts
         NhlShift::where('nhl_game_id', $nhlGameId)->delete();
 
         foreach ($shiftsData as $shift) {
-            if (!$this->isShiftRow($shift)) {
+            if (!$this->isShiftRow($shift) || !$this->isGameTeamShiftRow($shift, $nhlGame)) {
                 continue;
             }
 
@@ -136,8 +145,6 @@ class ImportNhlShifts
             ->groupBy('nhl_player_id', 'team_abbrev')
             ->get();
 
-        $nhlGame = NhlGame::find($nhlGameId);
-
         foreach ($toiSums as $toi) {
             $player = Player::where('nhl_id', $toi->nhl_player_id)->first();
 
@@ -148,6 +155,15 @@ class ImportNhlShifts
             }
 
             $teamId = $nhlGame->getTeamIdByAbbrev($toi->team_abbrev);
+
+            if ($teamId === null) {
+                throw new \RuntimeException(sprintf(
+                    'Unable to resolve NHL team id for game %s shift player %s with team abbrev %s.',
+                    (string) $nhlGameId,
+                    (string) $toi->nhl_player_id,
+                    (string) $toi->team_abbrev
+                ));
+            }
 
             NhlGameSummary::updateOrCreate(
                 [
@@ -179,6 +195,20 @@ class ImportNhlShifts
             && !empty($shift['startTime'])
             && !empty($shift['endTime'])
             && !empty($shift['duration']);
+    }
+
+    /**
+     * Determine whether a shift row belongs to one of the teams in the stored game.
+     *
+     * @param array<string, mixed> $shift
+     * @return bool
+     */
+    private function isGameTeamShiftRow(array $shift, NhlGame $game): bool
+    {
+        $teamAbbrev = (string) ($shift['teamAbbrev'] ?? '');
+
+        return $teamAbbrev !== ''
+            && $game->getTeamIdByAbbrev($teamAbbrev) !== null;
     }
 
     /**

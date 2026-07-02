@@ -6,6 +6,7 @@ use App\Jobs\ImportBoxscoreNhlJob;
 use App\Jobs\ImportPbpNhlJob;
 use App\Jobs\ImportShiftsNhlJob;
 use App\Jobs\MakeShiftUnitsNhlJob;
+use App\Jobs\BaseNhlJob;
 use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
 use App\Models\NhlGameSourceStatus;
@@ -1053,6 +1054,9 @@ it('requires authentication for source gap admin endpoints', function (): void {
 
     $this->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
         ->assertUnauthorized();
+
+    $this->postJson(route('admin.nhl-game-imports.games.rerun', ['gameId' => 2026020001]))
+        ->assertUnauthorized();
 });
 
 it('blocks non-admin users from source gap admin endpoints', function (): void {
@@ -1064,6 +1068,10 @@ it('blocks non-admin users from source gap admin endpoints', function (): void {
 
     $this->actingAs($user)
         ->postJson(route('admin.nhl-game-imports.source-gaps.rerun', ['gameId' => 2026020001]))
+        ->assertForbidden();
+
+    $this->actingAs($user)
+        ->postJson(route('admin.nhl-game-imports.games.rerun', ['gameId' => 2026020001]))
         ->assertForbidden();
 });
 
@@ -1185,6 +1193,75 @@ it('keeps a game in source gaps when a rerun still finds a missing core source',
         ->assertJsonPath('gaps.0.sources.0.source', NhlGameSourceStatus::SOURCE_BOXSCORE);
 
     Bus::assertNothingDispatched();
+});
+
+it('rebuilds a stopped game import from the admin rerun endpoint', function (): void {
+    Bus::fake();
+    $admin = ($this->makeSuperAdmin)();
+    ($this->insertGame)();
+    ($this->insertPipeline)(2026020001, [
+        NhlImportStages::PBP => 'completed',
+        NhlImportStages::SUMMARY => 'error',
+    ]);
+
+    $this->actingAs($admin)
+        ->postJson(route('admin.nhl-game-imports.games.rerun', ['gameId' => 2026020001]))
+        ->assertAccepted()
+        ->assertJsonPath('status', 'game_rebuild_queued')
+        ->assertJsonPath('game_id', 2026020001);
+
+    Bus::assertDispatched(ImportPbpNhlJob::class);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'running',
+    ]);
+});
+
+it('writes raw provider troubleshooting files when a game import stage stops', function (): void {
+    ($this->insertGame)();
+    ($this->insertProgress)(2026020001, NhlImportStages::SUMMARY, 'running');
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/boxscore' => Http::response([
+            'playerByGameStats' => ['homeTeam' => ['forwards' => []]],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'plays' => [['eventId' => 1, 'typeDescKey' => 'goal']],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [['playerId' => 8478402, 'shiftNumber' => 1]],
+        ]),
+    ]);
+
+    $job = new class(2026020001) extends BaseNhlJob {
+        protected function stageName(): string
+        {
+            return \App\Support\NhlImportStages::SUMMARY;
+        }
+
+        protected function perform(int $gameId): int
+        {
+            throw new \RuntimeException('Unable to resolve NHL team id for game 2026020001 PBP summary player 8478402.');
+        }
+    };
+
+    $job->handle(app(NhlImportOrchestrator::class), app(NhlGameImportEligibility::class));
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
+
+    expect(File::exists($directory . '/stoppage_2026020001.md'))->toBeTrue()
+        ->and(File::exists($directory . '/raw_boxscore_2026020001.txt'))->toBeTrue()
+        ->and(File::exists($directory . '/raw_pbp_2026020001.txt'))->toBeTrue()
+        ->and(File::exists($directory . '/raw_shifts_2026020001.txt'))->toBeTrue()
+        ->and(File::get($directory . '/stoppage_2026020001.md'))->toContain('summary', 'Unable to resolve NHL team id')
+        ->and(File::get($directory . '/raw_boxscore_2026020001.txt'))->toContain('"source": "boxscore"')
+        ->and(File::get($directory . '/raw_pbp_2026020001.txt'))->toContain('"source": "pbp"')
+        ->and(File::get($directory . '/raw_shifts_2026020001.txt'))->toContain('"source": "shifts"');
+
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::SUMMARY,
+        'status' => 'error',
+    ]);
 });
 
 it('persists a failed validation with field deltas', function (): void {
@@ -1642,6 +1719,101 @@ it('updates game summary time on ice and shifts after importing raw shifts', fun
         'shift_number' => 5,
         'event_number' => 31,
         'shift_end_seconds' => 1240,
+    ]);
+});
+
+it('ignores shiftchart rows for teams outside the imported game', function (): void {
+    ($this->insertGame)(2025020565, [
+        'season_id' => '20252026',
+        'game_date' => '2025-12-21',
+        'game_dow' => 'Sun',
+        'game_month' => 'Dec',
+        'home_team_id' => 1,
+        'home_team_abbrev' => 'NJD',
+        'away_team_id' => 7,
+        'away_team_abbrev' => 'BUF',
+    ]);
+    ($this->makePlayer)(8484145, [
+        'first_name' => 'Zach',
+        'last_name' => 'Benson',
+        'full_name' => 'Zach Benson',
+        'team_abbrev' => 'BUF',
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    [
+                        'playerId' => 8474565,
+                        'shiftNumber' => 1,
+                        'period' => 1,
+                        'startTime' => '00:00',
+                        'endTime' => '00:36',
+                        'duration' => '00:36',
+                        'teamAbbrev' => 'VGK',
+                        'teamName' => 'Vegas Golden Knights',
+                        'firstName' => 'Alex',
+                        'lastName' => 'Pietrangelo',
+                        'eventNumber' => 7,
+                        'typeCode' => 517,
+                    ],
+                    [
+                        'playerId' => 8484801,
+                        'shiftNumber' => 1,
+                        'period' => 1,
+                        'startTime' => '00:00',
+                        'endTime' => '00:40',
+                        'duration' => '00:40',
+                        'teamAbbrev' => 'SJS',
+                        'teamName' => 'San Jose Sharks',
+                        'firstName' => 'Macklin',
+                        'lastName' => 'Celebrini',
+                        'eventNumber' => 8,
+                        'typeCode' => 517,
+                    ],
+                    [
+                        'playerId' => 8484145,
+                        'shiftNumber' => 1,
+                        'period' => 1,
+                        'startTime' => '00:00',
+                        'endTime' => '00:45',
+                        'duration' => '00:45',
+                        'teamAbbrev' => 'BUF',
+                        'teamName' => 'Buffalo Sabres',
+                        'firstName' => 'Zach',
+                        'lastName' => 'Benson',
+                        'eventNumber' => 9,
+                        'typeCode' => 517,
+                    ],
+                ],
+            ];
+        }
+    };
+
+    expect($importer->import('2025020565'))->toBe(1);
+
+    $this->assertDatabaseHas('nhl_shifts', [
+        'nhl_game_id' => 2025020565,
+        'nhl_player_id' => 8484145,
+        'team_abbrev' => 'BUF',
+        'shift_duration_seconds' => 45,
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2025020565,
+        'team_abbrev' => 'VGK',
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2025020565,
+        'team_abbrev' => 'SJS',
+    ]);
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2025020565,
+        'nhl_player_id' => 8484145,
+        'nhl_team_id' => 7,
+        'toi' => 45,
+        'shifts' => 1,
     ]);
 });
 
