@@ -22,6 +22,7 @@ rules:
   - Discovery output must remain compatible with NhlImportOrchestrator.
   - Discovery must seed import progress rows from NhlImportStages instead of maintaining its own stage list.
   - Command-line discovery must record an admin-visible nhl_game_import_runs row before dispatching so CLI and UI discovery share the same orchestration ledger.
+  - Discovery jobs must write nhl_import_progress.run_id when an admin-visible run created the discovery work.
 public_interface:
   - NhlDiscoverCommand
   - NhlDiscoveryJob

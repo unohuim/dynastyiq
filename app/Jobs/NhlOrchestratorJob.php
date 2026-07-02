@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Services\NhlImportOrchestrator;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use App\Services\NhlImportOrchestrator;
 
 class NhlOrchestratorJob implements ShouldQueue
 {
@@ -18,13 +18,15 @@ class NhlOrchestratorJob implements ShouldQueue
     public const TAG_IMPORT = 'nhl-import-date';
 
     public string $gameDate;
+    public ?int $runId;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(string $gameDate)
+    public function __construct(string $gameDate, ?int $runId = null)
     {
         $this->gameDate = $gameDate;
+        $this->runId = $runId;
     }
 
     /**
@@ -32,7 +34,7 @@ class NhlOrchestratorJob implements ShouldQueue
      */
     public function handle(NhlImportOrchestrator $orchestrator): void
     {
-        $orchestrator->processScheduled($this->gameDate);
+        $orchestrator->processScheduled($this->gameDate, $this->runId);
     }
 
     /**
@@ -42,6 +44,10 @@ class NhlOrchestratorJob implements ShouldQueue
      */
     public function tags(): array
     {
-        return [self::TAG_IMPORT, $this->gameDate];
+        return [
+            self::TAG_IMPORT,
+            $this->gameDate,
+            'run-id:' . ($this->runId ?? 'none'),
+        ];
     }
 }

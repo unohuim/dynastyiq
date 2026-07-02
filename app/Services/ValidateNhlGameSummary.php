@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Models\NhlGameValidation;
 use App\Models\NhlGameValidationDelta;
 use App\Models\NhlGame;
+use App\Models\NhlBoxscore;
+use App\Models\NhlGameSummary;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +30,11 @@ class ValidateNhlGameSummary
     public function validate(int $gameId): NhlGameValidation
     {
         $deltas = $this->comparator->compare($gameId);
+
+        if ($this->applyTinySkaterToiReconciliations($gameId, $deltas)) {
+            $deltas = $this->comparator->compare($gameId);
+        }
+
         $status = $this->validationStatus($gameId, $deltas);
 
         $validation = DB::transaction(function () use ($gameId, $deltas, $status): NhlGameValidation {
@@ -98,6 +105,71 @@ class ValidateNhlGameSummary
         }
 
         return NhlGameValidation::STATUS_APPROVED;
+    }
+
+    /**
+     * Accept official skater TOI for tiny TOI-only clock discrepancies.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function applyTinySkaterToiReconciliations(int $gameId, array $deltas): bool
+    {
+        if (empty($deltas) || ! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
+            return false;
+        }
+
+        $changed = false;
+        $deltasByPlayer = collect($deltas)
+            ->filter(fn (array $delta): bool => isset($delta['nhl_player_id']))
+            ->groupBy(fn (array $delta): int => (int) $delta['nhl_player_id']);
+
+        foreach ($deltasByPlayer as $playerId => $playerDeltas) {
+            if ($playerDeltas->count() !== 1) {
+                continue;
+            }
+
+            $delta = $playerDeltas->first();
+
+            if (($delta['field'] ?? null) !== 'toi_seconds' || abs((float) ($delta['delta'] ?? 0)) >= 20) {
+                continue;
+            }
+
+            $boxscore = NhlBoxscore::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['position', 'shifts', 'toi_seconds']);
+
+            $summary = NhlGameSummary::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['id', 'shifts', 'toi']);
+
+            if (
+                ! $boxscore
+                || ! $summary
+                || strtoupper((string) $boxscore->position) === 'G'
+                || (int) $boxscore->shifts !== (int) $summary->shifts
+                || $boxscore->toi_seconds === null
+            ) {
+                continue;
+            }
+
+            $summary->forceFill([
+                'toi' => (int) $boxscore->toi_seconds,
+            ])->save();
+
+            $changed = true;
+
+            Log::info('Applied tiny NHL skater TOI reconciliation from official boxscore.', [
+                'game_id' => $gameId,
+                'nhl_player_id' => (int) $playerId,
+                'summary_toi_seconds' => (int) ($delta['summary_value'] ?? $summary->toi),
+                'boxscore_toi_seconds' => (int) $boxscore->toi_seconds,
+                'delta_seconds' => (float) ($delta['delta'] ?? 0),
+            ]);
+        }
+
+        return $changed;
     }
 
     private function stringValue(mixed $value): ?string

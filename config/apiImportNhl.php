@@ -35,6 +35,7 @@ return [
     'max_shift_units_seconds'       => env('MAX_SHIFT_UNITS_SECONDS', 7200),
     'max_connect_events_seconds'    => env('MAX_CONNECT_EVENTS_SECONDS', 7200),
     'max_sum_game_units_seconds'    => env('MAX_SUM_GAME_UNITS_SECONDS', 7200),
+    'active_game_import_slots'       => (int) env('NHL_IMPORT_ACTIVE_GAME_SLOTS', 8),
     'draft_years_back'              => (int) env('NHL_DRAFT_YEARS_BACK', 8),
     'player_landing_retry_delays'   => [2, 5, 10],
     'validation_troubleshooting_path' => env('NHL_VALIDATION_TROUBLESHOOTING_PATH', base_path('docs/troubleshooting')),

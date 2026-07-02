@@ -99,6 +99,11 @@ class ImportNhlShifts
             $boxscoreTargets
         );
         $normalizedShifts = $this->removeGoalieEmptyNetArtifacts($normalizedShifts, $nhlGame);
+        $duplicateToiCredits = $this->duplicateToiCreditsForTargets(
+            $normalizedShifts,
+            $candidateShifts,
+            $boxscoreTargets
+        );
 
         foreach ($normalizedShifts as $resolvedShift) {
             $shift = $resolvedShift['shift'];
@@ -173,7 +178,8 @@ class ImportNhlShifts
                     'nhl_player_id' => $toi->nhl_player_id,
                 ],
                 [
-                    'toi' => $toi->total_toi,
+                    'toi' => (int) $toi->total_toi
+                        + (int) ($duplicateToiCredits[(int) $toi->nhl_player_id] ?? 0),
                     'shifts' => (int) $toi->shifts,
                     'nhl_team_id' => $teamId,
                 ]
@@ -284,7 +290,7 @@ class ImportNhlShifts
      * Remove tiny provider artifacts when the same shift number is reused later.
      *
      * @param array<int,array<string,mixed>> $resolvedShifts
-     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
      * @return array<int,array<string,mixed>>
      */
     private function removeReusedShortShiftNumbers(array $resolvedShifts, array $boxscoreTargets): array
@@ -515,7 +521,7 @@ class ImportNhlShifts
      *
      * @param array<int,array<string,mixed>> $playerShifts
      * @param array<string,mixed> $dropShift
-     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
      * @return bool
      */
     private function shortShiftDropWouldMissTarget(array $playerShifts, array $dropShift, array $boxscoreTargets): bool
@@ -544,7 +550,7 @@ class ImportNhlShifts
      * Load official boxscore shift and TOI targets when they are already available.
      *
      * @param string $nhlGameId
-     * @return array<int,array{shifts:int,toi:int}>
+     * @return array<int,array{shifts:int,toi:int,is_goalie:bool}>
      */
     private function boxscoreShiftTargets(string $nhlGameId): array
     {
@@ -552,13 +558,15 @@ class ImportNhlShifts
             ->where('nhl_game_id', $nhlGameId)
             ->whereNotNull('nhl_player_id')
             ->whereNotNull('toi_seconds')
-            ->where('shifts', '>', 0)
             ->where('toi_seconds', '>', 0)
-            ->get(['nhl_player_id', 'shifts', 'toi_seconds'])
+            ->get(['nhl_player_id', 'shifts', 'toi_seconds', 'position'])
+            ->filter(fn (NhlBoxscore $boxscore): bool => (int) ($boxscore->shifts ?? 0) > 0
+                || strtoupper((string) ($boxscore->position ?? '')) === 'G')
             ->mapWithKeys(fn (NhlBoxscore $boxscore): array => [
                 (int) $boxscore->nhl_player_id => [
                     'shifts' => (int) ($boxscore->shifts ?? 0),
                     'toi' => (int) $boxscore->toi_seconds,
+                    'is_goalie' => strtoupper((string) ($boxscore->position ?? '')) === 'G',
                 ],
             ])
             ->all();
@@ -569,7 +577,7 @@ class ImportNhlShifts
      *
      * @param array<int,array<string,mixed>> $filteredShifts
      * @param array<int,array<string,mixed>> $candidateShifts
-     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
+     * @param array<int,array{shifts:int,toi:int,is_goalie:bool}> $boxscoreTargets
      * @return array<int,array<string,mixed>>
      */
     private function reconcileWithBoxscoreTargets(
@@ -593,6 +601,11 @@ class ImportNhlShifts
                 }
 
                 $normalized = $playerShifts->values()->all();
+
+                if ($target['is_goalie']) {
+                    return $this->reconcileGoalieWithBoxscoreToi($normalized, $target);
+                }
+
                 $normalized = $this->replaceContainedIntervalsForTarget(
                     $normalized,
                     $candidateByPlayer->get($playerId, collect())->values()->all(),
@@ -611,6 +624,53 @@ class ImportNhlShifts
                 ['shift_start_seconds', 'asc'],
                 ['shift_end_seconds', 'asc'],
             ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Drop exact goalie TOI overage rows when official goalie TOI proves shiftchart artifacts.
+     *
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array{shifts:int,toi:int,is_goalie:bool} $target
+     * @return array<int,array<string,mixed>>
+     */
+    private function reconcileGoalieWithBoxscoreToi(array $playerShifts, array $target): array
+    {
+        $excessToi = $this->shiftDurationTotal($playerShifts) - $target['toi'];
+
+        if ($excessToi <= 0) {
+            return $playerShifts;
+        }
+
+        $artifactRows = $this->goalieArtifactCandidateRows($playerShifts);
+        $dropRows = $this->findAnyExactDurationSubset($artifactRows, $excessToi);
+
+        if ($dropRows === []) {
+            return $playerShifts;
+        }
+
+        $dropKeys = collect($dropRows)
+            ->mapWithKeys(fn (array $shift): array => [$this->resolvedShiftIdentity($shift) => true])
+            ->all();
+
+        return collect($playerShifts)
+            ->reject(fn (array $shift): bool => isset($dropKeys[$this->resolvedShiftIdentity($shift)]))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return goalie rows that look like provider artifacts before attempting exact-duration removal.
+     *
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @return array<int,array<string,mixed>>
+     */
+    private function goalieArtifactCandidateRows(array $playerShifts): array
+    {
+        return collect($playerShifts)
+            ->filter(fn (array $shift): bool => $this->goalieArtifactScore($shift, $playerShifts) >= 2)
+            ->sortByDesc(fn (array $shift): int => $this->goalieArtifactScore($shift, $playerShifts))
             ->values()
             ->all();
     }
@@ -811,6 +871,77 @@ class ImportNhlShifts
     }
 
     /**
+     * Credit duplicate provider intervals as TOI-only when they exactly reconcile official TOI.
+     *
+     * @param array<int,array<string,mixed>> $normalizedShifts
+     * @param array<int,array<string,mixed>> $candidateShifts
+     * @param array<int,array{shifts:int,toi:int}> $boxscoreTargets
+     * @return array<int,int>
+     */
+    private function duplicateToiCreditsForTargets(
+        array $normalizedShifts,
+        array $candidateShifts,
+        array $boxscoreTargets
+    ): array {
+        if ($boxscoreTargets === []) {
+            return [];
+        }
+
+        $credits = [];
+        $candidateByPlayer = collect($candidateShifts)->groupBy(fn (array $shift): int => (int) $shift['player_id']);
+
+        foreach (collect($normalizedShifts)->groupBy(fn (array $shift): int => (int) $shift['player_id']) as $playerId => $playerShifts) {
+            $target = $boxscoreTargets[(int) $playerId] ?? null;
+
+            if (!$target || $playerShifts->count() !== $target['shifts']) {
+                continue;
+            }
+
+            $missingToi = $target['toi'] - $this->shiftDurationTotal($playerShifts->values()->all());
+
+            if ($missingToi <= 0 || $missingToi > self::SHORT_ARTIFACT_MAX_SECONDS) {
+                continue;
+            }
+
+            $duplicateRows = $this->duplicateProviderRows(
+                $candidateByPlayer->get((int) $playerId, collect())->values()->all()
+            );
+            $creditRows = [];
+
+            for ($size = 1; $size <= min(5, count($duplicateRows)); $size++) {
+                $creditRows = $this->findExactDurationSubset($duplicateRows, $size, $missingToi);
+
+                if ($creditRows !== []) {
+                    break;
+                }
+            }
+
+            if ($creditRows !== []) {
+                $credits[(int) $playerId] = $missingToi;
+            }
+        }
+
+        return $credits;
+    }
+
+    /**
+     * Return extra copies of identical provider shift intervals.
+     *
+     * @param array<int,array<string,mixed>> $candidateShifts
+     * @return array<int,array<string,mixed>>
+     */
+    private function duplicateProviderRows(array $candidateShifts): array
+    {
+        return collect($candidateShifts)
+            ->groupBy(fn (array $shift): string => $this->duplicateProviderIntervalKey($shift))
+            ->flatMap(function ($group) {
+                return $group->sortBy('shift.id')->skip(1);
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
      * @param array<string,mixed> $keptShift
      * @param array<string,mixed> $candidateShift
      * @return bool
@@ -823,6 +954,94 @@ class ImportNhlShifts
             && (int) $candidateShift['shift_end_seconds'] <= (int) $keptShift['shift_end_seconds']
             && (int) $candidateShift['shift_end_seconds'] === (int) $keptShift['shift_end_seconds']
             && (int) $candidateShift['shift_duration_seconds'] < (int) $keptShift['shift_duration_seconds'];
+    }
+
+    /**
+     * Score goalie artifact likelihood without replacing the exact-duration proof requirement.
+     *
+     * @param array<string,mixed> $shift
+     * @param array<int,array<string,mixed>> $playerShifts
+     */
+    private function goalieArtifactScore(array $shift, array $playerShifts): int
+    {
+        $score = 0;
+
+        if ($this->hasDurationMismatch($shift)) {
+            $score += 4;
+        }
+
+        if (empty($shift['shift']['eventNumber'])) {
+            $score += 2;
+        }
+
+        if ($this->overlapsAnotherShift($shift, $playerShifts)) {
+            $score += 1;
+        }
+
+        return $score;
+    }
+
+    /**
+     * Determine whether a shift row duration conflicts with its start/end interval.
+     *
+     * @param array<string,mixed> $shift
+     */
+    private function hasDurationMismatch(array $shift): bool
+    {
+        $intervalSeconds = (int) $shift['shift_end_seconds'] - (int) $shift['shift_start_seconds'];
+
+        return $intervalSeconds > 0
+            && $intervalSeconds !== (int) $shift['shift_duration_seconds'];
+    }
+
+    /**
+     * Determine whether this row overlaps another row for the same goalie and period.
+     *
+     * @param array<string,mixed> $shift
+     * @param array<int,array<string,mixed>> $playerShifts
+     */
+    private function overlapsAnotherShift(array $shift, array $playerShifts): bool
+    {
+        foreach ($playerShifts as $otherShift) {
+            if ($this->resolvedShiftIdentity($shift) === $this->resolvedShiftIdentity($otherShift)) {
+                continue;
+            }
+
+            if (
+                (int) $shift['player_id'] !== (int) $otherShift['player_id']
+                || (int) ($shift['shift']['period'] ?? 0) !== (int) ($otherShift['shift']['period'] ?? 0)
+            ) {
+                continue;
+            }
+
+            if (
+                (int) $shift['shift_start_seconds'] < (int) $otherShift['shift_end_seconds']
+                && (int) $shift['shift_end_seconds'] > (int) $otherShift['shift_start_seconds']
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Find any subset of candidate rows whose durations exactly equal the target.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function findAnyExactDurationSubset(array $rows, int $duration): array
+    {
+        for ($size = 1; $size <= count($rows); $size++) {
+            $subset = $this->findExactDurationSubset($rows, $size, $duration);
+
+            if ($subset !== []) {
+                return $subset;
+            }
+        }
+
+        return [];
     }
 
     /**
@@ -936,6 +1155,28 @@ class ImportNhlShifts
             (string) $resolvedShift['player_id'],
             (string) ($shift['period'] ?? ''),
             (string) $resolvedShift['shift_start_seconds'],
+            (string) ($shift['eventNumber'] ?? ''),
+            (string) ($shift['typeCode'] ?? ''),
+        ]);
+    }
+
+    /**
+     * Build the identity for exact duplicate provider rows.
+     *
+     * @param array<string,mixed> $resolvedShift
+     * @return string
+     */
+    private function duplicateProviderIntervalKey(array $resolvedShift): string
+    {
+        $shift = $resolvedShift['shift'];
+
+        return implode('|', [
+            (string) $resolvedShift['player_id'],
+            (string) $resolvedShift['shift_number'],
+            (string) ($shift['period'] ?? ''),
+            (string) $resolvedShift['shift_start_seconds'],
+            (string) $resolvedShift['shift_end_seconds'],
+            (string) $resolvedShift['shift_duration_seconds'],
             (string) ($shift['eventNumber'] ?? ''),
             (string) ($shift['typeCode'] ?? ''),
         ]);

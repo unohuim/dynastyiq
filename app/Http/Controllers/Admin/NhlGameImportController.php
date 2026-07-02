@@ -27,7 +27,6 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGameImportController extends Controller
 {
-    private const MAX_DATE_COUNT = 120;
     private const SHIFT_RERUN_STAGES = [
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
@@ -142,7 +141,7 @@ class NhlGameImportController extends Controller
             'created_by' => $request->user()?->id,
         ]);
 
-        NhlDiscoveryJob::dispatch($range['start'], $range['end']);
+        NhlDiscoveryJob::dispatch($range['start'], $range['end'], $run->id);
         broadcast(new NhlGameImportStatusUpdated('discovery-queued', $run->id));
 
         return response()->json([
@@ -154,7 +153,7 @@ class NhlGameImportController extends Controller
     /**
      * Queue NHL orchestrator jobs for a validated date selection.
      */
-    public function process(Request $request): JsonResponse
+    public function process(Request $request, NhlImportOrchestrator $orchestrator): JsonResponse
     {
         $input = $this->validatedInput($request);
         $discoveryRun = $this->discoveryRunFromInput($input);
@@ -193,9 +192,14 @@ class NhlGameImportController extends Controller
             $run = $discoveryRun->refresh();
         }
 
-        foreach ($dates as $date) {
-            NhlOrchestratorJob::dispatch($date);
+        if ($discoveryRun) {
+            $orchestrator->fillActiveGameSlotsForRun($run->id);
+        } else {
+            foreach ($dates as $date) {
+                NhlOrchestratorJob::dispatch($date);
+            }
         }
+
         broadcast(new NhlGameImportStatusUpdated('processing-queued', $run->id));
 
         return response()->json([
@@ -250,8 +254,8 @@ class NhlGameImportController extends Controller
             'date' => ['nullable', 'date'],
             'start' => ['nullable', 'date'],
             'end' => ['nullable', 'date'],
-            'days' => ['nullable', 'integer', 'min:0', 'max:' . self::MAX_DATE_COUNT],
-            'newdays' => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_DATE_COUNT],
+            'days' => ['nullable', 'integer', 'min:0'],
+            'newdays' => ['nullable', 'integer', 'min:1'],
             'season' => ['nullable', 'digits:8'],
             'run_id' => ['nullable', 'integer'],
         ]);
@@ -406,12 +410,6 @@ class NhlGameImportController extends Controller
 
         $dateCount = (int) $end->diffInDays($start) + 1;
 
-        if ($dateCount > self::MAX_DATE_COUNT) {
-            throw ValidationException::withMessages([
-                'start' => 'Date ranges are limited to ' . self::MAX_DATE_COUNT . ' days.',
-            ]);
-        }
-
         return [
             'start' => $start,
             'end' => $end,
@@ -500,9 +498,8 @@ class NhlGameImportController extends Controller
             return $this->seasonSyncProgressForRun($run);
         }
 
-        $rows = DB::table('nhl_import_progress')
+        $rows = $this->progressQueryForRun($run)
             ->selectRaw('status, COUNT(*) as aggregate')
-            ->whereBetween('game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()])
             ->groupBy('status')
             ->pluck('aggregate', 'status');
 
@@ -514,8 +511,7 @@ class NhlGameImportController extends Controller
         $total = $scheduled + $running + $completed + $skipped + $failed;
         $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0;
         $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
-        $lastError = DB::table('nhl_import_progress')
-            ->whereBetween('game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()])
+        $lastError = $this->progressQueryForRun($run)
             ->where('status', 'error')
             ->whereNotNull('last_error')
             ->latest('updated_at')
@@ -568,8 +564,7 @@ class NhlGameImportController extends Controller
      */
     private function factsForRun(NhlGameImportRun $run): array
     {
-        $query = DB::table('nhl_import_progress')
-            ->whereBetween('game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()]);
+        $query = $this->progressQueryForRun($run);
 
         return [
             'selected_date_count' => $run->date_count,
@@ -596,7 +591,14 @@ class NhlGameImportController extends Controller
                 'progress.status',
                 'progress.last_error',
             ])
-            ->whereBetween('progress.game_date', [$run->end_date->toDateString(), $run->start_date->toDateString()])
+            ->when(
+                $this->hasRunScopedProgress($run),
+                fn ($query) => $query->where('progress.run_id', $run->id),
+                fn ($query) => $query->whereBetween(
+                    'progress.game_date',
+                    [$run->end_date->toDateString(), $run->start_date->toDateString()]
+                )
+            )
             ->orderBy('progress.game_date')
             ->orderBy('progress.game_id')
             ->orderBy('progress.import_type')
@@ -663,6 +665,27 @@ class NhlGameImportController extends Controller
             })
             ->values()
             ->all();
+    }
+
+    private function hasRunScopedProgress(NhlGameImportRun $run): bool
+    {
+        return DB::table('nhl_import_progress')
+            ->where('run_id', $run->id)
+            ->exists();
+    }
+
+    private function progressQueryForRun(NhlGameImportRun $run)
+    {
+        $query = DB::table('nhl_import_progress');
+
+        if ($this->hasRunScopedProgress($run)) {
+            return $query->where('run_id', $run->id);
+        }
+
+        return $query->whereBetween('game_date', [
+            $run->end_date->toDateString(),
+            $run->start_date->toDateString(),
+        ]);
     }
 
     /**

@@ -22,13 +22,13 @@ when_not_to_use:
 rules:
   - The admin controller dispatches existing NHL jobs directly instead of invoking Artisan commands.
   - Discovery requests must queue discovery work and must not perform downstream import stages.
-  - Processing requests must queue orchestrator jobs and must not directly call import services.
+  - Processing requests must ask the NHL import orchestrator to fill active game slots and must not directly call import services.
   - NhlGameImportRun records describe admin requests, not individual NHL stage rows.
   - The admin status payload must derive pipeline progress from nhl_import_progress.
   - Discovery rows should present known discovery facts until processing starts.
   - Processing should be launched from a discovery run row so the selected date range is explicit.
   - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
-  - Scheduled auto-processing must claim an existing queued discovery run and mark it running instead of anonymously sweeping all scheduled import progress rows.
+  - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
   - Direct command processing for an explicit date may remain as an operator escape hatch without creating an admin run.
   - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.
   - Reverb updates should be lightweight invalidation signals and the browser must reload status from the admin status endpoint.
@@ -45,5 +45,5 @@ public_interface:
   - adminHub gameImports state
 example_usage: |
   NhlDiscoveryJob::dispatch($start, $end);
-  NhlOrchestratorJob::dispatch($gameDate);
+  app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($runId);
   SeasonSumJob::dispatch($seasonId, $runId);

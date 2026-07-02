@@ -907,6 +907,34 @@ export default function adminHub(options = {}) {
             return this.gameImportProgressText(run);
         },
 
+        isGameImportRunCompacted(run) {
+            return run?.status === 'completed'
+                && run?.processing_started === true
+                && this.gameImportGames(run).length === 0;
+        },
+
+        gameImportCompactSummaryText(run) {
+            const games = Array.isArray(run?.games) ? run.games : [];
+            const facts = run?.facts ?? {};
+            const total = Number(facts.discovered_game_count) || games.length || 0;
+            const failed = games.filter((game) => Number(game?.failed_stage_rows) > 0).length;
+            const skipped = games.filter((game) =>
+                Number(game?.skipped_stage_rows) > 0 && Number(game?.failed_stage_rows) === 0
+            ).length;
+            const active = games.filter((game) =>
+                this.gameImportGameProgressPercentage(game) < 100
+                && Number(game?.failed_stage_rows) === 0
+                && Number(game?.skipped_stage_rows) === 0
+            ).length;
+
+            return [
+                `${this.formatNumber(total)} games`,
+                `${this.formatNumber(active)} active`,
+                `${this.formatNumber(skipped)} skipped`,
+                `${this.formatNumber(failed)} failed`,
+            ].join(' - ');
+        },
+
         gameImportAccordionId(run) {
             return `game-import-run-${run.id}-games`;
         },

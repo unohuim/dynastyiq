@@ -1058,6 +1058,7 @@ Migrations remain the **sole source of truth**.
 | Name | Type | Nullable | Notes |
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
+| run_id | foreignId | Yes | Admin-visible NHL game import run that seeded or owns this stage row |
 | season_id | string(8) | No | NHL season ID |
 | game_date | date | No | Game date |
 | game_id | string(10) | No | NHL game ID as string |
@@ -1074,6 +1075,9 @@ Migrations remain the **sole source of truth**.
 
 - PK: `id`
 - Unique: `(game_id, import_type)`
+- FK: `run_id` -> `nhl_game_import_runs.id` (`nullOnDelete`)
+- Index: `(run_id, status)`
+- Index: `(run_id, game_date)`
 - Index: `(season_id, game_date)`
 - Index: `status`
 - Index: `game_type`
@@ -1082,6 +1086,7 @@ Migrations remain the **sole source of truth**.
 ### Behavioral Notes
 
 - `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> game unit summaries -> validation.
+- New scheduled rows created by admin or CLI discovery are linked to `nhl_game_import_runs` through `run_id`; null `run_id` rows remain legacy-compatible and are read by date range.
 
 ---
 

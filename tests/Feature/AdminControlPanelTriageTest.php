@@ -2001,6 +2001,8 @@ it('empties NHL game import data without deleting player identities', function (
         ->expectsOutput('event_unit_shifts: 1')
         ->expectsOutput('Clearing nhl_game_validations...')
         ->expectsOutput('nhl_game_validations: 1')
+        ->expectsOutput('Clearing nhl_import_progress...')
+        ->expectsOutput('nhl_import_progress: 1')
         ->expectsOutput('Clearing nhl_game_import_runs...')
         ->expectsOutput('nhl_game_import_runs: 1')
         ->expectsOutput('Clearing nhl_game_source_statuses...')

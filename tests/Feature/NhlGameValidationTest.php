@@ -1926,6 +1926,174 @@ it('drops goalie shiftchart artifacts when pbp proves the goalie was empty net a
     ]);
 });
 
+it('drops a malformed goalie shift row when official goalie toi exactly proves the overage', function (): void {
+    ($this->insertGame)(2025020634, [
+        'season_id' => '20252026',
+        'game_date' => '2026-01-06',
+        'game_dow' => 'Tue',
+        'game_month' => 'Jan',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 52,
+        'away_team_abbrev' => 'WPG',
+    ]);
+    ($this->makePlayer)(8483710, [
+        'first_name' => 'Dennis',
+        'last_name' => 'Hildeby',
+        'full_name' => 'Dennis Hildeby',
+        'position' => 'G',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->insertBoxscore)(2025020634, 8483710, [
+        'nhl_team_id' => 10,
+        'toi' => '34:36',
+        'toi_seconds' => 2076,
+        'shifts' => 0,
+        'position' => 'G',
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(1, 2, '05:24', '20:00', '14:36', 608),
+                    $this->shift(2, 2, '00:00', '13:31', '04:43', null),
+                    $this->shift(2, 3, '00:00', '20:00', '20:00', 812),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(
+            int $shiftNumber,
+            int $period,
+            string $start,
+            string $end,
+            string $duration,
+            ?int $eventNumber
+        ): array {
+            return [
+                'playerId' => 8483710,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'TOR',
+                'teamName' => 'Toronto Maple Leafs',
+                'firstName' => 'Dennis',
+                'lastName' => 'Hildeby',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2025020634'))->toBe(2);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2025020634,
+        'nhl_player_id' => 8483710,
+        'nhl_team_id' => 10,
+        'toi' => 2076,
+        'shifts' => 2,
+    ]);
+    $this->assertDatabaseMissing('nhl_shifts', [
+        'nhl_game_id' => 2025020634,
+        'nhl_player_id' => 8483710,
+        'shift_number' => 2,
+        'period' => 2,
+        'shift_duration_seconds' => 283,
+    ]);
+});
+
+it('keeps goalie shift rows when no suspicious row exactly reconciles official goalie toi', function (): void {
+    ($this->insertGame)(2025020635, [
+        'season_id' => '20252026',
+        'game_date' => '2026-01-06',
+        'game_dow' => 'Tue',
+        'game_month' => 'Jan',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 52,
+        'away_team_abbrev' => 'WPG',
+    ]);
+    ($this->makePlayer)(8483711, [
+        'first_name' => 'Sample',
+        'last_name' => 'Goalie',
+        'full_name' => 'Sample Goalie',
+        'position' => 'G',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->insertBoxscore)(2025020635, 8483711, [
+        'nhl_team_id' => 10,
+        'toi' => '34:35',
+        'toi_seconds' => 2075,
+        'shifts' => 0,
+        'position' => 'G',
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(1, 2, '05:24', '20:00', '14:36', 608),
+                    $this->shift(2, 2, '00:00', '13:31', '04:43', null),
+                    $this->shift(2, 3, '00:00', '20:00', '20:00', 812),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string, mixed>
+         */
+        private function shift(
+            int $shiftNumber,
+            int $period,
+            string $start,
+            string $end,
+            string $duration,
+            ?int $eventNumber
+        ): array {
+            return [
+                'playerId' => 8483711,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'TOR',
+                'teamName' => 'Toronto Maple Leafs',
+                'firstName' => 'Sample',
+                'lastName' => 'Goalie',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2025020635'))->toBe(3);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2025020635,
+        'nhl_player_id' => 8483711,
+        'nhl_team_id' => 10,
+        'toi' => 2359,
+        'shifts' => 3,
+    ]);
+    $this->assertDatabaseHas('nhl_shifts', [
+        'nhl_game_id' => 2025020635,
+        'nhl_player_id' => 8483711,
+        'shift_number' => 2,
+        'period' => 2,
+        'shift_duration_seconds' => 283,
+    ]);
+});
+
 it('reconciles shiftchart artifacts against boxscore shift targets when available', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8476473, [

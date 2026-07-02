@@ -8,6 +8,7 @@ use App\Services\NhlDiscoverGames;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
@@ -21,19 +22,21 @@ class NhlDiscoverDayJob implements ShouldQueue
     public const TAG_DISCOVERY_DAY = 'nhl-discovery-day';
 
     public string $date; // YYYY-MM-DD
+    public ?int $runId;
     public int $timeout = 60;
     public int $tries   = 1;
 
-    public function __construct(string $date)
+    public function __construct(string $date, ?int $runId = null)
     {
         $this->date = $date;
+        $this->runId = $runId;
     }
 
     public function handle(NhlDiscoverGames $service): void
     {
         try {
             \Log::warning('Start discovering the day:', ['date'=>$this->date]);
-            $service->discoverDay($this->date);
+            $service->discoverDay($this->date, $this->runId);
         } catch (RequestException $e) {
             $status = $e->response?->status();
 
@@ -61,6 +64,6 @@ class NhlDiscoverDayJob implements ShouldQueue
 
     public function tags(): array
     {
-        return [self::TAG_DISCOVERY_DAY, "date:{$this->date}"];
+        return [self::TAG_DISCOVERY_DAY, "date:{$this->date}", 'run-id:' . ($this->runId ?? 'none')];
     }
 }

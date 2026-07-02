@@ -111,6 +111,7 @@ export class StatsPageShell {
       selectedPosTypes: [],
       selectedLeagues: [],
       numericFilters: {},
+      dirtyNumericFilters: {},
       loading: false,
       error: '',
       isFilterDrawerOpen: false,
@@ -201,6 +202,8 @@ export class StatsPageShell {
 
     this.state.selectedLeagues.forEach((value) => params.append('league[]', value));
     Object.entries(this.state.numericFilters || {}).forEach(([key, value]) => {
+      if (!this.state.dirtyNumericFilters?.[key]) return;
+
       if (value?.min !== undefined && value.min !== null && value.min !== '') {
         params.set(`${key}_min`, String(value.min));
       }
@@ -311,6 +314,10 @@ export class StatsPageShell {
     });
 
     this.state.numericFilters = next;
+
+    if (force) {
+      this.state.dirtyNumericFilters = {};
+    }
   }
 
   setNumericFilterBound(key, bound, value) {
@@ -323,12 +330,14 @@ export class StatsPageShell {
       min: Math.min(min, max),
       max: Math.max(min, max),
     };
+    this.state.dirtyNumericFilters[key] = true;
   }
 
   resetFilters() {
     this.state.selectedPos = [];
     this.state.selectedPosTypes = [];
     this.state.selectedLeagues = [];
+    this.state.dirtyNumericFilters = {};
     this.syncNumericFiltersFromPayload(true);
     this.fetchPayload();
   }
@@ -350,6 +359,8 @@ export class StatsPageShell {
     this.state.selectedPos = [];
     this.state.selectedPosTypes = [];
     this.state.selectedLeagues = [];
+    this.state.numericFilters = {};
+    this.state.dirtyNumericFilters = {};
     this.fetchPayload();
   }
 

@@ -21,7 +21,7 @@ class NhlDiscoverGames
     /**
      * Discover and persist scheduled rows for a single calendar day (YYYY-MM-DD).
      */
-    public function discoverDay(string $yyyy_mm_dd): void
+    public function discoverDay(string $yyyy_mm_dd, ?int $runId = null): void
     {
         try {
             $payload = $this->getAPIData('nhl', 'dailyscores', ['date' => $yyyy_mm_dd]);
@@ -83,6 +83,7 @@ class NhlDiscoverGames
 
             foreach (NhlImportStages::ordered() as $type) {
                 $rows[] = [
+                    'run_id'        => $runId,
                     'season_id'     => $seasonId,
                     'game_date'     => $dateOnly,
                     'game_id'       => $gameId,

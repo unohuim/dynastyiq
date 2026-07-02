@@ -16,6 +16,7 @@ class NhlImportProgressRepo
 
         foreach (array_chunk($rows, $chunk) as $part) {
             $inserted += DB::table('nhl_import_progress')->insertOrIgnore($part);
+            $this->attachRunToLegacyRows($part);
         }
 
         if ($inserted > 0) {
@@ -24,17 +25,22 @@ class NhlImportProgressRepo
     }
 
     /** Atomically claim a scheduled row (scheduled → running). */
-    public function claim(int $gameId, string $type): bool
+    public function claim(int $gameId, string $type, ?int $runId = null): bool
     {
-        $claimed = DB::transaction(function () use ($gameId, $type) {
-            $updated = DB::table('nhl_import_progress')
+        $claimed = DB::transaction(function () use ($gameId, $type, $runId) {
+            $query = DB::table('nhl_import_progress')
                 ->where('game_id', $gameId)
                 ->where('import_type', $type)
-                ->where('status', 'scheduled')
-                ->update([
-                    'status' => 'running',
-                    'updated_at' => now(),
-                ]);
+                ->where('status', 'scheduled');
+
+            if ($runId !== null) {
+                $query->where('run_id', $runId);
+            }
+
+            $updated = $query->update([
+                'status' => 'running',
+                'updated_at' => now(),
+            ]);
 
             return $updated === 1;
         }, 1);
@@ -47,12 +53,99 @@ class NhlImportProgressRepo
     }
 
     /** Verify row is currently running. */
-    public function isRunning(int $gameId, string $type): bool
+    public function isRunning(int $gameId, string $type, ?int $runId = null): bool
     {
-        return DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->where('import_type', $type)
+            ->where('status', 'running');
+
+        if ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        return $query->exists();
+    }
+
+    /** Determine whether any stage is running for a scheduled date/run scope. */
+    public function runningExistsForDate(string $gameDate, ?int $runId = null): bool
+    {
+        $query = DB::table('nhl_import_progress')
+            ->whereDate('game_date', $gameDate)
+            ->where('status', 'running');
+
+        if ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * Return game ids that still have scheduled work for a date/run scope.
+     *
+     * @return array<int,int>
+     */
+    public function scheduledGameIdsForDate(string $gameDate, ?int $runId = null): array
+    {
+        $query = DB::table('nhl_import_progress')
+            ->whereDate('game_date', $gameDate)
+            ->where('status', 'scheduled')
+            ->select('game_id')
+            ->distinct()
+            ->orderBy('game_id');
+
+        if ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        return $query->pluck('game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+    }
+
+    /** Count distinct games with a running stage for a run. */
+    public function activeGameCountForRun(int $runId): int
+    {
+        return (int) DB::table('nhl_import_progress')
+            ->where('run_id', $runId)
             ->where('status', 'running')
+            ->distinct()
+            ->count('game_id');
+    }
+
+    /**
+     * Return scheduled game ids without a currently running stage for a run.
+     *
+     * @return array<int,int>
+     */
+    public function scheduledGameIdsForRun(int $runId): array
+    {
+        return DB::table('nhl_import_progress as scheduled')
+            ->where('scheduled.run_id', $runId)
+            ->where('scheduled.status', 'scheduled')
+            ->whereNotExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('nhl_import_progress as running')
+                    ->whereColumn('running.run_id', 'scheduled.run_id')
+                    ->whereColumn('running.game_id', 'scheduled.game_id')
+                    ->where('running.status', 'running');
+            })
+            ->selectRaw('scheduled.game_id, MIN(scheduled.game_date) as first_game_date')
+            ->groupBy('scheduled.game_id')
+            ->orderBy('first_game_date')
+            ->orderBy('scheduled.game_id')
+            ->pluck('scheduled.game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+    }
+
+    /** Determine whether a run still has scheduled or running work. */
+    public function hasOpenRowsForRun(int $runId): bool
+    {
+        return DB::table('nhl_import_progress')
+            ->where('run_id', $runId)
+            ->whereIn('status', ['scheduled', 'running'])
             ->exists();
     }
 
@@ -155,27 +248,37 @@ class NhlImportProgressRepo
     }
 
     /** Does a scheduled row exist for this (gameId,type)? */
-    public function scheduledExists(int $gameId, string $type): bool
+    public function scheduledExists(int $gameId, string $type, ?int $runId = null): bool
     {
-        return DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->where('import_type', $type)
-            ->where('status', 'scheduled')
-            ->exists();
+            ->where('status', 'scheduled');
+
+        if ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        return $query->exists();
     }
 
     /** How many dependencies are completed for this game? */
-    public function completedDepsCount(int $gameId, array $deps): int
+    public function completedDepsCount(int $gameId, array $deps, ?int $runId = null): int
     {
         if (empty($deps)) {
             return 0;
         }
 
-        return (int) DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->whereIn('import_type', $deps)
-            ->whereIn('status', ['completed', 'skipped'])
-            ->count();
+            ->whereIn('status', ['completed', 'skipped']);
+
+        if ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        return (int) $query->count();
     }
 
     /** Mark stale running rows as error for a given type before cutoff. */
@@ -193,6 +296,31 @@ class NhlImportProgressRepo
 
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('stale-stage-error', stage: $type));
+        }
+    }
+
+    /**
+     * Attach old null-run rows to a new run when discovery encounters existing game/stage rows.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     */
+    private function attachRunToLegacyRows(array $rows): void
+    {
+        $runId = collect($rows)->pluck('run_id')->filter()->first();
+
+        if (! $runId) {
+            return;
+        }
+
+        foreach ($rows as $row) {
+            DB::table('nhl_import_progress')
+                ->whereNull('run_id')
+                ->where('game_id', $row['game_id'])
+                ->where('import_type', $row['import_type'])
+                ->update([
+                    'run_id' => $runId,
+                    'updated_at' => now(),
+                ]);
         }
     }
 }

@@ -195,7 +195,7 @@ class NhlDiscoverCommand extends Command
             'created_by' => null,
         ]);
 
-        dispatch(new NhlDiscoveryJob($start, $end));
+        dispatch(new NhlDiscoveryJob($start, $end, $run->id));
         broadcast(new NhlGameImportStatusUpdated('discovery-queued', $run->id));
     }
 

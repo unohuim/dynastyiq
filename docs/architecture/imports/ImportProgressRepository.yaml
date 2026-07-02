@@ -3,6 +3,7 @@ type: Persistence Abstraction
 location:
   - app/Repositories/NhlImportProgressRepo.php
   - database/migrations/2025_08_13_155830_nhl_import_progress.php
+  - database/migrations/2026_07_02_160000_add_run_id_to_nhl_import_progress_table.php
 purpose: Centralize reads and writes to nhl_import_progress for import claim, status, dependency, and stale-job behavior.
 when_to_use:
   - Mutating NHL import progress state.
@@ -18,9 +19,17 @@ rules:
   - Status values must remain aligned with docs/ENUMS.md.
   - Base NHL import jobs must verify running state before performing stage work.
   - Explicit admin reruns must reschedule progress rows through this repository.
+  - Run-aware processing may scope claim, scheduled-exists, running, and dependency checks by nhl_import_progress.run_id.
+  - Date/run scheduler reads must support game-first orchestration by exposing running-state and scheduled-game checks for one date scope.
+  - Run supervisor reads must expose active-game counts, scheduled candidate games, and open-row checks for run-scoped slot filling.
 public_interface:
   - NhlImportProgressRepo::claim()
   - NhlImportProgressRepo::isRunning()
+  - NhlImportProgressRepo::runningExistsForDate()
+  - NhlImportProgressRepo::scheduledGameIdsForDate()
+  - NhlImportProgressRepo::activeGameCountForRun()
+  - NhlImportProgressRepo::scheduledGameIdsForRun()
+  - NhlImportProgressRepo::hasOpenRowsForRun()
   - NhlImportProgressRepo::markCompleted()
   - NhlImportProgressRepo::reschedule()
   - NhlImportProgressRepo::markError()

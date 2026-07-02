@@ -357,7 +357,10 @@
 
                         <div x-show="!gameImports.loading && gameImportVisibleRuns().length > 0" class="space-y-1.5">
                             <template x-for="run in gameImportVisibleRuns()" :key="run.id">
-                                <div class="rounded-md bg-white px-3 py-2.5 shadow-sm">
+                                <div
+                                    class="rounded-md bg-white px-3 shadow-sm"
+                                    :class="isGameImportRunCompacted(run) ? 'py-1.5' : 'py-2.5'"
+                                >
                                     <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                         <div class="min-w-0">
                                             <div class="flex flex-wrap items-center gap-1.5">
@@ -367,9 +370,18 @@
                                                     :class="gameImportBadgeClass(run)"
                                                     x-text="gameImportBadgeText(run)"
                                                 ></span>
+                                                <span
+                                                    x-show="isGameImportRunCompacted(run)"
+                                                    x-cloak
+                                                    class="text-[11px] text-gray-500"
+                                                    x-text="gameImportCompactSummaryText(run)"
+                                                ></span>
                                             </div>
                                         </div>
-                                        <div class="flex items-center text-xs text-gray-600 sm:text-right">
+                                        <div
+                                            x-show="!isGameImportRunCompacted(run)"
+                                            class="flex items-center text-xs text-gray-600 sm:text-right"
+                                        >
                                             <template x-if="run.action === 'discover' && !run.processing_started">
                                                 <button
                                                     type="button"
@@ -389,7 +401,10 @@
                                         </div>
                                     </div>
 
-                                    <div class="mt-2 border-t border-gray-200 pt-2">
+                                    <div
+                                        x-show="!isGameImportRunCompacted(run)"
+                                        class="mt-2 border-t border-gray-200 pt-2"
+                                    >
                                         <button
                                             type="button"
                                             class="flex w-full items-center justify-between gap-2 text-left"
@@ -548,11 +563,11 @@
                             <div class="grid gap-4 sm:grid-cols-2">
                                 <div>
                                     <label for="game-import-days" class="block text-sm font-medium text-gray-700">Days</label>
-                                    <input id="game-import-days" x-model="gameImports.form.days" type="number" min="0" max="120" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <input id="game-import-days" x-model="gameImports.form.days" type="number" min="0" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                 </div>
                                 <div>
                                     <label for="game-import-newdays" class="block text-sm font-medium text-gray-700">New days</label>
-                                    <input id="game-import-newdays" x-model="gameImports.form.newdays" type="number" min="1" max="120" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <input id="game-import-newdays" x-model="gameImports.form.newdays" type="number" min="1" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                 </div>
                             </div>
 

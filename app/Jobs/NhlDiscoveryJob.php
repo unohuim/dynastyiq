@@ -36,19 +36,22 @@ class NhlDiscoveryJob implements ShouldQueue
     /** @var int */
     public int $tries = 1;
 
+    public ?int $runId;
+
     /**
      * @param Carbon|string $start Later date (YYYY-MM-DD or Carbon)
      * @param Carbon|string $end   Earlier date (YYYY-MM-DD or Carbon)
      */
-    public function __construct($start, $end)
+    public function __construct($start, $end, ?int $runId = null)
     {
         $this->start = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse((string) $start)->startOfDay();
         $this->end   = $end   instanceof Carbon ? $end->copy()->startOfDay()   : Carbon::parse((string) $end)->startOfDay();
+        $this->runId = $runId;
     }
 
     public function handle(NhlDiscovery $discovery): void
     {
-        $discovery->discoverRange($this->start, $this->end);
+        $discovery->discoverRange($this->start, $this->end, $this->runId);
     }
 
     public function tags(): array
@@ -58,6 +61,7 @@ class NhlDiscoveryJob implements ShouldQueue
             'mode:range',
             'start:' . $this->start->toDateString(),
             'end:' . $this->end->toDateString(),
+            'run-id:' . ($this->runId ?? 'none'),
         ];
     }
 }

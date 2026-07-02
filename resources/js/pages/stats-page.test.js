@@ -390,6 +390,62 @@ describe('stats page prospect controls', () => {
     expect(shell.buildParams().getAll('league[]')).toEqual(['WHL']);
   });
 
+  it('does not include untouched numeric slider defaults in params', async () => {
+    const shell = await createShell({
+      meta: {
+        filterSchema: [
+          { key: 'gp', label: 'GP', type: 'number', bounds: { min: 0, max: 80 }, step: 1 },
+        ],
+      },
+    });
+
+    expect(shell.state.numericFilters.gp).toEqual({ min: 0, max: 80 });
+    expect(shell.buildParams().has('gp_min')).toBe(false);
+    expect(shell.buildParams().has('gp_max')).toBe(false);
+  });
+
+  it('includes numeric slider params after the user changes them', async () => {
+    const shell = await createShell({
+      meta: {
+        filterSchema: [
+          { key: 'gp', label: 'GP', type: 'number', bounds: { min: 0, max: 80 }, step: 1 },
+        ],
+      },
+    });
+
+    shell.setNumericFilterBound('gp', 'min', 12);
+
+    expect(shell.buildParams().get('gp_min')).toBe('12');
+    expect(shell.buildParams().get('gp_max')).toBe('80');
+  });
+
+  it('clears all filters when switching perspectives', async () => {
+    const shell = await createShell({
+      meta: {
+        availableLeagues: ['WHL'],
+        filterSchema: [
+          { key: 'gp', label: 'GP', type: 'number', bounds: { min: 0, max: 80 }, step: 1 },
+        ],
+      },
+    });
+    shell.fetchPayload = vi.fn();
+    shell.state.selectedPos = ['C'];
+    shell.state.selectedPosTypes = ['F'];
+    shell.state.selectedLeagues = ['WHL'];
+    shell.setNumericFilterBound('gp', 'min', 12);
+
+    shell.setPerspective('prospects-goalies');
+
+    expect(shell.state.selectedPos).toEqual([]);
+    expect(shell.state.selectedPosTypes).toEqual([]);
+    expect(shell.state.selectedLeagues).toEqual([]);
+    expect(shell.state.numericFilters).toEqual({});
+    expect(shell.state.dirtyNumericFilters).toEqual({});
+    expect(shell.buildParams().has('league[]')).toBe(false);
+    expect(shell.buildParams().has('gp_min')).toBe(false);
+    expect(shell.fetchPayload).toHaveBeenCalledTimes(1);
+  });
+
   it('renders desktop league selector only when league options exist', async () => {
     const shell = await createShell({ meta: { availableLeagues: ['WHL', 'AHL'] } });
 

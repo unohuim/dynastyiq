@@ -77,10 +77,21 @@ class EmptyNhlCommand extends Command
             'nhl_game_summaries',
             'play_by_plays',
             'nhl_season_stats',
-            'nhl_import_progress',
-            'nhl_game_import_runs',
             'nhl_game_source_statuses',
             'nhl_games',
+        ];
+    }
+
+    /**
+     * Return NHL import progress tables in dependency-safe delete order.
+     *
+     * @return array<int,string>
+     */
+    private function progressTables(): array
+    {
+        return [
+            'nhl_import_progress',
+            'nhl_game_import_runs',
         ];
     }
 
@@ -93,7 +104,7 @@ class EmptyNhlCommand extends Command
     {
         $counts = [];
 
-        foreach ($this->gameTables() as $table) {
+        foreach (array_merge($this->gameTables(), $this->progressTables()) as $table) {
             $this->line("Clearing {$table}...");
             $count = DB::table($table)->count();
             $counts[$table] = $count;
