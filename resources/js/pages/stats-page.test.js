@@ -658,4 +658,71 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('75.68%');
     expect(document.body.textContent).toContain('0.917');
   });
+
+  it('lets league column sorting override yahoo slot order until slot is selected again', async () => {
+    const shell = await createShell({
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'yahoo',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        sortDirection: 'desc',
+      },
+    });
+    shell.payload.data = [
+      {
+        name: 'High GP Player',
+        team: 'NYR',
+        league: 'NHL',
+        pos_type: 'F',
+        gp: 80,
+        stats: { gp: 80 },
+        fantasy_team_name: 'Alpha Team',
+        fantasy_team_avatar_url: 'https://example.test/alpha.png',
+        roster_slot: 'LW',
+        roster_sort_order: 1,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 0,
+      },
+      {
+        name: 'Slot First Player',
+        team: 'NYR',
+        league: 'NHL',
+        pos_type: 'F',
+        gp: 10,
+        stats: { gp: 10 },
+        fantasy_team_name: 'Alpha Team',
+        fantasy_team_avatar_url: 'https://example.test/alpha.png',
+        roster_slot: 'C',
+        roster_sort_order: 2,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 0,
+      },
+    ];
+
+    shell.renderContent();
+    Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('All Players'))
+      ?.click();
+    Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Alpha Team'))
+      ?.click();
+
+    expect(document.body.textContent.indexOf('High GP Player'))
+      .toBeLessThan(document.body.textContent.indexOf('Slot First Player'));
+
+    Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Player')
+      ?.click();
+
+    expect(document.body.textContent.indexOf('Slot First Player'))
+      .toBeLessThan(document.body.textContent.indexOf('High GP Player'));
+
+    Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Slot')
+      ?.click();
+
+    expect(document.body.textContent.indexOf('High GP Player'))
+      .toBeLessThan(document.body.textContent.indexOf('Slot First Player'));
+  });
 });

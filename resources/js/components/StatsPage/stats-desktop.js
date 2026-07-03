@@ -427,10 +427,20 @@ const renderLeagueOwnerStatsDesktop = (
                 th.classList.add("text-gray-900");
             }
             th.addEventListener("click", () => {
+                if (["type", "pos_type"].includes(String(key).toLowerCase()) && useRosterSlotColumn()) {
+                    onSortChange?.({
+                        sortKey: settings.defaultSort ?? settings.sortKey ?? key,
+                        sortDirection: settings.defaultSortDirection ?? "desc",
+                        leagueUserSortActive: false,
+                    });
+                    return;
+                }
+
                 const same = settings.sortKey === key;
                 onSortChange?.({
                     sortKey: key,
                     sortDirection: same && settings.sortDirection === "desc" ? "asc" : "desc",
+                    leagueUserSortActive: true,
                 });
             });
         }
@@ -518,7 +528,9 @@ const renderLeagueOwnerStatsDesktop = (
             return (!isRosterOnly || hasSelectedFantasyTeam()) && hitName && hitTeam && hitFantasyTeam && hitLeague;
         });
 
-        return hasSelectedFantasyTeam() ? sortByRosterOrder(filtered) : filtered;
+        return hasSelectedFantasyTeam() && settings.leagueUserSortActive !== true
+            ? sortByRosterOrder(filtered)
+            : filtered;
     };
 
     const renderLeftCell = (row, heading, idx, i) => {

@@ -1103,6 +1103,7 @@ Storing canonical player attributes, identity match state, or materialized contr
 CapWages identity/profile import eligibility requires a payable non-buyout contract season at least as recent as the current calendar-year season key; buyout or dead-cap-only rows do not qualify retired/inactive players.
 CapWages payloads with durable `nhlId` must link by `players.nhl_id` or remain unresolved; they must not create provisional canonical players with `nhl_id = NULL`.
 CapWages list imports crawl pages sequentially with no fixed delay after successful pages; 403 responses trigger backoff.
+CapWages player detail imports reuse cached raw payload only when `capwages_players.api_last_updated` is from the current day; older or missing provider freshness metadata requires a live detail request.
 CapWages player detail 5xx responses and connection failures are recorded and skipped so one provider-side player failure does not fail the whole page import.
 Admin import progress bars read processed/total counters from `import_runs` instead of parsing terminal output.
 

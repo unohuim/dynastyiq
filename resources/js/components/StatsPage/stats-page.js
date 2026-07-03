@@ -26,6 +26,7 @@ export class StatsPage {
       ...settings,
       sortKey: settings.sortKey ?? settings.defaultSort ?? null,
       sortDirection: settings.sortDirection ?? settings.defaultSortDirection ?? 'desc',
+      leagueUserSortActive: false,
     };
     // displayKey controls the top-right label/value; defaults to the initial sortKey
     this.settings.displayKey = settings.displayKey ?? this.settings.sortKey;
@@ -55,18 +56,20 @@ export class StatsPage {
       ...settings,
       sortKey: settings.sortKey ?? settings.defaultSort ?? null,
       sortDirection: settings.sortDirection ?? settings.defaultSortDirection ?? 'desc',
+      leagueUserSortActive: false,
     };
     this.settings.displayKey = settings.displayKey ?? this.settings.sortKey;
 
     this.render();
   }
 
-  handleSortChange = ({ sortKey, sortDirection }) => {
+  handleSortChange = ({ sortKey, sortDirection, leagueUserSortActive = true }) => {
     // keep current displayKey if sorting by a static-display key; otherwise follow sortKey
     const nextDisplayKey = STATIC_DISPLAY_KEYS.has(String(sortKey)) ? this.settings.displayKey : sortKey;
 
     this.settings.sortKey = sortKey;
     this.settings.sortDirection = sortDirection;
+    this.settings.leagueUserSortActive = leagueUserSortActive;
     this.settings.displayKey = nextDisplayKey;
 
     const sorted = sortData(this.originalData, sortKey, sortDirection);

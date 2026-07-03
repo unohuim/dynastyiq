@@ -123,6 +123,7 @@ export class StatsPageShell {
       sortKey: settings.sortKey ?? settings.defaultSort ?? null,
       sortDirection: settings.sortDirection ?? settings.defaultSortDirection ?? 'desc',
       displayKey: settings.displayKey ?? settings.sortKey ?? settings.defaultSort ?? null,
+      leagueUserSortActive: false,
     };
     this.syncNumericFiltersFromPayload();
 
@@ -350,6 +351,7 @@ export class StatsPageShell {
       sortKey: settings.sortKey ?? settings.defaultSort ?? this.settings.sortKey,
       sortDirection: settings.sortDirection ?? settings.defaultSortDirection ?? this.settings.sortDirection ?? 'desc',
       displayKey: settings.displayKey ?? settings.sortKey ?? settings.defaultSort ?? this.settings.displayKey,
+      leagueUserSortActive: false,
     };
     this.syncNumericFiltersFromPayload();
   }
@@ -415,10 +417,11 @@ export class StatsPageShell {
     this.fetchPayload();
   }
 
-  onSortChange = ({ sortKey, sortDirection }) => {
+  onSortChange = ({ sortKey, sortDirection, leagueUserSortActive = true }) => {
     this.settings.sortKey = sortKey;
     this.settings.sortDirection = sortDirection;
     this.settings.displayKey = sortKey;
+    this.settings.leagueUserSortActive = leagueUserSortActive;
     this.renderContent();
   };
 

@@ -24,11 +24,11 @@ rules:
   - capwages_players.player_id may mirror the linked identity player_id after a canonical player link exists.
   - CapWages contracts and contract seasons must remain in raw_payload until a non-null player_id exists.
   - CapWages acquisition details may be materialized into nhl_player_transactions before player_id exists when linked to the provider identity.
-  - CapWages imports must use cached capwages_players.raw_payload before making a live provider detail request for the same slug.
+  - CapWages imports must use cached capwages_players.raw_payload before making a live provider detail request only when capwages_players.api_last_updated is from the current day.
   - CapWages imports should process list pages sequentially without fixed delay on successful pages and should use 403 backoff only when the provider blocks a request.
   - CapWages player detail 5xx responses and connection failures should be recorded on the import run and skipped so one provider-side player failure does not fail the whole page import.
   - CapWages page jobs should process player details inline rather than fan out one detail job per listed player.
-  - CapWages player detail imports should prefer cached raw payloads to avoid unnecessary live provider requests.
+  - CapWages player detail imports should prefer same-day provider-fresh cached raw payloads to avoid unnecessary live provider requests.
   - CapWages jobs must not sleep for long throttle waits inside worker execution.
   - CapWages link handling should materialize contracts from cached capwages_players.raw_payload without scheduling live refresh when cached payload exists.
   - CapWages refresh jobs may materialize contracts from cached capwages_players.raw_payload when live provider refresh is temporarily blocked.

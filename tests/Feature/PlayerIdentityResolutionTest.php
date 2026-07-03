@@ -3366,11 +3366,12 @@ it('capwages import remains idempotent for identities contracts and seasons', fu
     expect(ContractSeason::query()->count())->toBe(1);
 });
 
-it('capwages import uses same-day cached raw payload before fetching detail', function () {
+it('capwages import uses same-day provider cached raw payload before fetching detail', function () {
     ($this->makePlayer)(['nhl_id' => 123456]);
     CapWagesPlayer::create([
         'slug' => 'test-player',
         'name' => 'Test Player',
+        'api_last_updated' => now()->subHour(),
         'raw_payload' => ($this->capWagesPayload)(),
     ]);
     Http::fake();
@@ -3383,11 +3384,12 @@ it('capwages import uses same-day cached raw payload before fetching detail', fu
     expect(ContractSeason::query()->count())->toBe(1);
 });
 
-it('capwages import refreshes detail when cached raw payload is older than today', function () {
+it('capwages import refreshes detail when cached provider payload is older than today', function () {
     ($this->makePlayer)(['nhl_id' => 123456]);
-    $cached = CapWagesPlayer::create([
+    CapWagesPlayer::create([
         'slug' => 'test-player',
         'name' => 'Test Player',
+        'api_last_updated' => now()->subDay(),
         'raw_payload' => ($this->capWagesPayload)([
             'contracts' => [
                 [
@@ -3408,10 +3410,6 @@ it('capwages import refreshes detail when cached raw payload is older than today
             ],
         ]),
     ]);
-    $cached->forceFill([
-        'created_at' => now()->subDay(),
-        'updated_at' => now()->subDay(),
-    ])->save();
 
     Http::fake([
         'https://capwages.com/api/gateway/v1/players/test-player' => Http::response([
@@ -3434,6 +3432,7 @@ it('capwages import refreshes detail when cached raw payload is older than today
                     ],
                 ],
             ]),
+            'meta' => ['lastUpdated' => now()->toISOString()],
         ]),
     ]);
 

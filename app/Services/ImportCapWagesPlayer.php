@@ -271,7 +271,7 @@ class ImportCapWagesPlayer
             return null;
         }
 
-        if (! $capWagesPlayer->updated_at?->isToday()) {
+        if (! $capWagesPlayer->api_last_updated?->isToday()) {
             return null;
         }
 
