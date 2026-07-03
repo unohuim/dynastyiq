@@ -209,7 +209,7 @@ class CommunityLeagues extends Controller
 
         abort_unless($platformLeague instanceof PlatformLeague && $platformLeague->platform === 'fantrax', 404);
 
-        $filename = 'fantrax-aav-' . str($league->name ?: 'league')->slug('-')->toString() . '-' . now()->format('Ymd-His') . '.csv';
+        $filename = 'fantrax-caphit-' . str($league->name ?: 'league')->slug('-')->toString() . '-' . now()->format('Ymd-His') . '.csv';
 
         return response()->streamDownload(function (): void {
             $handle = fopen('php://output', 'w');
