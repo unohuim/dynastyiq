@@ -271,6 +271,10 @@ class ImportCapWagesPlayer
             return null;
         }
 
+        if (! $capWagesPlayer->updated_at?->isToday()) {
+            return null;
+        }
+
         return $capWagesPlayer->raw_payload;
     }
 

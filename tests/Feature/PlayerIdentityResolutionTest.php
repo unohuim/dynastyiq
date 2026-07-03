@@ -3366,7 +3366,7 @@ it('capwages import remains idempotent for identities contracts and seasons', fu
     expect(ContractSeason::query()->count())->toBe(1);
 });
 
-it('capwages import uses cached raw payload before fetching detail', function () {
+it('capwages import uses same-day cached raw payload before fetching detail', function () {
     ($this->makePlayer)(['nhl_id' => 123456]);
     CapWagesPlayer::create([
         'slug' => 'test-player',
@@ -3381,6 +3381,68 @@ it('capwages import uses cached raw payload before fetching detail', function ()
     expect(PlayerExternalIdentity::query()->count())->toBe(1);
     expect(Contract::query()->count())->toBe(1);
     expect(ContractSeason::query()->count())->toBe(1);
+});
+
+it('capwages import refreshes detail when cached raw payload is older than today', function () {
+    ($this->makePlayer)(['nhl_id' => 123456]);
+    $cached = CapWagesPlayer::create([
+        'slug' => 'test-player',
+        'name' => 'Test Player',
+        'raw_payload' => ($this->capWagesPayload)([
+            'contracts' => [
+                [
+                    'contractType' => 'Standard',
+                    'signingDate' => '2024-07-01',
+                    'contractLength' => 1,
+                    'contractValue' => 750000,
+                    'seasons' => [
+                        [
+                            'season' => '2025-26',
+                            'capHit' => 750000,
+                            'aav' => 750000,
+                            'baseSalary' => 750000,
+                            'totalSalary' => 750000,
+                        ],
+                    ],
+                ],
+            ],
+        ]),
+    ]);
+    $cached->forceFill([
+        'created_at' => now()->subDay(),
+        'updated_at' => now()->subDay(),
+    ])->save();
+
+    Http::fake([
+        'https://capwages.com/api/gateway/v1/players/test-player' => Http::response([
+            'data' => ($this->capWagesPayload)([
+                'contracts' => [
+                    [
+                        'contractType' => 'Standard',
+                        'signingDate' => '2025-07-01',
+                        'contractLength' => 1,
+                        'contractValue' => 950000,
+                        'seasons' => [
+                            [
+                                'season' => '2026-27',
+                                'capHit' => 950000,
+                                'aav' => 950000,
+                                'baseSalary' => 950000,
+                                'totalSalary' => 950000,
+                            ],
+                        ],
+                    ],
+                ],
+            ]),
+        ]),
+    ]);
+
+    (new ImportCapWagesPlayer())->syncBySlug('test-player', false);
+
+    Http::assertSentCount(1);
+    expect(Contract::query()->where('contract_value', 950000)->exists())->toBeTrue();
+    expect(ContractSeason::query()->where('season_key', 20262027)->where('aav', 950000)->exists())->toBeTrue();
+    expect(CapWagesPlayer::first()->raw_payload['contracts'][0]['contractValue'])->toBe(950000);
 });
 
 it('capwages page import dispatches the next page without delay after a successful page', function () {
