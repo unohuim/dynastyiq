@@ -25,6 +25,12 @@
         $currentSort = $sort ?? request('sort','gf');
         $currentPos  = collect(request('pos', $pos ?? ['F']))->values()->all();
         $posOptions  = ['F','D','PP','PK']; // include special teams
+        $seasonOptions = collect($availableSeasons ?? []);
+        $gameTypeOptions = [
+            1 => 'Pre',
+            2 => 'Reg',
+            3 => 'Post',
+        ];
     @endphp
 
     <div class="px-4 safe-bottom max-w-7xl mx-auto">
@@ -32,7 +38,7 @@
             <div class="py-3 px-4 flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold tracking-tight">Line Combos</h1>
-                    <p class="text-sm text-gray-500">per single games</p>
+                    <p class="text-sm text-gray-500">{{ $seasonLabel }} &middot; {{ $gameTypeLabel }}</p>
                 </div>
 
                 {{-- Controls --}}
@@ -40,9 +46,15 @@
                       x-data="{
                         pos:  @js($currentPos[0] ?? 'F'),   // single-select
                         sort: @js($currentSort),
+                        seasonId: @js($seasonId ?? ''),
+                        gameType: @js((string) ($gameType ?? 2)),
                         open:false,
                         selectPos(p){
                           this.pos = p;
+                          this.$nextTick(()=> $refs.submit.click());
+                        },
+                        selectGameType(v){
+                          this.gameType = String(v);
                           this.$nextTick(()=> $refs.submit.click());
                         },
                         chooseSort(k){
@@ -55,6 +67,35 @@
                     <input type="hidden" name="dir" value="desc">
                     <input type="hidden" name="pos[]" :value="pos">
                     <input type="hidden" name="sort" :value="sort">
+                    <input type="hidden" name="game_type" :value="gameType">
+
+                    <select
+                        name="season_id"
+                        x-model="seasonId"
+                        @change="$refs.submit.click()"
+                        class="h-9 rounded-lg border border-gray-200 bg-white px-3 pr-8 text-sm font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                        @foreach ($seasonOptions as $season)
+                            @php
+                                $label = preg_match('/^(\d{4})(\d{4})$/', (string) $season, $matches)
+                                    ? $matches[1] . '-' . substr($matches[2], -2)
+                                    : (string) $season;
+                            @endphp
+                            <option value="{{ $season }}">{{ $label }}</option>
+                        @endforeach
+                    </select>
+
+                    @foreach ($gameTypeOptions as $value => $label)
+                        <button type="button"
+                                @click="selectGameType('{{ $value }}')"
+                                :aria-pressed="gameType==='{{ $value }}'"
+                                :class="gameType==='{{ $value }}'
+                                        ? 'bg-slate-900 text-white'
+                                        : 'bg-white text-gray-700 hover:bg-gray-50'"
+                                class="px-3 py-1.5 rounded-lg text-sm font-medium border border-gray-200 shadow-sm">
+                            {{ $label }}
+                        </button>
+                    @endforeach
 
                     @foreach ($posOptions as $p)
                         <button type="button"
@@ -105,6 +146,8 @@
             @include('partials._unit-cards', [
                 'units'   => $units,
                 'sortKey' => $currentSort,
+                'seasonLabel' => $seasonLabel,
+                'gameTypeLabel' => $gameTypeLabel,
             ])
             <div class="mt-6">
                 {{ $units->links() }}

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\Perspective;
 use App\Models\Player;
+use App\Models\User;
 use App\Services\NhlStrengthStatsQuery;
 use App\Services\ResolveNhlUnit;
 use App\Services\SumNhlGameUnits;
@@ -82,6 +83,64 @@ beforeEach(function (): void {
             'seconds_in_game' => $seconds,
             'type_desc_key' => $type,
             'strength' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $overrides));
+    };
+
+    $this->insertStatsUnitGame = static function (
+        int $gameId,
+        string $seasonId = '20262027',
+        int $gameType = 2,
+        string $gameDate = '2026-10-01'
+    ): void {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $gameId,
+            'season_id' => $seasonId,
+            'game_type' => $gameType,
+            'game_date' => $gameDate,
+            'game_dow' => 'Thu',
+            'game_month' => 'Oct',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    };
+
+    $this->insertStatsUnitSummary = static function (int $gameId, int $unitId, array $overrides = []): void {
+        DB::table('nhl_unit_game_strength_summaries')->insert(array_merge([
+            'nhl_game_id' => $gameId,
+            'unit_id' => $unitId,
+            'team_id' => 1,
+            'team_abbrev' => 'TOR',
+            'strength' => 'EV',
+            'toi' => 60,
+            'shifts' => 1,
+            'ozs' => 0,
+            'nzs' => 0,
+            'dzs' => 0,
+            'gf' => 0,
+            'ga' => 0,
+            'sf' => 0,
+            'sa' => 0,
+            'satf' => 0,
+            'sata' => 0,
+            'ff' => 0,
+            'fa' => 0,
+            'bf' => 0,
+            'ba' => 0,
+            'hf' => 0,
+            'ha' => 0,
+            'fow' => 0,
+            'fol' => 0,
+            'fot' => 0,
+            'pim_f' => 0,
+            'pim_a' => 0,
+            'penalties_f' => 0,
+            'penalties_a' => 0,
             'created_at' => now(),
             'updated_at' => now(),
         ], $overrides));
@@ -706,6 +765,120 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ->and($row['cf_pct'])->toBe(0.667)
         ->and($row['pdo'])->toBe(1.1)
         ->and($row['ozs_pct'])->toBe(0.8);
+});
+
+it('defaults line combos to the latest season regular-season segment', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->makePlayer)(41, 'Old Player');
+    ($this->makePlayer)(42, 'Fresh Player');
+    $oldUnit = app(ResolveNhlUnit::class)->resolve('F', [41], 'TOR');
+    $freshUnit = app(ResolveNhlUnit::class)->resolve('F', [42], 'TOR');
+    ($this->insertStatsUnitGame)(2025020001, '20252026', 2, '2025-10-01');
+    ($this->insertStatsUnitGame)(2026020001, '20262027', 2, '2026-10-01');
+    ($this->insertStatsUnitSummary)(2025020001, $oldUnit->id, ['gf' => 4]);
+    ($this->insertStatsUnitSummary)(2026020001, $freshUnit->id, ['gf' => 7]);
+
+    $response = $this->get(route('stats.units.index'));
+
+    $response->assertOk()
+        ->assertSee('2026-27')
+        ->assertSee('Regular Season')
+        ->assertSee('F. Player')
+        ->assertDontSee('O. Player');
+});
+
+it('filters line combo season totals by preseason segment', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->makePlayer)(43, 'Pre Player');
+    ($this->makePlayer)(44, 'Reg Player');
+    $preUnit = app(ResolveNhlUnit::class)->resolve('F', [43], 'TOR');
+    $regUnit = app(ResolveNhlUnit::class)->resolve('F', [44], 'TOR');
+    ($this->insertStatsUnitGame)(2026010001, '20262027', 1, '2026-09-20');
+    ($this->insertStatsUnitGame)(2026020002, '20262027', 2, '2026-10-05');
+    ($this->insertStatsUnitSummary)(2026010001, $preUnit->id, ['gf' => 2]);
+    ($this->insertStatsUnitSummary)(2026020002, $regUnit->id, ['gf' => 8]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20262027',
+        'game_type' => 1,
+        'pos' => ['F'],
+    ]));
+
+    $response->assertOk()
+        ->assertSee('Preseason')
+        ->assertSee('P. Player')
+        ->assertDontSee('R. Player');
+});
+
+it('aggregates line combo strength summaries across the selected season segment', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->makePlayer)(45, 'Aggregate Player');
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [45], 'TOR');
+    ($this->insertStatsUnitGame)(2026020003, '20262027', 2, '2026-10-06');
+    ($this->insertStatsUnitGame)(2026020004, '20262027', 2, '2026-10-07');
+    ($this->insertStatsUnitSummary)(2026020003, $unit->id, ['gf' => 1, 'sf' => 4, 'toi' => 120]);
+    ($this->insertStatsUnitSummary)(2026020004, $unit->id, ['gf' => 2, 'sf' => 5, 'toi' => 180]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['F'],
+    ]));
+
+    $row = $response->viewData('units')->items()[0];
+
+    $response->assertOk();
+    expect((int) $row->gp)->toBe(2)
+        ->and((int) $row->gf)->toBe(3)
+        ->and((int) $row->sf)->toBe(9)
+        ->and((int) $row->toi)->toBe(300);
+});
+
+it('sorts line combo season totals by the selected aggregate column', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->makePlayer)(46, 'Lower Player');
+    ($this->makePlayer)(47, 'Higher Player');
+    $lowerUnit = app(ResolveNhlUnit::class)->resolve('F', [46], 'TOR');
+    $higherUnit = app(ResolveNhlUnit::class)->resolve('F', [47], 'TOR');
+    ($this->insertStatsUnitGame)(2026020005, '20262027', 2, '2026-10-08');
+    ($this->insertStatsUnitSummary)(2026020005, $lowerUnit->id, ['sf' => 3]);
+    ($this->insertStatsUnitSummary)(2026020005, $higherUnit->id, ['sf' => 9]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['F'],
+        'sort' => 'sf',
+        'dir' => 'desc',
+    ]));
+
+    $row = $response->viewData('units')->items()[0];
+
+    $response->assertOk();
+    expect((int) $row->unit_id)->toBe((int) $higherUnit->id);
+});
+
+it('filters line combo season totals by selected season', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->makePlayer)(48, 'Selected Season Player');
+    ($this->makePlayer)(49, 'Other Season Player');
+    $selectedUnit = app(ResolveNhlUnit::class)->resolve('F', [48], 'TOR');
+    $otherUnit = app(ResolveNhlUnit::class)->resolve('F', [49], 'TOR');
+    ($this->insertStatsUnitGame)(2025020002, '20252026', 2, '2025-10-02');
+    ($this->insertStatsUnitGame)(2026020006, '20262027', 2, '2026-10-09');
+    ($this->insertStatsUnitSummary)(2025020002, $selectedUnit->id, ['gf' => 5]);
+    ($this->insertStatsUnitSummary)(2026020006, $otherUnit->id, ['gf' => 9]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'pos' => ['F'],
+    ]));
+
+    $response->assertOk()
+        ->assertSee('2025-26')
+        ->assertSee('S. Season Player')
+        ->assertDontSee('O. Season Player');
 });
 
 it('defaults the stats page to skaters instead of the first visible perspective id', function (): void {

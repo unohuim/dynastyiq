@@ -11,10 +11,39 @@ class StatsUnitsController extends Controller
 {
     /** @var string[] allow-list for sortable columns on s.* */
     private array $sortable = [
-        'gf','ga','ev_gf','pp_gf','pk_gf','ev_ga','pp_ga','pk_ga',
-        'sf','sa','ev_sf','pp_sf','pk_sf','ev_sa','pp_sa','pk_sa',
-        'satf','sata','ff','fa','bf','ba','hf','ha','fow','fol','fot',
-        'ozs','nzs','dzs','shifts','toi','pim_f','pim_a','penalties_f','penalties_a'
+        'gp',
+        'gf', 'ga',
+        'sf', 'sa',
+        'satf', 'sata', 'ff', 'fa', 'bf', 'ba', 'hf', 'ha', 'fow', 'fol', 'fot',
+        'ozs', 'nzs', 'dzs', 'shifts', 'toi', 'pim_f', 'pim_a', 'penalties_f', 'penalties_a',
+    ];
+
+    /** @var string[] */
+    private array $totalFields = [
+        'toi',
+        'shifts',
+        'ozs',
+        'nzs',
+        'dzs',
+        'gf',
+        'ga',
+        'sf',
+        'sa',
+        'satf',
+        'sata',
+        'ff',
+        'fa',
+        'bf',
+        'ba',
+        'hf',
+        'ha',
+        'fow',
+        'fol',
+        'fot',
+        'pim_f',
+        'pim_a',
+        'penalties_f',
+        'penalties_a',
     ];
 
     public function index(Request $request)
@@ -22,16 +51,21 @@ class StatsUnitsController extends Controller
         $perPage = (int) $request->integer('per_page', 30);
         $sort    = (string) $request->get('sort', 'gf');
         $dir     = strtolower((string) $request->get('dir', 'desc'));
-        $dir     = in_array($dir, ['asc','desc'], true) ? $dir : 'desc';
+        $dir     = in_array($dir, ['asc', 'desc'], true) ? $dir : 'desc';
+        $gameType = (int) $request->integer('game_type', 2);
 
-        if (!in_array($sort, $this->sortable, true)) {
+        if (! in_array($sort, $this->sortable, true)) {
             $sort = 'gf';
+        }
+
+        if (! in_array($gameType, [1, 2, 3], true)) {
+            $gameType = 2;
         }
 
         // Filter by unit type(s): F/D/PP/PK[/G] (default: F only)
         $pos = collect((array) $request->input('pos', ['F']))
             ->map(fn ($v) => strtoupper((string) $v))
-            ->intersect(['F','D','PP','PK','G'])
+            ->intersect(['F', 'D', 'PP', 'PK', 'G'])
             ->values()
             ->all();
         if (empty($pos)) {
@@ -44,17 +78,31 @@ class StatsUnitsController extends Controller
             ? "STRING_AGG((p.first_name || ' ' || p.last_name), ' · ' ORDER BY p.last_name)"
             : "GROUP_CONCAT(CONCAT_WS(' ', p.first_name, p.last_name) ORDER BY p.last_name SEPARATOR ' · ')";
 
-        $q = DB::table('nhl_unit_game_summaries as s')
+        $availableSeasons = DB::table('nhl_unit_game_strength_summaries as s')
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+            ->select('g.season_id')
+            ->distinct()
+            ->orderByDesc('g.season_id')
+            ->pluck('g.season_id')
+            ->map(static fn (mixed $season): string => (string) $season)
+            ->values()
+            ->all();
+        $seasonId = (string) $request->get('season_id', $availableSeasons[0] ?? '');
+
+        if ($seasonId === '' || ! in_array($seasonId, $availableSeasons, true)) {
+            $seasonId = $availableSeasons[0] ?? '';
+        }
+
+        $sumSelects = collect($this->totalFields)
+            ->map(static fn (string $field): string => "SUM(s.{$field}) as {$field}")
+            ->implode(', ');
+
+        $q = DB::table('nhl_unit_game_strength_summaries as s')
             ->join('nhl_units as u', 'u.id', '=', 's.unit_id')
             ->leftJoin('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
-            ->select(
-                's.*',
-                'u.unit_type',
-                'g.game_date',
-                'g.home_team_abbrev as home',
-                'g.away_team_abbrev as away',
-                'g.home_team_score',
-                'g.away_team_score',
+            ->selectRaw(
+                "s.unit_id, u.unit_type, COALESCE(u.team_abbrev, MAX(s.team_abbrev)) as team_abbrev, " .
+                "g.season_id, g.game_type, COUNT(DISTINCT s.nhl_game_id) as gp, {$sumSelects}"
             )
             ->selectSub(function ($sub) use ($playerNamesExpr) {
                 $sub->from('nhl_unit_players as up')
@@ -62,14 +110,14 @@ class StatsUnitsController extends Controller
                     ->whereColumn('up.unit_id', 's.unit_id')
                     ->selectRaw($playerNamesExpr);
             }, 'player_names')
+            ->where('g.season_id', $seasonId)
+            ->where('g.game_type', $gameType)
             ->whereIn('u.unit_type', $pos)
             ->when($request->filled('team'), function ($qq) use ($request) {
                 $qq->where('s.team_abbrev', strtoupper((string) $request->get('team')));
             })
-            ->when($request->filled('game'), function ($qq) use ($request) {
-                $qq->where('s.nhl_game_id', (int) $request->get('game'));
-            })
-            ->orderBy("s.$sort", $dir);
+            ->groupBy('s.unit_id', 'u.unit_type', 'u.team_abbrev', 'g.season_id', 'g.game_type')
+            ->orderBy($sort, $dir);
 
         $units = $q->paginate($perPage)->withQueryString();
 
@@ -80,8 +128,30 @@ class StatsUnitsController extends Controller
             'dir'      => $dir,
             'perPage'  => $perPage,
             'team'     => (string) $request->get('team', ''),
-            'game'     => (string) $request->get('game', ''),
             'pos'      => $pos,
+            'availableSeasons' => $availableSeasons,
+            'seasonId' => $seasonId,
+            'seasonLabel' => $this->seasonLabel($seasonId),
+            'gameType' => $gameType,
+            'gameTypeLabel' => $this->gameTypeLabel($gameType),
         ]);
+    }
+
+    private function seasonLabel(string $seasonId): string
+    {
+        if (preg_match('/^(\d{4})(\d{4})$/', $seasonId, $matches) !== 1) {
+            return $seasonId;
+        }
+
+        return $matches[1] . '-' . substr($matches[2], -2);
+    }
+
+    private function gameTypeLabel(int $gameType): string
+    {
+        return match ($gameType) {
+            1 => 'Preseason',
+            3 => 'Postseason',
+            default => 'Regular Season',
+        };
     }
 }

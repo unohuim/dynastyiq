@@ -46,7 +46,9 @@
 
         $toiM = intdiv((int)$row->toi, 60);
         $toiS = str_pad((string)((int)$row->toi % 60), 2, '0', STR_PAD_LEFT);
-        $date = $row->game_date ? \Illuminate\Support\Carbon::parse($row->game_date)->format('M j, Y') : null;
+        $gameDate = data_get($row, 'game_date');
+        $date = $gameDate ? \Illuminate\Support\Carbon::parse($gameDate)->format('M j, Y') : null;
+        $isSeasonAggregate = ! $date && data_get($row, 'season_id');
     @endphp
 
     <article
@@ -66,27 +68,40 @@
         class="bg-white rounded-2xl border shadow-sm overflow-hidden flex flex-col w-full"
     >
         <header class="flex items-center justify-between bg-emerald-50/70 px-4 py-2 text-sm min-h-[42px]">
-            @php        
-                $awayScore = $row->away_team_score ?? null;
-                $homeScore = $row->home_team_score ?? null;
-                $periodType = strtoupper((string)($row->period_type ?? '')); // e.g., OT, SO, REG
-                $showPeriod = $periodType !== '' && !in_array($periodType, ['REG', 'R']);
-            @endphp
+            @if($isSeasonAggregate)
+                <div class="font-semibold flex items-center gap-2">
+                    <span class="text-gray-900">{{ $seasonLabel ?? data_get($row, 'season_id') }}</span>
+                    <span class="text-gray-300">&middot;</span>
+                    <span class="text-gray-600">{{ $gameTypeLabel ?? 'Season' }}</span>
+                </div>
 
-            <div class="font-semibold flex items-center gap-2">
-                <span class="text-gray-400">{{ $row->away }}</span>
-                @isset($awayScore)<span class="text-gray-900 font-bold">{{ $awayScore }}</span>@endisset
-                <span class="text-gray-300">vs</span>
-                <span class="text-gray-400">{{ $row->home }}</span>
-                @isset($homeScore)<span class="text-gray-900 font-bold">{{ $homeScore }}</span>@endisset
-                @if($showPeriod)
-                    <span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-200 text-gray-700">{{ $periodType }}</span>
-                @endif
-            </div>
+                <div class="flex items-center gap-2 text-xs text-gray-700">
+                    <span>GP</span>
+                    <span class="font-semibold tabular-nums text-gray-900">{{ (int)($row->gp ?? 0) }}</span>
+                </div>
+            @else
+                @php
+                    $awayScore = $row->away_team_score ?? null;
+                    $homeScore = $row->home_team_score ?? null;
+                    $periodType = strtoupper((string)($row->period_type ?? '')); // e.g., OT, SO, REG
+                    $showPeriod = $periodType !== '' && !in_array($periodType, ['REG', 'R']);
+                @endphp
 
-            <div class="flex items-center gap-4">
-                @if($date)<span class="text-gray-700 text-xs">{{ $date }}</span>@endif
-            </div>
+                <div class="font-semibold flex items-center gap-2">
+                    <span class="text-gray-400">{{ $row->away }}</span>
+                    @isset($awayScore)<span class="text-gray-900 font-bold">{{ $awayScore }}</span>@endisset
+                    <span class="text-gray-300">vs</span>
+                    <span class="text-gray-400">{{ $row->home }}</span>
+                    @isset($homeScore)<span class="text-gray-900 font-bold">{{ $homeScore }}</span>@endisset
+                    @if($showPeriod)
+                        <span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-200 text-gray-700">{{ $periodType }}</span>
+                    @endif
+                </div>
+
+                <div class="flex items-center gap-4">
+                    @if($date)<span class="text-gray-700 text-xs">{{ $date }}</span>@endif
+                </div>
+            @endif
         </header>
 
 
