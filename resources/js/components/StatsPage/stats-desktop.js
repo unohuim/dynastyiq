@@ -198,7 +198,9 @@ const renderLeagueOwnerStatsDesktop = (
     desktopState.set(container, state);
 
     const isYahooLeague = settings?.leaguePlatform === "yahoo";
-    const useRosterSlotColumn = () => isYahooLeague && state.fantasyTeamFilter.trim() !== "";
+    const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
+    const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
+    const useRosterSlotColumn = () => isYahooLeague && hasSelectedFantasyTeam();
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
@@ -287,7 +289,9 @@ const renderLeagueOwnerStatsDesktop = (
 
         const label = document.createElement("span");
         label.className = "min-w-0 flex-1 truncate";
-        label.textContent = selected?.name || "All Fantasy Teams";
+        label.textContent = isFreeAgentFantasyFilter()
+            ? "Free Agents"
+            : (selected?.name || "All Players");
         fantasyTeamButton.appendChild(label);
     };
     const fantasyTeamMenu = document.createElement("div");
@@ -308,10 +312,10 @@ const renderLeagueOwnerStatsDesktop = (
 
         const label = document.createElement("span");
         label.className = "min-w-0 truncate";
-        label.textContent = team.name || "All Fantasy Teams";
+        label.textContent = team.label || team.name || "All Players";
         option.appendChild(label);
         option.addEventListener("click", () => {
-            state.fantasyTeamFilter = team.name || "";
+            state.fantasyTeamFilter = team.value ?? team.name ?? "";
             desktopState.set(container, state);
             fantasyTeamMenu.classList.add("hidden");
             renderFantasyTeamButton();
@@ -321,7 +325,8 @@ const renderLeagueOwnerStatsDesktop = (
         });
         fantasyTeamMenu.appendChild(option);
     };
-    addFantasyTeamOption({ name: "", avatarUrl: "" });
+    addFantasyTeamOption({ name: "", value: "", label: "All Players", avatarUrl: "" });
+    addFantasyTeamOption({ name: "Free Agents", value: "__free_agents", label: "Free Agents", avatarUrl: "" });
     fantasyTeams.forEach(addFantasyTeamOption);
     fantasyTeamButton.addEventListener("click", () => {
         fantasyTeamMenu.classList.toggle("hidden");
@@ -354,11 +359,10 @@ const renderLeagueOwnerStatsDesktop = (
     const table = document.createElement("div");
     table.className = "grid min-w-0";
     const syncOwnerPaneVisibility = () => {
-        const hasFantasyTeamFilter = state.fantasyTeamFilter.trim() !== "";
-        table.style.gridTemplateColumns = hasFantasyTeamFilter
+        table.style.gridTemplateColumns = hasSelectedFantasyTeam()
             ? "minmax(0, 418px) minmax(0, 1fr)"
             : "minmax(0, 418px) minmax(0, 1fr) 190px";
-        ownerPane.classList.toggle("hidden", hasFantasyTeamFilter);
+        ownerPane.classList.toggle("hidden", hasSelectedFantasyTeam());
     };
 
     const leftPane = document.createElement("div");
@@ -505,13 +509,16 @@ const renderLeagueOwnerStatsDesktop = (
             const name = String(row?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
             const hitTeam = !teamQ || String(row?.team ?? "").toUpperCase() === teamQ;
-            const hitFantasyTeam = !fantasyTeamQ || String(row?.fantasy_team_name ?? "").toUpperCase() === fantasyTeamQ;
+            const rowFantasyTeam = String(row?.fantasy_team_name ?? "").trim();
+            const hitFantasyTeam = isFreeAgentFantasyFilter()
+                ? rowFantasyTeam === ""
+                : (!fantasyTeamQ || rowFantasyTeam.toUpperCase() === fantasyTeamQ);
             const hitLeague = !leagueQ || String(row?.league ?? "").toUpperCase() === leagueQ;
 
-            return (!isRosterOnly || fantasyTeamQ) && hitName && hitTeam && hitFantasyTeam && hitLeague;
+            return (!isRosterOnly || hasSelectedFantasyTeam()) && hitName && hitTeam && hitFantasyTeam && hitLeague;
         });
 
-        return fantasyTeamQ ? sortByRosterOrder(filtered) : filtered;
+        return hasSelectedFantasyTeam() ? sortByRosterOrder(filtered) : filtered;
     };
 
     const renderLeftCell = (row, heading, idx, i) => {
