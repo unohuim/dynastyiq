@@ -232,11 +232,11 @@ class CommunityLeagues extends Controller
                     $query->from('contracts')
                         ->join('contract_seasons', 'contract_seasons.contract_id', '=', 'contracts.id')
                         ->whereColumn('contracts.player_id', 'fantrax_players.player_id')
-                        ->whereNotNull('contract_seasons.aav')
+                        ->whereNotNull('contract_seasons.cap_hit')
                         ->orderByDesc('contract_seasons.season_key')
-                        ->select('contract_seasons.aav')
+                        ->select('contract_seasons.cap_hit')
                         ->limit(1);
-                }, 'current_aav')
+                }, 'current_cap_hit')
                 ->orderBy('fantrax_players.name')
                 ->orderBy('fantrax_players.fantrax_id')
                 ->cursor();
@@ -248,7 +248,7 @@ class CommunityLeagues extends Controller
                     $this->fantraxUploadName((string) ($player->name ?? '')),
                     $this->fantraxUploadTeam((string) ($player->team ?: $player->linked_team_abbrev ?: '')),
                     $this->fantraxUploadPosition((string) ($player->position ?? '')),
-                    (string) (int) ($player->current_aav ?: 750000),
+                    (string) (int) ($player->current_cap_hit ?: 750000),
                 ]));
             }
 
