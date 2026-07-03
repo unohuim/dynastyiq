@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 class CommunityLeagues extends Controller
@@ -180,8 +181,80 @@ class CommunityLeagues extends Controller
             mobileBreakpoint: (int) config('viewports.mobile', 768)
         );
 
+        $payload = $vm->toDto()->toArray();
+        $payload['header']['can_export_fantrax_aav'] = $isFantraxLeague;
+        $payload['header']['fantrax_aav_export_url'] = route('community.leagues.fantrax-aav-export', [
+            'c_id' => $community->id,
+            'l_id' => $league->id,
+        ]);
+
         return view('communities.leagues.show', [
-            'vm' => $vm->toDto()->toArray(),
+            'vm' => $payload,
+        ]);
+    }
+
+    /**
+     * Stream a Fantrax salary upload file for commissioner-managed leagues.
+     */
+    public function exportFantraxAav(int $cId, int $lId): StreamedResponse
+    {
+        $user = Auth::user();
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->findOrFail($cId);
+        $league = $community->leagues()
+            ->findOrFail($lId);
+        $platformLeague = $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague && $platformLeague->platform === 'fantrax', 404);
+
+        $filename = 'fantrax-aav-' . str($league->name ?: 'league')->slug('-')->toString() . '-' . now()->format('Ymd-His') . '.csv';
+
+        return response()->streamDownload(function (): void {
+            $handle = fopen('php://output', 'w');
+
+            if ($handle === false) {
+                return;
+            }
+
+            $rowNumber = 1;
+            $players = FantraxPlayer::query()
+                ->leftJoin('players', 'players.id', '=', 'fantrax_players.player_id')
+                ->select([
+                    'fantrax_players.fantrax_id',
+                    'fantrax_players.name',
+                    'fantrax_players.team',
+                    'fantrax_players.position',
+                    'players.team_abbrev as linked_team_abbrev',
+                ])
+                ->selectSub(function ($query): void {
+                    $query->from('contracts')
+                        ->join('contract_seasons', 'contract_seasons.contract_id', '=', 'contracts.id')
+                        ->whereColumn('contracts.player_id', 'fantrax_players.player_id')
+                        ->whereNotNull('contract_seasons.aav')
+                        ->orderByDesc('contract_seasons.season_key')
+                        ->select('contract_seasons.aav')
+                        ->limit(1);
+                }, 'current_aav')
+                ->orderBy('fantrax_players.name')
+                ->orderBy('fantrax_players.fantrax_id')
+                ->cursor();
+
+            foreach ($players as $player) {
+                fputcsv($handle, [
+                    '*' . (string) $player->fantrax_id . '*',
+                    $rowNumber++,
+                    (string) ($player->name ?? ''),
+                    (string) ($player->team ?: $player->linked_team_abbrev ?: ''),
+                    $this->fantraxUploadPosition((string) ($player->position ?? '')),
+                    (int) ($player->current_aav ?: 750000),
+                ], "\t", '"', '\\');
+            }
+
+            fclose($handle);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
@@ -249,6 +322,39 @@ class CommunityLeagues extends Controller
             'ok' => true,
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
         ]);
+    }
+
+    /**
+     * Normalize a stored Fantrax position into the Fantrax salary-upload position list.
+     */
+    private function fantraxUploadPosition(string $position): string
+    {
+        $positions = collect(preg_split('/[,\s\/]+/', strtoupper(trim($position))) ?: [])
+            ->map(static fn (string $value): string => match ($value) {
+                'L' => 'LW',
+                'R' => 'RW',
+                'W' => 'RW',
+                'LD', 'RD' => 'D',
+                'SKT', 'SKATER' => 'Skt',
+                default => $value,
+            })
+            ->filter(static fn (string $value): bool => $value !== '')
+            ->unique()
+            ->values();
+
+        if ($positions->isEmpty()) {
+            return '';
+        }
+
+        if ($positions->contains('G')) {
+            return 'G';
+        }
+
+        if (! $positions->contains('Skt')) {
+            $positions->push('Skt');
+        }
+
+        return $positions->implode(',');
     }
 
     /**

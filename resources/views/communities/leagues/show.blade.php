@@ -9,18 +9,32 @@
             {{ $vm['header']['title'] }}
         </a>
 
-        @if ($vm['header']['can_edit'])
-            <button
-                type="button"
-                id="btnEditName"
-                class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-            >
-                <svg class="h-4 w-4 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 3.487a2.25 2.25 0 013.182 3.182L7.5 19.313l-4.5 1.125L4.125 16.5 16.862 3.487z"/>
-                </svg>
-                Edit name
-            </button>
-        @endif
+        <div class="flex items-center gap-2">
+            @if (! empty($vm['header']['can_export_fantrax_aav']))
+                <a
+                    href="{{ $vm['header']['fantrax_aav_export_url'] }}"
+                    class="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                >
+                    <svg class="h-4 w-4 text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M4.5 19.5h15"/>
+                    </svg>
+                    Export AAV CSV
+                </a>
+            @endif
+
+            @if ($vm['header']['can_edit'])
+                <button
+                    type="button"
+                    id="btnEditName"
+                    class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                >
+                    <svg class="h-4 w-4 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 3.487a2.25 2.25 0 013.182 3.182L7.5 19.313l-4.5 1.125L4.125 16.5 16.862 3.487z"/>
+                    </svg>
+                    Edit name
+                </button>
+            @endif
+        </div>
     </div>
 
     {{-- Body --}}
