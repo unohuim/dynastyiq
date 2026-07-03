@@ -787,6 +787,53 @@ it('defaults line combos to the latest season regular-season segment', function 
         ->assertDontSee('O. Player');
 });
 
+it('renders player avatars in line combo season cards', function (): void {
+    $this->actingAs(User::factory()->create());
+    $player = ($this->makePlayer)(50, 'Avatar Player');
+    $player->update(['head_shot_url' => 'https://example.test/avatar-player.png']);
+    $unit = app(ResolveNhlUnit::class)->resolve('F', [50], 'TOR');
+    ($this->insertStatsUnitGame)(2026020007, '20262027', 2, '2026-10-10');
+    ($this->insertStatsUnitSummary)(2026020007, $unit->id, ['gf' => 1]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['F'],
+    ]));
+
+    $response->assertOk()
+        ->assertSee('https://example.test/avatar-player.png')
+        ->assertSee('A. Player');
+});
+
+it('renders penalty kill units as forwards row above defense row when positions are known', function (): void {
+    $this->actingAs(User::factory()->create());
+    $forwardOne = ($this->makePlayer)(51, 'First Forward');
+    $forwardTwo = ($this->makePlayer)(52, 'Second Forward');
+    $defenseOne = ($this->makePlayer)(53, 'First Defense');
+    $defenseTwo = ($this->makePlayer)(54, 'Second Defense');
+    $defenseOne->update(['position' => 'D', 'pos_type' => 'D']);
+    $defenseTwo->update(['position' => 'D', 'pos_type' => 'D']);
+    $unit = app(ResolveNhlUnit::class)->resolve('PK', [51, 52, 53, 54], 'TOR');
+    ($this->insertStatsUnitGame)(2026020008, '20262027', 2, '2026-10-11');
+    ($this->insertStatsUnitSummary)(2026020008, $unit->id, ['strength' => 'PK', 'gf' => 1]);
+
+    $response = $this->get(route('stats.units.index', [
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'pos' => ['PK'],
+    ]));
+
+    $html = $response->getContent();
+
+    $response->assertOk()
+        ->assertSee('data-unit-player-layout="pk"', false)
+        ->assertSee('data-unit-player-row="forwards"', false)
+        ->assertSee('data-unit-player-row="defense"', false);
+    expect(strpos($html, 'F. Forward'))->toBeLessThan(strpos($html, 'F. Defense'))
+        ->and(strpos($html, 'S. Forward'))->toBeLessThan(strpos($html, 'S. Defense'));
+});
+
 it('filters line combo season totals by preseason segment', function (): void {
     $this->actingAs(User::factory()->create());
     ($this->makePlayer)(43, 'Pre Player');

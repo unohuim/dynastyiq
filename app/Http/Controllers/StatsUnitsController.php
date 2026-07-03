@@ -120,6 +120,11 @@ class StatsUnitsController extends Controller
             ->orderBy($sort, $dir);
 
         $units = $q->paginate($perPage)->withQueryString();
+        $units->getCollection()->transform(function (object $row): object {
+            $row->players = $this->unitPlayers((int) $row->unit_id);
+
+            return $row;
+        });
 
         return view('stats-units', [
             'units'    => $units,
@@ -153,5 +158,38 @@ class StatsUnitsController extends Controller
             3 => 'Postseason',
             default => 'Regular Season',
         };
+    }
+
+    /**
+     * @return array<int,array{name:string,short_name:string,avatar_url:string|null,initials:string,position:string,pos_type:string}>
+     */
+    private function unitPlayers(int $unitId): array
+    {
+        return DB::table('nhl_unit_players as up')
+            ->join('players as p', 'p.id', '=', 'up.player_id')
+            ->where('up.unit_id', $unitId)
+            ->orderBy('p.last_name')
+            ->get(['p.first_name', 'p.last_name', 'p.full_name', 'p.head_shot_url', 'p.position', 'p.pos_type'])
+            ->map(function (object $player): array {
+                $fullName = trim((string) ($player->full_name ?: trim($player->first_name . ' ' . $player->last_name)));
+                $firstName = trim((string) $player->first_name);
+                $lastName = trim((string) $player->last_name);
+                $shortName = trim(($firstName !== '' ? mb_substr($firstName, 0, 1) . '. ' : '') . $lastName);
+                $initials = collect([$firstName, $lastName])
+                    ->filter()
+                    ->map(static fn (string $part): string => mb_strtoupper(mb_substr($part, 0, 1)))
+                    ->implode('');
+
+                return [
+                    'name' => $fullName,
+                    'short_name' => $shortName !== '' ? $shortName : $fullName,
+                    'avatar_url' => $player->head_shot_url ? (string) $player->head_shot_url : null,
+                    'initials' => $initials !== '' ? $initials : '?',
+                    'position' => strtoupper(trim((string) $player->position)),
+                    'pos_type' => strtoupper(trim((string) $player->pos_type)),
+                ];
+            })
+            ->values()
+            ->all();
     }
 }

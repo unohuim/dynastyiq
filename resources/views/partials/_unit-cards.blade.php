@@ -14,7 +14,18 @@
 <div class="pt-4 grid gap-6 [grid-template-columns:repeat(auto-fill,minmax(320px,1fr))]">
 @foreach($units as $row)
     @php
-        $players = $row->player_names ? array_map($fmtName, explode(' · ', $row->player_names)) : [];
+        $players = is_array(data_get($row, 'players')) ? data_get($row, 'players') : [];
+        $fallbackPlayers = $row->player_names ? array_map($fmtName, explode(' · ', $row->player_names)) : [];
+        $isPkUnit = strtoupper((string)($row->unit_type ?? '')) === 'PK';
+        $isDefensePlayer = static function (array $player): bool {
+            $position = strtoupper((string)($player['position'] ?? ''));
+            $posType = strtoupper((string)($player['pos_type'] ?? ''));
+
+            return $posType === 'D' || in_array($position, ['D', 'LD', 'RD'], true);
+        };
+        $pkForwards = $isPkUnit ? collect($players)->reject($isDefensePlayer)->values()->all() : [];
+        $pkDefense = $isPkUnit ? collect($players)->filter($isDefensePlayer)->values()->all() : [];
+        $usePkRows = $isPkUnit && $pkDefense !== [];
 
         $ozs = (int)($row->ozs ?? 0);
         $dzs = (int)($row->dzs ?? 0);
@@ -113,13 +124,29 @@
         </div>
 
         <div class="px-4 py-3">
-            <div class="flex flex-wrap justify-between w-full gap-y-2 min-h-[40px]">
-                @forelse($players as $p)
-                    <span class="px-4 pt-2 rounded-lg text-sm bg-gray-50 border border-blue-100 whitespace-nowrap">{{ $p }}</span>
-                @empty
-                    <span class="px-3 py-1 rounded-lg text-sm bg-gray-50 border">No players</span>
-                @endforelse
-            </div>
+            @if($usePkRows)
+                <div class="space-y-2" data-unit-player-layout="pk">
+                    @foreach([$pkForwards, $pkDefense] as $pkRow)
+                        <div class="flex w-full justify-center gap-2" data-unit-player-row="{{ $loop->first ? 'forwards' : 'defense' }}">
+                            @foreach($pkRow as $player)
+                                @include('partials._unit-player-tile', ['player' => $player])
+                            @endforeach
+                        </div>
+                    @endforeach
+                </div>
+            @else
+                <div class="flex w-full flex-wrap justify-center gap-2">
+                    @forelse($players as $player)
+                        @include('partials._unit-player-tile', ['player' => $player])
+                    @empty
+                        @forelse($fallbackPlayers as $p)
+                            <span class="px-3 py-1 rounded-lg text-xs bg-gray-50 border border-blue-100 whitespace-nowrap">{{ $p }}</span>
+                        @empty
+                            <span class="px-3 py-1 rounded-lg text-sm bg-gray-50 border">No players</span>
+                        @endforelse
+                    @endforelse
+                </div>
+            @endif
         </div>
 
         {{-- Dot navigation --}}
