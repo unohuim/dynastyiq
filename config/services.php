@@ -40,6 +40,7 @@ return [
         'client_secret' => env('DISCORD_CLIENT_SECRET'),
         'redirect'      => env('DISCORD_REDIRECT_URI'),
         'invite'        => env('DISCORD_INVITE'),
+        'diq_install_url' => env('DIQ_INSTALL_URL'),
         'diq_guild_id'  => env('DIQ_GUILD_ID'),
     ],
 

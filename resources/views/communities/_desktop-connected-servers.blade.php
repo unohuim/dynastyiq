@@ -1,4 +1,27 @@
 {{-- Card: Connected Servers (with Add button in header) --}}
+@php
+    $diqInstallUrl = config('services.discord.diq_install_url');
+    $discordBotToken = (string) config('apiurls.discord-bot.key');
+    $botInstalledGuildIds = collect();
+
+    if ($discordBotToken !== '' && $guilds->isNotEmpty()) {
+        $botInstalledGuildIds = $guilds
+            ->filter(function ($guild) use ($discordBotToken): bool {
+                try {
+                    return \Illuminate\Support\Facades\Http::withHeaders([
+                        'Authorization' => 'Bot ' . $discordBotToken,
+                    ])
+                        ->acceptJson()
+                        ->get('https://discord.com/api/v10/guilds/' . $guild->discord_guild_id)
+                        ->successful();
+                } catch (\Throwable) {
+                    return false;
+                }
+            })
+            ->pluck('discord_guild_id');
+    }
+@endphp
+
 <section class="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
     <div class="mb-3 flex items-center justify-between">
         <div class="flex items-center gap-2">
@@ -31,6 +54,7 @@
                     $icon   = data_get($g->meta, 'icon');
                     $ext    = $icon && str_starts_with($icon, 'a_') ? 'gif' : 'png';
                     $avatar = $icon ? "https://cdn.discordapp.com/icons/{$g->discord_guild_id}/{$icon}.{$ext}?size=64" : null;
+                    $botInstalled = $botInstalledGuildIds->contains((string) $g->discord_guild_id);
                 @endphp
                 <li class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <div class="flex items-center gap-3">
@@ -47,9 +71,28 @@
                             <div class="text-xs text-slate-600">ID: {{ $g->discord_guild_id }}</div>
                         </div>
                     </div>
-                    <button class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 cursor-not-allowed">
-                        Manage
-                    </button>
+                    @if($botInstalled)
+                        <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                            Installed
+                        </span>
+                    @elseif($diqInstallUrl)
+                        <a
+                            href="{{ $diqInstallUrl }}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                        >
+                            Install Bot
+                        </a>
+                    @else
+                        <button
+                            type="button"
+                            disabled
+                            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-400 cursor-not-allowed"
+                        >
+                            Install Bot
+                        </button>
+                    @endif
                 </li>
             @endforeach
         </ul>
