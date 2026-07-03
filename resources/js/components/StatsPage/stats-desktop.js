@@ -145,7 +145,7 @@ const sortByRosterOrder = (rows) => [...rows].sort((a, b) => {
 // Persist filters per-container across re-renders
 const desktopState = new WeakMap();
 
-const splitLeagueOwnerHeadings = (headings) => {
+const splitLeagueOwnerHeadings = (headings, useRosterSlotColumn = false) => {
     const srcHeadings = Array.isArray(headings) ? [...headings] : [];
     const typeOrigIdx = srcHeadings.findIndex((h) =>
         ["type", "pos_type"].includes(String(h?.key || "").toLowerCase())
@@ -154,7 +154,13 @@ const splitLeagueOwnerHeadings = (headings) => {
         { key: "__rk", label: "Rk" },
         ...(typeOrigIdx > -1 ? [srcHeadings[typeOrigIdx]] : []),
         ...srcHeadings.filter((_, i) => i !== typeOrigIdx),
-    ];
+    ].map((heading) => {
+        const key = String(heading?.key ?? "").toLowerCase();
+
+        return useRosterSlotColumn && ["type", "pos_type"].includes(key)
+            ? { ...heading, label: "Slot" }
+            : heading;
+    });
     const fixedKeys = new Set(["__rk", "type", "pos_type", "player", "name", "team", "league"]);
     const left = ordered.filter((heading) => fixedKeys.has(String(heading?.key ?? "").toLowerCase()));
     const stats = ordered.filter((heading) => !fixedKeys.has(String(heading?.key ?? "").toLowerCase()));
@@ -162,10 +168,11 @@ const splitLeagueOwnerHeadings = (headings) => {
     return { left, stats };
 };
 
-const headingWidth = (key) => {
+const headingWidth = (key, settings = {}) => {
     const normalized = String(key ?? "").toLowerCase();
 
     if (normalized === "__rk") return "44px";
+    if (settings?.leaguePlatform === "yahoo" && ["type", "pos_type"].includes(normalized)) return "52px";
     if (["type", "pos_type"].includes(normalized)) return "36px";
     if (normalized === "team") return "76px";
     if (normalized === "league") return "72px";
@@ -190,9 +197,11 @@ const renderLeagueOwnerStatsDesktop = (
     };
     desktopState.set(container, state);
 
-    const { left, stats } = splitLeagueOwnerHeadings(headings);
-    const leftGridCols = left.map((heading) => headingWidth(heading?.key)).join(" ");
-    const statGridCols = stats.map((heading) => headingWidth(heading?.key)).join(" ") || "72px";
+    const isYahooLeague = settings?.leaguePlatform === "yahoo";
+    const useRosterSlotColumn = () => isYahooLeague && state.fantasyTeamFilter.trim() !== "";
+    const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
+    const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
+    const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
 
     const teams = Array.from(
         new Set(
@@ -216,10 +225,15 @@ const renderLeagueOwnerStatsDesktop = (
             fantasyTeamsByName.set(name, {
                 name,
                 avatarUrl: String(row?.fantasy_team_avatar_url ?? "").trim(),
+                isUserTeam: row?.fantasy_team_is_user_team === true,
             });
         }
     });
-    const fantasyTeams = [...fantasyTeamsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const fantasyTeams = [...fantasyTeamsByName.values()].sort((a, b) => {
+        if (a.isUserTeam !== b.isUserTeam) return a.isUserTeam ? -1 : 1;
+
+        return a.name.localeCompare(b.name);
+    });
 
     container.innerHTML = "";
 
@@ -302,6 +316,7 @@ const renderLeagueOwnerStatsDesktop = (
             fantasyTeamMenu.classList.add("hidden");
             renderFantasyTeamButton();
             syncOwnerPaneVisibility();
+            syncRosterSlotHeader();
             renderRows();
         });
         fantasyTeamMenu.appendChild(option);
@@ -387,12 +402,17 @@ const renderLeagueOwnerStatsDesktop = (
     const leftBody = document.createElement("div");
     const statsBody = document.createElement("div");
     const ownerBody = document.createElement("div");
+    const typeHeaderCells = [];
 
     const sortableHeader = (heading, className) => {
         const key = heading?.key;
         const th = document.createElement("div");
         th.className = className;
         th.textContent = heading?.label ?? "";
+
+        if (["type", "pos_type"].includes(String(key).toLowerCase())) {
+            typeHeaderCells.push(th);
+        }
 
         if (key !== "__rk") {
             th.classList.add("cursor-pointer");
@@ -412,6 +432,18 @@ const renderLeagueOwnerStatsDesktop = (
         }
 
         return th;
+    };
+
+    const syncRosterSlotHeader = () => {
+        typeHeaderCells.forEach((cell) => {
+            if (cell.firstChild) {
+                cell.firstChild.textContent = useRosterSlotColumn() ? "Slot" : "Type";
+
+                return;
+            }
+
+            cell.textContent = useRosterSlotColumn() ? "Slot" : "Type";
+        });
     };
 
     left.forEach((heading) => {
@@ -469,13 +501,14 @@ const renderLeagueOwnerStatsDesktop = (
         const leagueQ = state.leagueFilter.trim().toUpperCase();
 
         const filtered = rows.filter((row) => {
+            const isRosterOnly = row?.league_roster_only === true;
             const name = String(row?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
             const hitTeam = !teamQ || String(row?.team ?? "").toUpperCase() === teamQ;
             const hitFantasyTeam = !fantasyTeamQ || String(row?.fantasy_team_name ?? "").toUpperCase() === fantasyTeamQ;
             const hitLeague = !leagueQ || String(row?.league ?? "").toUpperCase() === leagueQ;
 
-            return hitName && hitTeam && hitFantasyTeam && hitLeague;
+            return (!isRosterOnly || fantasyTeamQ) && hitName && hitTeam && hitFantasyTeam && hitLeague;
         });
 
         return fantasyTeamQ ? sortByRosterOrder(filtered) : filtered;
@@ -489,11 +522,23 @@ const renderLeagueOwnerStatsDesktop = (
             cell.className = "flex items-center justify-center text-gray-500";
             cell.textContent = String(idx + 1);
         } else if (["type", "pos_type"].includes(String(key).toLowerCase())) {
-            const val = row.pos ?? row.position ?? row[key] ?? row.pos_type ?? row.type;
-            const typeVal = row.pos_type ?? row.type;
             cell.className = "flex items-center justify-center text-gray-500";
-            cell.appendChild(buildPosShape(val, typeVal));
+
+            if (useRosterSlotColumn()) {
+                const slot = String(row?.roster_slot ?? "").trim();
+                cell.textContent = slot;
+            } else {
+                const val = row.pos ?? row.position ?? row[key] ?? row.pos_type ?? row.type;
+                const typeVal = row.pos_type ?? row.type;
+                cell.appendChild(buildPosShape(val, typeVal));
+            }
         } else if (String(key).toLowerCase() === "team") {
+            if (row?.league_roster_placeholder === true || String(row?.team ?? "").trim() === "") {
+                cell.className = "flex items-center justify-center text-gray-500";
+
+                return cell;
+            }
+
             const badge = document.createElement("div");
             badge.className =
                 "inline-flex h-7 px-3 rounded-md items-center justify-center " +
@@ -508,6 +553,12 @@ const renderLeagueOwnerStatsDesktop = (
             cell.className = "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
             cell.textContent = val ?? "";
         } else if (/^(player|name)$/i.test(String(key))) {
+            if (row?.league_roster_placeholder === true) {
+                cell.className = "flex min-w-0 items-center justify-start";
+
+                return cell;
+            }
+
             const rawVal = row.stats?.[key] ?? row[key];
             const val = formatStatValue(key, rawVal);
             cell.className = "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
@@ -625,6 +676,7 @@ const renderLeagueOwnerStatsDesktop = (
     window.addEventListener("resize", updateScrollHints, { passive: true });
 
     renderRows();
+    syncRosterSlotHeader();
     window.requestAnimationFrame(updateScrollHints);
 
     const observer = new MutationObserver(() => {

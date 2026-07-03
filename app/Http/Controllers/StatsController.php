@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\Perspective;
+use App\Models\Player;
 use App\Models\PlatformLeague;
 use App\Models\Stat;
 use App\Models\NhlSeasonStat;
@@ -213,9 +214,10 @@ class StatsController extends BaseController
             );
         }
 
-        $payload = $this->withLeagueOwnership($payload, $league);
+        $payload = $this->withLeagueOwnership($payload, $league, $user?->id);
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['ownerColumn'] = true;
+        $payload['settings']['leaguePlatform'] = (string) ($league->platform ?? '');
         $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
         $payload['perspectives'] = $this->leagueStatsPerspectives($user, $league);
         $payload['selectedPerspective'] = $perspective->slug ?? $perspective->name ?? $defaultPerspectiveSlug;
@@ -351,20 +353,31 @@ class StatsController extends BaseController
      *
      * @return array<string,mixed>
      */
-    private function withLeagueOwnership(array $payload, PlatformLeague $league): array
+    private function withLeagueOwnership(array $payload, PlatformLeague $league, ?int $userId = null): array
     {
-        $ownership = $this->leagueOwnership($league);
+        $ownership = $this->leagueOwnership($league, $userId);
         $ownershipByPlayerId = $ownership['by_player_id'];
         $ownershipByNhlId = $ownership['by_nhl_id'];
+        $seenPlayerIds = [];
+        $seenNhlIds = [];
 
         $payload['data'] = collect($payload['data'] ?? [])
-            ->map(static function (mixed $row) use ($ownershipByPlayerId, $ownershipByNhlId): mixed {
+            ->map(static function (mixed $row) use ($ownershipByPlayerId, $ownershipByNhlId, &$seenPlayerIds, &$seenNhlIds): mixed {
                 if (! is_array($row)) {
                     return $row;
                 }
 
                 $playerId = (string) ($row['player_id'] ?? '');
                 $nhlPlayerId = (string) ($row['nhl_player_id'] ?? '');
+
+                if ($playerId !== '') {
+                    $seenPlayerIds[$playerId] = true;
+                }
+
+                if ($nhlPlayerId !== '') {
+                    $seenNhlIds[$nhlPlayerId] = true;
+                }
+
                 $rowOwnership = $playerId !== ''
                     ? ($ownershipByPlayerId[$playerId] ?? null)
                     : null;
@@ -374,6 +387,7 @@ class StatsController extends BaseController
                     'fantasy_team_id' => $rowOwnership['fantasy_team_id'] ?? null,
                     'fantasy_team_name' => $rowOwnership['fantasy_team_name'] ?? null,
                     'fantasy_team_avatar_url' => $rowOwnership['fantasy_team_avatar_url'] ?? null,
+                    'fantasy_team_is_user_team' => $rowOwnership['fantasy_team_is_user_team'] ?? false,
                     'roster_slot' => $rowOwnership['roster_slot'] ?? null,
                     'roster_status' => $rowOwnership['roster_status'] ?? null,
                     'roster_group' => $rowOwnership['roster_group'] ?? null,
@@ -385,24 +399,42 @@ class StatsController extends BaseController
             ->values()
             ->all();
 
+        if ((string) ($league->platform ?? '') === 'yahoo') {
+            $missingRows = collect($ownership['roster_rows'])
+                ->reject(static function (array $row) use ($seenPlayerIds, $seenNhlIds): bool {
+                    $playerId = (string) ($row['player_id'] ?? '');
+                    $nhlPlayerId = (string) ($row['nhl_player_id'] ?? '');
+
+                    return ($playerId !== '' && isset($seenPlayerIds[$playerId]))
+                        || ($nhlPlayerId !== '' && isset($seenNhlIds[$nhlPlayerId]));
+                })
+                ->values()
+                ->all();
+
+            $payload['data'] = array_values(array_merge($payload['data'], $missingRows));
+        }
+
         return $payload;
     }
 
     /**
      * Return current fantasy owner metadata keyed by local and NHL player ids.
      *
-     * @return array{by_player_id:array<string,array<string,mixed>>,by_nhl_id:array<string,array<string,mixed>>}
+     * @return array{by_player_id:array<string,array<string,mixed>>,by_nhl_id:array<string,array<string,mixed>>,roster_rows:array<int,array<string,mixed>>}
      */
-    private function leagueOwnership(PlatformLeague $league): array
+    private function leagueOwnership(PlatformLeague $league, ?int $userId = null): array
     {
-        $slotOrder = $league->rosterSlots()
+        $usesProviderSlotOrder = (string) ($league->platform ?? '') === 'yahoo';
+        $rosterSlots = $league->rosterSlots()
+            ->get(['slot', 'count', 'sort_order']);
+        $slotOrder = $rosterSlots
             ->pluck('sort_order', 'slot')
             ->map(static fn ($value): int => (int) $value)
             ->all();
         $teams = $league->teams()
             ->select('id', 'platform_team_id', 'name')
             ->with([
-                'roster:id,nhl_id,position',
+                'roster:id,nhl_id,full_name,first_name,last_name,position,pos_type,dob,team_abbrev,head_shot_url,is_goalie,status',
                 'users' => static function ($query): void {
                     $query->wherePivot('is_active', true)
                         ->select('users.id')
@@ -413,6 +445,7 @@ class StatsController extends BaseController
 
         $byPlayerId = [];
         $byNhlId = [];
+        $rosterRows = [];
 
         foreach ($teams as $team) {
             $defaultAvatar = config('ui.default_team_avatar')
@@ -427,28 +460,36 @@ class StatsController extends BaseController
                     break;
                 }
             }
+            $isUserTeam = $userId !== null && $team->users->contains(static fn ($user): bool => (int) $user->id === $userId);
 
             $ownerPayload = [
                 'fantasy_team_id' => (string) $team->platform_team_id,
                 'fantasy_team_name' => (string) $team->name,
                 'fantasy_team_avatar_url' => $ownerAvatar,
+                'fantasy_team_is_user_team' => $isUserTeam,
             ];
+            $teamSlotCounts = [];
 
             foreach ($team->roster as $player) {
                 $slot = (string) ($player->pivot->slot ?? '');
+                $slotKey = strtoupper(trim($slot));
                 $rosterStatus = (string) ($player->pivot->status ?? '');
                 $eligibility = $this->normalizeRosterEligibility($player->pivot->eligibility ?? null);
-                $displaySlot = $this->displayRosterSlot($slot, $rosterStatus, $eligibility, (string) ($player->position ?? ''));
+                $displaySlot = $usesProviderSlotOrder
+                    ? ($slotKey !== '' ? $slotKey : (strtolower(trim($rosterStatus)) === 'na' ? 'NA' : ''))
+                    : $this->displayRosterSlot($slot, $rosterStatus, $eligibility, (string) ($player->position ?? ''));
                 $rosterGroup = $this->isMinorRosterRow($displaySlot, $rosterStatus) ? 'minor' : 'active';
-                $rosterSortOrder = $rosterGroup === 'minor'
-                    ? $this->minorRosterPositionSortOrder($eligibility)
-                    : ($slotOrder[$slot] ?? $this->fallbackRosterSlotOrder($displaySlot));
+                $rosterSortOrder = $usesProviderSlotOrder
+                    ? ($slotOrder[$slot] ?? $slotOrder[$slotKey] ?? $slotOrder[$displaySlot] ?? $this->fallbackRosterSlotOrder($displaySlot))
+                    : ($rosterGroup === 'minor'
+                        ? $this->minorRosterPositionSortOrder($eligibility)
+                        : ($slotOrder[$slot] ?? $this->fallbackRosterSlotOrder($displaySlot)));
                 $rosterPayload = array_merge($ownerPayload, [
                     'roster_slot' => $displaySlot,
                     'roster_status' => $rosterStatus,
                     'roster_group' => $rosterGroup,
                     'roster_sort_order' => $rosterSortOrder,
-                    'roster_group_sort_order' => $rosterGroup === 'minor' ? 1 : 0,
+                    'roster_group_sort_order' => $usesProviderSlotOrder ? 0 : ($rosterGroup === 'minor' ? 1 : 0),
                     'roster_status_sort_order' => match ($rosterStatus) {
                         'active' => 10,
                         'bench' => 20,
@@ -458,11 +499,29 @@ class StatsController extends BaseController
                         default => 90,
                     },
                 ]);
+                $teamSlotCounts[$displaySlot] = ($teamSlotCounts[$displaySlot] ?? 0) + 1;
 
                 $byPlayerId[(string) $player->id] = $rosterPayload;
 
                 if (filled($player->nhl_id)) {
                     $byNhlId[(string) $player->nhl_id] = $rosterPayload;
+                }
+
+                $rosterRows[] = array_merge($this->rosterOnlyStatsRow($player), $rosterPayload);
+            }
+
+            if ($usesProviderSlotOrder) {
+                foreach ($rosterSlots as $slotSetting) {
+                    $slot = strtoupper(trim((string) $slotSetting->slot));
+                    $missingCount = max(0, (int) $slotSetting->count - (int) ($teamSlotCounts[$slot] ?? 0));
+
+                    for ($i = 0; $i < $missingCount; $i++) {
+                        $rosterRows[] = $this->emptyRosterSlotStatsRow(
+                            $ownerPayload,
+                            $slot,
+                            (int) $slotSetting->sort_order,
+                        );
+                    }
                 }
             }
         }
@@ -470,7 +529,82 @@ class StatsController extends BaseController
         return [
             'by_player_id' => $byPlayerId,
             'by_nhl_id' => $byNhlId,
+            'roster_rows' => $rosterRows,
         ];
+    }
+
+    /**
+     * Build a league stats row for rostered players absent from the stats payload.
+     */
+    private function rosterOnlyStatsRow(Player $player): array
+    {
+        return [
+            'name' => (string) ($player->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? ''))),
+            'player_id' => (int) $player->id,
+            'avatar_url' => $player->head_shot_url,
+            'age' => $this->playerAge($player),
+            'team' => $player->team_abbrev,
+            'league' => null,
+            'pos' => $player->position,
+            'pos_type' => $player->pos_type,
+            'contract_value' => null,
+            'contract_value_num' => null,
+            'contract_last_year' => null,
+            'contract_last_year_num' => null,
+            'gp' => null,
+            'nhl_player_id' => $player->nhl_id,
+            'toi_seconds' => null,
+            'toi' => null,
+            'league_roster_only' => true,
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $ownerPayload
+     */
+    private function emptyRosterSlotStatsRow(array $ownerPayload, string $slot, int $sortOrder): array
+    {
+        $slot = strtoupper(trim($slot));
+        $status = match ($slot) {
+            'BN' => 'bench',
+            'IR', 'IR+' => 'ir',
+            'NA' => 'na',
+            default => 'active',
+        };
+
+        return array_merge([
+            'name' => '',
+            'player_id' => null,
+            'avatar_url' => null,
+            'age' => null,
+            'team' => null,
+            'league' => null,
+            'pos' => null,
+            'pos_type' => null,
+            'contract_value' => null,
+            'contract_value_num' => null,
+            'contract_last_year' => null,
+            'contract_last_year_num' => null,
+            'gp' => null,
+            'nhl_player_id' => null,
+            'toi_seconds' => null,
+            'toi' => null,
+            'league_roster_only' => true,
+            'league_roster_placeholder' => true,
+        ], $ownerPayload, [
+            'roster_slot' => $slot,
+            'roster_status' => $status,
+            'roster_group' => 'active',
+            'roster_sort_order' => $sortOrder,
+            'roster_group_sort_order' => 0,
+            'roster_status_sort_order' => match ($status) {
+                'active' => 10,
+                'bench' => 20,
+                'ir' => 30,
+                'na' => 40,
+                default => 90,
+            },
+        ]);
     }
 
     /**
