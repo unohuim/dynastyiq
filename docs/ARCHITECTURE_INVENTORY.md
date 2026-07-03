@@ -147,6 +147,41 @@ Laravel web routes, domain persistence, or app authorization rules.
 
 ---
 
+### Fantrax Draft State Sync
+
+**Name:** Fantrax Draft State Sync
+**Type:** External Platform Sync Pattern
+**Location:**
+- `app/Services/SyncFantraxDraftState.php`
+- `app/Jobs/SyncFantraxDraftStateJob.php`
+- `app/Console/Commands/FantraxDraftsPollCommand.php`
+- `app/Models/FantraxDraftState.php`
+- `app/Models/FantraxDraftPick.php`
+- `app/Events/FantraxDraftPickMade.php`
+
+**Purpose:**
+Persist current Fantrax draft payload state so periodic syncs can detect newly made picks.
+
+**When to Use:**
+Polling Fantrax draft payloads, comparing latest provider draft rows against persisted pick state, and emitting events when a previously unmade pick receives a Fantrax player id.
+
+**When Not to Use:**
+Rendering the draft window directly, storing every raw polling snapshot, or syncing Fantrax rosters.
+
+**Public Interface:**
+- `SyncFantraxDraftState::sync`
+- `SyncFantraxDraftState::syncPayloads`
+- `SyncFantraxDraftStateJob`
+- `fantrax:drafts:poll`
+- `FantraxDraftPickMade`
+
+**Example Usage:**
+```php
+SyncFantraxDraftStateJob::dispatch($platformLeague->id);
+```
+
+---
+
 ## Authorization & Identity
 
 ### Role and Organization Authorization
@@ -359,7 +394,7 @@ Global app state, backend authorization, or unrelated page modules.
 Prepare league detail data for Blade without spreading query and transformation logic through views.
 
 **When to Use:**
-League detail pages that need organization, platform league, teams, roster, and availability context.
+League detail pages that need organization, platform league, teams, roster, drafting, and availability context.
 
 **When Not to Use:**
 Raw API endpoints, import services, or low-level model relationships.
@@ -1255,6 +1290,39 @@ dispatch(new SyncFantraxLeagueJob($platformLeague->id));
 
 ---
 
+### Fantrax Drafting Window
+
+**Name:** Fantrax Drafting Window
+**Type:** External Platform View Payload
+**Location:**
+- `app/Services/FantraxDraftingWindow.php`
+- `app/Http/Controllers/CommunityLeagues.php`
+- `app/ViewModels/LeagueShowViewModel.php`
+- `app/DTO/LeagueShowDto.php`
+- `resources/views/communities/leagues/show.blade.php`
+
+**Purpose:**
+Normalize Fantrax draft payloads into a stable community league show drafting view contract.
+
+**When to Use:**
+Rendering Fantrax draft results on community league detail pages or enriching drafted Fantrax player ids for display.
+
+**When Not to Use:**
+Persisting Fantrax draft history, syncing Fantrax rosters, or importing canonical NHL source data.
+
+**Public Interface:**
+- `FantraxDraftingWindow`
+- `CommunityLeagues::show`
+- `LeagueShowViewModel`
+- `LeagueShowDto`
+
+**Example Usage:**
+```php
+$drafting = app(FantraxDraftingWindow::class)->normalize($leagueInfo, $draftResults);
+```
+
+---
+
 ### Platform State Service
 
 **Name:** Platform State Service
@@ -1331,13 +1399,13 @@ $slotOrder = $league->rosterSlots()->pluck('sort_order', 'slot');
 - `app/Http/Controllers/Admin/YahooOAuthProbeController.php`
 
 **Purpose:**
-Map a connected Yahoo Fantasy user's hockey leagues, roster settings, and teams into platform-neutral league tables.
+Map a connected Yahoo Fantasy user's hockey leagues, league settings, scoring categories, roster settings, and teams into platform-neutral league tables.
 
 **When to Use:**
-Syncing Yahoo leagues after OAuth connection, refreshing Yahoo league assignments, importing Yahoo roster position settings, or making Yahoo leagues available through the shared Leagues experience.
+Syncing Yahoo leagues after OAuth connection, refreshing Yahoo league assignments, importing Yahoo league settings, scoring categories, roster position settings, or making Yahoo leagues available through the shared Leagues experience.
 
 **When Not to Use:**
-Yahoo player imports, standings, scoring settings, scoreboard data, or transactions.
+Yahoo player imports, standings, scoreboard data, or transactions.
 
 **Public Interface:**
 - `SyncYahooTeamRosterJob`

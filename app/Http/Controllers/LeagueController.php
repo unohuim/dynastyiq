@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\SyncFantraxLeagueJob;
+use App\Models\Player;
 use App\Services\FantasyLeagueAccess;
 use App\Services\YahooFantasyLeagueService;
 use Illuminate\Contracts\View\View;
@@ -12,9 +13,46 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 final class LeagueController extends Controller
 {
+    /**
+     * Available nhl_season_stats fields for scoring category alignment.
+     *
+     * @var array<int,array{key:string,label:string}>
+     */
+    private const AVAILABLE_STAT_FIELDS = [
+        ['key' => 'gp', 'label' => 'Games Played'],
+        ['key' => 'g', 'label' => 'Goals'],
+        ['key' => 'a', 'label' => 'Assists'],
+        ['key' => 'pts', 'label' => 'Points'],
+        ['key' => 'plus_minus', 'label' => 'Plus/Minus'],
+        ['key' => 'pim', 'label' => 'Penalty Minutes'],
+        ['key' => 'ppg', 'label' => 'Power Play Goals'],
+        ['key' => 'ppa', 'label' => 'Power Play Assists'],
+        ['key' => 'ppp', 'label' => 'Power Play Points'],
+        ['key' => 'pkg', 'label' => 'Shorthanded Goals'],
+        ['key' => 'pka', 'label' => 'Shorthanded Assists'],
+        ['key' => 'pkp', 'label' => 'Shorthanded Points'],
+        ['key' => 'gwg', 'label' => 'Game-Winning Goals'],
+        ['key' => 'sog', 'label' => 'Shots on Goal'],
+        ['key' => 'h', 'label' => 'Hits'],
+        ['key' => 'b', 'label' => 'Blocks'],
+        ['key' => 'fow', 'label' => 'Faceoffs Won'],
+        ['key' => 'fol', 'label' => 'Faceoffs Lost'],
+        ['key' => 'wins', 'label' => 'Wins'],
+        ['key' => 'losses', 'label' => 'Losses'],
+        ['key' => 'ot_losses', 'label' => 'Overtime Losses'],
+        ['key' => 'sv', 'label' => 'Saves'],
+        ['key' => 'sa', 'label' => 'Shots Against'],
+        ['key' => 'ga', 'label' => 'Goals Against'],
+        ['key' => 'gaa', 'label' => 'Goals Against Average'],
+        ['key' => 'sv_pct', 'label' => 'Save Percentage'],
+        ['key' => 'so', 'label' => 'Shutouts'],
+        ['key' => 'shosv', 'label' => 'Shootout Saves'],
+    ];
+
     public function index(Request $request): View|RedirectResponse
     {
         $user = $request->user();
@@ -43,6 +81,15 @@ final class LeagueController extends Controller
             'activeLeagueId' => $activeLeague?->id,
             'activeLeague' => $activeLeague,
             'teams' => $teams,
+            'scoringCategories' => $activeLeague ? $this->scoringCategoriesPayload($activeLeague) : [],
+            'scoringAlignmentCategories' => $activeLeague ? $this->scoringAlignmentCategoriesPayload($activeLeague) : [],
+            'manualScoringMappings' => $activeLeague ? $this->manualScoringMappingsPayload($activeLeague) : [],
+            'availableStatFields' => $this->availableStatFieldsPayload(),
+            'searchPlayers' => $activeLeague ? $this->searchPlayersPayload() : [],
+            'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
+            'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
+            'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
+            'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
         ]);
     }
 
@@ -65,6 +112,67 @@ final class LeagueController extends Controller
         return view('leagues._panel', [
             'league' => $league,
             'teams'  => $this->teamsPayload($league),
+            'scoringCategories' => $this->scoringCategoriesPayload($league),
+            'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
+            'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
+            'availableStatFields' => $this->availableStatFieldsPayload(),
+            'searchPlayers' => $this->searchPlayersPayload(),
+            'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
+            'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
+            'canShowLeagueStats' => $this->canShowLeagueStats($league),
+        ]);
+    }
+
+    /**
+     * Persist manual scoring category mappings for the selected league.
+     */
+    public function updateScoringSettings(Request $request, string $leagueId): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before updating league settings.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+        $statKeys = collect($this->availableStatFieldsPayload())->pluck('key')->all();
+        $validated = $request->validate([
+            'mappings' => ['nullable', 'array'],
+            'mappings.*' => ['nullable', 'string', Rule::in($statKeys)],
+        ]);
+        $manualMappings = collect($validated['mappings'] ?? [])
+            ->mapWithKeys(static fn (mixed $value, mixed $key): array => [(string) $key => (string) $value])
+            ->filter(static fn (string $value): bool => $value !== '')
+            ->all();
+        $scoringSettings = is_array($league->scoring_settings) ? $league->scoring_settings : [];
+        $categories = $this->applyManualScoringMappingsToCategories(
+            is_array($scoringSettings['categories'] ?? null) ? $scoringSettings['categories'] : [],
+            $manualMappings,
+        );
+
+        $scoringSettings['manual_mappings'] = $manualMappings;
+        $scoringSettings['categories'] = $categories;
+
+        $league->forceFill([
+            'scoring_settings' => $scoringSettings,
+        ])->save();
+
+        $league->refresh();
+
+        return response()->json([
+            'message' => 'Scoring category alignment saved.',
+            'scoringCategories' => $this->scoringCategoriesPayload($league),
+            'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
+            'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
+            'canShowLeagueStats' => $this->canShowLeagueStats($league),
+            'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
         ]);
     }
 
@@ -166,6 +274,15 @@ final class LeagueController extends Controller
             'activeLeagueId' => $activeLeague->id,
             'activeLeague' => $activeLeague,
             'teams' => $this->teamsPayload($activeLeague),
+            'scoringCategories' => $this->scoringCategoriesPayload($activeLeague),
+            'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($activeLeague),
+            'manualScoringMappings' => $this->manualScoringMappingsPayload($activeLeague),
+            'availableStatFields' => $this->availableStatFieldsPayload(),
+            'searchPlayers' => $this->searchPlayersPayload(),
+            'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
+            'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
+            'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
         ]);
     }
 
@@ -211,7 +328,7 @@ final class LeagueController extends Controller
             ? self::fantraxEligibilityByPlatformPlayerId($teams->pluck('roster')->flatten())
             : [];
 
-        $teams = $teams
+        $teamRows = $teams
             ->map(static function ($t) use ($authId, $slotOrder, $fantraxEligibility, $league): array {
                 // default avatar per TEAM name
                 $defaultAvatar = config('ui.default_team_avatar')
@@ -236,7 +353,7 @@ final class LeagueController extends Controller
                     'owned_by_me'       => $ownedByMe,
                     'owner_user_ids'    => $ownerIds,
                     'players'           => $t->roster
-                        ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $league): array {
+                        ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $league, $t, $ownerAvatar): array {
                             $slot = (string) ($p->pivot->slot ?? '');
                             $rosterStatus = (string) ($p->pivot->status ?? '');
                             $eligibility = self::normalizeEligibility($p->pivot->eligibility);
@@ -271,6 +388,9 @@ final class LeagueController extends Controller
                                 'avatar_url'    => (string) ($p->head_shot_url ?? ''),
                                 'is_goalie'     => (bool) $p->is_goalie,
                                 'status'        => (string) $p->status,
+                                'fantasy_team_id' => (string) $t->platform_team_id,
+                                'fantasy_team_name' => (string) $t->name,
+                                'fantasy_team_avatar_url' => $ownerAvatar,
                                 'roster_slot'   => $displaySlot,
                                 'roster_status' => $rosterStatus,
                                 'roster_group'  => $rosterGroup,
@@ -303,7 +423,327 @@ final class LeagueController extends Controller
             ->values()
             ->all();
 
+        $freeAgents = $this->freeAgentsPayload($league);
+        $allPlayers = collect($teamRows)
+            ->pluck('players')
+            ->flatten(1)
+            ->concat($freeAgents)
+            ->unique(static fn (array $player): int => (int) $player['id'])
+            ->sortBy(static fn (array $player): string => (string) $player['name'])
+            ->values()
+            ->all();
+
+        $teams = [[
+            'id' => '__all_players__',
+            'name' => 'All Players',
+            'owner_avatar_url' => null,
+            'owned_by_me' => false,
+            'owner_user_ids' => [],
+            'players' => $allPlayers,
+        ], ...$teamRows];
+
+        $teams[] = [
+            'id' => '__free_agents__',
+            'name' => 'Free Agents',
+            'owner_avatar_url' => null,
+            'owned_by_me' => false,
+            'owner_user_ids' => [],
+            'players' => $freeAgents,
+        ];
+
         return $teams;
+    }
+
+    /**
+     * Build free-agent player rows for the selected platform league.
+     */
+    private function freeAgentsPayload($league): array
+    {
+        $teamIds = $league->teams()
+            ->pluck('id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+
+        $players = Player::query()
+            ->select([
+                'id',
+                'full_name',
+                'first_name',
+                'last_name',
+                'position',
+                'pos_type',
+                'dob',
+                'team_abbrev',
+                'head_shot_url',
+                'is_goalie',
+                'status',
+            ])
+            ->when($teamIds !== [], static function ($query) use ($teamIds): void {
+                $query->whereNotExists(static function ($subquery) use ($teamIds): void {
+                    $subquery->selectRaw('1')
+                        ->from('platform_roster_memberships')
+                        ->whereIn('platform_team_id', $teamIds)
+                        ->whereNull('ends_at')
+                        ->whereColumn('platform_roster_memberships.player_id', 'players.id');
+                });
+            })
+            ->orderBy('full_name')
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->get();
+
+        return $players
+            ->map(static function (Player $player): array {
+                $position = (string) ($player->position ?? '');
+
+                return [
+                    'id' => (int) $player->id,
+                    'first_name' => (string) ($player->first_name ?? ''),
+                    'last_name' => (string) ($player->last_name ?? ''),
+                    'name' => (string) ($player->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? ''))),
+                    'position' => $position,
+                    'age' => $player->age(),
+                    'pos_type' => (string) ($player->pos_type ?? ''),
+                    'team_abbrev' => (string) ($player->team_abbrev ?? ''),
+                    'avatar_url' => (string) ($player->head_shot_url ?? ''),
+                    'is_goalie' => (bool) $player->is_goalie,
+                    'status' => (string) $player->status,
+                    'roster_slot' => 'FA',
+                    'roster_status' => 'free_agent',
+                    'roster_group' => 'active',
+                    'eligibility' => self::realRosterPositions([$position]),
+                    'starts_at' => '',
+                    'ends_at' => '',
+                    'roster_sort_order' => self::fallbackRosterSlotOrder($position),
+                    'roster_group_sort_order' => 0,
+                    'roster_status_sort_order' => 80,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build locally searchable player rows for client-side filtering.
+     */
+    private function searchPlayersPayload(): array
+    {
+        return Player::query()
+            ->select([
+                'id',
+                'full_name',
+                'first_name',
+                'last_name',
+                'position',
+                'pos_type',
+                'dob',
+                'team_abbrev',
+                'head_shot_url',
+                'is_goalie',
+                'status',
+            ])
+            ->orderBy('full_name')
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->get()
+            ->map(static function (Player $player): array {
+                $position = (string) ($player->position ?? '');
+
+                return [
+                    'id' => (int) $player->id,
+                    'first_name' => (string) ($player->first_name ?? ''),
+                    'last_name' => (string) ($player->last_name ?? ''),
+                    'name' => (string) ($player->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? ''))),
+                    'position' => $position,
+                    'age' => $player->age(),
+                    'pos_type' => (string) ($player->pos_type ?? ''),
+                    'team_abbrev' => (string) ($player->team_abbrev ?? ''),
+                    'avatar_url' => (string) ($player->head_shot_url ?? ''),
+                    'is_goalie' => (bool) $player->is_goalie,
+                    'status' => (string) $player->status,
+                    'roster_slot' => 'DB',
+                    'roster_status' => 'database',
+                    'roster_group' => 'active',
+                    'eligibility' => self::realRosterPositions([$position]),
+                    'starts_at' => '',
+                    'ends_at' => '',
+                    'roster_sort_order' => self::fallbackRosterSlotOrder($position),
+                    'roster_group_sort_order' => 0,
+                    'roster_status_sort_order' => 90,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build locally available scoring category labels for the selected league.
+     */
+    private function scoringCategoriesPayload($league): array
+    {
+        $settings = data_get($league, 'scoring_settings.categories')
+            ?? data_get($league, 'scoring_settings')
+            ?? data_get($league, 'settings.scoring_categories')
+            ?? data_get($league, 'extras.scoring_categories')
+            ?? [];
+
+        if (! is_array($settings)) {
+            return [];
+        }
+
+        $categories = array_is_list($settings) ? $settings : array_values($settings);
+
+        return collect($categories)
+            ->map(static function (mixed $category): ?array {
+                if (is_string($category)) {
+                    $label = trim($category);
+
+                    return $label !== '' ? ['label' => $label, 'value' => null] : null;
+                }
+
+                if (! is_array($category)) {
+                    return null;
+                }
+
+                $label = (string) (
+                    $category['short']
+                    ?? $category['label']
+                    ?? $category['name']
+                    ?? $category['code']
+                    ?? ''
+                );
+
+                if (trim($label) === '') {
+                    return null;
+                }
+
+                return [
+                    'label' => trim($label),
+                    'value' => $category['points'] ?? $category['value'] ?? null,
+                    'stat_key' => $category['stat_key'] ?? null,
+                    'is_mapped' => filled($category['stat_key'] ?? null),
+                    'mapping_source' => $category['mapping_source'] ?? null,
+                ];
+            })
+            ->filter()
+            ->unique(static fn (array $category): string => $category['label'])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build editable Yahoo scoring alignment rows for the league options drawer.
+     */
+    private function scoringAlignmentCategoriesPayload($league): array
+    {
+        $settings = data_get($league, 'scoring_settings.categories') ?? [];
+
+        if (! is_array($settings)) {
+            return [];
+        }
+
+        return collect(array_is_list($settings) ? $settings : array_values($settings))
+            ->filter(static fn (mixed $category): bool => is_array($category))
+            ->map(static function (array $category): array {
+                return [
+                    'id' => (string) ($category['id'] ?? $category['label'] ?? $category['name'] ?? ''),
+                    'label' => (string) ($category['label'] ?? $category['short'] ?? $category['name'] ?? ''),
+                    'name' => (string) ($category['name'] ?? ''),
+                    'short' => (string) ($category['short'] ?? ''),
+                    'value' => $category['points'] ?? $category['value'] ?? null,
+                    'auto_stat_key' => $category['auto_stat_key'] ?? null,
+                    'stat_key' => $category['stat_key'] ?? null,
+                    'is_mapped' => filled($category['stat_key'] ?? null),
+                    'mapping_source' => $category['mapping_source'] ?? null,
+                ];
+            })
+            ->filter(static fn (array $category): bool => $category['id'] !== '' && $category['label'] !== '')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build stored manual scoring mappings keyed by Yahoo stat id.
+     *
+     * @return array<string,string>
+     */
+    private function manualScoringMappingsPayload($league): array
+    {
+        $mappings = data_get($league, 'scoring_settings.manual_mappings', []);
+
+        if (! is_array($mappings)) {
+            return [];
+        }
+
+        return collect($mappings)
+            ->mapWithKeys(static fn (mixed $value, mixed $key): array => [(string) $key => (string) $value])
+            ->filter(static fn (string $value): bool => $value !== '')
+            ->all();
+    }
+
+    /**
+     * Build stat field options exposed to the scoring alignment drawer.
+     *
+     * @return array<int,array{key:string,label:string}>
+     */
+    private function availableStatFieldsPayload(): array
+    {
+        return self::AVAILABLE_STAT_FIELDS;
+    }
+
+    /**
+     * Apply saved manual mappings to category rows without removing auto matches.
+     *
+     * @param array<int,array<string,mixed>> $categories
+     * @param array<string,string> $manualMappings
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function applyManualScoringMappingsToCategories(array $categories, array $manualMappings): array
+    {
+        return collect($categories)
+            ->map(static function (array $category) use ($manualMappings): array {
+                $statId = (string) ($category['id'] ?? '');
+                $manualStatKey = $manualMappings[$statId] ?? null;
+                $autoStatKey = $category['auto_stat_key'] ?? null;
+                $statKey = $manualStatKey ?: $autoStatKey;
+
+                $category['stat_key'] = $statKey;
+                $category['is_mapped'] = $statKey !== null && $statKey !== '';
+                $category['mapping_source'] = $manualStatKey ? 'manual' : ($autoStatKey ? 'auto' : null);
+
+                return $category;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Determine whether every imported scoring category has a resolved stat key.
+     */
+    private function isScoringFullyMapped($league): bool
+    {
+        $categories = data_get($league, 'scoring_settings.categories', []);
+
+        if (! is_array($categories) || $categories === []) {
+            return false;
+        }
+
+        return collect(array_is_list($categories) ? $categories : array_values($categories))
+            ->filter(static fn (mixed $category): bool => is_array($category))
+            ->every(static fn (array $category): bool => filled($category['stat_key'] ?? null));
+    }
+
+    /**
+     * Determine whether the league stats component can be shown for this platform league.
+     */
+    private function canShowLeagueStats($league): bool
+    {
+        return match ((string) ($league->platform ?? '')) {
+            'fantrax' => true,
+            'yahoo' => $this->isScoringFullyMapped($league),
+            default => false,
+        };
     }
 
     /**

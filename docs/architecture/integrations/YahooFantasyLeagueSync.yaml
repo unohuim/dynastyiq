@@ -10,19 +10,20 @@ location:
   - app/Models/PlatformTeam.php
   - app/Http/Controllers/LeagueController.php
   - app/Http/Controllers/Admin/YahooOAuthProbeController.php
-purpose: Map a connected Yahoo Fantasy user's hockey leagues, roster settings, and teams into platform-neutral league tables.
+purpose: Map a connected Yahoo Fantasy user's hockey leagues, league settings, scoring categories, roster settings, and teams into platform-neutral league tables.
 when_to_use:
   - Syncing Yahoo leagues after a user connects Yahoo OAuth.
   - Refreshing Yahoo league and owned-team assignments.
-  - Importing Yahoo league roster position settings for roster display order.
+  - Importing Yahoo league settings, scoring categories, and roster position settings for roster display order.
   - Making Yahoo leagues available to the shared Leagues experience.
 when_not_to_use:
   - Importing Yahoo player collections.
-  - Syncing standings, scoring settings, scoreboard data, or transactions.
+  - Syncing standings, scoreboard data, or transactions.
   - Replacing provider-neutral Leagues route access checks.
 rules:
   - Yahoo league discovery must use user-scoped Yahoo Fantasy API resources.
   - Yahoo league records must persist to platform_leagues with platform yahoo.
+  - Yahoo league settings and scoring categories must persist to platform_leagues from the league settings endpoint.
   - Yahoo roster position settings must persist to provider-neutral roster slot rows before roster display relies on provider slot order.
   - Yahoo teams must persist to platform_teams using Yahoo team_key as the provider team id.
   - User-owned Yahoo teams must attach through league_user_teams.

@@ -32,6 +32,8 @@ Migrations remain the **sole source of truth**.
 - discord_servers
 - event_unit_shifts
 - failed_jobs
+- fantrax_draft_picks
+- fantrax_draft_states
 - fantrax_players
 - import_runs
 - integration_secrets
@@ -414,6 +416,76 @@ Migrations remain the **sole source of truth**.
 - Unique: `player_id`
 - Unique: `fantrax_id`
 - Implicit (FK index): `player_id`
+
+---
+
+## fantrax_draft_states
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** Current persisted Fantrax draft payload state used to determine polling cadence and pick deltas.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE), unique |
+| draft_at | timestamp | Yes | Provider draft datetime when known |
+| status | string(32) | No | Current normalized draft status |
+| current_draft_pick_count | unsignedInteger | No | Count from Fantrax currentDraftPicks |
+| poll_interval_minutes | unsignedSmallInteger | No | Per-league poll interval |
+| draft_results_hash | string(64) | Yes | Latest draft results payload hash |
+| draft_picks_hash | string(64) | Yes | Latest draft pick info payload hash |
+| raw_draft_results | json | Yes | Latest raw draft results payload |
+| raw_draft_pick_info | json | Yes | Latest raw draft pick info payload |
+| last_checked_at | timestamp | Yes | Last poll/persist time |
+| last_detected_pick_at | timestamp | Yes | Last time a new made-pick delta was detected |
+| meta | json | Yes | Optional diagnostics |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `platform_league_id` (`uq_fantrax_draft_state_league`)
+- Index: `(status, last_checked_at)` (`idx_fantrax_draft_state_status_checked`)
+- Implicit (FK index): `platform_league_id`
+
+---
+
+## fantrax_draft_picks
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** Current persisted Fantrax draft pick rows used to detect when an unmade pick receives a player id.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| provider_pick_key | string(120) | No | Stable provider-derived pick key |
+| overall_pick | unsignedInteger | Yes | Overall pick number when known |
+| round | unsignedInteger | Yes | Draft round |
+| pick | unsignedInteger | Yes | Provider pick value |
+| pick_in_round | unsignedInteger | Yes | Pick number within round |
+| fantrax_team_id | string | Yes | Fantrax drafting team id |
+| fantrax_player_id | string | Yes | Fantrax player id; null means unmade pick |
+| drafted_at | timestamp | Yes | Provider pick timestamp when known |
+| detected_at | timestamp | Yes | First local detection time for a made pick |
+| announced_at | timestamp | Yes | First local announcement side-effect time for toast/Discord idempotency |
+| payload_hash | string(64) | No | Row payload hash |
+| raw_payload | json | Yes | Raw provider pick row |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, provider_pick_key)` (`uq_fantrax_draft_pick_provider`)
+- Index: `(platform_league_id, overall_pick)` (`idx_fantrax_draft_pick_overall`)
+- Index: `(platform_league_id, fantrax_player_id)` (`idx_fantrax_draft_pick_player`)
+- Implicit (FK index): `platform_league_id`
 
 ---
 
@@ -1895,6 +1967,8 @@ Migrations remain the **sole source of truth**.
 | platform_league_id | string | No | External league ID |
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
+| settings | json | Yes | Provider league settings payload |
+| scoring_settings | json | Yes | Provider scoring categories and modifiers |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |

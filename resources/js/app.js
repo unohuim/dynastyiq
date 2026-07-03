@@ -53,3 +53,5 @@ if (!window.__alpineStarted) {
     Alpine.start();
     window.__alpineStarted = true;
 }
+
+import('./pages/stats-page.js');

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 
 class PlatformLeague extends Model
@@ -19,10 +20,14 @@ class PlatformLeague extends Model
         'platform_league_id',
         'name',
         'sport',
+        'settings',
+        'scoring_settings',
         'synced_at',
     ];
 
     protected $casts = [
+        'settings' => 'array',
+        'scoring_settings' => 'array',
         'synced_at' => 'datetime',
     ];
 
@@ -55,6 +60,16 @@ class PlatformLeague extends Model
     public function teams(): HasMany
     {
         return $this->hasMany(PlatformTeam::class, 'platform_league_id');
+    }
+
+    public function fantraxDraftState(): HasOne
+    {
+        return $this->hasOne(FantraxDraftState::class, 'platform_league_id');
+    }
+
+    public function fantraxDraftPicks(): HasMany
+    {
+        return $this->hasMany(FantraxDraftPick::class, 'platform_league_id');
     }
 
     /**

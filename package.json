@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "design:player-draft-card": "node scripts/generate-player-draft-card-modern.mjs",
     "dev": "vite",
     "test": "vitest"
   },

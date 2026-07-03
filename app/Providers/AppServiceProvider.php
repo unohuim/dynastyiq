@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Events\PlayerExternalIdentityLinked;
+use App\Events\FantraxDraftPickMade;
+use App\Listeners\AnnounceFantraxDraftPick;
 use App\Listeners\QueueCapWagesContractRefresh;
 use App\Listeners\QueueNhlIdentityResolution;
 use App\Listeners\SyncFantraxRosterMembershipsForLinkedIdentity;
@@ -54,6 +56,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(PlayerExternalIdentityLinked::class, QueueCapWagesContractRefresh::class);
         Event::listen(PlayerExternalIdentityLinked::class, QueueNhlIdentityResolution::class);
         Event::listen(PlayerExternalIdentityLinked::class, SyncFantraxRosterMembershipsForLinkedIdentity::class);
+        Event::listen(FantraxDraftPickMade::class, AnnounceFantraxDraftPick::class);
         Player::observe(PlayerNhlIdentityObserver::class);
 
 

@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\Perspective;
+use App\Models\PlatformLeague;
 use App\Models\Stat;
 use App\Models\NhlSeasonStat;
 use App\Models\NhlGameSummary;
+use App\Services\FantasyLeagueAccess;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
@@ -92,6 +94,524 @@ class StatsController extends BaseController
             'defaultSeason'         => $payload['meta']['season'] ?? null,
             'connectedLeagues'      => $connectedLeagues,
         ]);
+    }
+
+    /**
+     * Return a stats payload for an ephemeral Yahoo league scoring perspective.
+     */
+    public function leaguePayload(Request $request, string $leagueId)
+    {
+        $request->validate([
+            'perspectiveId' => 'nullable|integer|exists:perspectives,id',
+            'perspective'   => 'nullable|string',
+            'season'        => 'nullable|string',
+            'season_id'     => 'nullable|string',
+            'slice'         => 'nullable|in:total,pgp,p60',
+            'resource'      => 'nullable|in:players,units',
+            'period'        => 'nullable|in:season,range,lastWeek,thisWeek,past30days',
+            'game_type'     => 'nullable|in:1,2,3',
+            'from'          => 'nullable|date',
+            'to'            => 'nullable|date',
+            'availability'  => 'nullable|integer',
+        ]);
+
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before loading league stats.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        $season = $request->input('season_id', $request->input('season'));
+        $slice = (string) $request->input('slice', 'total');
+        $gameType = (int) $request->input('game_type', 2);
+        $period = (string) $request->input('period', 'season');
+        $leaguePerspectiveSlug = $this->leagueScoringPerspectiveSlug($league);
+        $fantraxPerspectiveSlug = $this->fantraxLeaguePerspectiveSlug($league);
+        $defaultPerspectiveSlug = $this->defaultLeagueStatsPerspectiveSlug($user, $league);
+        $requestedPerspective = (string) $request->query('perspective', $defaultPerspectiveSlug);
+        $isLeagueScoringPerspective = ! $request->filled('perspectiveId')
+            && $leaguePerspectiveSlug !== null
+            && ($requestedPerspective === '' || $requestedPerspective === $leaguePerspectiveSlug);
+        $isFantraxLeaguePerspective = ! $request->filled('perspectiveId')
+            && $fantraxPerspectiveSlug !== null
+            && ($requestedPerspective === '' || $requestedPerspective === $fantraxPerspectiveSlug);
+
+        if ($isLeagueScoringPerspective) {
+            $settings = $this->leagueScoringPerspectiveSettings($league);
+
+            if ($settings === null) {
+                return response()->json([
+                    'message' => 'Map every scoring category before loading league stats.',
+                ], 409);
+            }
+
+            $perspective = (object) [
+                'slug' => $leaguePerspectiveSlug,
+                'name' => $league->name . ' Scoring',
+                'is_slicable' => true,
+            ];
+            $canSlice = true;
+        } elseif ($isFantraxLeaguePerspective) {
+            $settings = $this->leagueScoringPerspectiveSettings($league);
+            $basePerspective = null;
+
+            if ($settings === null) {
+                $basePerspective = $this->defaultSavedStatsPerspective($user);
+                $settings = is_array($basePerspective->settings)
+                    ? $basePerspective->settings
+                    : (json_decode($basePerspective->settings ?? '[]', true) ?: []);
+            }
+
+            $perspective = (object) [
+                'slug' => $fantraxPerspectiveSlug,
+                'name' => $league->name . ' Fantrax',
+                'is_slicable' => (bool) ($basePerspective?->is_slicable ?? true),
+            ];
+            $canSlice = (bool) ($basePerspective?->is_slicable ?? true);
+        } else {
+            $perspective = $this->resolveStatsPerspective($request, $user, $requestedPerspective);
+            $settings = is_array($perspective->settings)
+                ? $perspective->settings
+                : (json_decode($perspective->settings ?? '[]', true) ?: []);
+            $canSlice = (bool) ($perspective->is_slicable ?? true);
+
+            if ($this->isProspectsPerspective($perspective, $settings['filters'] ?? [])) {
+                $period = 'season';
+            }
+        }
+
+        if ($period === 'season') {
+            [$payload] = $this->buildAndFormatPlayersPayloadFromSettings(
+                $user,
+                $perspective,
+                $settings,
+                $canSlice,
+                is_string($season) ? $season : null,
+                $canSlice && in_array($slice, ['total', 'pgp', 'p60'], true) ? $slice : 'total',
+                in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
+                $request,
+            );
+        } else {
+            [$fromDate, $toDate] = $this->resolveDates($period, $request->query('from'), $request->query('to'));
+
+            [$payload] = $this->buildAndFormatPlayersPayloadRangeFromSettings(
+                $user,
+                $settings,
+                $canSlice,
+                $canSlice && in_array($slice, ['total', 'pgp', 'p60'], true) ? $slice : 'total',
+                in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
+                $fromDate,
+                $toDate,
+                $request,
+            );
+        }
+
+        $payload = $this->withLeagueOwnership($payload, $league);
+        $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
+        $payload['settings']['ownerColumn'] = true;
+        $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
+        $payload['perspectives'] = $this->leagueStatsPerspectives($user, $league);
+        $payload['selectedPerspective'] = $perspective->slug ?? $perspective->name ?? $defaultPerspectiveSlug;
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Return the synthetic league scoring perspective slug when the platform supports one.
+     */
+    private function leagueScoringPerspectiveSlug(PlatformLeague $league): ?string
+    {
+        return (string) ($league->platform ?? '') === 'yahoo'
+            ? 'yahoo-league-' . $league->id
+            : null;
+    }
+
+    /**
+     * Return the synthetic Fantrax league perspective slug when applicable.
+     */
+    private function fantraxLeaguePerspectiveSlug(PlatformLeague $league): ?string
+    {
+        return (string) ($league->platform ?? '') === 'fantrax'
+            ? 'fantrax-league-' . $league->id
+            : null;
+    }
+
+    /**
+     * Return the default stats perspective slug for the league page.
+     */
+    private function defaultLeagueStatsPerspectiveSlug($user, PlatformLeague $league): string
+    {
+        $leaguePerspectiveSlug = $this->leagueScoringPerspectiveSlug($league);
+        $fantraxPerspectiveSlug = $this->fantraxLeaguePerspectiveSlug($league);
+
+        if ($leaguePerspectiveSlug !== null && $this->leagueScoringPerspectiveSettings($league) !== null) {
+            return $leaguePerspectiveSlug;
+        }
+
+        if ($fantraxPerspectiveSlug !== null) {
+            return $fantraxPerspectiveSlug;
+        }
+
+        $perspective = $this->defaultSavedStatsPerspective($user);
+
+        return (string) ($perspective->slug ?? $perspective->name);
+    }
+
+    /**
+     * Return the default saved stats perspective for non-scoring league views.
+     */
+    private function defaultSavedStatsPerspective($user): Perspective
+    {
+        $perspective = Perspective::forUser($user)
+            ->where(static function ($query): void {
+                $query->where('slug', 'skaters')
+                    ->orWhere('name', 'Skaters');
+            })
+            ->orderByRaw("CASE WHEN slug = 'skaters' OR name = 'Skaters' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->first()
+            ?? Perspective::forUser($user)->orderBy('id')->first();
+
+        abort_if($perspective === null, 409, 'Create a stats perspective before loading league stats.');
+
+        return $perspective;
+    }
+
+    /**
+     * Resolve a normal saved stats perspective for the current user.
+     */
+    private function resolveStatsPerspective(Request $request, $user, string $requestedPerspective): Perspective
+    {
+        if ($request->filled('perspectiveId')) {
+            return Perspective::forUser($user)
+                ->whereKey($request->integer('perspectiveId'))
+                ->firstOrFail();
+        }
+
+        return Perspective::forUser($user)
+            ->where(static function ($query) use ($requestedPerspective): void {
+                $query->where('slug', $requestedPerspective)
+                    ->orWhere('name', $requestedPerspective);
+            })
+            ->firstOrFail();
+    }
+
+    /**
+     * Return the synthetic league scoring perspective followed by normal user perspectives.
+     *
+     * @return array<int,array{id:int|string|null,slug:string,name:string,is_slicable:bool}>
+     */
+    private function leagueStatsPerspectives($user, PlatformLeague $league): array
+    {
+        $leaguePerspectiveSlug = $this->leagueScoringPerspectiveSlug($league);
+        $fantraxPerspectiveSlug = $this->fantraxLeaguePerspectiveSlug($league);
+        $leaguePerspective = $leaguePerspectiveSlug !== null && $this->leagueScoringPerspectiveSettings($league) !== null
+            ? [[
+                'id' => $leaguePerspectiveSlug,
+                'slug' => $leaguePerspectiveSlug,
+                'name' => $league->name . ' Scoring',
+                'is_slicable' => true,
+            ]]
+            : [];
+        $fantraxPerspective = $fantraxPerspectiveSlug !== null
+            ? [[
+                'id' => $fantraxPerspectiveSlug,
+                'slug' => $fantraxPerspectiveSlug,
+                'name' => $league->name . ' Fantrax',
+                'is_slicable' => true,
+            ]]
+            : [];
+
+        $perspectives = Perspective::forUser($user)
+            ->orderBy('id')
+            ->get()
+            ->map(static fn (Perspective $perspective): array => [
+                'id' => $perspective->id,
+                'slug' => $perspective->slug ?? $perspective->name,
+                'name' => $perspective->name,
+                'is_slicable' => (bool) ($perspective->is_slicable ?? true),
+            ])
+            ->values()
+            ->all();
+
+        return [...$leaguePerspective, ...$fantraxPerspective, ...$perspectives];
+    }
+
+    /**
+     * Add current fantasy ownership metadata to a league-specific stats payload.
+     *
+     * @param array<string,mixed> $payload
+     *
+     * @return array<string,mixed>
+     */
+    private function withLeagueOwnership(array $payload, PlatformLeague $league): array
+    {
+        $ownership = $this->leagueOwnership($league);
+        $ownershipByPlayerId = $ownership['by_player_id'];
+        $ownershipByNhlId = $ownership['by_nhl_id'];
+
+        $payload['data'] = collect($payload['data'] ?? [])
+            ->map(static function (mixed $row) use ($ownershipByPlayerId, $ownershipByNhlId): mixed {
+                if (! is_array($row)) {
+                    return $row;
+                }
+
+                $playerId = (string) ($row['player_id'] ?? '');
+                $nhlPlayerId = (string) ($row['nhl_player_id'] ?? '');
+                $rowOwnership = $playerId !== ''
+                    ? ($ownershipByPlayerId[$playerId] ?? null)
+                    : null;
+                $rowOwnership ??= $nhlPlayerId !== '' ? ($ownershipByNhlId[$nhlPlayerId] ?? null) : null;
+
+                return array_merge($row, [
+                    'fantasy_team_id' => $rowOwnership['fantasy_team_id'] ?? null,
+                    'fantasy_team_name' => $rowOwnership['fantasy_team_name'] ?? null,
+                    'fantasy_team_avatar_url' => $rowOwnership['fantasy_team_avatar_url'] ?? null,
+                    'roster_slot' => $rowOwnership['roster_slot'] ?? null,
+                    'roster_status' => $rowOwnership['roster_status'] ?? null,
+                    'roster_group' => $rowOwnership['roster_group'] ?? null,
+                    'roster_sort_order' => $rowOwnership['roster_sort_order'] ?? null,
+                    'roster_group_sort_order' => $rowOwnership['roster_group_sort_order'] ?? null,
+                    'roster_status_sort_order' => $rowOwnership['roster_status_sort_order'] ?? null,
+                ]);
+            })
+            ->values()
+            ->all();
+
+        return $payload;
+    }
+
+    /**
+     * Return current fantasy owner metadata keyed by local and NHL player ids.
+     *
+     * @return array{by_player_id:array<string,array<string,mixed>>,by_nhl_id:array<string,array<string,mixed>>}
+     */
+    private function leagueOwnership(PlatformLeague $league): array
+    {
+        $slotOrder = $league->rosterSlots()
+            ->pluck('sort_order', 'slot')
+            ->map(static fn ($value): int => (int) $value)
+            ->all();
+        $teams = $league->teams()
+            ->select('id', 'platform_team_id', 'name')
+            ->with([
+                'roster:id,nhl_id,position',
+                'users' => static function ($query): void {
+                    $query->wherePivot('is_active', true)
+                        ->select('users.id')
+                        ->with(['socialAccounts:id,user_id,avatar']);
+                },
+            ])
+            ->get();
+
+        $byPlayerId = [];
+        $byNhlId = [];
+
+        foreach ($teams as $team) {
+            $defaultAvatar = config('ui.default_team_avatar')
+                ?: 'https://ui-avatars.com/api/?name=' . urlencode((string) $team->name) . '&background=E5E7EB&color=111827&size=64';
+            $ownerAvatar = $defaultAvatar;
+
+            foreach ($team->users as $user) {
+                $avatar = optional($user->socialAccounts->first())->avatar;
+
+                if (filled($avatar)) {
+                    $ownerAvatar = (string) $avatar;
+                    break;
+                }
+            }
+
+            $ownerPayload = [
+                'fantasy_team_id' => (string) $team->platform_team_id,
+                'fantasy_team_name' => (string) $team->name,
+                'fantasy_team_avatar_url' => $ownerAvatar,
+            ];
+
+            foreach ($team->roster as $player) {
+                $slot = (string) ($player->pivot->slot ?? '');
+                $rosterStatus = (string) ($player->pivot->status ?? '');
+                $eligibility = $this->normalizeRosterEligibility($player->pivot->eligibility ?? null);
+                $displaySlot = $this->displayRosterSlot($slot, $rosterStatus, $eligibility, (string) ($player->position ?? ''));
+                $rosterGroup = $this->isMinorRosterRow($displaySlot, $rosterStatus) ? 'minor' : 'active';
+                $rosterSortOrder = $rosterGroup === 'minor'
+                    ? $this->minorRosterPositionSortOrder($eligibility)
+                    : ($slotOrder[$slot] ?? $this->fallbackRosterSlotOrder($displaySlot));
+                $rosterPayload = array_merge($ownerPayload, [
+                    'roster_slot' => $displaySlot,
+                    'roster_status' => $rosterStatus,
+                    'roster_group' => $rosterGroup,
+                    'roster_sort_order' => $rosterSortOrder,
+                    'roster_group_sort_order' => $rosterGroup === 'minor' ? 1 : 0,
+                    'roster_status_sort_order' => match ($rosterStatus) {
+                        'active' => 10,
+                        'bench' => 20,
+                        'ir' => 30,
+                        'na' => 40,
+                        'taxi' => 50,
+                        default => 90,
+                    },
+                ]);
+
+                $byPlayerId[(string) $player->id] = $rosterPayload;
+
+                if (filled($player->nhl_id)) {
+                    $byNhlId[(string) $player->nhl_id] = $rosterPayload;
+                }
+            }
+        }
+
+        return [
+            'by_player_id' => $byPlayerId,
+            'by_nhl_id' => $byNhlId,
+        ];
+    }
+
+    /**
+     * Normalize stored roster eligibility into a flat string list.
+     *
+     * @return array<int,string>
+     */
+    private function normalizeRosterEligibility(mixed $eligibility): array
+    {
+        if (is_string($eligibility)) {
+            $decoded = json_decode($eligibility, true);
+            $eligibility = json_last_error() === JSON_ERROR_NONE ? $decoded : [$eligibility];
+        }
+
+        if (! is_array($eligibility)) {
+            return [];
+        }
+
+        return collect($eligibility)
+            ->flatten()
+            ->map(static fn (mixed $value): string => trim((string) $value))
+            ->filter(static fn (string $value): bool => $value !== '')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return the display roster slot used for league roster ordering.
+     *
+     * @param array<int,string> $eligibility
+     */
+    private function displayRosterSlot(string $slot, string $status, array $eligibility, string $position): string
+    {
+        $slot = strtoupper(trim($slot));
+
+        if ($slot !== '') {
+            return match ($slot) {
+                'BN' => 'BEN',
+                'MINOR', 'MINORS', 'MINORS_ROSTER', 'MINORSROSTER' => 'MIN',
+                default => $slot,
+            };
+        }
+
+        if (strtolower(trim($status)) === 'na') {
+            return 'MIN';
+        }
+
+        return collect($eligibility)
+            ->map(static fn (string $value): string => strtoupper(trim($value)))
+            ->first(static fn (string $value): bool => $value !== '' && ! in_array($value, [
+                'F',
+                'UTIL',
+                'UTILS',
+                'UTILITY',
+                'UTL',
+                'W/R/T',
+            ], true)) ?: strtoupper(trim($position));
+    }
+
+    /**
+     * Return provider-neutral fallback roster slot order.
+     */
+    private function fallbackRosterSlotOrder(string $slot): int
+    {
+        $order = [
+            'C' => 10,
+            'LW' => 20,
+            'RW' => 30,
+            'F' => 40,
+            'D' => 50,
+            'SKT' => 60,
+            'G' => 70,
+            'RES' => 80,
+            'BEN' => 90,
+            'IR' => 100,
+            'MIN' => 110,
+        ];
+
+        return $order[$this->normalizedFallbackSlot($slot)] ?? 999;
+    }
+
+    /**
+     * Return minor roster player ordering by actual hockey position.
+     *
+     * @param array<int,string> $eligibility
+     */
+    private function minorRosterPositionSortOrder(array $eligibility): int
+    {
+        $order = [
+            'C' => 10,
+            'LW' => 20,
+            'RW' => 30,
+            'D' => 40,
+            'G' => 50,
+        ];
+
+        return collect($eligibility)
+            ->map(fn (string $value): string => $this->normalizedMinorPosition($value))
+            ->filter()
+            ->map(static fn (string $value): int => $order[$value] ?? 999)
+            ->min() ?? 999;
+    }
+
+    /**
+     * Normalize provider position variants into the minor roster ordering vocabulary.
+     */
+    private function normalizedMinorPosition(string $position): string
+    {
+        $position = strtoupper(trim($position));
+
+        return match ($position) {
+            'L' => 'LW',
+            'R' => 'RW',
+            'LD', 'RD' => 'D',
+            default => $position,
+        };
+    }
+
+    /**
+     * Normalize provider slot variants into fallback roster ordering vocabulary.
+     */
+    private function normalizedFallbackSlot(string $slot): string
+    {
+        $slot = strtoupper(trim($slot));
+
+        return match ($slot) {
+            'L' => 'LW',
+            'R' => 'RW',
+            'BN', 'BENCH' => 'BEN',
+            'MINOR', 'MINORS', 'MINORS_ROSTER', 'MINORSROSTER' => 'MIN',
+            'UTIL', 'UTILS', 'UTILITY', 'UTL', 'W/R/T' => 'F',
+            default => $slot,
+        };
+    }
+
+    /**
+     * Determine whether a roster row belongs under the minor league separator.
+     */
+    private function isMinorRosterRow(string $slot, string $status): bool
+    {
+        return $this->normalizedFallbackSlot($slot) === 'MIN' || strtolower(trim($status)) === 'na';
     }
 
 
@@ -303,6 +823,31 @@ class StatsController extends BaseController
         $settings    = is_array($perspective->settings) ? $perspective->settings : (json_decode($perspective->settings ?? '[]', true) ?: []);
         $canSlice    = (bool)($perspective->is_slicable ?? true);
 
+        return $this->buildAndFormatPlayersPayloadFromSettings(
+            $user,
+            $perspective,
+            $settings,
+            $canSlice,
+            $seasonFilter,
+            $slice,
+            $gameType,
+            $request,
+        );
+    }
+
+    /**
+     * Build and format a season players payload from a persisted or ephemeral perspective settings array.
+     */
+    private function buildAndFormatPlayersPayloadFromSettings(
+        $user,
+        object $perspective,
+        array $settings,
+        bool $canSlice,
+        ?string $seasonFilter,
+        string $slice = 'total',
+        ?int $gameType = 2,
+        ?Request $request = null
+    ): array {
         $filters = $settings['filters'] ?? [];
         $columns = $settings['columns'] ?? [];
         $sort    = $settings['sort']    ?? ['sortKey' => 'pts', 'sortDirection' => 'desc'];
@@ -426,6 +971,9 @@ class StatsController extends BaseController
                 'defaultSortDirection' => $sortDir,
                 'resource'             => 'players',
                 'slice'                => $canSlice ? $slice : 'total',
+                'columnGroups'         => $settings['columnGroups'] ?? null,
+                'columnGroupSort'      => $settings['columnGroupSort'] ?? null,
+                'activeColumnGroup'    => $settings['activeColumnGroup'] ?? null,
             ],
             'meta' => [
                 'availableSeasons'   => $availableSeasons,
@@ -462,6 +1010,31 @@ class StatsController extends BaseController
         $settings    = is_array($perspective->settings) ? $perspective->settings : (json_decode($perspective->settings ?? '[]', true) ?: []);
         $canSlice    = (bool)($perspective->is_slicable ?? true);
 
+        return $this->buildAndFormatPlayersPayloadRangeFromSettings(
+            $user,
+            $settings,
+            $canSlice,
+            $slice,
+            $gameType,
+            $from,
+            $to,
+            $request,
+        );
+    }
+
+    /**
+     * Build and format a date-range players payload from a settings array.
+     */
+    private function buildAndFormatPlayersPayloadRangeFromSettings(
+        $user,
+        array $settings,
+        bool $canSlice,
+        string $slice,
+        ?int $gameType,
+        ?Carbon $from,
+        ?Carbon $to,
+        Request $request
+    ): array {
         $columns = $settings['columns'] ?? [];
         $sort    = $settings['sort']    ?? ['sortKey' => 'pts', 'sortDirection' => 'desc'];
 
@@ -538,6 +1111,9 @@ class StatsController extends BaseController
                 'defaultSortDirection' => $sortDir,
                 'resource'             => 'players',
                 'slice'                => $canSlice ? $slice : 'total',
+                'columnGroups'         => $settings['columnGroups'] ?? null,
+                'columnGroupSort'      => $settings['columnGroupSort'] ?? null,
+                'activeColumnGroup'    => $settings['activeColumnGroup'] ?? null,
             ],
             'meta' => [
                 'availableSeasons'   => [],
@@ -634,6 +1210,7 @@ class StatsController extends BaseController
 
             $row = [
                 'name'                   => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
+                'player_id'              => $player?->id ?? $entry->player_id ?? null,
                 'avatar_url'             => $player?->head_shot_url,
                 'age'                    => $this->playerAge($player),
                 'team'                   => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
@@ -1131,11 +1708,187 @@ class StatsController extends BaseController
         };
     }
 
-    private function isProspectsPerspective(Perspective $p, array $filters): bool
+    private function isProspectsPerspective(object $p, array $filters): bool
     {
         $slug = strtolower((string) ($p->slug ?? ''));
 
         return in_array($slug, ['prospects', 'prospects-goalies'], true);
+    }
+
+    /**
+     * Build ephemeral perspective settings from a fully mapped league scoring configuration.
+     */
+    private function leagueScoringPerspectiveSettings(PlatformLeague $league): ?array
+    {
+        $categories = data_get($league, 'scoring_settings.categories', []);
+
+        if (! is_array($categories) || $categories === []) {
+            return null;
+        }
+
+        $scoringOrderByStatId = $this->leagueScoringOrderByStatId($league);
+        $categoryRows = collect(array_is_list($categories) ? $categories : array_values($categories))
+            ->filter(static fn (mixed $category): bool => is_array($category))
+            ->map(static function (array $category) use ($scoringOrderByStatId): array {
+                $category['display_order'] = (int) (
+                    $scoringOrderByStatId[(string) ($category['id'] ?? '')]
+                    ?? $category['scoring_order']
+                    ?? PHP_INT_MAX
+                );
+
+                return $category;
+            })
+            ->sortBy('display_order')
+            ->values();
+
+        if ($categoryRows->isEmpty()) {
+            return null;
+        }
+
+        if ($categoryRows->contains(static fn (array $category): bool => trim((string) ($category['stat_key'] ?? '')) === '')) {
+            return null;
+        }
+
+        $columns = $categoryRows
+            ->filter(static fn (mixed $category): bool => is_array($category))
+            ->map(static function (array $category): ?array {
+                $statKey = trim((string) ($category['stat_key'] ?? ''));
+
+                if ($statKey === '') {
+                    return null;
+                }
+
+                $label = trim((string) (
+                    $category['short']
+                    ?? $category['label']
+                    ?? $category['name']
+                    ?? strtoupper($statKey)
+                ));
+
+                return [
+                    'key' => $statKey,
+                    'label' => $label !== '' ? $label : strtoupper($statKey),
+                    'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
+                ];
+            })
+            ->filter()
+            ->unique(static fn (array $column): string => $column['key'])
+            ->values()
+            ->all();
+
+        if ($columns === []) {
+            return null;
+        }
+
+        $goalieKeys = $this->goalieScoringStatKeys();
+        $goalieColumns = collect($columns)
+            ->filter(static fn (array $column): bool => in_array($column['key'], $goalieKeys, true))
+            ->values()
+            ->all();
+        $skaterColumns = collect($columns)
+            ->reject(static fn (array $column): bool => in_array($column['key'], $goalieKeys, true))
+            ->values()
+            ->all();
+
+        $sortKey = collect(['pts', 'g', 'a', 'wins', 'sv', 'sog'])
+            ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
+            ?? $columns[0]['key'];
+        $skaterSortKey = collect(['pts', 'g', 'a', 'sog'])
+            ->first(static fn (string $key): bool => collect($skaterColumns)->contains('key', $key))
+            ?? ($skaterColumns[0]['key'] ?? $sortKey);
+        $goalieSortKey = collect(['wins', 'sv', 'sv_pct', 'gaa'])
+            ->first(static fn (string $key): bool => collect($goalieColumns)->contains('key', $key))
+            ?? ($goalieColumns[0]['key'] ?? $sortKey);
+
+        return [
+            'columns' => $columns,
+            'sort' => [
+                'sortKey' => $skaterSortKey,
+                'sortDirection' => 'desc',
+            ],
+            'columnGroups' => [
+                'skater' => $skaterColumns,
+                'goalie' => $goalieColumns,
+            ],
+            'columnGroupSort' => [
+                'skater' => [
+                    'sortKey' => $skaterSortKey,
+                    'sortDirection' => 'desc',
+                ],
+                'goalie' => [
+                    'sortKey' => $goalieSortKey,
+                    'sortDirection' => 'desc',
+                ],
+            ],
+            'activeColumnGroup' => 'skater',
+            'filters' => [],
+            'ui' => [
+                'positionButtons' => ['F', 'C', 'LW', 'RW', 'D', 'G'],
+            ],
+        ];
+    }
+
+    /**
+     * Stat keys treated as goalie-only when splitting league scoring columns.
+     *
+     * @return array<int,string>
+     */
+    private function goalieScoringStatKeys(): array
+    {
+        return [
+            'wins',
+            'losses',
+            'ot_losses',
+            'starts',
+            'relief_appearances',
+            'quality_starts',
+            'really_bad_starts',
+            'quality_start_percentage',
+            'sv',
+            'saves',
+            'sa',
+            'shots_against',
+            'ga',
+            'goals_against',
+            'gaa',
+            'sv_pct',
+            'ev_sv_pct',
+            'pp_sv_pct',
+            'pk_sv_pct',
+            'so',
+            'shutouts',
+            'shosv',
+        ];
+    }
+
+    /**
+     * Derive selected Yahoo scoring category order from stored raw stat modifiers.
+     *
+     * @return array<string,int>
+     */
+    private function leagueScoringOrderByStatId(PlatformLeague $league): array
+    {
+        $stats = data_get($league, 'scoring_settings.raw_payload.stat_modifiers.stats.stat', []);
+
+        if (! is_array($stats)) {
+            return [];
+        }
+
+        if (isset($stats['stat_id'])) {
+            $stats = [$stats];
+        }
+
+        $rows = array_values($stats);
+        $count = count($rows);
+
+        return collect($rows)
+            ->filter(static fn (mixed $stat): bool => is_array($stat))
+            ->mapWithKeys(static function (array $stat, int $index) use ($count): array {
+                $statId = trim((string) ($stat['stat_id'] ?? ''));
+
+                return $statId !== '' ? [$statId => $count - $index] : [];
+            })
+            ->all();
     }
 
 

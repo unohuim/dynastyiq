@@ -42,6 +42,7 @@ final class SyncFantraxLeague
         }
 
         $leaguePlayerEligibilityByFantraxId = self::leaguePlayerEligibilityByFantraxId($leagueInfo);
+        $this->syncLeagueSettings($league, $leagueInfo);
 
         //team rosters
         try {
@@ -409,6 +410,224 @@ final class SyncFantraxLeague
                 ]);
             }
         });
+    }
+
+    /**
+     * Persist Fantrax league settings and scoring categories in the shared league shape.
+     *
+     * @param array<string,mixed> $leagueInfo
+     */
+    private function syncLeagueSettings(PlatformLeague $league, array $leagueInfo): void
+    {
+        if ($leagueInfo === []) {
+            return;
+        }
+
+        $existingScoringSettings = is_array($league->scoring_settings) ? $league->scoring_settings : [];
+        $manualMappings = is_array($existingScoringSettings['manual_mappings'] ?? null)
+            ? $existingScoringSettings['manual_mappings']
+            : [];
+        $normalizedCategories = $this->fantraxScoringCategoryPayloads($leagueInfo);
+
+        if ($normalizedCategories === []) {
+            $league->forceFill([
+                'settings' => array_merge(is_array($league->settings) ? $league->settings : [], [
+                    'fantrax_league_info_keys' => array_keys($leagueInfo),
+                ]),
+            ])->save();
+
+            return;
+        }
+
+        $categories = $this->applyManualScoringMappings(
+            $normalizedCategories,
+            $manualMappings,
+        );
+
+        $league->forceFill([
+            'settings' => array_merge(is_array($league->settings) ? $league->settings : [], [
+                'fantrax_league_info_keys' => array_keys($leagueInfo),
+            ]),
+            'scoring_settings' => [
+                'categories' => $categories,
+                'manual_mappings' => $manualMappings,
+                'raw_payload' => [
+                    'scoringSystem' => $leagueInfo['scoringSystem'] ?? null,
+                    'scoringCategorySettings' => $leagueInfo['scoringCategorySettings'] ?? null,
+                    'scoringCategories' => $leagueInfo['scoringCategories'] ?? null,
+                ],
+            ],
+        ])->save();
+    }
+
+    /**
+     * Normalize Fantrax scoring settings to editable category rows.
+     *
+     * @param array<string,mixed> $payload
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function fantraxScoringCategoryPayloads(array $payload): array
+    {
+        $groups = data_get($payload, 'scoringSystem.scoringCategorySettings')
+            ?? data_get($payload, 'scoringCategorySettings')
+            ?? [];
+        $simple = data_get($payload, 'scoringSystem.scoringCategories')
+            ?? data_get($payload, 'scoringCategories')
+            ?? [];
+        $rows = [];
+
+        foreach ((array) $groups as $groupBlock) {
+            $groupCode = (string) (data_get($groupBlock, 'group.code') ?? 'UNKNOWN');
+
+            foreach ((array) data_get($groupBlock, 'configs', []) as $config) {
+                $category = data_get($config, 'scoringCategory', []);
+                $code = (string) data_get($category, 'code');
+
+                if ($code === '') {
+                    continue;
+                }
+
+                $key = $groupCode . ':' . $code;
+                $points = $this->parseFantraxPoints(data_get($category, 'points'));
+
+                $rows[$key] ??= [
+                    'id' => $key,
+                    'label' => (string) (data_get($category, 'name') ?: data_get($category, 'shortName') ?: $code),
+                    'name' => (string) (data_get($category, 'name') ?? ''),
+                    'short' => (string) (data_get($category, 'shortName') ?? $code),
+                    'value' => $points,
+                    'auto_stat_key' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')),
+                    'stat_key' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')),
+                    'is_mapped' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')) !== null,
+                    'mapping_source' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')) !== null ? 'auto' : null,
+                    'position_values' => [],
+                    'raw_payload' => $category,
+                ];
+
+                $position = (string) (data_get($config, 'position.code') ?? 'DEFAULT');
+                $rows[$key]['position_values'][$position] = $points;
+            }
+        }
+
+        foreach ((array) $simple as $group => $categories) {
+            foreach ((array) $categories as $short => $value) {
+                $key = (string) $group . ':' . (string) $short;
+
+                $rows[$key] ??= [
+                    'id' => $key,
+                    'label' => (string) $short,
+                    'name' => '',
+                    'short' => (string) $short,
+                    'value' => is_array($value) ? null : $this->parseFantraxPoints($value),
+                    'auto_stat_key' => $this->autoStatKey((string) $short, null),
+                    'stat_key' => $this->autoStatKey((string) $short, null),
+                    'is_mapped' => $this->autoStatKey((string) $short, null) !== null,
+                    'mapping_source' => $this->autoStatKey((string) $short, null) !== null ? 'auto' : null,
+                    'position_values' => [],
+                    'raw_payload' => $value,
+                ];
+            }
+        }
+
+        return array_values($rows);
+    }
+
+    /**
+     * Apply persisted manual stat-key mappings over auto mappings.
+     *
+     * @param array<int,array<string,mixed>> $categories
+     * @param array<string,string> $manualMappings
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function applyManualScoringMappings(array $categories, array $manualMappings): array
+    {
+        return collect($categories)
+            ->map(static function (array $category) use ($manualMappings): array {
+                $id = (string) ($category['id'] ?? '');
+                $manualStatKey = $manualMappings[$id] ?? null;
+                $statKey = $manualStatKey ?: ($category['auto_stat_key'] ?? null);
+
+                $category['stat_key'] = $statKey;
+                $category['is_mapped'] = $statKey !== null && $statKey !== '';
+                $category['mapping_source'] = $manualStatKey ? 'manual' : ($category['mapping_source'] ?? null);
+
+                return $category;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Resolve common Fantrax category labels to DynastyIQ stat keys.
+     */
+    private function autoStatKey(?string $short, ?string $name): ?string
+    {
+        $map = [
+            'a' => 'a',
+            'ast' => 'a',
+            'assist' => 'a',
+            'assists' => 'a',
+            'blk' => 'b',
+            'blocks' => 'b',
+            'g' => 'g',
+            'goal' => 'g',
+            'goals' => 'g',
+            'gaa' => 'gaa',
+            'gwg' => 'gwg',
+            'hit' => 'h',
+            'hits' => 'h',
+            'pim' => 'pim',
+            '+/-' => 'plus_minus',
+            'plus minus' => 'plus_minus',
+            'ppg' => 'ppg',
+            'ppa' => 'ppa',
+            'ppp' => 'ppp',
+            'pts' => 'pts',
+            'points' => 'pts',
+            'sog' => 'sog',
+            'shots on goal' => 'sog',
+            'sv' => 'sv',
+            'saves' => 'sv',
+            'sv%' => 'sv_pct',
+            'save percentage' => 'sv_pct',
+            'w' => 'wins',
+            'wins' => 'wins',
+            'so' => 'so',
+            'shutouts' => 'so',
+        ];
+
+        foreach ([$short, $name] as $label) {
+            $normalized = strtolower(trim((string) $label));
+            $normalized = preg_replace('/\s+/', ' ', $normalized);
+
+            if ($normalized !== '' && isset($map[$normalized])) {
+                return $map[$normalized];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse Fantrax point strings such as points0.5.
+     */
+    private function parseFantraxPoints(mixed $value): int|float|string|null
+    {
+        if (is_numeric($value)) {
+            $number = (float) $value;
+
+            return floor($number) === $number ? (int) $number : $number;
+        }
+
+        if (is_string($value) && preg_match('/^points(-?\d+(?:\.\d+)?)$/i', trim($value), $matches)) {
+            $number = (float) $matches[1];
+
+            return floor($number) === $number ? (int) $number : $number;
+        }
+
+        return is_string($value) ? $value : null;
     }
 
     /**

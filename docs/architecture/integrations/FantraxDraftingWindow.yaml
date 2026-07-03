@@ -1,0 +1,47 @@
+name: Fantrax Drafting Window
+type: External Platform View Payload
+location:
+  - app/Services/FantraxDraftingWindow.php
+  - app/Http/Controllers/CommunityLeagues.php
+  - app/ViewModels/LeagueShowViewModel.php
+  - app/DTO/LeagueShowDto.php
+  - resources/views/communities/leagues/show.blade.php
+purpose: Normalize Fantrax draft payloads into a stable community league show drafting view contract.
+when_to_use:
+  - Rendering Fantrax draft results on community league detail pages.
+  - Translating Fantrax draft dates, status fields, pick rows, and team ids for display.
+  - Enriching drafted Fantrax player ids with local canonical player identity and latest stats.
+when_not_to_use:
+  - Persisting Fantrax draft history.
+  - Syncing Fantrax rosters.
+  - Importing canonical NHL source data.
+rules:
+  - Blade templates must consume the normalized drafting payload and must not call Fantrax directly.
+  - Community league show should prefer persisted Fantrax draft payloads when present and hydrate from Fantrax API only when no persisted draft state exists.
+  - API-hydrated draft payloads used for rendering should be queued for draft-state persistence so the page and poller converge on the same provider data.
+  - Fantrax draft_results is the authoritative source for completed drafted-player rows.
+  - Fantrax draft_picks currentDraftPicks determines whether a past or current draft date is live or complete.
+  - Fantrax league_info may provide team labels and draft status context for display.
+  - Local Fantrax player and external identity records may enrich draft rows but must not replace provider pick order.
+  - Draft rows without a Fantrax player id represent unmade picks and must keep player and stat display fields blank.
+  - Draft rows should be segmented by provider round when round data is available.
+  - Fantrax pickInRound should be preserved separately from overall pick display.
+  - Only the next unmade draft row should render an active loading treatment.
+  - The initial draft round page should be the round containing the next unmade pick; when every visible pick is made, it should be the last available round.
+  - The draft settings channel combobox should preload text channels from the selected connected Discord guild through the DIQ bot token when available.
+  - Discord bot API calls for draft channels must send the token with the Discord `Bot` authorization scheme.
+  - The draft settings payload should include a non-sensitive channel preload status/message so empty channel lists are diagnosable in the drawer.
+  - A saved draft notification channel should remain selectable even if the latest Discord channel list omits it.
+  - Draft notification channel settings belong to the organization_leagues pivot metadata for the community league.
+  - Draft notification channel creation may use the Discord guild channel API when the connected guild and bot token are available.
+  - Draft notification channel creation should place new text channels under an inferred text-channel category when available.
+  - Draft player stats enrichment should choose the player's latest available stats season, then the stat row with the highest games played in that season.
+  - Drafting window status must be deterministic when a current time is supplied.
+public_interface:
+  - FantraxDraftingWindow
+  - CommunityLeagues::show
+  - CommunityLeagues::updateDraftSettings
+  - LeagueShowViewModel
+  - LeagueShowDto
+example_usage: |
+  $drafting = app(FantraxDraftingWindow::class)->normalize($leagueInfo, $draftResults);

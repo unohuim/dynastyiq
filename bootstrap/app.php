@@ -1,7 +1,9 @@
 <?php
 
 use App\Console\Commands\FantraxImportPlayersCommand;
+use App\Console\Commands\FantraxDraftsPollCommand;
 use App\Console\Commands\FantraxSyncCommand;
+use App\Console\Commands\GenerateDraftPickCardImageCommand;
 use App\Console\Commands\ImportCapWagesCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
@@ -23,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PatreonNightlySync::class,
         BackfillShotGeometryCommand::class,
+        FantraxDraftsPollCommand::class,
+        GenerateDraftPickCardImageCommand::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

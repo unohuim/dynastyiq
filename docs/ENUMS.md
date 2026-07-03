@@ -1077,6 +1077,32 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+## Fantrax Drafts
+
+### Fantrax Draft State Status
+
+**Name:** Fantrax draft state status
+**Storage location(s):** `fantrax_draft_states.status` (string column)
+**Allowed values currently emitted:**
+
+- `unknown`
+- `scheduled`
+- `live`
+- `complete`
+
+**Semantic meaning:**
+
+- `unknown`: Draft date/status could not be determined from the provider payload.
+- `scheduled`: Draft date is in the future.
+- `live`: Draft date has passed and Fantrax reports current draft picks.
+- `complete`: Draft date has passed and Fantrax reports no current draft picks.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:

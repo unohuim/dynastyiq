@@ -122,6 +122,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/communities/{c_id}/leagues/{l_id}', [CommunityLeagues::class, 'show'])
             ->middleware('auth')
             ->name('community.leagues.show');
+        Route::put('/communities/{c_id}/leagues/{l_id}/draft-settings', [CommunityLeagues::class, 'updateDraftSettings'])
+            ->middleware('auth')
+            ->name('community.leagues.draft-settings.update');
 
         // User preferences
         Route::put('/me/preferences', [\App\Http\Controllers\UserPreferencesController::class, 'upsert'])
@@ -304,6 +307,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.resync');
         Route::post('/leagues/yahoo/resync', [LeagueController::class, 'resyncYahoo'])
             ->name('leagues.yahoo.resync');
+        Route::put('/leagues/{league_id}/scoring-settings', [LeagueController::class, 'updateScoringSettings'])
+            ->name('leagues.scoring-settings.update');
+        Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
+            ->name('leagues.stats.payload');
         Route::get('/leagues/{league_id}', [LeagueController::class, 'show'])
             ->name('leagues.show');
         Route::get('/leagues/{league_id}/panel', [LeagueController::class, 'panel'])

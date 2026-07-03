@@ -97,8 +97,544 @@ const buildPlayerAvatar = (row, name) => {
     return wrap;
 };
 
+const buildOwnerAvatar = (avatarUrl, name = "") => {
+    const wrap = document.createElement("span");
+    wrap.className =
+        "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200";
+
+    if (!avatarUrl) {
+        wrap.textContent = playerInitials(name);
+        return wrap;
+    }
+
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = "";
+    img.loading = "lazy";
+    img.className = "h-7 w-7 rounded-full object-cover";
+    img.addEventListener("error", () => {
+        img.remove();
+        wrap.textContent = playerInitials(name);
+    });
+    wrap.appendChild(img);
+
+    return wrap;
+};
+
+const isOwnerColumn = (key) => String(key) === "__owner";
+
+const rosterOrderValue = (row, key, fallback = 999) => {
+    const value = Number(row?.[key]);
+
+    return Number.isFinite(value) ? value : fallback;
+};
+
+const sortByRosterOrder = (rows) => [...rows].sort((a, b) => {
+    const group = rosterOrderValue(a, "roster_group_sort_order") - rosterOrderValue(b, "roster_group_sort_order");
+    if (group !== 0) return group;
+
+    const slot = rosterOrderValue(a, "roster_sort_order") - rosterOrderValue(b, "roster_sort_order");
+    if (slot !== 0) return slot;
+
+    const status = rosterOrderValue(a, "roster_status_sort_order") - rosterOrderValue(b, "roster_status_sort_order");
+    if (status !== 0) return status;
+
+    return String(a?.name ?? "").localeCompare(String(b?.name ?? ""));
+});
+
 // Persist filters per-container across re-renders
 const desktopState = new WeakMap();
+
+const splitLeagueOwnerHeadings = (headings) => {
+    const srcHeadings = Array.isArray(headings) ? [...headings] : [];
+    const typeOrigIdx = srcHeadings.findIndex((h) =>
+        ["type", "pos_type"].includes(String(h?.key || "").toLowerCase())
+    );
+    const ordered = [
+        { key: "__rk", label: "Rk" },
+        ...(typeOrigIdx > -1 ? [srcHeadings[typeOrigIdx]] : []),
+        ...srcHeadings.filter((_, i) => i !== typeOrigIdx),
+    ];
+    const fixedKeys = new Set(["__rk", "type", "pos_type", "player", "name", "team", "league"]);
+    const left = ordered.filter((heading) => fixedKeys.has(String(heading?.key ?? "").toLowerCase()));
+    const stats = ordered.filter((heading) => !fixedKeys.has(String(heading?.key ?? "").toLowerCase()));
+
+    return { left, stats };
+};
+
+const headingWidth = (key) => {
+    const normalized = String(key ?? "").toLowerCase();
+
+    if (normalized === "__rk") return "44px";
+    if (["type", "pos_type"].includes(normalized)) return "36px";
+    if (normalized === "team") return "76px";
+    if (normalized === "league") return "72px";
+    if (/^(player|name)$/i.test(normalized)) return "190px";
+
+    return "72px";
+};
+
+const renderLeagueOwnerStatsDesktop = (
+    container,
+    data,
+    headings,
+    settings,
+    onSortChange
+) => {
+    const prev = desktopState.get(container) || {};
+    const state = {
+        nameFilter: typeof prev.nameFilter === "string" ? prev.nameFilter : "",
+        teamFilter: typeof prev.teamFilter === "string" ? prev.teamFilter : "",
+        fantasyTeamFilter: typeof prev.fantasyTeamFilter === "string" ? prev.fantasyTeamFilter : "",
+        leagueFilter: typeof prev.leagueFilter === "string" ? prev.leagueFilter : "",
+    };
+    desktopState.set(container, state);
+
+    const { left, stats } = splitLeagueOwnerHeadings(headings);
+    const leftGridCols = left.map((heading) => headingWidth(heading?.key)).join(" ");
+    const statGridCols = stats.map((heading) => headingWidth(heading?.key)).join(" ") || "72px";
+
+    const teams = Array.from(
+        new Set(
+            (Array.isArray(data) ? data : [])
+                .map((p) => (p?.team ?? "").toString().trim())
+                .filter(Boolean)
+        )
+    ).sort((a, b) => a.localeCompare(b));
+    const leagues = Array.from(
+        new Set(
+            (Array.isArray(data) ? data : [])
+                .map((p) => (p?.league ?? "").toString().trim())
+                .filter(Boolean)
+        )
+    ).sort((a, b) => a.localeCompare(b));
+    const fantasyTeamsByName = new Map();
+    (Array.isArray(data) ? data : []).forEach((row) => {
+        const name = String(row?.fantasy_team_name ?? "").trim();
+
+        if (name !== "" && !fantasyTeamsByName.has(name)) {
+            fantasyTeamsByName.set(name, {
+                name,
+                avatarUrl: String(row?.fantasy_team_avatar_url ?? "").trim(),
+            });
+        }
+    });
+    const fantasyTeams = [...fantasyTeamsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+    container.innerHTML = "";
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "w-full overflow-hidden bg-white shadow rounded-lg border border-gray-200";
+
+    const controls = document.createElement("div");
+    controls.className = "sticky top-0 z-20 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.placeholder = "Filter by name…";
+    nameInput.value = state.nameFilter;
+    nameInput.className =
+        "flex-1 max-w-md rounded-md border border-gray-300 px-3 py-2 text-sm " +
+        "focus:outline-none focus:ring-2 focus:ring-indigo-500";
+    controls.appendChild(nameInput);
+
+    const teamSelect = document.createElement("select");
+    teamSelect.className =
+        "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
+        "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
+    const optAll = document.createElement("option");
+    optAll.value = "";
+    optAll.textContent = "All Teams";
+    teamSelect.appendChild(optAll);
+    teams.forEach((team) => {
+        const opt = document.createElement("option");
+        opt.value = team;
+        opt.textContent = team;
+        teamSelect.appendChild(opt);
+    });
+    teamSelect.value = state.teamFilter;
+    controls.appendChild(teamSelect);
+
+    const fantasyTeamPicker = document.createElement("div");
+    fantasyTeamPicker.className = "relative w-56";
+    const fantasyTeamButton = document.createElement("button");
+    fantasyTeamButton.type = "button";
+    fantasyTeamButton.className =
+        "flex h-10 w-full items-center gap-2 rounded-md border border-gray-300 bg-white px-2 text-left text-sm " +
+        "focus:outline-none focus:ring-2 focus:ring-indigo-500";
+    const selectedFantasyTeam = () => fantasyTeams.find((team) => team.name === state.fantasyTeamFilter) || null;
+    const renderFantasyTeamButton = () => {
+        const selected = selectedFantasyTeam();
+        fantasyTeamButton.innerHTML = "";
+
+        if (selected?.avatarUrl) {
+            fantasyTeamButton.appendChild(buildOwnerAvatar(selected.avatarUrl, selected.name));
+        }
+
+        const label = document.createElement("span");
+        label.className = "min-w-0 flex-1 truncate";
+        label.textContent = selected?.name || "All Fantasy Teams";
+        fantasyTeamButton.appendChild(label);
+    };
+    const fantasyTeamMenu = document.createElement("div");
+    fantasyTeamMenu.className =
+        "absolute left-0 top-11 z-40 hidden max-h-72 w-full overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg";
+    const addFantasyTeamOption = (team) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-gray-50";
+
+        if (team.avatarUrl) {
+            option.appendChild(buildOwnerAvatar(team.avatarUrl, team.name));
+        } else {
+            const spacer = document.createElement("span");
+            spacer.className = "h-7 w-7 shrink-0";
+            option.appendChild(spacer);
+        }
+
+        const label = document.createElement("span");
+        label.className = "min-w-0 truncate";
+        label.textContent = team.name || "All Fantasy Teams";
+        option.appendChild(label);
+        option.addEventListener("click", () => {
+            state.fantasyTeamFilter = team.name || "";
+            desktopState.set(container, state);
+            fantasyTeamMenu.classList.add("hidden");
+            renderFantasyTeamButton();
+            syncOwnerPaneVisibility();
+            renderRows();
+        });
+        fantasyTeamMenu.appendChild(option);
+    };
+    addFantasyTeamOption({ name: "", avatarUrl: "" });
+    fantasyTeams.forEach(addFantasyTeamOption);
+    fantasyTeamButton.addEventListener("click", () => {
+        fantasyTeamMenu.classList.toggle("hidden");
+    });
+    renderFantasyTeamButton();
+    fantasyTeamPicker.appendChild(fantasyTeamButton);
+    fantasyTeamPicker.appendChild(fantasyTeamMenu);
+    controls.appendChild(fantasyTeamPicker);
+
+    let leagueSelect = null;
+    if (leagues.length > 0) {
+        leagueSelect = document.createElement("select");
+        leagueSelect.className =
+            "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
+            "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        const optAllLeagues = document.createElement("option");
+        optAllLeagues.value = "";
+        optAllLeagues.textContent = "All Leagues";
+        leagueSelect.appendChild(optAllLeagues);
+        leagues.forEach((league) => {
+            const opt = document.createElement("option");
+            opt.value = league;
+            opt.textContent = league;
+            leagueSelect.appendChild(opt);
+        });
+        leagueSelect.value = state.leagueFilter;
+        controls.appendChild(leagueSelect);
+    }
+
+    const table = document.createElement("div");
+    table.className = "grid min-w-0";
+    const syncOwnerPaneVisibility = () => {
+        const hasFantasyTeamFilter = state.fantasyTeamFilter.trim() !== "";
+        table.style.gridTemplateColumns = hasFantasyTeamFilter
+            ? "minmax(0, 418px) minmax(0, 1fr)"
+            : "minmax(0, 418px) minmax(0, 1fr) 190px";
+        ownerPane.classList.toggle("hidden", hasFantasyTeamFilter);
+    };
+
+    const leftPane = document.createElement("div");
+    leftPane.className = "min-w-0 bg-white";
+    const statsViewport = document.createElement("div");
+    statsViewport.className = "relative min-w-0";
+    const statsScroll = document.createElement("div");
+    statsScroll.className = "min-w-0 overflow-x-auto";
+    const statsPane = document.createElement("div");
+    statsPane.className = "min-w-max";
+    const ownerPane = document.createElement("div");
+    ownerPane.className = "min-w-0 bg-white";
+    const leftHint = document.createElement("div");
+    leftHint.className =
+        "pointer-events-none absolute left-1 top-2 z-20 hidden rounded-full bg-white/95 p-0.5 text-gray-400 shadow-sm ring-1 ring-gray-200/70";
+    leftHint.innerHTML = `
+        <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+            <path fill-rule="evenodd" d="M12.78 15.53a.75.75 0 0 1-1.06 0l-5-5a.75.75 0 0 1 0-1.06l5-5a.75.75 0 1 1 1.06 1.06L8.31 10l4.47 4.47a.75.75 0 0 1 0 1.06Z" clip-rule="evenodd" />
+        </svg>
+    `;
+    const rightHint = document.createElement("div");
+    rightHint.className =
+        "pointer-events-none absolute right-1 top-2 z-20 hidden rounded-full bg-white/95 p-0.5 text-gray-400 shadow-sm ring-1 ring-gray-200/70";
+    rightHint.innerHTML = `
+        <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+            <path fill-rule="evenodd" d="M7.22 4.47a.75.75 0 0 1 1.06 0l5 5a.75.75 0 0 1 0 1.06l-5 5a.75.75 0 0 1-1.06-1.06L11.69 10 7.22 5.53a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+        </svg>
+    `;
+
+    const leftHeader = document.createElement("div");
+    leftHeader.className = "sticky top-0 z-10 grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+    leftHeader.style.gridTemplateColumns = leftGridCols;
+
+    const statsHeader = document.createElement("div");
+    statsHeader.className = "sticky top-0 z-10 grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+    statsHeader.style.gridTemplateColumns = statGridCols;
+
+    const ownerHeader = document.createElement("div");
+    ownerHeader.className = "sticky top-0 z-10 flex h-9 items-center justify-end bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+
+    const leftBody = document.createElement("div");
+    const statsBody = document.createElement("div");
+    const ownerBody = document.createElement("div");
+
+    const sortableHeader = (heading, className) => {
+        const key = heading?.key;
+        const th = document.createElement("div");
+        th.className = className;
+        th.textContent = heading?.label ?? "";
+
+        if (key !== "__rk") {
+            th.classList.add("cursor-pointer");
+            if (settings.sortKey === key) {
+                const arrow = document.createElement("span");
+                arrow.textContent = settings.sortDirection === "asc" ? "↑" : "↓";
+                th.appendChild(arrow);
+                th.classList.add("text-gray-900");
+            }
+            th.addEventListener("click", () => {
+                const same = settings.sortKey === key;
+                onSortChange?.({
+                    sortKey: key,
+                    sortDirection: same && settings.sortDirection === "desc" ? "asc" : "desc",
+                });
+            });
+        }
+
+        return th;
+    };
+
+    left.forEach((heading) => {
+        leftHeader.appendChild(sortableHeader(
+            heading,
+            "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
+        ));
+    });
+    stats.forEach((heading) => {
+        statsHeader.appendChild(sortableHeader(
+            heading,
+            "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
+        ));
+    });
+
+    const buildPosShape = (raw, rawType) => {
+        const v = displayPosition(raw);
+        const shapeType = displayPosition(rawType);
+        const wrap = document.createElement("div");
+        wrap.className = "h-8 w-full flex items-center justify-center";
+        const box = document.createElement("div");
+        box.className = "h-5 w-5 flex items-center justify-center";
+        wrap.appendChild(box);
+
+        const inner = document.createElement("div");
+        inner.className = "h-full w-full flex items-center justify-center font-semibold text-[9px]";
+        inner.style.color = posTextColor(shapeType);
+
+        if (shapeType === "F") {
+            inner.className += " rounded-[6px] border transform scale-110";
+            inner.style.borderColor = BORDER_COLOUR_F;
+            inner.textContent = v || "F";
+        } else if (shapeType === "D") {
+            inner.className += " rounded-[6px] border transform scale-110";
+            inner.style.borderColor = BORDER_COLOUR_D;
+            inner.textContent = v || "D";
+        } else if (shapeType === "G") {
+            inner.className += " rounded-full border-2";
+            inner.style.borderColor = BORDER_COLOUR_G;
+            inner.textContent = v || "G";
+        } else {
+            inner.className += " rounded border-2";
+            inner.style.borderColor = "#e5e7eb";
+            inner.textContent = v || "—";
+        }
+
+        box.appendChild(inner);
+        return wrap;
+    };
+
+    const applyFilters = (rows) => {
+        const nameQ = state.nameFilter.trim().toLowerCase();
+        const teamQ = state.teamFilter.trim().toUpperCase();
+        const fantasyTeamQ = state.fantasyTeamFilter.trim().toUpperCase();
+        const leagueQ = state.leagueFilter.trim().toUpperCase();
+
+        const filtered = rows.filter((row) => {
+            const name = String(row?.name ?? "").toLowerCase();
+            const hitName = !nameQ || name.includes(nameQ);
+            const hitTeam = !teamQ || String(row?.team ?? "").toUpperCase() === teamQ;
+            const hitFantasyTeam = !fantasyTeamQ || String(row?.fantasy_team_name ?? "").toUpperCase() === fantasyTeamQ;
+            const hitLeague = !leagueQ || String(row?.league ?? "").toUpperCase() === leagueQ;
+
+            return hitName && hitTeam && hitFantasyTeam && hitLeague;
+        });
+
+        return fantasyTeamQ ? sortByRosterOrder(filtered) : filtered;
+    };
+
+    const renderLeftCell = (row, heading, idx, i) => {
+        const key = heading?.key;
+        const cell = document.createElement("div");
+
+        if (key === "__rk") {
+            cell.className = "flex items-center justify-center text-gray-500";
+            cell.textContent = String(idx + 1);
+        } else if (["type", "pos_type"].includes(String(key).toLowerCase())) {
+            const val = row.pos ?? row.position ?? row[key] ?? row.pos_type ?? row.type;
+            const typeVal = row.pos_type ?? row.type;
+            cell.className = "flex items-center justify-center text-gray-500";
+            cell.appendChild(buildPosShape(val, typeVal));
+        } else if (String(key).toLowerCase() === "team") {
+            const badge = document.createElement("div");
+            badge.className =
+                "inline-flex h-7 px-3 rounded-md items-center justify-center " +
+                "text-white font-semibold text-xs tracking-wide shadow-sm";
+            badge.style.background = teamBg(row?.team);
+            badge.textContent = row?.team ?? "—";
+            cell.className = "flex items-center justify-center text-gray-500";
+            cell.appendChild(badge);
+        } else if (String(key).toLowerCase() === "league") {
+            const rawVal = row.stats?.[key] ?? row[key];
+            const val = formatStatValue(key, rawVal);
+            cell.className = "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
+            cell.textContent = val ?? "";
+        } else if (/^(player|name)$/i.test(String(key))) {
+            const rawVal = row.stats?.[key] ?? row[key];
+            const val = formatStatValue(key, rawVal);
+            cell.className = "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
+            cell.title = String(val ?? "");
+            const name = document.createElement("span");
+            name.className = "min-w-0 overflow-hidden text-ellipsis";
+            name.textContent = val ?? "";
+            cell.appendChild(buildPlayerAvatar(row, val));
+            cell.appendChild(name);
+        } else {
+            const rawVal = row.stats?.[key] ?? row[key];
+            const val = formatStatValue(key, rawVal);
+            cell.className = "flex items-center justify-center whitespace-nowrap text-gray-500";
+            cell.textContent = formatDesktopNumber(val);
+        }
+
+        return cell;
+    };
+
+    const renderStatCell = (row, heading) => {
+        const key = heading?.key;
+        const cell = document.createElement("div");
+        const rawVal = row.stats?.[key] ?? row[key];
+        const val = formatStatValue(key, rawVal);
+        const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
+        cell.className = settings.sortKey === key ? `${common} font-semibold` : common;
+        cell.textContent = isAAVKey(key) ? formatAAV(rawVal) : formatDesktopNumber(val);
+
+        return cell;
+    };
+
+    const renderRows = () => {
+        leftBody.innerHTML = "";
+        statsBody.innerHTML = "";
+        ownerBody.innerHTML = "";
+
+        applyFilters(data).forEach((row, idx) => {
+            const leftRow = document.createElement("div");
+            leftRow.className = "grid h-12 border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
+            leftRow.style.gridTemplateColumns = leftGridCols;
+            left.forEach((heading, i) => leftRow.appendChild(renderLeftCell(row, heading, idx, i)));
+            leftBody.appendChild(leftRow);
+
+            const statsRow = document.createElement("div");
+            statsRow.className = "grid h-12 border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
+            statsRow.style.gridTemplateColumns = statGridCols;
+            stats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
+            statsBody.appendChild(statsRow);
+
+            const ownerRow = document.createElement("div");
+            ownerRow.className = "flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 hover:bg-gray-50 transition-colors";
+            const ownerName = String(row?.fantasy_team_name ?? "").trim();
+            const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
+
+            if (ownerName !== "") {
+                const name = document.createElement("span");
+                name.className = "min-w-0 truncate font-medium";
+                name.textContent = ownerName;
+                name.title = ownerName;
+                ownerRow.appendChild(name);
+                ownerRow.appendChild(buildOwnerAvatar(ownerAvatarUrl, ownerName));
+            }
+
+            ownerBody.appendChild(ownerRow);
+        });
+
+        updateScrollHints();
+    };
+
+    const updateScrollHints = () => {
+        const maxScroll = Math.max(0, statsScroll.scrollWidth - statsScroll.clientWidth);
+        const hasOverflow = maxScroll > 1;
+        const isAtLeftEdge = hasOverflow && statsScroll.scrollLeft <= 1;
+        const hasHiddenLeftContent = hasOverflow && statsScroll.scrollLeft > 1;
+
+        leftHint.classList.toggle("hidden", !hasHiddenLeftContent);
+        rightHint.classList.toggle("hidden", !isAtLeftEdge);
+    };
+
+    nameInput.addEventListener("input", () => {
+        state.nameFilter = nameInput.value || "";
+        desktopState.set(container, state);
+        renderRows();
+    });
+    teamSelect.addEventListener("change", () => {
+        state.teamFilter = teamSelect.value || "";
+        desktopState.set(container, state);
+        renderRows();
+    });
+    leagueSelect?.addEventListener("change", () => {
+        state.leagueFilter = leagueSelect.value || "";
+        desktopState.set(container, state);
+        renderRows();
+    });
+
+    leftPane.appendChild(leftHeader);
+    leftPane.appendChild(leftBody);
+    statsPane.appendChild(statsHeader);
+    statsPane.appendChild(statsBody);
+    statsScroll.appendChild(statsPane);
+    statsViewport.appendChild(statsScroll);
+    statsViewport.appendChild(leftHint);
+    statsViewport.appendChild(rightHint);
+    ownerPane.appendChild(ownerHeader);
+    ownerPane.appendChild(ownerBody);
+    table.appendChild(leftPane);
+    table.appendChild(statsViewport);
+    table.appendChild(ownerPane);
+    wrapper.appendChild(controls);
+    wrapper.appendChild(table);
+    container.appendChild(wrapper);
+
+    syncOwnerPaneVisibility();
+    statsScroll.addEventListener("scroll", updateScrollHints, { passive: true });
+    window.addEventListener("resize", updateScrollHints, { passive: true });
+
+    renderRows();
+    window.requestAnimationFrame(updateScrollHints);
+
+    const observer = new MutationObserver(() => {
+        if (!container.contains(wrapper)) {
+            window.removeEventListener("resize", updateScrollHints);
+            observer.disconnect();
+        }
+    });
+    observer.observe(container, { childList: true });
+};
 
 export function renderStatsDesktop(
     container,
@@ -107,6 +643,13 @@ export function renderStatsDesktop(
     settings,
     onSortChange
 ) {
+    if (settings?.ownerColumn === true) {
+        renderLeagueOwnerStatsDesktop(container, data, headings, settings, onSortChange);
+        return;
+    }
+
+    const showOwnerColumn = settings?.ownerColumn === true;
+
     // ----- state (persisted via WeakMap) -----
     const prev = desktopState.get(container) || {};
     const state = {
@@ -125,6 +668,7 @@ export function renderStatsDesktop(
         { key: "__rk", label: "Rk" },
         ...(typeOrigIdx > -1 ? [srcHeadings[typeOrigIdx]] : []),
         ...srcHeadings.filter((_, i) => i !== typeOrigIdx),
+        ...(showOwnerColumn ? [{ key: "__owner", label: "" }] : []),
     ];
 
     // Column sizing
@@ -141,6 +685,7 @@ export function renderStatsDesktop(
     const playerIdx = displayHeadings.findIndex((h) =>
         /^(player|name)$/i.test(String(h.key))
     );
+    const ownerIdx = displayHeadings.findIndex((h) => isOwnerColumn(h.key));
 
     const gridCols = displayHeadings
         .map((_, i) => {
@@ -149,6 +694,7 @@ export function renderStatsDesktop(
             if (i === teamIdx) return "76px";
             if (i === leagueIdx) return "72px";
             if (i === playerIdx) return "190px";
+            if (i === ownerIdx) return "180px";
             return "72px";
         })
         .join(" ");
@@ -247,10 +793,12 @@ export function renderStatsDesktop(
 
     displayHeadings.forEach(({ key, label }) => {
         const th = document.createElement("div");
-        th.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
+        th.className = isOwnerColumn(key)
+            ? "sticky right-0 z-30 select-none flex items-center justify-end gap-1 whitespace-nowrap bg-gray-100 pl-3 text-right"
+            : "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
         th.textContent = label;
 
-        if (key !== "__rk") {
+        if (key !== "__rk" && !isOwnerColumn(key)) {
             th.classList.add("cursor-pointer");
             if (settings.sortKey === key) {
                 const arrow = document.createElement("span");
@@ -347,6 +895,21 @@ export function renderStatsDesktop(
                     cell.className =
                         "flex items-center justify-center text-gray-500";
                     cell.textContent = String(idx + 1);
+                } else if (isOwnerColumn(key)) {
+                    const ownerName = String(row?.fantasy_team_name ?? "").trim();
+                    const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
+
+                    cell.className =
+                        "sticky right-0 z-10 flex min-w-0 items-center justify-end gap-2 border-l border-gray-100 bg-white pl-3 text-right text-xs text-gray-600";
+
+                    if (ownerName !== "") {
+                        const name = document.createElement("span");
+                        name.className = "min-w-0 truncate font-medium";
+                        name.textContent = ownerName;
+                        name.title = ownerName;
+                        cell.appendChild(buildOwnerAvatar(ownerAvatarUrl, ownerName));
+                        cell.appendChild(name);
+                    }
                 } else if (i === teamIdx) {
                     const badge = document.createElement("div");
                     badge.className =

@@ -19,8 +19,11 @@ final class LeagueShowViewModel
 
     private Collection $guilds;
 
-    /** @var array<int, array{id:string,name:string,owner_avatar_url:string|null}> */
+    /** @var array<int, array{id:string,name:string,owner_avatar_url:string|null,logo_url?:string|null}> */
     private array $teams;
+
+    /** @var array<string,mixed> */
+    private array $drafting;
 
     private bool $fantraxConnected;
 
@@ -35,6 +38,7 @@ final class LeagueShowViewModel
         Collection $communities,
         Collection $guilds,
         array $teams,
+        array $drafting,
         bool $fantraxConnected,
         array $fantraxOptions,
         int $mobileBreakpoint
@@ -44,6 +48,7 @@ final class LeagueShowViewModel
         $this->communities = $communities;
         $this->guilds = $guilds;
         $this->teams = $teams;
+        $this->drafting = $drafting;
         $this->fantraxConnected = $fantraxConnected;
         $this->fantraxOptions = $fantraxOptions;
         $this->mobileBreakpoint = $mobileBreakpoint;
@@ -55,6 +60,7 @@ final class LeagueShowViewModel
 
         $header = [
             'title' => (string) ($this->league->name ?? 'League'),
+            'url' => route('community.leagues.show', ['c_id' => $this->community->id, 'l_id' => $this->league->id]),
             'can_edit' => true,
         ];
 
@@ -92,6 +98,7 @@ final class LeagueShowViewModel
                 'id' => (string) $t['id'],
                 'name' => (string) $t['name'],
                 'owner_avatar_url' => $t['owner_avatar_url'] ?? null,
+                'logo_url' => $t['logo_url'] ?? null,
             ];
         }, $this->teams);
 
@@ -123,6 +130,7 @@ final class LeagueShowViewModel
             $platform,
             $discord,
             $teams,
+            $this->drafting,
             $sidebar,
             $fantraxModal,
             $meta

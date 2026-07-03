@@ -14,6 +14,8 @@ final class LeagueShowDto
 
     private array $teams;
 
+    private array $drafting;
+
     private array $sidebar;
 
     private array $fantraxModal;
@@ -25,6 +27,7 @@ final class LeagueShowDto
         array $platform,
         array $discord,
         array $teams,
+        array $drafting,
         array $sidebar,
         array $fantraxModal,
         array $meta
@@ -33,6 +36,7 @@ final class LeagueShowDto
         $this->platform = $platform;
         $this->discord = $discord;
         $this->teams = $teams;
+        $this->drafting = $drafting;
         $this->sidebar = $sidebar;
         $this->fantraxModal = $fantraxModal;
         $this->meta = $meta;
@@ -45,6 +49,7 @@ final class LeagueShowDto
             'platform' => $this->platform,
             'discord' => $this->discord,
             'teams' => $this->teams,
+            'drafting' => $this->drafting,
             'sidebar' => $this->sidebar,
             'fantrax_modal' => $this->fantraxModal,
             'meta' => $this->meta,

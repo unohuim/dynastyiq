@@ -20,6 +20,41 @@ use SimpleXMLElement;
  */
 class YahooFantasyLeagueService
 {
+    /**
+     * Yahoo hockey category names normalized to DynastyIQ nhl_season_stats keys.
+     *
+     * @var array<string,string>
+     */
+    private const HOCKEY_STAT_KEYS_BY_LABEL = [
+        'assists' => 'a',
+        'blocks' => 'b',
+        'blocked shots' => 'b',
+        'faceoffs won' => 'fow',
+        'goals' => 'g',
+        'goals against' => 'ga',
+        'goals against average' => 'gaa',
+        'hits' => 'h',
+        'losses' => 'losses',
+        'overtime losses' => 'ot_losses',
+        'penalty minutes' => 'pim',
+        'plus minus' => 'plus_minus',
+        'plus/minus' => 'plus_minus',
+        'points' => 'pts',
+        'power play assists' => 'ppa',
+        'power play goals' => 'ppg',
+        'power play points' => 'ppp',
+        'save percentage' => 'sv_pct',
+        'saves' => 'sv',
+        'shorthanded assists' => 'pka',
+        'shorthanded goals' => 'pkg',
+        'shorthanded points' => 'pkp',
+        'shootout saves' => 'shosv',
+        'shots against' => 'sa',
+        'shots on goal' => 'sog',
+        'shutouts' => 'so',
+        'wins' => 'wins',
+    ];
+
     public function __construct(
         private readonly YahooFantasyClient $client,
     ) {
@@ -77,7 +112,7 @@ class YahooFantasyLeagueService
                 ],
             );
             $syncedLeagueIds[] = $platformLeague->id;
-            $this->syncRosterSlots($connection, $platformLeague, $leaguePayload['league_key'], $now);
+            $this->syncLeagueSettings($connection, $platformLeague, $leaguePayload['league_key'], $now);
 
             $leagueTeams = $this->teamsForLeague($connection, $leaguePayload['league_key']);
             if ($leagueTeams === []) {
@@ -122,18 +157,42 @@ class YahooFantasyLeagueService
     }
 
     /**
-     * Sync provider-neutral roster slot settings for a Yahoo league.
+     * Sync provider-neutral league settings for a Yahoo league.
      */
-    private function syncRosterSlots(
+    private function syncLeagueSettings(
         YahooFantasyConnection $connection,
         PlatformLeague $platformLeague,
         string $leagueKey,
         CarbonInterface $now,
     ): void {
-        $slots = $this->rosterSlotPayloads(
-            $this->client->fantasyXmlForConnection($connection, "league/{$leagueKey}/settings"),
+        $settingsXml = $this->client->fantasyXmlForConnection($connection, "league/{$leagueKey}/settings");
+
+        $manualMappings = $this->manualScoringMappings($platformLeague);
+        $categories = $this->applyManualScoringMappings(
+            $this->scoringCategoryPayloads($settingsXml),
+            $manualMappings,
         );
 
+        $platformLeague->forceFill([
+            'settings' => $this->leagueSettingsPayload($settingsXml),
+            'scoring_settings' => [
+                'categories' => $categories,
+                'manual_mappings' => $manualMappings,
+                'raw_payload' => $this->settingsRawPayload($settingsXml),
+            ],
+            'updated_at' => $now,
+        ])->save();
+
+        $this->syncRosterSlots($platformLeague, $this->rosterSlotPayloads($settingsXml), $now);
+    }
+
+    /**
+     * Sync provider-neutral roster slot settings for a Yahoo league.
+     *
+     * @param array<int,array{slot:string,slot_type:string,position_type:?string,count:int,sort_order:int,raw_payload:array<string,mixed>}> $slots
+     */
+    private function syncRosterSlots(PlatformLeague $platformLeague, array $slots, CarbonInterface $now): void
+    {
         if ($slots === []) {
             return;
         }
@@ -314,6 +373,227 @@ class YahooFantasyLeagueService
     }
 
     /**
+     * Extract normalized Yahoo league settings metadata.
+     *
+     * @return array<string,mixed>
+     */
+    private function leagueSettingsPayload(SimpleXMLElement $xml): array
+    {
+        $settings = $this->settingsNode($xml);
+
+        if (! $settings instanceof SimpleXMLElement) {
+            return [];
+        }
+
+        return [
+            'scoring_type' => $this->childText($settings, 'scoring_type'),
+            'draft_type' => $this->childText($settings, 'draft_type'),
+            'uses_fractional_points' => $this->booleanText($this->childText($settings, 'uses_fractional_points')),
+            'uses_negative_points' => $this->booleanText($this->childText($settings, 'uses_negative_points')),
+            'player_pool' => $this->childText($settings, 'player_pool'),
+            'raw_payload' => $this->xmlToArray($settings),
+        ];
+    }
+
+    /**
+     * Extract normalized Yahoo scoring categories with league modifiers.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function scoringCategoryPayloads(SimpleXMLElement $xml): array
+    {
+        $modifiers = $this->statModifiersById($xml);
+        $nodes = $xml->xpath(
+            '//*[local-name()="settings"]/*[local-name()="stat_categories"]/*[local-name()="stats"]/*[local-name()="stat"]'
+        ) ?: [];
+
+        return collect($nodes)
+            ->map(function (SimpleXMLElement $stat, int $index) use ($modifiers): ?array {
+                $statId = $this->childText($stat, 'stat_id');
+
+                if ($statId === null) {
+                    return null;
+                }
+
+                $displayName = $this->childText($stat, 'display_name');
+                $name = $this->childText($stat, 'name');
+                $autoStatKey = $this->autoStatKey($displayName, $name);
+
+                return [
+                    'id' => $statId,
+                    'label' => $displayName ?? $name ?? $statId,
+                    'name' => $name,
+                    'short' => $displayName,
+                    'enabled' => $this->booleanText($this->childText($stat, 'enabled')) ?? false,
+                    'position_type' => $this->childText($stat, 'position_type'),
+                    'position_types' => $this->statPositionTypes($stat),
+                    'sort_order' => (int) ($this->childText($stat, 'sort_order') ?? $index + 1),
+                    'scoring_order' => $modifiers[$statId]['display_order'] ?? $index + 1,
+                    'value' => $modifiers[$statId]['value'] ?? null,
+                    'auto_stat_key' => $autoStatKey,
+                    'stat_key' => $autoStatKey,
+                    'is_mapped' => $autoStatKey !== null,
+                    'mapping_source' => $autoStatKey !== null ? 'auto' : null,
+                    'raw_payload' => $this->xmlToArray($stat),
+                ];
+            })
+            ->filter()
+            ->filter(static fn (array $stat): bool => (bool) $stat['enabled'])
+            ->sortBy([
+                ['scoring_order', 'asc'],
+                ['label', 'asc'],
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Resolve a Yahoo scoring category to a DynastyIQ stat key.
+     */
+    private function autoStatKey(?string $displayName, ?string $name): ?string
+    {
+        foreach ([$displayName, $name] as $label) {
+            $normalized = $this->normalizedStatLabel($label);
+
+            if ($normalized !== '' && isset(self::HOCKEY_STAT_KEYS_BY_LABEL[$normalized])) {
+                return self::HOCKEY_STAT_KEYS_BY_LABEL[$normalized];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Return manual scoring mappings already stored on the platform league.
+     *
+     * @return array<string,string>
+     */
+    private function manualScoringMappings(PlatformLeague $platformLeague): array
+    {
+        $mappings = data_get($platformLeague->scoring_settings ?? [], 'manual_mappings', []);
+
+        if (! is_array($mappings)) {
+            return [];
+        }
+
+        return collect($mappings)
+            ->mapWithKeys(static fn (mixed $value, mixed $key): array => [(string) $key => (string) $value])
+            ->filter(static fn (string $value): bool => $value !== '')
+            ->all();
+    }
+
+    /**
+     * Apply user-selected scoring mappings over auto mappings.
+     *
+     * @param array<int,array<string,mixed>> $categories
+     * @param array<string,string> $manualMappings
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function applyManualScoringMappings(array $categories, array $manualMappings): array
+    {
+        return collect($categories)
+            ->map(static function (array $category) use ($manualMappings): array {
+                $statId = (string) ($category['id'] ?? '');
+                $manualStatKey = $manualMappings[$statId] ?? null;
+                $statKey = $manualStatKey ?: ($category['auto_stat_key'] ?? null);
+
+                $category['stat_key'] = $statKey;
+                $category['is_mapped'] = $statKey !== null && $statKey !== '';
+                $category['mapping_source'] = $manualStatKey ? 'manual' : ($category['mapping_source'] ?? null);
+
+                return $category;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Normalize Yahoo scoring labels for deterministic stat-key matching.
+     */
+    private function normalizedStatLabel(?string $label): string
+    {
+        $label = strtolower(trim((string) $label));
+        $label = str_replace(['+', '-'], [' plus ', ' '], $label);
+        $label = preg_replace('/[^a-z0-9\/]+/', ' ', $label);
+
+        return trim((string) preg_replace('/\s+/', ' ', (string) $label));
+    }
+
+    /**
+     * Return Yahoo stat modifier values keyed by stat id.
+     *
+     * @return array<string,array{value:int|float|string,display_order:int}>
+     */
+    private function statModifiersById(SimpleXMLElement $xml): array
+    {
+        $nodes = $xml->xpath(
+            '//*[local-name()="settings"]/*[local-name()="stat_modifiers"]/*[local-name()="stats"]/*[local-name()="stat"]'
+        ) ?: [];
+
+        $count = count($nodes);
+
+        return collect($nodes)
+            ->mapWithKeys(function (SimpleXMLElement $stat, int $index) use ($count): array {
+                $statId = $this->childText($stat, 'stat_id');
+                $value = $this->childText($stat, 'value');
+
+                if ($statId === null || $value === null) {
+                    return [];
+                }
+
+                return [
+                    $statId => [
+                        'value' => $this->numericText($value),
+                        'display_order' => $count - $index,
+                    ],
+                ];
+            })
+            ->all();
+    }
+
+    /**
+     * Return position types that Yahoo associates to one stat.
+     *
+     * @return array<int,string>
+     */
+    private function statPositionTypes(SimpleXMLElement $stat): array
+    {
+        $nodes = $stat->xpath(
+            './*[local-name()="stat_position_types"]/*[local-name()="stat_position_type"]/*[local-name()="position_type"]'
+        ) ?: [];
+
+        return collect($nodes)
+            ->map(static fn (SimpleXMLElement $node): string => trim((string) $node))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return the league settings node from a Yahoo settings response.
+     */
+    private function settingsNode(SimpleXMLElement $xml): ?SimpleXMLElement
+    {
+        $nodes = $xml->xpath('//*[local-name()="settings"]') ?: [];
+        $settings = $nodes[0] ?? null;
+
+        return $settings instanceof SimpleXMLElement ? $settings : null;
+    }
+
+    /**
+     * Return the raw settings payload for diagnostics.
+     *
+     * @return array<string,mixed>
+     */
+    private function settingsRawPayload(SimpleXMLElement $xml): array
+    {
+        $settings = $this->settingsNode($xml);
+
+        return $settings instanceof SimpleXMLElement ? $this->xmlToArray($settings) : [];
+    }
+
+    /**
      * Normalize a provider roster slot into a display group.
      */
     private function slotType(string $slot): string
@@ -358,6 +638,32 @@ class YahooFantasyLeagueService
         }
 
         return null;
+    }
+
+    /**
+     * Convert Yahoo boolean text when present.
+     */
+    private function booleanText(?string $value): ?bool
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return in_array(strtolower($value), ['1', 'true', 'yes'], true);
+    }
+
+    /**
+     * Convert Yahoo numeric text while preserving non-numeric values.
+     */
+    private function numericText(string $value): int|float|string
+    {
+        if (! is_numeric($value)) {
+            return $value;
+        }
+
+        $number = (float) $value;
+
+        return floor($number) === $number ? (int) $number : $number;
     }
 
     /**

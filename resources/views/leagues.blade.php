@@ -10,5 +10,16 @@
     :active-league-id="$active?->id"
     :initial-league="['slug' => (string) ($active?->id ?? ''), 'name' => (string) ($active?->name ?? '')]"
 >
-    @include('leagues._panel', ['league' => $active])
+    @include('leagues._panel', [
+        'league' => $active,
+        'teams' => $teams ?? [],
+        'scoringCategories' => $scoringCategories ?? [],
+        'scoringAlignmentCategories' => $scoringAlignmentCategories ?? [],
+        'manualScoringMappings' => $manualScoringMappings ?? [],
+        'availableStatFields' => $availableStatFields ?? [],
+        'searchPlayers' => $searchPlayers ?? [],
+        'scoringSettingsUpdateUrl' => $scoringSettingsUpdateUrl ?? '',
+        'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
+        'isScoringFullyMapped' => $isScoringFullyMapped ?? false,
+    ])
 </x-leagues-hub-layout>

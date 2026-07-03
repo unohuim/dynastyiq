@@ -184,6 +184,72 @@ export class StatsPageShell {
     }));
   }
 
+  hasColumnGroups() {
+    return this.settings.columnGroups
+      && typeof this.settings.columnGroups === 'object'
+      && !Array.isArray(this.settings.columnGroups);
+  }
+
+  activeColumnGroup() {
+    if (!this.hasColumnGroups()) {
+      return null;
+    }
+
+    return this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G')
+      ? 'goalie'
+      : (this.settings.activeColumnGroup || 'skater');
+  }
+
+  activeHeadings() {
+    if (!this.hasColumnGroups()) {
+      return this.payload.headings;
+    }
+
+    const group = this.activeColumnGroup();
+    const groupColumns = Array.isArray(this.settings.columnGroups?.[group])
+      ? this.settings.columnGroups[group]
+      : [];
+
+    const identityHeadings = this.payload.headings.filter((heading) => {
+      const key = String(heading?.key ?? '');
+      return IDENTITY_KEYS.has(key);
+    });
+    const seen = new Set();
+
+    return [...identityHeadings, ...groupColumns]
+      .filter((heading) => {
+        const key = String(heading?.key ?? '');
+        if (!key || seen.has(key)) return false;
+
+        seen.add(key);
+        return true;
+      });
+  }
+
+  syncColumnGroupSort() {
+    if (!this.hasColumnGroups()) {
+      return;
+    }
+
+    const activeKeys = new Set(this.activeHeadings().map((heading) => String(heading?.key ?? '')).filter(Boolean));
+
+    if (activeKeys.has(String(this.settings.sortKey ?? ''))) {
+      return;
+    }
+
+    const group = this.activeColumnGroup();
+    const groupSort = this.settings.columnGroupSort?.[group] || {};
+    const fallbackKey = groupSort.sortKey
+      || this.settings.columnGroups?.[group]?.[0]?.key
+      || this.activeHeadings().find((heading) => !IDENTITY_KEYS.has(String(heading?.key ?? '')))?.key
+      || this.activeHeadings()[0]?.key
+      || null;
+
+    this.settings.sortKey = fallbackKey;
+    this.settings.sortDirection = groupSort.sortDirection || this.settings.defaultSortDirection || 'desc';
+    this.settings.displayKey = fallbackKey;
+  }
+
   buildParams() {
     const params = new URLSearchParams();
     const period = this.supportsDateRange() ? this.state.period : 'season';
@@ -216,6 +282,8 @@ export class StatsPageShell {
   }
 
   updateUrl(params) {
+    if (this.config.syncUrl === false) return;
+
     window.history.replaceState(null, '', `/stats?${params.toString()}`);
   }
 
@@ -773,20 +841,22 @@ export class StatsPageShell {
     }
 
     this.contentEl.innerHTML = '';
+    this.syncColumnGroupSort();
+    const activeHeadings = this.activeHeadings();
     const sorted = sortData(this.locallyFilteredRows(), this.settings.sortKey, this.settings.sortDirection);
 
     if (this.state.isMobile) {
       StatsMobile({
         container: this.contentEl,
         data: sorted,
-        headings: this.payload.headings,
+        headings: activeHeadings,
         settings: this.settings,
         onSortChange: this.onSortChange,
       });
       return;
     }
 
-    renderStatsDesktop(this.contentEl, sorted, this.payload.headings, this.settings, this.onSortChange);
+    renderStatsDesktop(this.contentEl, sorted, activeHeadings, this.settings, this.onSortChange);
   }
 
   renderMobileSkeleton() {
@@ -856,13 +926,21 @@ export class StatsPageShell {
   }
 }
 
+export const mountStatsPage = (container, config = {}) => {
+  if (!container) return null;
+
+  container.dataset.statsMounted = '1';
+  const shell = new StatsPageShell(container, config);
+  shell.render();
+
+  return shell;
+};
+
 const bootStatsPage = () => {
   const container = document.getElementById('stats-page');
   if (!container || container.dataset.statsMounted === '1') return;
 
-  container.dataset.statsMounted = '1';
-  const shell = new StatsPageShell(container, window.__statsPageConfig || {});
-  shell.render();
+  mountStatsPage(container, window.__statsPageConfig || {});
 };
 
 if (document.readyState === 'loading') {
@@ -870,3 +948,7 @@ if (document.readyState === 'loading') {
 } else {
   bootStatsPage();
 }
+
+window.DIQ = window.DIQ || {};
+window.DIQ.mountStatsPage = mountStatsPage;
+window.dispatchEvent(new CustomEvent('diq:stats-page-ready'));

@@ -29,4 +29,14 @@ if (window.DIQ?.userId) {
     console.log('Discord connected:', e);
     window.dispatchEvent(new CustomEvent('discord:connected', { detail: e }));
   });
+
+  window.DIQ.userChannel.listen('.fantrax.draft.pick', (e) => {
+    window.dispatchEvent(new CustomEvent('fantrax:draft-pick', { detail: e }));
+    window.dispatchEvent(new CustomEvent('toast', {
+      detail: {
+        message: e?.message || 'A draft pick was made.',
+        type: 'success',
+      },
+    }));
+  });
 }

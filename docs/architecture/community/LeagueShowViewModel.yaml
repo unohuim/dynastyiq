@@ -9,7 +9,7 @@ purpose: Prepare league detail data for Blade without spreading query and transf
 when_to_use:
   - League detail pages needing organization context.
   - League detail pages needing platform league data.
-  - League detail pages needing teams, roster, or availability context.
+  - League detail pages needing teams, roster, drafting, or availability context.
 when_not_to_use:
   - Raw API endpoints.
   - Import services.
@@ -18,9 +18,9 @@ rules:
   - League detail transformation belongs in the view model or DTO, not in Blade.
   - DTO shape must remain stable for consuming views.
   - Domain queries should not be duplicated in league detail templates.
+  - External platform drafting data must enter the DTO as a normalized drafting payload.
 public_interface:
   - LeagueShowViewModel
   - LeagueShowDto
 example_usage: |
   $dto = $leagueShowViewModel->toDto();
-
