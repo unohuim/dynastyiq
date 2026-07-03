@@ -242,14 +242,14 @@ class CommunityLeagues extends Controller
                 ->cursor();
 
             foreach ($players as $player) {
-                fputcsv($handle, [
+                fwrite($handle, $this->fantraxUploadCsvRow([
                     '*' . (string) $player->fantrax_id . '*',
-                    $rowNumber++,
+                    (string) $rowNumber++,
                     $this->fantraxUploadName((string) ($player->name ?? '')),
-                    (string) ($player->team ?: $player->linked_team_abbrev ?: ''),
+                    $this->fantraxUploadTeam((string) ($player->team ?: $player->linked_team_abbrev ?: '')),
                     $this->fantraxUploadPosition((string) ($player->position ?? '')),
-                    (int) ($player->current_aav ?: 750000),
-                ], "\t", '"', '\\');
+                    (string) (int) ($player->current_aav ?: 750000),
+                ]));
             }
 
             fclose($handle);
@@ -325,6 +325,18 @@ class CommunityLeagues extends Controller
     }
 
     /**
+     * Format a Fantrax salary-upload CSV row exactly like the blank Fantrax template.
+     *
+     * @param array<int, string> $fields
+     */
+    private function fantraxUploadCsvRow(array $fields): string
+    {
+        return collect($fields)
+            ->map(static fn (string $field): string => '"' . str_replace('"', '""', $field) . '"')
+            ->implode(',') . "\n";
+    }
+
+    /**
      * Normalize a stored Fantrax name for salary-upload display.
      */
     private function fantraxUploadName(string $name): string
@@ -341,17 +353,24 @@ class CommunityLeagues extends Controller
     }
 
     /**
-     * Normalize a stored Fantrax position into the Fantrax salary-upload position list.
+     * Normalize a stored Fantrax team for salary-upload display.
+     */
+    private function fantraxUploadTeam(string $team): string
+    {
+        $team = trim($team);
+
+        return in_array(strtoupper($team), ['', 'N/A', '(N/A)'], true) ? '' : $team;
+    }
+
+    /**
+     * Normalize a stored Fantrax position into the Fantrax salary-upload position bucket.
      */
     private function fantraxUploadPosition(string $position): string
     {
         $positions = collect(preg_split('/[,\s\/]+/', strtoupper(trim($position))) ?: [])
             ->map(static fn (string $value): string => match ($value) {
-                'L' => 'LW',
-                'R' => 'RW',
-                'W' => 'RW',
+                'C', 'L', 'LW', 'R', 'RW', 'W', 'FWD', 'FORWARD', 'SKT', 'SKATER' => 'F',
                 'LD', 'RD' => 'D',
-                'SKT', 'SKATER' => 'Skt',
                 default => $value,
             })
             ->filter(static fn (string $value): bool => $value !== '')
@@ -366,11 +385,15 @@ class CommunityLeagues extends Controller
             return 'G';
         }
 
-        if (! $positions->contains('Skt')) {
-            $positions->push('Skt');
+        if ($positions->contains('F') && $positions->contains('D')) {
+            return 'F,D';
         }
 
-        return $positions->implode(',');
+        if ($positions->contains('D')) {
+            return 'D';
+        }
+
+        return 'F';
     }
 
     /**
