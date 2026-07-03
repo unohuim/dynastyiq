@@ -245,7 +245,7 @@ class CommunityLeagues extends Controller
                 fputcsv($handle, [
                     '*' . (string) $player->fantrax_id . '*',
                     $rowNumber++,
-                    (string) ($player->name ?? ''),
+                    $this->fantraxUploadName((string) ($player->name ?? '')),
                     (string) ($player->team ?: $player->linked_team_abbrev ?: ''),
                     $this->fantraxUploadPosition((string) ($player->position ?? '')),
                     (int) ($player->current_aav ?: 750000),
@@ -322,6 +322,22 @@ class CommunityLeagues extends Controller
             'ok' => true,
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
         ]);
+    }
+
+    /**
+     * Normalize a stored Fantrax name for salary-upload display.
+     */
+    private function fantraxUploadName(string $name): string
+    {
+        $name = trim($name);
+
+        if (! str_contains($name, ',')) {
+            return $name;
+        }
+
+        [$last, $first] = array_map('trim', explode(',', $name, 2));
+
+        return trim($first . ' ' . $last);
     }
 
     /**
