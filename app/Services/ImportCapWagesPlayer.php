@@ -87,7 +87,7 @@ class ImportCapWagesPlayer
             return false;
         }
 
-        $this->writeContractsForPlayer($player, $data, $slug, $nhlId);
+        $this->writeContractsForPlayer($player, $data, $slug, $nhlId, $identity);
 
         return true;
     }
@@ -165,7 +165,7 @@ class ImportCapWagesPlayer
         $slug = $capWagesPlayer->slug ?: ($identity->provider_slug ?: $identity->provider_player_id);
         $nhlId = $capWagesPlayer->raw_payload['nhlId'] ?? null;
 
-        $this->writeContractsForPlayer($player, $capWagesPlayer->raw_payload, (string) $slug, $nhlId);
+        $this->writeContractsForPlayer($player, $capWagesPlayer->raw_payload, (string) $slug, $nhlId, $identity);
 
         return true;
     }
@@ -211,7 +211,63 @@ class ImportCapWagesPlayer
             return;
         }
 
-        $this->writeContractsForPlayer($player, $data, $slug, $nhlId);
+        $this->writeContractsForPlayer($player, $data, $slug, $nhlId, $identity);
+    }
+
+    /**
+     * Create missing CapWages signing transactions for materialized contracts.
+     */
+    public function reconcileMissingContractTransactions(): int
+    {
+        $created = 0;
+
+        Contract::query()
+            ->with('player')
+            ->whereNotNull('signing_date')
+            ->orderBy('id')
+            ->chunkById(200, function ($contracts) use (&$created): void {
+                foreach ($contracts as $contract) {
+                    if (! $contract instanceof Contract || ! $contract->player) {
+                        continue;
+                    }
+
+                    $capWagesPlayer = CapWagesPlayer::query()
+                        ->with('externalIdentity')
+                        ->where('player_id', $contract->player_id)
+                        ->first();
+
+                    if (! $capWagesPlayer) {
+                        continue;
+                    }
+
+                    $slug = $capWagesPlayer->slug
+                        ?: $capWagesPlayer->externalIdentity?->provider_slug
+                        ?: $capWagesPlayer->externalIdentity?->provider_player_id
+                        ?: 'player:' . $contract->player_id;
+
+                    $wasRecentlyCreated = $this->upsertCapWagesContractTransaction(
+                        $contract->player,
+                        $capWagesPlayer->externalIdentity,
+                        (string) $slug,
+                        [
+                            'contractType' => $contract->contract_type,
+                            'contractLength' => $contract->contract_length,
+                            'contractValue' => $contract->contract_value,
+                            'expiryStatus' => $contract->expiry_status,
+                            'signingTeam' => $contract->signing_team,
+                            'signingDate' => $contract->signing_date?->toDateString(),
+                            'signedBy' => $contract->signed_by,
+                        ],
+                        $contract,
+                    );
+
+                    if ($wasRecentlyCreated) {
+                        $created++;
+                    }
+                }
+            });
+
+        return $created;
     }
 
     /**
@@ -284,7 +340,13 @@ class ImportCapWagesPlayer
      * @param array<string,mixed> $data
      * @param int|string|null $nhlId
      */
-    private function writeContractsForPlayer(Player $player, array $data, string $slug, int|string|null $nhlId): void
+    private function writeContractsForPlayer(
+        Player $player,
+        array $data,
+        string $slug,
+        int|string|null $nhlId,
+        ?PlayerExternalIdentity $identity = null,
+    ): void
     {
         foreach ($data['contracts'] ?? [] as $entry) {
             if (! is_array($entry)) {
@@ -321,6 +383,8 @@ class ImportCapWagesPlayer
                     'signing_date' => $signingDate,
                 ]);
 
+            $isNewContract = ! $contract->exists;
+
             $contract->fill([
                 'contract_length' => $entry['contractLength'] ?? null,
                 'contract_value'  => $entry['contractValue']  ?? null,
@@ -330,6 +394,10 @@ class ImportCapWagesPlayer
                 'signed_by'       => $entry['signedBy']       ?? null,
             ]);
             $contract->save();
+
+            if ($isNewContract) {
+                $this->upsertCapWagesContractTransaction($player, $identity, $slug, $entry, $contract);
+            }
 
             foreach ($seasonRows as $seasonData) {
                 $rawSeason = (string) ($seasonData['season'] ?? '');
@@ -362,6 +430,84 @@ class ImportCapWagesPlayer
                 );
             }
         }
+    }
+
+    /**
+     * Persist a CapWages contract signing as real hockey transaction history.
+     *
+     * @param array<string,mixed> $entry
+     */
+    private function upsertCapWagesContractTransaction(
+        Player $player,
+        ?PlayerExternalIdentity $identity,
+        string $slug,
+        array $entry,
+        Contract $contract,
+    ): bool
+    {
+        if ($contract->signing_date === null) {
+            return false;
+        }
+
+        $transaction = NhlPlayerTransaction::firstOrNew([
+            'source_key' => $this->capWagesContractSourceKey($slug, $contract),
+        ]);
+
+        $transaction->fill([
+            'player_id' => $player->id,
+            'player_external_identity_id' => $identity?->id,
+            'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
+            'source_transaction_id' => null,
+            'transaction_date' => $contract->signing_date->toDateString(),
+            'transaction_type' => 'signed',
+            'description' => $this->capWagesContractDescription($contract),
+            'from_team' => null,
+            'to_team' => $contract->signing_team ?: $player->team_abbrev ?: $identity?->team,
+            'raw_payload' => [
+                'slug' => $slug,
+                'contract' => $entry,
+            ],
+        ]);
+        $transaction->save();
+
+        return $transaction->wasRecentlyCreated;
+    }
+
+    /**
+     * Build a deterministic key for provider contract-signing rows.
+     */
+    private function capWagesContractSourceKey(string $slug, Contract $contract): string
+    {
+        return 'capwages:contract:'
+            . sha1(json_encode([
+                'slug' => $slug,
+                'contract_type' => $contract->contract_type,
+                'signing_date' => $contract->signing_date?->toDateString(),
+            ], JSON_THROW_ON_ERROR));
+    }
+
+    /**
+     * Build a compact display description for a contract signing transaction.
+     */
+    private function capWagesContractDescription(Contract $contract): string
+    {
+        $parts = array_values(array_filter([
+            $contract->contract_length,
+            $contract->contract_value ? '$' . number_format((int) $contract->contract_value) : null,
+        ]));
+
+        $description = 'Signed';
+        if ($parts !== []) {
+            $description .= ' ' . implode(', ', $parts) . ' contract';
+        } else {
+            $description .= ' contract';
+        }
+
+        if ($contract->signing_team) {
+            $description .= ' with ' . $contract->signing_team;
+        }
+
+        return $description;
     }
 
     /**

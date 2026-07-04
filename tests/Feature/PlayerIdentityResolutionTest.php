@@ -2041,6 +2041,123 @@ it('capwages import leaves transaction dates empty when acquisition prose has no
     expect($transaction->transaction_date)->toBeNull();
 });
 
+it('capwages import creates a signed transaction when it materializes a new contract', function () {
+    ($this->makePlayer)([
+        'nhl_id' => 123456,
+        'full_name' => 'Signed Contract Player',
+        'first_name' => 'Signed',
+        'last_name' => 'Player',
+        'team_abbrev' => 'WSH',
+    ]);
+    ($this->fakeCapWagesPlayer)('signed-contract-player', ($this->capWagesPayload)([
+        'name' => 'Signed Contract Player',
+        'team' => 'WSH',
+        'contracts' => [
+            [
+                'signingDate' => '2026-07-01',
+                'contractType' => 'Standard',
+                'contractLength' => '3 years',
+                'contractValue' => 9000000,
+                'expiryStatus' => 'UFA',
+                'signingTeam' => 'WSH',
+                'signedBy' => 'Club',
+                'seasons' => [
+                    [
+                        'season' => '2026-27',
+                        'capHit' => 3000000,
+                        'aav' => 3000000,
+                        'baseSalary' => 3000000,
+                    ],
+                ],
+            ],
+        ],
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('signed-contract-player', false);
+
+    $transaction = NhlPlayerTransaction::query()
+        ->where('source', NhlPlayerTransaction::SOURCE_CAPWAGES)
+        ->where('transaction_type', 'signed')
+        ->first();
+
+    expect($transaction)->not->toBeNull()
+        ->and($transaction->player?->full_name)->toBe('Signed Contract Player')
+        ->and($transaction->transaction_date?->toDateString())->toBe('2026-07-01')
+        ->and($transaction->to_team)->toBe('WSH')
+        ->and($transaction->description)->toBe('Signed 3 years, $9,000,000 contract with WSH')
+        ->and($transaction->raw_payload['slug'])->toBe('signed-contract-player');
+});
+
+it('capwages import does not duplicate signed transactions for an existing materialized contract', function () {
+    ($this->makePlayer)([
+        'nhl_id' => 123456,
+        'full_name' => 'Idempotent Contract Player',
+        'first_name' => 'Idempotent',
+        'last_name' => 'Player',
+    ]);
+    ($this->fakeCapWagesPlayer)('idempotent-contract-player', ($this->capWagesPayload)([
+        'name' => 'Idempotent Contract Player',
+    ]));
+
+    (new ImportCapWagesPlayer())->syncBySlug('idempotent-contract-player', false);
+    (new ImportCapWagesPlayer())->syncBySlug('idempotent-contract-player', false);
+
+    expect(NhlPlayerTransaction::query()
+        ->where('source', NhlPlayerTransaction::SOURCE_CAPWAGES)
+        ->where('transaction_type', 'signed')
+        ->count())->toBe(1);
+});
+
+it('capwages reconciliation creates missing signed transactions for existing contracts', function () {
+    $player = ($this->makePlayer)([
+        'nhl_id' => 123456,
+        'full_name' => 'Backfilled Contract Player',
+        'first_name' => 'Backfilled',
+        'last_name' => 'Player',
+        'team_abbrev' => 'WSH',
+    ]);
+    $identity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'backfilled-contract-player',
+        'provider_slug' => 'backfilled-contract-player',
+        'player_id' => $player->id,
+        'display_name' => 'Backfilled Contract Player',
+        'team' => 'WSH',
+        'status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    CapWagesPlayer::create([
+        'player_external_identity_id' => $identity->id,
+        'player_id' => $player->id,
+        'slug' => 'backfilled-contract-player',
+        'name' => 'Backfilled Contract Player',
+        'team' => 'WSH',
+        'raw_payload' => [],
+    ]);
+    Contract::create([
+        'player_id' => $player->id,
+        'contract_type' => 'Standard',
+        'contract_length' => '1 year',
+        'contract_value' => 5000000,
+        'expiry_status' => 'UFA',
+        'signing_team' => 'WSH',
+        'signing_date' => '2026-07-02',
+        'signed_by' => 'Club',
+    ]);
+
+    $created = (new ImportCapWagesPlayer())->reconcileMissingContractTransactions();
+
+    $transaction = NhlPlayerTransaction::query()
+        ->where('source', NhlPlayerTransaction::SOURCE_CAPWAGES)
+        ->where('transaction_type', 'signed')
+        ->first();
+
+    expect($created)->toBe(1)
+        ->and($transaction)->not->toBeNull()
+        ->and($transaction->player_id)->toBe($player->id)
+        ->and($transaction->player_external_identity_id)->toBe($identity->id)
+        ->and($transaction->transaction_date?->toDateString())->toBe('2026-07-02');
+});
+
 it('public transactions page renders the javascript mount shell', function () {
     $this->get(route('transactions.index'))
         ->assertOk()

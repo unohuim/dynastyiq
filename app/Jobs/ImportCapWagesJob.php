@@ -154,6 +154,12 @@ class ImportCapWagesJob implements ShouldQueue
         $totalPages = $this->totalPages ?? $this->page;
 
         if ($this->page >= $totalPages) {
+            $createdTransactions = (new ImportCapWagesPlayer())->reconcileMissingContractTransactions();
+            ImportStreamEvent::dispatch(
+                'capwages',
+                "Reconciled {$createdTransactions} missing CapWages contract transaction(s)",
+                'completed',
+            );
             ImportRun::query()->find($this->importRunId)?->markCompleted();
             return;
         }

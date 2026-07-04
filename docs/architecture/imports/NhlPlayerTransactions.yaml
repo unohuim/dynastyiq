@@ -6,7 +6,7 @@ location:
   - database/migrations/*_create_nhl_player_transactions_table.php
 purpose: Store real hockey player movement history separately from fantasy roster transactions.
 when_to_use:
-  - Persisting provider-sourced NHL-domain player acquisition or movement events.
+  - Persisting provider-sourced NHL-domain player acquisition, contract-signing, or movement events.
   - Showing transaction history for a canonical player after provider identity linkage.
   - Retaining transaction evidence for unlinked provider identities until a canonical player exists.
 when_not_to_use:
@@ -20,6 +20,7 @@ rules:
   - Transaction rows should update player_id when the linked provider identity gains a canonical player.
   - Provider raw transaction payloads must be preserved for audit and future parsing.
   - Provider transaction imports must be idempotent by source_key or a provider transaction id when one exists.
+  - CapWages contract-signing transactions must use the contract signing date as transaction_date.
 public_interface:
   - NhlPlayerTransaction
   - ImportCapWagesPlayer::syncBySlug()

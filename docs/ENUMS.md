@@ -487,7 +487,7 @@ Do not introduce new enum values without updating this document.
 
 **Semantic meaning:**
 
-- `capwages`: Real hockey player acquisition history sourced from CapWages player detail payloads.
+- `capwages`: Real hockey player acquisition and contract-signing history sourced from CapWages player detail payloads.
 
 **Notes:**
 
