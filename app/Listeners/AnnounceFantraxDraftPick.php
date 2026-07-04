@@ -9,6 +9,7 @@ use App\Events\FantraxDraftPickToast;
 use App\Models\FantraxDraftPick;
 use App\Models\FantraxPlayer;
 use App\Models\PlatformTeam;
+use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\SocialAccount;
 use App\Models\Stat;
@@ -62,7 +63,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     }
 
     /**
-     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,drafting_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,pivot_meta:array<string,mixed>,user_ids:array<int,int>}|null
+     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>,drafting_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,pivot_meta:array<string,mixed>,user_ids:array<int,int>}|null
      */
     private function context(FantraxDraftPick $draftPick): ?array
     {
@@ -104,6 +105,8 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             'position' => $playerDetails['position'],
             'avatar_url' => $playerDetails['avatar_url'],
             'stats' => $playerDetails['stats'],
+            'stat_headers' => $playerDetails['stat_headers'],
+            'stat_keys' => $playerDetails['stat_keys'],
             'team_abbrev' => $playerDetails['team_abbrev'],
             'drafting_owner' => $this->teamOwnerDiscordContext($draftPick->platform_league_id, $draftPick->fantrax_team_id, (string) ($teamName ?: $draftPick->fantrax_team_id ?: 'Unknown team')),
             'otc_owner' => $this->nextOtcOwnerContext($draftPick),
@@ -163,6 +166,8 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 'team_abbrev' => $context['team_abbrev'],
                 'drafting_owner_avatar_url' => $context['drafting_owner']['avatar_url'],
                 'stats' => $context['stats'],
+                'stat_headers' => $context['stat_headers'],
+                'stat_keys' => $context['stat_keys'],
             ],
         ];
     }
@@ -246,21 +251,22 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     }
 
     /**
-     * @return array{name:string|null,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>}
+     * @return array{name:string|null,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>}
      */
     private function playerDetails(string $fantraxPlayerId): array
     {
         $fantraxPlayer = FantraxPlayer::query()
-            ->with('player:id,full_name,position,head_shot_url')
+            ->with('player:id,full_name,position,pos_type,head_shot_url')
             ->where('fantrax_id', $fantraxPlayerId)
             ->first();
         $identity = PlayerExternalIdentity::query()
-            ->with('player:id,full_name,position,head_shot_url')
+            ->with('player:id,full_name,position,pos_type,head_shot_url')
             ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
             ->where('provider_player_id', $fantraxPlayerId)
             ->first();
         $player = $fantraxPlayer?->player ?? $identity?->player;
         $playerId = $fantraxPlayer?->player_id ?: $identity?->player_id;
+        $isGoalie = $this->isGoalie($player, $fantraxPlayer?->position, $identity?->position);
 
         $stats = $playerId ? $this->recentSeasonStats((int) $playerId) : [];
 
@@ -270,7 +276,22 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             'avatar_url' => $player?->head_shot_url,
             'team_abbrev' => $stats[0]['team_abbrev'] ?? null,
             'stats' => $stats,
+            'stat_headers' => $isGoalie ? ['GP', 'W', 'SV', 'SV%'] : ['GP', 'G', 'A', 'PTS'],
+            'stat_keys' => $isGoalie ? ['gp', 'wins', 'saves', 'sv_pct'] : ['gp', 'g', 'a', 'pts'],
         ];
+    }
+
+    private function isGoalie(?Player $player, ?string ...$providerPositions): bool
+    {
+        $positions = [
+            $player?->position,
+            $player?->pos_type,
+            ...$providerPositions,
+        ];
+
+        return collect($positions)
+            ->filter()
+            ->contains(static fn (string $position): bool => strtoupper(trim($position)) === 'G');
     }
 
     /**
@@ -283,7 +304,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->orderByDesc('season_id')
             ->orderByDesc('gp')
             ->orderByDesc('updated_at')
-            ->get(['season_id', 'league_abbrev', 'nhl_team_abbrev', 'team_name', 'gp', 'g', 'a', 'pts', 'updated_at'])
+            ->get(['season_id', 'league_abbrev', 'nhl_team_abbrev', 'team_name', 'gp', 'g', 'a', 'pts', 'wins', 'saves', 'sv_pct', 'updated_at'])
             ->groupBy(static fn (Stat $stat): string => (string) $stat->season_id)
             ->sortKeysDesc()
             ->take(2)
@@ -301,6 +322,9 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                     'g' => (int) $stat->g,
                     'a' => (int) $stat->a,
                     'pts' => (int) $stat->pts,
+                    'wins' => $stat->wins === null ? null : (int) $stat->wins,
+                    'saves' => $stat->saves === null ? null : (int) $stat->saves,
+                    'sv_pct' => $stat->sv_pct === null ? null : (float) $stat->sv_pct,
                 ];
             })
             ->values()

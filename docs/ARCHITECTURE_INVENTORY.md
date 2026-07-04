@@ -164,6 +164,7 @@ Persist current Fantrax draft payload state so periodic syncs can detect newly m
 
 **When to Use:**
 Polling Fantrax draft payloads, comparing latest provider draft rows against persisted pick state, and emitting events when a previously unmade pick receives a Fantrax player id.
+Discord draft announcement cards use skater columns GP/G/A/PTS and goalie columns GP/W/SV/SV% based on canonical or provider position.
 
 **When Not to Use:**
 Rendering the draft window directly, storing every raw polling snapshot, or syncing Fantrax rosters.

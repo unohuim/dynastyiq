@@ -218,6 +218,7 @@ Expected coverage areas:
 - Discord draft pick announcement cards should follow the broadcast-card layout reference in `docs/designs/player_draft_card.png`.
 - Discord draft pick announcements send the announcement text after the generated image message so Discord renders the text below the card.
 - Discord draft pick announcements attach a temporary generated player-card image when runtime image support is available, and remove that temporary image after the Discord send attempt.
+- Discord draft pick announcement cards show GP/G/A/PTS for skaters and GP/W/SV/SV% for goalies.
 - Newly detected Fantrax draft pick announcements are idempotent per persisted draft pick row so duplicate queued listeners do not duplicate toast or Discord side effects.
 - Authorization and organization scope for `/communities/{id}/leagues/{id}` remain unchanged.
 

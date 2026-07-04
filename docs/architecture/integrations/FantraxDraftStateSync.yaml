@@ -37,6 +37,7 @@ rules:
   - A non-null draft pick announced_at means toast and Discord announcement side effects have already been attempted for that pick.
   - Discord draft announcements must use the organization league pivot draft notification channel.
   - Discord draft announcements should post generated player-card images as direct file attachments when runtime image support is available.
+  - Discord draft announcement cards must use GP/G/A/PTS for skaters and GP/W/SV/SV% for goalies detected by canonical or provider position.
   - Discord draft announcements should use explicit user mentions only for connected Discord users and fall back to text labels otherwise.
   - Discord draft announcement text may be sent after the generated image attachment so Discord renders the text below the card.
   - Discord draft announcements may attach a temporary generated player-card image when runtime image support is available; temporary files must be deleted after the send attempt.

@@ -140,10 +140,12 @@ final class DraftPickCardRenderer
         imageline($image, 108, 648, 1646, 648, $blue);
         $this->drawCardText($image, 'SEASON', 22, 145, 636, $muted, $font);
         $this->drawCardText($image, 'LEAGUE', 22, 378, 636, $muted, $font);
-        $this->drawCardText($image, 'GP', 22, 675, 636, $muted, $font);
-        $this->drawCardText($image, 'G', 22, 868, 636, $muted, $font);
-        $this->drawCardText($image, 'A', 22, 1048, 636, $muted, $font);
-        $this->drawCardText($image, 'PTS', 22, 1215, 636, $muted, $font);
+        $statColumns = $this->statColumnsFromCard($card);
+
+        foreach ($statColumns as $column) {
+            $this->drawCardText($image, $column['header'], 22, $column['header_x'], 636, $muted, $font);
+        }
+
         $this->drawCardText($image, 'TEAM', 22, 1418, 636, $muted, $font);
 
         $y = 676;
@@ -152,10 +154,19 @@ final class DraftPickCardRenderer
             $baseline = $y + 28;
             $this->drawCardText($image, $season, 30, 145, $baseline, $white, $font);
             $this->drawFittedCardText($image, (string) ($stat['league_abbrev'] ?? '-'), 30, 22, 180, 378, $baseline, $white, $font);
-            $this->drawCardText($image, $this->cardStatValue($stat['gp'] ?? null), 30, 672, $baseline, $white, $font);
-            $this->drawCardText($image, $this->cardStatValue($stat['g'] ?? null), 30, 864, $baseline, $white, $font);
-            $this->drawCardText($image, $this->cardStatValue($stat['a'] ?? null), 30, 1042, $baseline, $white, $font);
-            $this->drawCardText($image, $this->cardStatValue($stat['pts'] ?? null), 30, 1208, $baseline, $white, $font);
+
+            foreach ($statColumns as $column) {
+                $this->drawCardText(
+                    $image,
+                    $this->cardStatValue($stat[$column['key']] ?? null, $column['key']),
+                    30,
+                    $column['value_x'],
+                    $baseline,
+                    $white,
+                    $font
+                );
+            }
+
             $this->drawFittedCardText($image, (string) ($stat['team_name'] ?? '-'), 30, 20, 280, 1374, $baseline, $white, $font);
             imageline($image, 120, $y + 52, 1634, $y + 52, $this->colorWithAlpha($image, 148, 163, 184, 92));
             $y += 72;
@@ -254,9 +265,45 @@ final class DraftPickCardRenderer
         return $seasonId;
     }
 
-    private function cardStatValue(mixed $value): string
+    /**
+     * @param array<string,mixed> $card
+     *
+     * @return array<int,array{header:string,key:string,header_x:int,value_x:int}>
+     */
+    private function statColumnsFromCard(array $card): array
     {
-        return $value === null || $value === '' ? '-' : (string) $value;
+        $headers = array_values(array_filter((array) ($card['stat_headers'] ?? []), 'is_string'));
+        $keys = array_values(array_filter((array) ($card['stat_keys'] ?? []), 'is_string'));
+        $defaultHeaders = ['GP', 'G', 'A', 'PTS'];
+        $defaultKeys = ['gp', 'g', 'a', 'pts'];
+        $positions = [
+            ['header_x' => 675, 'value_x' => 672],
+            ['header_x' => 868, 'value_x' => 864],
+            ['header_x' => 1048, 'value_x' => 1042],
+            ['header_x' => 1215, 'value_x' => 1208],
+        ];
+
+        return collect($positions)
+            ->map(static fn (array $position, int $index): array => [
+                'header' => $headers[$index] ?? $defaultHeaders[$index],
+                'key' => $keys[$index] ?? $defaultKeys[$index],
+                'header_x' => $position['header_x'],
+                'value_x' => $position['value_x'],
+            ])
+            ->all();
+    }
+
+    private function cardStatValue(mixed $value, ?string $key = null): string
+    {
+        if ($value === null || $value === '') {
+            return '-';
+        }
+
+        if ($key === 'sv_pct' && is_numeric($value)) {
+            return number_format((float) $value, 3);
+        }
+
+        return (string) $value;
     }
 
     private function cardTextWidth(string $value, int $size, string $font): int

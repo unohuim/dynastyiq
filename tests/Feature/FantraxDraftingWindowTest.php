@@ -20,6 +20,7 @@ use App\Models\PlayerExternalIdentity;
 use App\Models\SocialAccount;
 use App\Models\Stat;
 use App\Models\User;
+use App\Services\DraftPickCardRenderer;
 use App\Services\FantraxDraftingWindow;
 use App\Services\SyncFantraxDraftState;
 use Carbon\CarbonImmutable;
@@ -648,6 +649,94 @@ it('announces a new fantrax draft pick to the configured discord draft channel',
     });
     Event::assertDispatched(FantraxDraftPickToast::class, static fn (FantraxDraftPickToast $event): bool => $event->userId === $user->id
         && str_contains($event->message, '<@discord-drafter-1> (Northumberland Nitro) selects Drafted Player with pick 1.'));
+});
+
+it('uses goalie stat columns for drafted goalie discord cards', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'goalie-announce-draft-league',
+    ]);
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'goalie-announce-draft-league')->firstOrFail();
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'draft_notifications' => [
+                'discord_channel' => [
+                    'id' => 'draft-channel',
+                    'name' => 'draft-room',
+                ],
+            ],
+        ]),
+    ]);
+    PlatformTeam::query()->where('platform_league_id', $platformLeague->id)->update([
+        'platform_team_id' => 'team-1',
+        'name' => 'Goalie Draft Team',
+    ]);
+    $player = Player::create([
+        'nhl_id' => 8480001,
+        'first_name' => 'Drafted',
+        'last_name' => 'Goalie',
+        'full_name' => 'Drafted Goalie',
+        'position' => 'G',
+        'pos_type' => 'G',
+    ]);
+    FantraxPlayer::create([
+        'fantrax_id' => 'fantrax-goalie-1',
+        'name' => 'Drafted Goalie',
+        'position' => 'G',
+        'player_id' => $player->id,
+    ]);
+    Stat::create([
+        'player_id' => $player->id,
+        'player_name' => 'Drafted Goalie',
+        'season_id' => '20252026',
+        'league_abbrev' => 'OHL',
+        'nhl_team_abbrev' => 'NYR',
+        'team_name' => 'Goalie Club',
+        'gp' => 42,
+        'wins' => 27,
+        'saves' => 1210,
+        'sv_pct' => 0.914,
+    ]);
+    $draftPick = FantraxDraftPick::create([
+        'platform_league_id' => $platformLeague->id,
+        'provider_pick_key' => 'overall:43',
+        'overall_pick' => 43,
+        'round' => 3,
+        'pick_in_round' => 7,
+        'fantrax_team_id' => 'team-1',
+        'fantrax_player_id' => 'fantrax-goalie-1',
+        'payload_hash' => hash('sha256', 'goalie-pick'),
+    ]);
+    $cardRenderer = new class {
+        /** @var array<string,mixed>|null */
+        public ?array $card = null;
+
+        /**
+         * @param array<string,mixed> $card
+         */
+        public function render(array $card, ?string $path = null): ?string
+        {
+            $this->card = $card;
+
+            return null;
+        }
+    };
+
+    app()->instance(DraftPickCardRenderer::class, $cardRenderer);
+    Event::fake([FantraxDraftPickToast::class]);
+    Http::fake([
+        'https://discord.com/api/v10/channels/draft-channel/messages' => Http::response(['id' => 'message-1']),
+    ]);
+
+    app(AnnounceFantraxDraftPick::class)->handle(FantraxDraftPickMade::fromDraftPick($draftPick));
+
+    expect($cardRenderer->card)->not->toBeNull()
+        ->and($cardRenderer->card['stat_headers'])->toBe(['GP', 'W', 'SV', 'SV%'])
+        ->and($cardRenderer->card['stat_keys'])->toBe(['gp', 'wins', 'saves', 'sv_pct'])
+        ->and($cardRenderer->card['stats'][0]['gp'])->toBe(42)
+        ->and($cardRenderer->card['stats'][0]['wins'])->toBe(27)
+        ->and($cardRenderer->card['stats'][0]['saves'])->toBe(1210)
+        ->and($cardRenderer->card['stats'][0]['sv_pct'])->toBe(0.914);
 });
 
 it('announces a fantrax draft pick only once when duplicate listener jobs run', function (): void {
