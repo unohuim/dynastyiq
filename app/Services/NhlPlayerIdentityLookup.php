@@ -8,6 +8,7 @@ use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Resolves provisional canonical players to NHL API identities.
@@ -38,14 +39,21 @@ class NhlPlayerIdentityLookup
             return;
         }
 
-        if ($this->landingPlayerIdAlreadyOwned($landing, $player)) {
-            $this->markSourceIdentityConflict($sourceIdentity);
+        $owner = $this->landingPlayerOwner($landing, $player);
+
+        if ($owner instanceof Player) {
+            $this->mergeDuplicatePlayerIntoOwner($player, $owner);
+            $this->playerImporter->importForPlayer(
+                $owner->refresh(),
+                (string) $landing['playerId'],
+                (bool) $owner->is_prospect,
+            );
             return;
         }
 
         $identity = $this->resolver->upsertNhlIdentity($landing);
         $this->resolver->linkIdentityToPlayer($identity, $player);
-        $this->playerImporter->import((string) $landing['playerId'], (bool) $player->is_prospect);
+        $this->playerImporter->importForPlayer($player, (string) $landing['playerId'], (bool) $player->is_prospect);
     }
 
     /**
@@ -328,34 +336,137 @@ class NhlPlayerIdentityLookup
     /**
      * @param array<string,mixed> $landing
      */
-    private function landingPlayerIdAlreadyOwned(array $landing, Player $player): bool
+    private function landingPlayerOwner(array $landing, Player $player): ?Player
     {
         $playerId = $landing['playerId'] ?? null;
 
         if ($playerId === null || $playerId === '') {
-            return false;
+            return null;
         }
 
         return Player::query()
             ->where('nhl_id', (int) $playerId)
             ->whereKeyNot($player->id)
-            ->exists();
+            ->first();
     }
 
-    private function markSourceIdentityConflict(?PlayerExternalIdentity $sourceIdentity): void
+    private function mergeDuplicatePlayerIntoOwner(Player $duplicate, Player $owner): void
     {
-        if ($sourceIdentity === null) {
+        if ((int) $duplicate->id === (int) $owner->id) {
             return;
         }
 
-        $sourceIdentity->fill([
-            'player_id' => null,
-            'match_status' => PlayerExternalIdentity::STATUS_CONFLICT,
-            'match_confidence' => null,
-            'unmatched_reason' => PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES,
-            'last_seen_at' => Carbon::now(),
-        ]);
-        $sourceIdentity->save();
+        DB::transaction(function () use ($duplicate, $owner): void {
+            $duplicate = Player::query()->whereKey($duplicate->id)->lockForUpdate()->first();
+            $owner = Player::query()->whereKey($owner->id)->lockForUpdate()->first();
+
+            if (! $duplicate || ! $owner || $duplicate->nhl_id !== null) {
+                return;
+            }
+
+            PlayerExternalIdentity::query()
+                ->where('player_id', $duplicate->id)
+                ->update(['player_id' => $owner->id]);
+
+            $this->reassignProviderMirrorRows($duplicate, $owner);
+            $this->reassignConflictSafePlayerReferences($duplicate, $owner);
+            $this->reassignSimplePlayerReferences($duplicate, $owner);
+            $this->discardDerivedDuplicateRows($duplicate);
+
+            $duplicate->delete();
+        });
+    }
+
+    private function reassignProviderMirrorRows(Player $duplicate, Player $owner): void
+    {
+        DB::table('capwages_players')
+            ->where('player_id', $duplicate->id)
+            ->update(['player_id' => $owner->id]);
+
+        DB::table('yahoo_players')
+            ->where('player_id', $duplicate->id)
+            ->update(['player_id' => $owner->id]);
+
+        $ownerHasFantraxRow = DB::table('fantrax_players')
+            ->where('player_id', $owner->id)
+            ->exists();
+
+        DB::table('fantrax_players')
+            ->where('player_id', $duplicate->id)
+            ->update(['player_id' => $ownerHasFantraxRow ? null : $owner->id]);
+    }
+
+    private function reassignSimplePlayerReferences(Player $duplicate, Player $owner): void
+    {
+        foreach (['contracts', 'nhl_player_transactions'] as $table) {
+            DB::table($table)
+                ->where('player_id', $duplicate->id)
+                ->update(['player_id' => $owner->id]);
+        }
+    }
+
+    private function reassignConflictSafePlayerReferences(Player $duplicate, Player $owner): void
+    {
+        $this->reassignUniquePlayerReference(
+            'platform_player_ids',
+            $duplicate,
+            $owner,
+            ['platform'],
+        );
+        $this->reassignUniquePlayerReference(
+            'platform_roster_memberships',
+            $duplicate,
+            $owner,
+            ['platform_team_id', 'starts_at'],
+        );
+        $this->reassignUniquePlayerReference(
+            'player_rankings',
+            $duplicate,
+            $owner,
+            ['ranking_profile_id'],
+        );
+        $this->reassignUniquePlayerReference(
+            'nhl_unit_players',
+            $duplicate,
+            $owner,
+            ['unit_id'],
+        );
+    }
+
+    /**
+     * @param array<int,string> $conflictColumns
+     */
+    private function reassignUniquePlayerReference(
+        string $table,
+        Player $duplicate,
+        Player $owner,
+        array $conflictColumns,
+    ): void {
+        DB::table($table)
+            ->where('player_id', $duplicate->id)
+            ->whereExists(function ($query) use ($table, $owner, $conflictColumns): void {
+                $query->selectRaw('1')
+                    ->from($table . ' as owner_reference')
+                    ->where('owner_reference.player_id', $owner->id);
+
+                foreach ($conflictColumns as $column) {
+                    $query->whereColumn("owner_reference.{$column}", "{$table}.{$column}");
+                }
+            })
+            ->delete();
+
+        DB::table($table)
+            ->where('player_id', $duplicate->id)
+            ->update(['player_id' => $owner->id]);
+    }
+
+    private function discardDerivedDuplicateRows(Player $duplicate): void
+    {
+        foreach (['stats', 'season_stats', 'nhl_player_game_strength_summaries'] as $table) {
+            DB::table($table)
+                ->where('player_id', $duplicate->id)
+                ->delete();
+        }
     }
 
     private function positionType(?string $position): ?string

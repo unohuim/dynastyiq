@@ -1043,7 +1043,7 @@ Canonical player creates and identity-evidence updates may queue the same asynch
 When an NHL id is newly assigned to a canonical player, the assignment must queue `RefreshNhlPlayerLandingJob` so the canonical NHL landing import refreshes player metadata and upserts legacy `stats` rows from `seasonTotals`.
 NHL identity enrichment links the validated NHL identity to the existing canonical player before running the canonical NHL landing import so the refresh updates that player instead of creating a duplicate NHL row.
 NHL identity enrichment rejects NHL Stats last-name spillover by exact normalized name and may reduce same-name ambiguity to a single current-team candidate.
-NHL identity enrichment must not assign an NHL player id already owned by another canonical player.
+NHL identity enrichment must merge a null-`nhl_id` duplicate into an existing NHL-owned player when validated NHL lookup resolves to an already-owned NHL id, then refresh NHL landing stats for the retained player.
 NHL player resolution can be queued from the admin import registry with `nhl:resolve --players` to reconcile existing canonical players whose `nhl_id` is null.
 
 **Public Interface:**

@@ -27,6 +27,7 @@ use App\Models\PlatformLeague;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
+use App\Models\YahooPlayer;
 use App\Services\ImportCapWagesPlayer;
 use App\Services\ImportFantraxPlayer;
 use App\Services\ImportNHLPlayer;
@@ -1177,6 +1178,131 @@ it('nhl draft import resolves missing player ids through cayenne and imports lan
     expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL)->count())->toBe(1);
     expect(Stat::query()
         ->where('player_id', $player->id)
+        ->where('league_abbrev', 'OHL')
+        ->where('pts', 60)
+        ->exists())->toBeTrue();
+});
+
+it('nhl identity enrichment merges a duplicate null-id player into the existing nhl-id owner', function () {
+    Queue::fake([ImportNHLPlayerJob::class]);
+
+    $owner = ($this->makePlayer)([
+        'nhl_id' => 900014,
+        'first_name' => 'Lookup',
+        'last_name' => 'Prospect',
+        'full_name' => 'Lookup Prospect',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'ANA',
+    ]);
+    $duplicate = ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Lookup',
+        'last_name' => 'Prospect',
+        'full_name' => 'Lookup Prospect',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'ANA',
+    ]);
+    $capWagesIdentity = PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
+        'provider_player_id' => 'lookup-prospect',
+        'provider_slug' => 'lookup-prospect',
+        'player_id' => $duplicate->id,
+        'display_name' => 'Lookup Prospect',
+        'normalized_name' => 'lookup prospect',
+        'first_name' => 'Lookup',
+        'last_name' => 'Prospect',
+        'position' => 'C',
+        'team' => 'ANA',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    PlayerExternalIdentity::create([
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fantrax-lookup',
+        'player_id' => $duplicate->id,
+        'display_name' => 'Lookup Prospect',
+        'normalized_name' => 'lookup prospect',
+        'first_name' => 'Lookup',
+        'last_name' => 'Prospect',
+        'position' => 'C',
+        'team' => 'ANA',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+    ]);
+    CapWagesPlayer::create([
+        'player_external_identity_id' => $capWagesIdentity->id,
+        'player_id' => $duplicate->id,
+        'slug' => 'lookup-prospect',
+        'name' => 'Lookup Prospect',
+        'team' => 'ANA',
+        'position' => 'C',
+    ]);
+    FantraxPlayer::create([
+        'player_id' => $duplicate->id,
+        'fantrax_id' => 'fantrax-lookup',
+        'name' => 'Prospect, Lookup',
+        'team' => 'ANA',
+        'position' => 'C',
+    ]);
+    YahooPlayer::create([
+        'player_external_identity_id' => null,
+        'player_id' => $duplicate->id,
+        'game_key' => 'nhl',
+        'player_key' => 'nhl.p.lookup',
+        'yahoo_player_id' => 'yahoo-lookup',
+        'full_name' => 'Lookup Prospect',
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 900014,
+                    'currentTeamId' => 24,
+                    'firstName' => 'Lookup',
+                    'fullName' => 'Lookup Prospect',
+                    'lastName' => 'Prospect',
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/900014/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900014,
+            'currentTeamId' => 24,
+            'currentTeamAbbrev' => 'ANA',
+            'firstName' => ['default' => 'Lookup'],
+            'lastName' => ['default' => 'Prospect'],
+            'position' => 'C',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Lookup Club'],
+                    'season' => 20252026,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'OHL',
+                    'gamesPlayed' => 60,
+                    'avgToi' => '18:00',
+                    'goals' => 22,
+                    'assists' => 38,
+                    'points' => 60,
+                    'shots' => 180,
+                ],
+            ],
+        ])),
+    ]);
+
+    app(NhlPlayerIdentityLookup::class)->enrich($duplicate, $capWagesIdentity);
+
+    Queue::assertNotPushed(ImportNHLPlayerJob::class);
+    expect(Player::query()->whereKey($duplicate->id)->exists())->toBeFalse();
+    expect(Player::query()->whereKey($owner->id)->exists())->toBeTrue();
+    expect(PlayerExternalIdentity::query()->where('player_id', $duplicate->id)->count())->toBe(0);
+    expect(PlayerExternalIdentity::query()->where('player_id', $owner->id)->count())->toBe(3);
+    expect(CapWagesPlayer::query()->where('slug', 'lookup-prospect')->value('player_id'))->toBe($owner->id);
+    expect(FantraxPlayer::query()->where('fantrax_id', 'fantrax-lookup')->value('player_id'))->toBe($owner->id);
+    expect(YahooPlayer::query()->where('player_key', 'nhl.p.lookup')->value('player_id'))->toBe($owner->id);
+    expect(Stat::query()
+        ->where('player_id', $owner->id)
         ->where('league_abbrev', 'OHL')
         ->where('pts', 60)
         ->exists())->toBeTrue();

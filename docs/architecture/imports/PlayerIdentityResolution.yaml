@@ -48,7 +48,8 @@ rules:
   - Canonical NHL landing imports already performing player metadata and stats upserts must suppress the assignment-triggered landing refresh hook to avoid duplicate refresh jobs.
   - NHL identity enrichment must locally reject NHL Stats last-name spillover by exact normalized name before candidate counts are interpreted.
   - NHL identity enrichment may reduce same-name ambiguity to a single current-team candidate when exactly one otherwise viable candidate has currentTeamId.
-  - NHL identity enrichment must not assign an NHL player id that is already owned by another canonical player; source identities for the duplicate target should become conflicts instead.
+  - NHL identity enrichment must not assign an NHL player id that is already owned by another canonical player without first resolving the null-nhl_id duplicate into the existing owner; unresolved ownership conflicts should become conflict identities instead.
+  - NHL identity enrichment that resolves a null-nhl_id canonical player to an NHL id already owned by another canonical player must merge the null-nhl_id duplicate into the NHL-owned player, reassign all player_external_identities and provider mirror rows, delete the duplicate player, and refresh NHL landing stats for the retained player.
   - NHL identity enrichment with multiple same-name and same-position candidates must upsert NHL candidate identities for triage without mutating players.nhl_id.
   - Non-authority provider imports may auto-link only when an existing provider link, known durable ID, or provider-specific evidence score identifies exactly one canonical player at or above the provider threshold.
   - Provider evidence scoring must treat exact normalized name as 75, exact normalized name plus one strong context match as 85, and exact normalized name plus birthdate or two strong context matches as 95.
