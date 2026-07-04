@@ -3502,6 +3502,93 @@ it('queues NHL resolution jobs for canonical players without NHL ids', function 
     Queue::assertPushed(ResolveCanonicalPlayerNhlIdentityJob::class, 1);
 });
 
+it('resolves NHL identities inline for admin import runs without queueing resolver jobs', function () {
+    Queue::fake();
+
+    $owner = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => 900015,
+        'first_name' => 'Inline',
+        'last_name' => 'Merge',
+        'full_name' => 'Inline Merge',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'ANA',
+    ]));
+    $duplicate = Player::withoutEvents(fn () => ($this->makePlayer)([
+        'nhl_id' => null,
+        'first_name' => 'Inline',
+        'last_name' => 'Merge',
+        'full_name' => 'Inline Merge',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'ANA',
+    ]));
+    $importRun = ImportRun::create([
+        'source' => 'nhl-resolve-players',
+        'status' => 'working',
+        'command' => 'nhl:resolve',
+        'options' => ['--players' => true, '--inline' => true],
+        'started_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api.nhle.com/stats/rest/en/players*' => Http::response([
+            'data' => [
+                [
+                    'id' => 900015,
+                    'currentTeamId' => 24,
+                    'firstName' => 'Inline',
+                    'fullName' => 'Inline Merge',
+                    'lastName' => 'Merge',
+                    'positionCode' => 'C',
+                ],
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/player/900015/landing' => Http::response(($this->nhlPayload)([
+            'playerId' => 900015,
+            'currentTeamId' => 24,
+            'currentTeamAbbrev' => 'ANA',
+            'firstName' => ['default' => 'Inline'],
+            'lastName' => ['default' => 'Merge'],
+            'position' => 'C',
+            'seasonTotals' => [
+                [
+                    'teamName' => ['default' => 'Inline Club'],
+                    'season' => 20252026,
+                    'gameTypeId' => 2,
+                    'sequence' => 1,
+                    'leagueAbbrev' => 'OHL',
+                    'gamesPlayed' => 61,
+                    'goals' => 20,
+                    'assists' => 40,
+                    'points' => 60,
+                    'shots' => 180,
+                ],
+            ],
+        ])),
+    ]);
+
+    Artisan::call('nhl:resolve', [
+        '--players' => true,
+        '--inline' => true,
+        '--import-run-id' => $importRun->id,
+    ]);
+
+    Queue::assertNotPushed(ResolveCanonicalPlayerNhlIdentityJob::class);
+    expect(Player::query()->whereKey($duplicate->id)->exists())->toBeFalse();
+    expect(Player::query()->whereKey($owner->id)->exists())->toBeTrue();
+    expect(Stat::query()
+        ->where('player_id', $owner->id)
+        ->where('league_abbrev', 'OHL')
+        ->where('pts', 60)
+        ->exists())->toBeTrue();
+
+    $importRun->refresh();
+    expect($importRun->status)->toBe('completed');
+    expect($importRun->processed_records)->toBe(1);
+    expect($importRun->successful_records)->toBe(1);
+});
+
 it('requires a resolver target for the NHL resolve command', function () {
     Queue::fake();
 

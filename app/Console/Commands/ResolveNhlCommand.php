@@ -7,10 +7,12 @@ namespace App\Console\Commands;
 use App\Jobs\ResolveCanonicalPlayerNhlIdentityJob;
 use App\Models\ImportRun;
 use App\Models\Player;
+use App\Services\NhlPlayerIdentityLookup;
 use Illuminate\Console\Command;
+use Throwable;
 
 /**
- * Queue NHL reconciliation work for existing canonical records.
+ * Reconcile NHL identities for existing canonical records.
  */
 class ResolveNhlCommand extends Command
 {
@@ -19,14 +21,15 @@ class ResolveNhlCommand extends Command
      */
     protected $signature = 'nhl:resolve
                             {--players : Resolve canonical players without NHL ids}
+                            {--inline : Resolve players immediately instead of queueing resolver jobs}
                             {--import-run-id= : Internal admin import run id}';
 
     /**
      * @var string
      */
-    protected $description = 'Queue NHL identity reconciliation tasks';
+    protected $description = 'Run or queue NHL identity reconciliation tasks';
 
-    public function handle(): int
+    public function handle(NhlPlayerIdentityLookup $lookup): int
     {
         if (! $this->option('players')) {
             $this->error('Nothing to do. Try: nhl:resolve --players');
@@ -42,8 +45,10 @@ class ResolveNhlCommand extends Command
 
         $importRun?->setProgressTotal($players->count(), 'Canonical players without NHL ids');
 
-        $queued = 0;
+        $inline = (bool) $this->option('inline');
+        $successful = 0;
         $skipped = 0;
+        $failed = 0;
 
         foreach ($players as $player) {
             if (! $this->hasUsableName($player)) {
@@ -52,17 +57,38 @@ class ResolveNhlCommand extends Command
                 continue;
             }
 
+            if ($inline) {
+                $result = $this->resolveInline((int) $player->id, $lookup);
+
+                if ($result === 'successful') {
+                    $successful++;
+                } elseif ($result === 'failed') {
+                    $failed++;
+                } else {
+                    $skipped++;
+                }
+
+                $importRun?->recordProcessed($result);
+                continue;
+            }
+
             ResolveCanonicalPlayerNhlIdentityJob::dispatch($player->id);
-            $queued++;
+            $successful++;
             $importRun?->recordProcessed('successful');
         }
 
         $importRun?->markCompleted();
 
-        $this->info("Queued NHL player resolution for {$queued} player(s).");
+        $this->info($inline
+            ? "Resolved NHL player identities for {$successful} player(s)."
+            : "Queued NHL player resolution for {$successful} player(s).");
 
         if ($skipped > 0) {
             $this->line("Skipped {$skipped} player(s) without usable name evidence.");
+        }
+
+        if ($failed > 0) {
+            $this->warn("Failed to resolve {$failed} player(s).");
         }
 
         return self::SUCCESS;
@@ -86,5 +112,28 @@ class ResolveNhlCommand extends Command
         $parts = preg_split('/\s+/', trim((string) $player->full_name)) ?: [];
 
         return count($parts) >= 2;
+    }
+
+    private function resolveInline(int $playerId, NhlPlayerIdentityLookup $lookup): string
+    {
+        $player = Player::query()->find($playerId);
+
+        if (! $player || $player->nhl_id !== null) {
+            return 'skipped';
+        }
+
+        try {
+            $lookup->enrich($player);
+        } catch (Throwable) {
+            return 'failed';
+        }
+
+        $resolvedPlayer = Player::query()->find($playerId);
+
+        if (! $resolvedPlayer || $resolvedPlayer->nhl_id !== null) {
+            return 'successful';
+        }
+
+        return 'skipped';
     }
 }

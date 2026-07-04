@@ -40,6 +40,7 @@ rules:
   - Non-NHL provider identity links may queue asynchronous NHL identity enrichment when the linked canonical player has no nhl_id and has enough name and position evidence.
   - Canonical player creates and identity-evidence updates must queue asynchronous NHL identity enrichment when the player has no nhl_id and has enough name and position evidence.
   - The nhl:resolve --players command may queue asynchronous NHL identity enrichment for any canonical player with nhl_id null, even when no external identity is linked.
+  - Admin-triggered NHL player resolution must run nhl:resolve --players --inline so import progress reflects actual resolution, merge, skip, and failure outcomes instead of unique job dispatch attempts.
   - NHL identity enrichment must not block the source provider import and must run from a queued job.
   - NhlPlayerIdentityLookup is the single NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from a canonical player or first-name, last-name, and position-type evidence.
   - NHL identity enrichment must search NHL Stats players by first and last name, filter candidates by compatible position type, and only mutate the canonical player when exactly one validated NHL landing payload remains.

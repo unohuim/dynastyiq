@@ -21,7 +21,7 @@ class AdminImports
                 'key' => 'nhl-resolve-players',
                 'label' => 'Resolve NHL Players',
                 'command' => 'nhl:resolve',
-                'options' => ['--players' => true],
+                'options' => ['--players' => true, '--inline' => true],
             ],
             ['key' => 'fantrax', 'label' => 'Fantrax Players', 'command' => 'fx:import', 'options' => ['--players' => true]],
             [
