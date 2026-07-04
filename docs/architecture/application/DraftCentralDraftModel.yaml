@@ -1,0 +1,37 @@
+name: Draft Central Draft Model
+type: First-Party Domain Model
+location:
+  - app/Models/Draft.php
+  - app/Models/DraftPick.php
+  - app/Models/DraftNotificationSetting.php
+  - app/Events/DraftPickMade.php
+  - database/migrations/*_create_drafts_tables.php
+  - app/Services/SyncFantraxDraftState.php
+purpose: Store platform-neutral draft configuration, pick order, pick selections, and notification settings for Draft Central.
+when_to_use:
+  - Building Draft Central UI or API payloads.
+  - Mirroring provider draft data into DynastyIQ.
+  - Running a DynastyIQ-managed draft for a connected platform league.
+  - Reading draft timer settings or current pick state.
+when_not_to_use:
+  - Storing raw provider polling snapshots before normalization.
+  - Syncing current platform roster membership.
+rules:
+  - Draft Central must read normalized draft state from drafts and draft_picks when available.
+  - When no canonical draft exists, Draft Central may offer commissioners a provider-mirrored draft or a DynastyIQ-managed manual draft creation flow.
+  - Provider-specific draft syncs must mirror picked-player transitions into drafts and draft_picks before emitting draft notification side effects.
+  - Draft timer configuration belongs to drafts because each league may have multiple drafts with different timing rules.
+  - Pick countdowns should derive from draft_picks picked_at or expires_at plus drafts pick_clock_seconds.
+  - Provider IDs should be retained on draft_picks during transition, but canonical player and platform team links should be used when resolvable.
+  - Notification settings that are draft-specific should be attached to the draft rather than hidden inside league metadata.
+  - Draft pick notifications must use draft_picks as the idempotency and payload source; provider-specific draft pick tables are raw/audit inputs only.
+public_interface:
+  - Draft
+  - DraftPick
+  - DraftNotificationSetting
+  - DraftPickMade
+  - drafts
+  - draft_picks
+  - draft_notification_settings
+example_usage: |
+  $draft = Draft::query()->with(['picks', 'currentPick'])->findOrFail($draftId);

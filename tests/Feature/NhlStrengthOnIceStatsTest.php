@@ -13,12 +13,12 @@ use App\Services\SumNhlSeasonStats;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Tests\TestCase;
 
-uses(TestCase::class, RefreshDatabase::class);
+uses(RefreshDatabase::class);
 
 beforeEach(function (): void {
     Carbon::setTestNow('2026-06-29 12:00:00');
+    User::factory()->create();
 
     $this->insertGame = static function (int $gameId = 2026020001): void {
         DB::table('nhl_games')->insert([
@@ -745,7 +745,7 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ],
     ]);
 
-    $response = $this->getJson(route('api.stats', [
+    $response = $this->getJson(route('stats.payload', [
         'perspective' => 'native-advanced-test',
         'season_id' => '20262027',
         'game_type' => 2,
@@ -1077,7 +1077,7 @@ it('uses official boxscore toi for stats page per-60 rate calculations', functio
         ],
     ]);
 
-    $response = $this->getJson(route('api.stats', [
+    $response = $this->getJson(route('stats.payload', [
         'perspective' => 'boxscore-toi-test',
         'season_id' => '20262027',
         'game_type' => 2,
@@ -1159,19 +1159,19 @@ it('maps wing position filters to stored NHL left and right position codes', fun
         ],
     ]);
 
-    $lw = $this->getJson(route('api.stats', [
+    $lw = $this->getJson(route('stats.payload', [
         'perspective' => 'position-filter-test',
         'season_id' => '20262027',
         'game_type' => 2,
         'pos' => ['LW'],
     ]));
-    $c = $this->getJson(route('api.stats', [
+    $c = $this->getJson(route('stats.payload', [
         'perspective' => 'position-filter-test',
         'season_id' => '20262027',
         'game_type' => 2,
         'pos' => ['C'],
     ]));
-    $rw = $this->getJson(route('api.stats', [
+    $rw = $this->getJson(route('stats.payload', [
         'perspective' => 'position-filter-test',
         'season_id' => '20262027',
         'game_type' => 2,
@@ -1258,7 +1258,7 @@ it('limits the prospects perspective to players marked as prospects', function (
         ],
     ]);
 
-    $response = $this->getJson(route('api.stats', [
+    $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects',
         'season_id' => '20262027',
     ]));
@@ -1342,7 +1342,7 @@ it('exposes prospect goalie stats from legacy stats goalie columns', function ()
         ],
     ]);
 
-    $response = $this->getJson(route('api.stats', [
+    $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects-goalies',
         'season_id' => '20262027',
     ]));
@@ -1445,7 +1445,7 @@ it('groups prospect stats by player and league while summing same league teams',
         ],
     ]);
 
-    $response = $this->getJson(route('api.stats', [
+    $response = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects',
         'season_id' => '20262027',
     ]));
@@ -1465,7 +1465,7 @@ it('groups prospect stats by player and league while summing same league teams',
         ->and($ahl['gp'])->toBe(3)
         ->and($ahl['pts'])->toBe(3);
 
-    $filtered = $this->getJson(route('api.stats', [
+    $filtered = $this->getJson(route('stats.payload', [
         'perspective' => 'prospects',
         'season_id' => '20262027',
         'league' => ['AHL'],

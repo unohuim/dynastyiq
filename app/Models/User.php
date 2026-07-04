@@ -8,6 +8,7 @@ namespace App\Models;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -95,6 +96,11 @@ class User extends Authenticatable
         return $this->hasMany(LeagueUserTeam::class);
     }
 
+    public function leagueRoles(): HasMany
+    {
+        return $this->hasMany(LeagueUserRole::class);
+    }
+
     public function socialAccounts()
     {
         return $this->hasMany(SocialAccount::class);
@@ -136,10 +142,10 @@ class User extends Authenticatable
 
     public function isCommissionerForLeague(int $leagueId): bool
     {
-        return LeagueUserTeam::query()
+        return LeagueUserRole::query()
             ->where('user_id', $this->id)
             ->where('league_id', $leagueId)
-            ->where('extras->is_commish', true)
+            ->whereIn('role', ['commissioner', 'co_commissioner'])
             ->exists();
     }
 

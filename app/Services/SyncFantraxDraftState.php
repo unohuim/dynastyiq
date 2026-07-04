@@ -4,10 +4,16 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Events\FantraxDraftPickMade;
+use App\Events\DraftPickMade;
+use App\Models\Draft;
+use App\Models\DraftPick;
+use App\Models\DraftQueueItem;
 use App\Models\FantraxDraftPick;
 use App\Models\FantraxDraftState;
+use App\Models\FantraxPlayer;
 use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
+use App\Models\PlayerExternalIdentity;
 use App\Traits\HasAPITrait;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -60,8 +66,9 @@ final class SyncFantraxDraftState
         $now = $now ? CarbonImmutable::instance($now) : CarbonImmutable::now();
         $rows = $this->draftRows($draftResults);
         $newPicks = [];
+        $newDraftPicks = [];
 
-        $state = DB::transaction(function () use ($league, $draftResults, $draftPickInfo, $rows, $now, &$newPicks): FantraxDraftState {
+        $state = DB::transaction(function () use ($league, $draftResults, $draftPickInfo, $rows, $now, &$newPicks, &$newDraftPicks): FantraxDraftState {
             $state = FantraxDraftState::query()->updateOrCreate(
                 ['platform_league_id' => $league->id],
                 [
@@ -108,6 +115,18 @@ final class SyncFantraxDraftState
                 }
             }
 
+            $newDraftPicks = $this->mirrorNeutralDraft(
+                $league,
+                $draftResults,
+                $draftPickInfo,
+                $rows,
+                $now,
+                collect($newPicks)
+                    ->pluck('provider_pick_key')
+                    ->map(static fn (mixed $providerPickKey): string => (string) $providerPickKey)
+                    ->all(),
+            );
+
             if ($newPicks !== []) {
                 $state->forceFill(['last_detected_pick_at' => $now])->save();
             }
@@ -115,11 +134,169 @@ final class SyncFantraxDraftState
             return $state;
         });
 
-        foreach ($newPicks as $newPick) {
-            event(FantraxDraftPickMade::fromDraftPick($newPick));
+        foreach ($newDraftPicks as $newPick) {
+            event(DraftPickMade::fromDraftPick($newPick));
         }
 
         return ['state' => $state, 'new_picks' => $newPicks];
+    }
+
+    /**
+     * Mirror provider-specific Fantrax draft data into the platform-neutral draft tables.
+     *
+     * @param array<string,mixed> $draftResults
+     * @param array<string,mixed> $draftPickInfo
+     * @param array<int,array<string,mixed>> $rows
+     *
+     * @return array<int,DraftPick>
+     */
+    private function mirrorNeutralDraft(
+        PlatformLeague $league,
+        array $draftResults,
+        array $draftPickInfo,
+        array $rows,
+        CarbonImmutable $now,
+        array $newProviderPickKeys = [],
+    ): array
+    {
+        $newDraftPicks = [];
+        $draftAt = $this->draftAt($draftResults);
+        $externalDraftId = $this->neutralExternalDraftId($league, $draftResults, $draftAt);
+        $teamIds = collect($rows)
+            ->pluck('fantrax_team_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $platformTeamIds = PlatformTeam::query()
+            ->where('platform_league_id', $league->id)
+            ->whereIn('platform_team_id', $teamIds)
+            ->pluck('id', 'platform_team_id');
+
+        $draft = Draft::query()->updateOrCreate(
+            [
+                'platform' => 'fantrax',
+                'external_draft_id' => $externalDraftId,
+            ],
+            [
+                'platform_league_id' => $league->id,
+                'source_type' => 'platform_mirror',
+                'name' => $league->name . ' Draft',
+                'draft_type' => $this->stringValue($this->firstValue($draftResults, [
+                    'draftType',
+                    'draft_type',
+                    'draftSettings.draftType',
+                ])) ?: null,
+                'status' => $this->status($draftResults, $draftPickInfo, $now),
+                'starts_at' => $draftAt,
+                'settings' => [
+                    'provider' => 'fantrax',
+                ],
+            ]
+        );
+
+        foreach ($rows as $row) {
+            $providerTeamId = $row['fantrax_team_id'] ?: null;
+            $providerPlayerId = $row['fantrax_player_id'] ?: null;
+            $playerId = $providerPlayerId ? $this->canonicalPlayerIdForFantraxPlayer($providerPlayerId) : null;
+            $draftPick = DraftPick::query()->firstOrNew([
+                'draft_id' => $draft->id,
+                'provider_pick_key' => $row['provider_pick_key'],
+            ]);
+            $wasUnpicked = $draftPick->exists
+                && trim((string) ($draftPick->provider_player_id ?? '')) === ''
+                && $draftPick->player_id === null;
+            $detectedAt = $providerPlayerId
+                ? ($draftPick->detected_at ?? $row['drafted_at'] ?? $now)
+                : null;
+
+            $draftPick
+                ->fill([
+                    'overall_pick' => $row['overall_pick'],
+                    'round' => $row['round'],
+                    'pick' => $row['pick'],
+                    'pick_in_round' => $row['pick_in_round'],
+                    'platform_team_id' => $providerTeamId ? ($platformTeamIds[$providerTeamId] ?? null) : null,
+                    'provider_team_id' => $providerTeamId,
+                    'player_id' => $playerId,
+                    'provider_player_id' => $providerPlayerId,
+                    'source' => 'fantrax',
+                    'status' => $providerPlayerId ? 'picked' : 'pending',
+                    'picked_at' => $row['drafted_at'],
+                    'detected_at' => $detectedAt,
+                    'payload_hash' => $row['payload_hash'],
+                    'raw_payload' => $row['raw_payload'],
+                ])
+                ->save();
+
+            if ($playerId !== null) {
+                $this->removeDraftedPlayerFromQueues($draft, $playerId);
+            }
+
+            if (
+                $providerPlayerId
+                && ($wasUnpicked || in_array((string) $row['provider_pick_key'], $newProviderPickKeys, true))
+            ) {
+                $newDraftPicks[] = $draftPick;
+            }
+        }
+
+        $nextPick = DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereNull('provider_player_id')
+            ->orderByRaw('overall_pick is null')
+            ->orderBy('overall_pick')
+            ->orderBy('round')
+            ->orderBy('pick_in_round')
+            ->first();
+
+        DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereIn('status', ['pending', 'on_clock'])
+            ->update(['status' => 'pending']);
+
+        if ($nextPick instanceof DraftPick) {
+            $nextPick->forceFill(['status' => 'on_clock'])->save();
+            $draft->forceFill(['current_draft_pick_id' => $nextPick->id])->save();
+
+            return $newDraftPicks;
+        }
+
+        $draft->forceFill(['current_draft_pick_id' => null])->save();
+
+        return $newDraftPicks;
+    }
+
+    /**
+     * Resolve a Fantrax player id to the canonical player id used by draft queues.
+     */
+    private function canonicalPlayerIdForFantraxPlayer(string $fantraxPlayerId): ?int
+    {
+        $playerId = FantraxPlayer::query()
+            ->where('fantrax_id', $fantraxPlayerId)
+            ->value('player_id');
+
+        if ($playerId !== null) {
+            return (int) $playerId;
+        }
+
+        $playerId = PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
+            ->where('provider_player_id', $fantraxPlayerId)
+            ->value('player_id');
+
+        return $playerId !== null ? (int) $playerId : null;
+    }
+
+    /**
+     * Remove a player from all queues once the draft records them as picked.
+     */
+    private function removeDraftedPlayerFromQueues(Draft $draft, int $playerId): void
+    {
+        DraftQueueItem::query()
+            ->where('draft_id', $draft->id)
+            ->where('player_id', $playerId)
+            ->delete();
     }
 
     /**
@@ -246,6 +423,26 @@ final class SyncFantraxDraftState
         return $this->currentDraftPickCount($draftPickInfo) > 0 ? 'live' : 'complete';
     }
 
+    private function neutralExternalDraftId(
+        PlatformLeague $league,
+        array $draftResults,
+        ?CarbonImmutable $draftAt
+    ): string {
+        $providerDraftId = $this->stringValue($this->firstValue($draftResults, [
+            'draftId',
+            'draft_id',
+            'id',
+        ]));
+
+        if ($providerDraftId !== '') {
+            return $providerDraftId;
+        }
+
+        $dateKey = $draftAt?->format('YmdHis') ?? 'current';
+
+        return 'fantrax:' . $league->platform_league_id . ':' . $dateKey;
+    }
+
     private function currentDraftPickCount(array $draftPickInfo): int
     {
         $currentDraftPicks = $draftPickInfo['currentDraftPicks']
@@ -290,6 +487,16 @@ final class SyncFantraxDraftState
     {
         if ($value === null || $value === '') {
             return null;
+        }
+
+        if (is_numeric($value)) {
+            $timestamp = (float) $value;
+
+            if (abs($timestamp) > 9999999999) {
+                $timestamp /= 1000;
+            }
+
+            return CarbonImmutable::createFromTimestampUTC($timestamp);
         }
 
         try {

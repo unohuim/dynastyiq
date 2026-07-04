@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 use App\Models\IntegrationSecret;
 use App\Models\DiscordServer;
+use App\Events\DraftPickMade;
 use App\Events\FantraxDraftPickMade;
 use App\Events\FantraxDraftPickToast;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Listeners\AnnounceFantraxDraftPick;
+use App\Models\Draft;
+use App\Models\DraftPick;
+use App\Models\DraftQueueItem;
 use App\Models\FantraxDraftPick;
 use App\Models\FantraxDraftState;
 use App\Models\FantraxPlayer;
@@ -264,6 +268,24 @@ it('marks only the next unmade draft pick for the loading experience', function 
         ->and($payload['rows'][1]['is_next_pick'])->toBeFalse();
 });
 
+it('marks the first unmade draft pick even when later picks are already made', function (): void {
+    $payload = ($this->normalizeDraft)([], [
+        'draftPicks' => [
+            ['playerId' => 'player-1', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+            ['teamId' => 'team-2', 'round' => 1, 'pick' => 2, 'pickInRound' => 2],
+            ['playerId' => 'player-3', 'teamId' => 'team-3', 'round' => 1, 'pick' => 3, 'pickInRound' => 3],
+            ['teamId' => 'team-4', 'round' => 1, 'pick' => 4, 'pickInRound' => 4],
+        ],
+    ], null, null, [
+        'player-1' => ['name' => 'First Player'],
+        'player-3' => ['name' => 'Third Player'],
+    ]);
+
+    expect($payload['rows'][1]['is_next_pick'])->toBeTrue()
+        ->and($payload['rows'][3]['is_next_pick'])->toBeFalse()
+        ->and($payload['rows'][1]['pick_in_round'])->toBe(2);
+});
+
 it('defaults the active round to the next unmade draft pick round', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'draftPicks' => [
@@ -293,6 +315,21 @@ it('defaults the active round to the last round when every visible pick is made'
     expect($payload['active_round_index'])->toBe(1);
 });
 
+it('exposes fantrax draft pick timestamps for draft room countdowns', function (): void {
+    $payload = ($this->normalizeDraft)([], [
+        'draftPicks' => [
+            ['playerId' => 'player-1', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1, 'time' => 1782662499000],
+            ['playerId' => 'player-2', 'teamId' => 'team-2', 'round' => 1, 'pick' => 2, 'pickInRound' => 2, 'time' => 1782662939000],
+        ],
+    ], null, null, [
+        'player-1' => ['name' => 'First Drafted Player'],
+        'player-2' => ['name' => 'Second Drafted Player'],
+    ]);
+
+    expect($payload['rows'][0]['picked_at'])->toBe('2026-06-28T16:01:39+00:00')
+        ->and($payload['last_pick_at'])->toBe('2026-06-28T16:08:59+00:00');
+});
+
 it('persists a baseline fantrax draft state and pick rows from provider payloads', function (): void {
     [, , $league] = ($this->createCommunityLeague)([
         'platform_league_id' => 'draft-state-league',
@@ -304,7 +341,7 @@ it('persists a baseline fantrax draft state and pick rows from provider payloads
         [
             'draftDate' => '2026-09-21 19:00:00',
             'draftPicks' => [
-                ['teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+                ['teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1, 'time' => 1782662499000],
                 ['teamId' => 'team-2', 'round' => 1, 'pick' => 2, 'pickInRound' => 2],
             ],
         ],
@@ -315,7 +352,12 @@ it('persists a baseline fantrax draft state and pick rows from provider payloads
     expect($result['new_picks'])->toBe([])
         ->and(FantraxDraftState::query()->where('platform_league_id', $platformLeague->id)->first()?->status)->toBe('live')
         ->and(FantraxDraftPick::query()->where('platform_league_id', $platformLeague->id)->count())->toBe(2)
-        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->fantrax_player_id)->toBeNull();
+        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->fantrax_player_id)->toBeNull()
+        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->drafted_at?->toIso8601String())->toBe('2026-06-28T16:01:39+00:00')
+        ->and(Draft::query()->where('platform_league_id', $platformLeague->id)->count())->toBe(1)
+        ->and(Draft::query()->where('platform_league_id', $platformLeague->id)->first()?->status)->toBe('live')
+        ->and(DraftPick::query()->count())->toBe(2)
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->status)->toBe('on_clock');
 });
 
 it('detects a new fantrax draft selection when a previously unmade pick receives a player id', function (): void {
@@ -325,7 +367,7 @@ it('detects a new fantrax draft selection when a previously unmade pick receives
     $platformLeague = PlatformLeague::query()->where('platform_league_id', 'draft-delta-league')->firstOrFail();
     $service = app(SyncFantraxDraftState::class);
 
-    Event::fake([FantraxDraftPickMade::class]);
+    Event::fake([DraftPickMade::class]);
 
     $service->syncPayloads(
         $platformLeague,
@@ -339,7 +381,7 @@ it('detects a new fantrax draft selection when a previously unmade pick receives
         CarbonImmutable::parse('2026-09-21 20:00:00')
     );
 
-    Event::assertNotDispatched(FantraxDraftPickMade::class);
+    Event::assertNotDispatched(DraftPickMade::class);
 
     $result = $service->syncPayloads(
         $platformLeague,
@@ -356,9 +398,64 @@ it('detects a new fantrax draft selection when a previously unmade pick receives
     expect($result['new_picks'])->toHaveCount(1)
         ->and($result['new_picks'][0]->fantrax_player_id)->toBe('fantrax-player-1')
         ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->fantrax_player_id)->toBe('fantrax-player-1')
-        ->and(FantraxDraftState::query()->where('platform_league_id', $platformLeague->id)->first()?->last_detected_pick_at)->not->toBeNull();
+        ->and(FantraxDraftState::query()->where('platform_league_id', $platformLeague->id)->first()?->last_detected_pick_at)->not->toBeNull()
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->provider_player_id)->toBe('fantrax-player-1')
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->status)->toBe('picked');
 
-    Event::assertDispatched(FantraxDraftPickMade::class);
+    Event::assertDispatched(DraftPickMade::class);
+});
+
+it('removes drafted players from draft queues when fantrax sync resolves a picked player', function (): void {
+    [$user] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'draft-queue-prune-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'draft-queue-prune-league')->firstOrFail();
+    $service = app(SyncFantraxDraftState::class);
+    $player = Player::create([
+        'first_name' => 'Queued',
+        'last_name' => 'Player',
+        'full_name' => 'Queued Player',
+        'position' => 'C',
+    ]);
+    FantraxPlayer::create([
+        'fantrax_id' => 'fantrax-queued-player',
+        'name' => 'Queued Player',
+        'player_id' => $player->id,
+    ]);
+
+    $service->syncPayloads(
+        $platformLeague,
+        [
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => [
+                ['teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'team-1']]],
+        CarbonImmutable::parse('2026-09-21 20:00:00')
+    );
+    $draft = Draft::query()->where('platform_league_id', $platformLeague->id)->firstOrFail();
+    DraftQueueItem::create([
+        'draft_id' => $draft->id,
+        'user_id' => $user->id,
+        'player_id' => $player->id,
+        'rank' => 1,
+    ]);
+
+    $service->syncPayloads(
+        $platformLeague,
+        [
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => [
+                ['teamId' => 'team-2', 'playerId' => 'fantrax-queued-player', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'team-2']]],
+        CarbonImmutable::parse('2026-09-21 20:01:00')
+    );
+
+    expect(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->player_id)->toBe($player->id)
+        ->and(DraftQueueItem::query()->where('draft_id', $draft->id)->where('player_id', $player->id)->exists())->toBeFalse();
 });
 
 it('dispatches scheduled fantrax draft polling only for due live draft states', function (): void {

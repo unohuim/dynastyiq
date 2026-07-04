@@ -30,6 +30,7 @@ Migrations remain the **sole source of truth**.
 - discord_commands
 - discord_organizations
 - discord_servers
+- draft_queue_items
 - event_unit_shifts
 - failed_jobs
 - fantrax_draft_picks
@@ -415,6 +416,37 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `player_id`
 - Unique: `fantrax_id`
+- Implicit (FK index): `player_id`
+
+---
+
+## draft_queue_items
+
+**Organization-owned:** No; draft/user scoped
+**Purpose:** Private ordered manager queue entries for a canonical draft.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| draft_id | bigint | No | FK -> drafts.id (CASCADE) |
+| user_id | bigint | No | FK -> users.id (CASCADE) |
+| player_id | bigint | No | FK -> players.id (CASCADE) |
+| rank | unsignedInteger | No | User-specific queue order within the draft |
+| notes | text | Yes | Optional manager notes |
+| locked_until | timestamp | Yes | Optional temporary lock window for future auto-pick behavior |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(draft_id, user_id, player_id)` (`uq_draft_queue_items_player`)
+- Unique: `(draft_id, user_id, rank)` (`uq_draft_queue_items_rank`)
+- Index: `(draft_id, user_id, rank)` (`idx_draft_queue_items_user_rank`)
+- Implicit (FK index): `draft_id`
+- Implicit (FK index): `user_id`
 - Implicit (FK index): `player_id`
 
 ---

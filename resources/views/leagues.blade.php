@@ -23,5 +23,6 @@
         'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
         'isScoringFullyMapped' => $isScoringFullyMapped ?? false,
         'canShowLeagueStats' => $canShowLeagueStats ?? false,
+        'canManageLeague' => $canManageLeague ?? false,
     ])
 </x-leagues-hub-layout>

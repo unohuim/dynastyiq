@@ -9,13 +9,17 @@
   $leagueStatsFallbackName = $league?->platform === 'fantrax'
       ? $league->name . ' Fantrax'
       : $league?->name . ' Scoring';
+  $teamRowsForHeader = collect($teams ?? [])->reject(static fn (array $team): bool => in_array($team['id'] ?? null, ['__all_players__', '__free_agents__'], true));
+  $ownedTeamForHeader = $teamRowsForHeader->first(static fn (array $team): bool => (bool) ($team['owned_by_me'] ?? false));
+  $teamCountForHeader = $teamRowsForHeader->count();
+  $teamCountLabel = $teamCountForHeader === 1 ? 'Team' : 'Teams';
+  $canManageLeague = (bool) ($canManageLeague ?? false);
 @endphp
 
 @if (! $league)
   <div class="p-6 text-sm text-slate-500">No active league selected.</div>
 @else
   <div
-    class="p-6"
     x-data="{
       teams: @js($teams ?? []),
       scoringCategories: @js($scoringCategories ?? []),
@@ -27,7 +31,7 @@
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
-      activeLeagueTab: 'players',
+      activeLeagueTab: 'draft',
       playerSearch: '',
       settingsOpen: false,
       scoringAlignmentOpen: true,
@@ -203,44 +207,89 @@
     }"
     x-cloak
   >
-    <div class="mb-4 flex items-start justify-between gap-4 px-2">
-      <div class="min-w-0">
-        <div class="truncate text-sm font-semibold text-slate-900">{{ $league->name }}</div>
-        <div class="mt-1 text-xs text-slate-500">ID: <span class="font-mono">{{ $displayId }}</span></div>
+    <div class="overflow-hidden bg-white">
+      <div class="relative min-h-44 overflow-hidden bg-slate-950 text-white">
+        <div class="absolute inset-0 bg-[linear-gradient(110deg,rgba(2,6,23,0.98),rgba(15,23,42,0.86)_46%,rgba(29,78,216,0.72)),radial-gradient(circle_at_78%_16%,rgba(96,165,250,0.62),transparent_25%)]" aria-hidden="true"></div>
+        <div class="absolute inset-x-0 bottom-0 h-px bg-blue-300/70 shadow-[0_0_28px_rgba(96,165,250,0.92)]" aria-hidden="true"></div>
+        @if ($canManageLeague)
+        <button
+          type="button"
+          class="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-white/10 text-white/90 shadow-sm transition-colors hover:bg-white/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-200/70"
+          @click="settingsOpen = true"
+          aria-label="League settings"
+          title="League settings"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.397-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+          </svg>
+        </button>
+        @endif
+
+        <div class="relative flex min-h-44 items-end justify-between gap-6 px-7 pb-6 pt-8">
+          <div class="flex min-w-0 items-end gap-5">
+            <div class="flex h-24 w-24 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-2xl ring-1 ring-blue-200/20">
+              <svg viewBox="0 0 64 64" fill="none" class="h-16 w-16 text-blue-100" aria-hidden="true">
+                <path d="M12 45 32 54l20-9V18L32 9l-20 9v27Z" fill="currentColor" opacity=".16"/>
+                <path d="M17 41 32 48l15-7V22L32 16l-15 6v19Z" stroke="currentColor" stroke-width="3"/>
+                <path d="m21 42 25-22M43 44 18 22" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="min-w-0 pb-1">
+              <div class="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-100/80">
+                <span>{{ ucfirst((string) $league->platform) }}</span>
+                <span class="text-blue-200/40">/</span>
+                <span>{{ $teamCountForHeader }} {{ $teamCountLabel }}</span>
+                <span class="text-blue-200/40">/</span>
+                <span>Head-to-Head</span>
+              </div>
+              <h2 class="mt-2 truncate text-3xl font-semibold tracking-tight text-white">{{ $league->name }}</h2>
+              <div class="mt-4 inline-flex max-w-full items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-xs font-semibold text-blue-50 ring-1 ring-white/10">
+                @if (! empty($ownedTeamForHeader['owner_avatar_url']))
+                  <img src="{{ $ownedTeamForHeader['owner_avatar_url'] }}" alt="" class="h-5 w-5 rounded-full object-cover ring-1 ring-white/20">
+                @else
+                  <span class="h-2 w-2 rounded-full bg-blue-300"></span>
+                @endif
+                <span class="shrink-0 text-blue-100/80">Your Team:</span>
+                <span class="truncate">{{ $ownedTeamForHeader['name'] ?? 'Not linked' }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="hidden shrink-0 lg:block" aria-hidden="true"></div>
+        </div>
       </div>
-      <button
-        type="button"
-        class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2"
-        @click="settingsOpen = true"
-        aria-label="League options"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5" aria-hidden="true">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M10.3 4.3c.4-1.7 2.9-1.7 3.4 0a1.8 1.8 0 0 0 2.7 1.1c1.5-.9 3.2.9 2.4 2.4a1.8 1.8 0 0 0 1.1 2.7c1.7.4 1.7 2.9 0 3.4a1.8 1.8 0 0 0-1.1 2.7c.9 1.5-.9 3.2-2.4 2.4a1.8 1.8 0 0 0-2.7 1.1c-.4 1.7-2.9 1.7-3.4 0a1.8 1.8 0 0 0-2.7-1.1c-1.5.9-3.2-.9-2.4-2.4A1.8 1.8 0 0 0 4.1 14c-1.7-.4-1.7-2.9 0-3.4a1.8 1.8 0 0 0 1.1-2.7c-.9-1.5.9-3.2 2.4-2.4a1.8 1.8 0 0 0 2.7-1.1Z" />
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" />
-        </svg>
-      </button>
     </div>
 
-    <div class="mb-4 flex items-center gap-2 border-b border-slate-200 px-2">
-      <button
-        type="button"
-        class="border-b-2 px-1 pb-2 text-sm font-semibold transition"
-        :class="activeLeagueTab === 'players' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
-        @click="activeLeagueTab = 'players'"
-      >
-        Players
+    <div class="mb-4 flex items-center gap-7 border-b border-slate-200 px-7">
+      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+        Overview
       </button>
       <button
         type="button"
-        class="border-b-2 px-1 pb-2 text-sm font-semibold transition"
-        :class="activeLeagueTab === 'draft' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        class="border-b-2 py-3 text-sm font-semibold transition"
+        :class="activeLeagueTab === 'draft' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
         @click="activeLeagueTab = 'draft'"
       >
         Draft
       </button>
+      <button
+        type="button"
+        class="border-b-2 py-3 text-sm font-semibold transition"
+        :class="activeLeagueTab === 'players' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        @click="activeLeagueTab = 'players'"
+      >
+        My Team
+      </button>
+      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+        Standings
+      </button>
+      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+        Activity
+      </button>
     </div>
 
-    <div x-show="activeLeagueTab === 'players'">
+    <div x-show="activeLeagueTab === 'players'" class="px-6 pb-6">
     <div x-show="!canShowLeagueStats">
       <x-card-section title="Players" class="border-0">
         <div class="space-y-5">
@@ -405,14 +454,24 @@
     </div>
     </div>
 
-    <div x-show="activeLeagueTab === 'draft'">
-      @include('leagues._draft-panel', ['drafting' => $drafting ?? []])
+    <div x-show="activeLeagueTab === 'draft'" class="px-6 pb-6">
+      @include('leagues._draft-panel', [
+        'drafting' => $drafting ?? [],
+        'league' => $league,
+        'teams' => $teams ?? [],
+        'canManageLeague' => $canManageLeague,
+        'canShowLeagueStats' => $canShowLeagueStats ?? false,
+        'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
+        'leagueStatsFallbackSlug' => $leagueStatsFallbackSlug,
+        'leagueStatsFallbackName' => $leagueStatsFallbackName,
+      ])
     </div>
 
+    @if ($canManageLeague)
     <x-ui.slide-over show="settingsOpen" close-action="settingsOpen = false" title-id="league-options-title" max-width="max-w-2xl">
       <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
         <div>
-          <h2 id="league-options-title" class="text-base font-semibold text-slate-950">League options</h2>
+          <h2 id="league-options-title" class="text-sm font-semibold text-slate-950">League settings</h2>
           <p class="mt-1 text-xs text-slate-500">{{ $league->name }} &bull; {{ ucfirst((string) $league->platform) }}</p>
         </div>
         <button
@@ -531,5 +590,6 @@
         @endif
       </div>
     </x-ui.slide-over>
+    @endif
   </div>
 @endif

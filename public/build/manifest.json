@@ -1,13 +1,33 @@
 {
+  "_toast-stack-BGYccCCD.js": {
+    "file": "assets/toast-stack-BGYccCCD.js",
+    "name": "toast-stack"
+  },
   "resources/css/app.css": {
-    "file": "assets/app-Bx5Fsm6v.css",
+    "file": "assets/app-DLWznUwR.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-Blw9TOlb.js",
+    "file": "assets/app-BNObvdTd.js",
     "name": "app",
     "src": "resources/js/app.js",
-    "isEntry": true
+    "isEntry": true,
+    "imports": [
+      "_toast-stack-BGYccCCD.js"
+    ],
+    "dynamicImports": [
+      "resources/js/pages/stats-page.js"
+    ]
+  },
+  "resources/js/pages/stats-page.js": {
+    "file": "assets/stats-page-e9pjBOL2.js",
+    "name": "stats-page",
+    "src": "resources/js/pages/stats-page.js",
+    "isEntry": true,
+    "isDynamicEntry": true,
+    "imports": [
+      "_toast-stack-BGYccCCD.js"
+    ]
   }
 }

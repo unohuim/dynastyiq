@@ -6,6 +6,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 
 class League extends Model
@@ -41,6 +42,11 @@ class League extends Model
             'platform_league_id'
         )->withPivot(['linked_at', 'status', 'meta', 'created_at', 'updated_at'])
          ->withTimestamps();
+    }
+
+    public function userRoles(): HasMany
+    {
+        return $this->hasMany(LeagueUserRole::class);
     }
 
     public function activePlatformLeague(): ?PlatformLeague

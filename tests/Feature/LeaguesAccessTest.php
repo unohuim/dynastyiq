@@ -3,9 +3,13 @@
 declare(strict_types=1);
 
 use App\Models\IntegrationSecret;
+use App\Models\League;
+use App\Models\LeagueUserRole;
+use App\Models\Organization;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
 use App\Models\Player;
+use App\Models\Role;
 use App\Models\User;
 use App\Models\YahooFantasyConnection;
 use App\Jobs\SyncFantraxLeagueJob;
@@ -286,4 +290,204 @@ test('fantrax roster display derives eligibility from platform slot usage and so
     ]);
     expect($players->firstWhere('name', 'Quinton Byfield')['eligibility'])->toBe(['C', 'LW']);
     expect($players->firstWhere('name', 'Minor Defense')['eligibility'])->toBe(['D']);
+});
+
+test('creating a community league assigns the acting user as league commissioner', function (): void {
+    $user = User::factory()->create();
+    $organization = Organization::create([
+        'name' => 'Commissioner Community',
+        'short_name' => 'CC',
+        'slug' => 'commissioner-community',
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $organization->users()->attach($user->id);
+
+    $this->actingAs($user)
+        ->postJson(route('organizations.leagues.store', $organization), [
+            'name' => 'Created League',
+            'sport' => 'hockey',
+        ])
+        ->assertOk()
+        ->assertJsonPath('league.name', 'Created League');
+
+    $league = League::query()->where('name', 'Created League')->firstOrFail();
+
+    expect(LeagueUserRole::query()
+        ->where('league_id', $league->id)
+        ->where('user_id', $user->id)
+        ->where('role', 'commissioner')
+        ->exists())->toBeTrue();
+});
+
+test('league settings are gated by league-scoped commissioner role', function (): void {
+    $user = User::factory()->create();
+    IntegrationSecret::create([
+        'user_id' => $user->id,
+        'provider' => FantasyProvider::FANTRAX,
+        'secret' => 'secret-key',
+        'status' => 'connected',
+    ]);
+    $organization = Organization::create([
+        'name' => 'Org Commissioner Community',
+        'short_name' => 'OCC',
+        'slug' => 'org-commissioner-community',
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $organization->users()->attach($user->id);
+    $role = Role::create([
+        'name' => 'Commissioner',
+        'slug' => 'commissioner',
+        'level' => 10,
+        'scope' => 'organization',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => $organization->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $internalLeague = League::create([
+        'name' => 'Scoped League',
+        'sport' => 'hockey',
+    ]);
+    $organization->leagues()->attach($internalLeague->id, [
+        'linked_at' => now(),
+    ]);
+    $league = PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'scoped-league',
+        'name' => 'Scoped League',
+        'sport' => 'hockey',
+    ]);
+    $internalLeague->platformLeagues()->attach($league->id, [
+        'linked_at' => now(),
+        'status' => 'active',
+    ]);
+    $team = PlatformTeam::create([
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'team-1',
+        'name' => 'Team One',
+    ]);
+    $user->platformLeagues()->attach($league->id, [
+        'team_id' => $team->id,
+        'is_active' => true,
+        'extras' => json_encode(['provider' => FantasyProvider::FANTRAX]),
+        'synced_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('leagues.show', $league->id))
+        ->assertOk()
+        ->assertDontSee('League settings');
+
+    LeagueUserRole::create([
+        'league_id' => $internalLeague->id,
+        'user_id' => $user->id,
+        'role' => 'commissioner',
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('leagues.show', $league->id))
+        ->assertOk()
+        ->assertSee('League settings');
+});
+
+test('league commissioner backfill assigns organization owners only by default', function (): void {
+    $owner = User::factory()->create();
+    $admin = User::factory()->create();
+    $organization = Organization::create([
+        'name' => 'Backfill Community',
+        'short_name' => 'BC',
+        'slug' => 'backfill-community',
+        'owner_user_id' => $owner->id,
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $organization->users()->attach([$owner->id, $admin->id]);
+    $role = Role::create([
+        'name' => 'Admin',
+        'slug' => 'admin',
+        'level' => 10,
+        'scope' => 'organization',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $admin->id,
+        'organization_id' => $organization->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $league = League::create([
+        'name' => 'Backfilled League',
+        'sport' => 'hockey',
+    ]);
+    $organization->leagues()->attach($league->id, [
+        'linked_at' => now(),
+    ]);
+
+    $this->artisan('leagues:backfill-commissioners')
+        ->assertExitCode(0);
+    $this->artisan('leagues:backfill-commissioners')
+        ->assertExitCode(0);
+
+    expect(LeagueUserRole::query()
+        ->where('league_id', $league->id)
+        ->where('user_id', $owner->id)
+        ->where('role', 'commissioner')
+        ->count())->toBe(1)
+        ->and(LeagueUserRole::query()
+            ->where('league_id', $league->id)
+            ->where('user_id', $admin->id)
+            ->where('role', 'commissioner')
+            ->exists())->toBeFalse();
+});
+
+test('league commissioner backfill can include organization admins when requested', function (): void {
+    $owner = User::factory()->create();
+    $admin = User::factory()->create();
+    $organization = Organization::create([
+        'name' => 'Backfill Admin Community',
+        'short_name' => 'BAC',
+        'slug' => 'backfill-admin-community',
+        'owner_user_id' => $owner->id,
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $organization->users()->attach([$owner->id, $admin->id]);
+    $role = Role::create([
+        'name' => 'Admin',
+        'slug' => 'admin',
+        'level' => 10,
+        'scope' => 'organization',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $admin->id,
+        'organization_id' => $organization->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $league = League::create([
+        'name' => 'Backfilled Admin League',
+        'sport' => 'hockey',
+    ]);
+    $organization->leagues()->attach($league->id, [
+        'linked_at' => now(),
+    ]);
+
+    $this->artisan('leagues:backfill-commissioners', ['--include-org-admins' => true])
+        ->assertExitCode(0);
+
+    expect(LeagueUserRole::query()
+        ->where('league_id', $league->id)
+        ->where('user_id', $owner->id)
+        ->where('role', 'commissioner')
+        ->exists())->toBeTrue()
+        ->and(LeagueUserRole::query()
+            ->where('league_id', $league->id)
+            ->where('user_id', $admin->id)
+            ->where('role', 'commissioner')
+            ->exists())->toBeTrue();
 });

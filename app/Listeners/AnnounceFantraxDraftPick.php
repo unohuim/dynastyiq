@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace App\Listeners;
 
+use App\Events\DraftPickMade;
 use App\Events\FantraxDraftPickMade;
 use App\Events\FantraxDraftPickToast;
+use App\Models\Draft;
+use App\Models\DraftNotificationSetting;
+use App\Models\DraftPick;
 use App\Models\FantraxDraftPick;
 use App\Models\FantraxPlayer;
 use App\Models\PlatformTeam;
@@ -22,11 +26,13 @@ use Throwable;
 
 final class AnnounceFantraxDraftPick implements ShouldQueue
 {
-    public function handle(FantraxDraftPickMade $event): void
+    public function handle(DraftPickMade|FantraxDraftPickMade $event): void
     {
-        $draftPick = FantraxDraftPick::query()->find($event->draftPickId);
+        $draftPick = $event instanceof DraftPickMade
+            ? DraftPick::query()->with(['draft.notificationSettings', 'platformTeam', 'player'])->find($event->draftPickId)
+            : $this->canonicalDraftPickFromLegacyEvent($event);
 
-        if (! $draftPick instanceof FantraxDraftPick) {
+        if (! $draftPick instanceof DraftPick) {
             return;
         }
 
@@ -40,36 +46,190 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             return;
         }
 
+        if ($event instanceof FantraxDraftPickMade) {
+            FantraxDraftPick::query()
+                ->whereKey($event->draftPickId)
+                ->whereNull('announced_at')
+                ->update(['announced_at' => now()]);
+        }
+
         $message = $this->message($draftPick, $context);
         $discordPayload = $this->discordPayload($draftPick, $message, $context);
 
+        $eventPayload = DraftPickMade::fromDraftPick($draftPick)->pick;
+
         foreach ($context['user_ids'] as $userId) {
-            FantraxDraftPickToast::dispatch((int) $userId, $message, $event->pick);
+            FantraxDraftPickToast::dispatch((int) $userId, $message, $eventPayload);
         }
 
-        $channelId = (string) data_get($context['pivot_meta'], 'draft_notifications.discord_channel.id', '');
+        $channelId = (string) data_get($context['notification_settings'], 'discord_channel_id', '');
 
         if ($channelId !== '') {
             $this->postDiscordMessage($channelId, $discordPayload);
         }
     }
 
-    private function claimDraftPick(FantraxDraftPick $draftPick): bool
+    private function claimDraftPick(DraftPick $draftPick): bool
     {
-        return FantraxDraftPick::query()
+        return DraftPick::query()
             ->whereKey($draftPick->id)
             ->whereNull('announced_at')
             ->update(['announced_at' => now()]) === 1;
     }
 
-    /**
-     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>,drafting_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,pivot_meta:array<string,mixed>,user_ids:array<int,int>}|null
-     */
-    private function context(FantraxDraftPick $draftPick): ?array
+    private function canonicalDraftPickFromLegacyEvent(FantraxDraftPickMade $event): ?DraftPick
     {
+        $legacyPick = FantraxDraftPick::query()->find($event->draftPickId);
+
+        if (! $legacyPick instanceof FantraxDraftPick) {
+            return null;
+        }
+
+        $draft = Draft::query()
+            ->where('platform_league_id', $legacyPick->platform_league_id)
+            ->where('platform', 'fantrax')
+            ->latest('updated_at')
+            ->first();
+
+        if (! $draft instanceof Draft) {
+            $leagueName = (string) (DB::table('platform_leagues')
+                ->where('id', $legacyPick->platform_league_id)
+                ->value('name') ?: 'Fantrax League');
+
+            $draft = Draft::query()->create([
+                'platform_league_id' => (int) $legacyPick->platform_league_id,
+                'source_type' => 'platform_mirror',
+                'platform' => 'fantrax',
+                'external_draft_id' => 'fantrax:legacy:' . $legacyPick->platform_league_id,
+                'name' => $leagueName . ' Draft',
+                'status' => 'live',
+                'settings' => [
+                    'provider' => 'fantrax',
+                    'source' => 'legacy_fantrax_event',
+                ],
+            ]);
+        }
+
+        $platformTeamIds = PlatformTeam::query()
+            ->where('platform_league_id', $legacyPick->platform_league_id)
+            ->pluck('id', 'platform_team_id');
+        $draftPick = null;
+
+        FantraxDraftPick::query()
+            ->where('platform_league_id', $legacyPick->platform_league_id)
+            ->orderByRaw('overall_pick is null')
+            ->orderBy('overall_pick')
+            ->orderBy('round')
+            ->orderBy('pick_in_round')
+            ->get()
+            ->each(function (FantraxDraftPick $fantraxPick) use ($draft, $legacyPick, $platformTeamIds, &$draftPick): void {
+                $mirroredPick = DraftPick::query()->updateOrCreate(
+                    [
+                        'draft_id' => $draft->id,
+                        'provider_pick_key' => $fantraxPick->provider_pick_key,
+                    ],
+                    [
+                        'overall_pick' => $fantraxPick->overall_pick,
+                        'round' => $fantraxPick->round,
+                        'pick' => $fantraxPick->pick,
+                        'pick_in_round' => $fantraxPick->pick_in_round,
+                        'platform_team_id' => $fantraxPick->fantrax_team_id ? ($platformTeamIds[$fantraxPick->fantrax_team_id] ?? null) : null,
+                        'provider_team_id' => $fantraxPick->fantrax_team_id,
+                        'player_id' => $fantraxPick->fantrax_player_id ? $this->canonicalPlayerIdForFantraxPlayer((string) $fantraxPick->fantrax_player_id) : null,
+                        'provider_player_id' => $fantraxPick->fantrax_player_id,
+                        'source' => 'fantrax',
+                        'status' => $fantraxPick->fantrax_player_id ? 'picked' : 'pending',
+                        'picked_at' => $fantraxPick->drafted_at,
+                        'detected_at' => $fantraxPick->detected_at,
+                        'payload_hash' => $fantraxPick->payload_hash,
+                        'raw_payload' => $fantraxPick->raw_payload,
+                    ],
+                );
+
+                if ((string) $fantraxPick->provider_pick_key === (string) $legacyPick->provider_pick_key) {
+                    $draftPick = $mirroredPick;
+                }
+            });
+
+        if (! $draftPick instanceof DraftPick) {
+            return null;
+        }
+
+        return $draftPick->load(['draft.notificationSettings', 'platformTeam', 'player']);
+    }
+
+    private function canonicalPlayerIdForFantraxPlayer(string $fantraxPlayerId): ?int
+    {
+        $playerId = FantraxPlayer::query()
+            ->where('fantrax_id', $fantraxPlayerId)
+            ->value('player_id');
+
+        if ($playerId !== null) {
+            return (int) $playerId;
+        }
+
+        $playerId = PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
+            ->where('provider_player_id', $fantraxPlayerId)
+            ->value('player_id');
+
+        return $playerId !== null ? (int) $playerId : null;
+    }
+
+    /**
+     * @param array<string,mixed> $legacyPivotMeta
+     *
+     * @return array<string,mixed>
+     */
+    private function notificationSettings(Draft $draft, array $legacyPivotMeta): array
+    {
+        $settings = $draft->notificationSettings;
+
+        if (! $settings instanceof DraftNotificationSetting) {
+            $legacyChannel = data_get($legacyPivotMeta, 'draft_notifications.discord_channel');
+            $channelId = is_array($legacyChannel) ? trim((string) ($legacyChannel['id'] ?? '')) : '';
+            $channelName = is_array($legacyChannel) ? trim((string) ($legacyChannel['name'] ?? '')) : '';
+
+            $settings = DraftNotificationSetting::query()->updateOrCreate(
+                ['draft_id' => $draft->id],
+                [
+                    'discord_channel_id' => $channelId !== '' ? $channelId : null,
+                    'discord_channel_name' => $channelName !== '' ? $channelName : null,
+                    'enabled' => $channelId !== '',
+                    'settings' => [
+                        'source' => $channelId !== '' ? 'legacy_community_league_meta' : 'draft_pick_listener',
+                    ],
+                ],
+            );
+        }
+
+        return [
+            'discord_channel_id' => $settings->enabled ? $settings->discord_channel_id : null,
+            'discord_channel_name' => $settings->discord_channel_name,
+            'enabled' => (bool) $settings->enabled,
+        ];
+    }
+
+    /**
+     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>,drafting_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,notification_settings:array<string,mixed>,user_ids:array<int,int>}|null
+     */
+    private function context(DraftPick $draftPick): ?array
+    {
+        $draft = $draftPick->draft;
+
+        if (! $draft instanceof Draft) {
+            return null;
+        }
+
+        $platformLeagueId = $draft->platform_league_id ? (int) $draft->platform_league_id : null;
+
+        if ($platformLeagueId === null) {
+            return null;
+        }
+
         $row = DB::table('league_platform_league')
             ->join('organization_leagues', 'organization_leagues.league_id', '=', 'league_platform_league.league_id')
-            ->where('league_platform_league.platform_league_id', $draftPick->platform_league_id)
+            ->where('league_platform_league.platform_league_id', $platformLeagueId)
             ->select([
                 'league_platform_league.league_id',
                 'organization_leagues.organization_id',
@@ -77,40 +237,43 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ])
             ->first();
 
-        if (! $row) {
+        if (! $row && ! $draft->organization_id) {
             return null;
         }
 
-        $pivotMeta = is_string($row->pivot_meta) && $row->pivot_meta !== ''
+        $pivotMeta = is_string($row?->pivot_meta) && $row->pivot_meta !== ''
             ? json_decode($row->pivot_meta, true)
             : [];
-        $teamName = PlatformTeam::query()
-            ->where('platform_league_id', $draftPick->platform_league_id)
-            ->where('platform_team_id', $draftPick->fantrax_team_id)
+        $notificationSettings = $this->notificationSettings($draft, is_array($pivotMeta) ? $pivotMeta : []);
+        $providerTeamId = $draftPick->provider_team_id ? (string) $draftPick->provider_team_id : null;
+        $teamName = $draftPick->platformTeam?->name ?: PlatformTeam::query()
+            ->where('platform_league_id', $platformLeagueId)
+            ->where('platform_team_id', $providerTeamId)
             ->value('name');
-        $playerName = FantraxPlayer::query()
-            ->where('fantrax_id', $draftPick->fantrax_player_id)
+        $providerPlayerId = $draftPick->provider_player_id ? (string) $draftPick->provider_player_id : null;
+        $playerName = $draftPick->player?->full_name ?: FantraxPlayer::query()
+            ->where('fantrax_id', $providerPlayerId)
             ->value('name');
-        $playerDetails = $this->playerDetails((string) $draftPick->fantrax_player_id);
+        $playerDetails = $this->playerDetails($draftPick);
         $userIds = DB::table('organization_user')
-            ->where('organization_id', $row->organization_id)
+            ->where('organization_id', (int) ($draft->organization_id ?: $row?->organization_id))
             ->pluck('user_id')
             ->map(static fn (mixed $userId): int => (int) $userId)
             ->values()
             ->all();
 
         return [
-            'team_name' => (string) ($teamName ?: $draftPick->fantrax_team_id ?: 'Unknown team'),
-            'player_name' => (string) ($playerName ?: $playerDetails['name'] ?: $draftPick->fantrax_player_id ?: 'Unknown player'),
+            'team_name' => (string) ($teamName ?: $providerTeamId ?: 'Unknown team'),
+            'player_name' => (string) ($playerName ?: $playerDetails['name'] ?: $providerPlayerId ?: 'Unknown player'),
             'position' => $playerDetails['position'],
             'avatar_url' => $playerDetails['avatar_url'],
             'stats' => $playerDetails['stats'],
             'stat_headers' => $playerDetails['stat_headers'],
             'stat_keys' => $playerDetails['stat_keys'],
             'team_abbrev' => $playerDetails['team_abbrev'],
-            'drafting_owner' => $this->teamOwnerDiscordContext($draftPick->platform_league_id, $draftPick->fantrax_team_id, (string) ($teamName ?: $draftPick->fantrax_team_id ?: 'Unknown team')),
+            'drafting_owner' => $this->teamOwnerDiscordContext($platformLeagueId, $providerTeamId, (string) ($teamName ?: $providerTeamId ?: 'Unknown team'), $draftPick->platform_team_id ? (int) $draftPick->platform_team_id : null),
             'otc_owner' => $this->nextOtcOwnerContext($draftPick),
-            'pivot_meta' => is_array($pivotMeta) ? $pivotMeta : [],
+            'notification_settings' => $notificationSettings,
             'user_ids' => $userIds,
         ];
     }
@@ -118,7 +281,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     /**
      * @param array<string,mixed> $context
      */
-    private function message(FantraxDraftPick $draftPick, array $context): string
+    private function message(DraftPick $draftPick, array $context): string
     {
         $pickLabel = $draftPick->overall_pick ? (string) $draftPick->overall_pick : 'unknown';
         $draftingOwner = $context['drafting_owner']['mention'] ?? $context['drafting_owner']['label'];
@@ -138,7 +301,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     /**
      * @return array{content:string,allowed_mentions:array{parse:array<int,string>,users:array<int,string>},card:array<string,mixed>}
      */
-    private function discordPayload(FantraxDraftPick $draftPick, string $message, array $context): array
+    private function discordPayload(DraftPick $draftPick, string $message, array $context): array
     {
         $mentionUserIds = collect([
             $context['drafting_owner']['discord_user_id'] ?? null,
@@ -175,16 +338,18 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     /**
      * @return array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}
      */
-    private function teamOwnerDiscordContext(int $platformLeagueId, ?string $fantraxTeamId, string $fallbackLabel): array
+    private function teamOwnerDiscordContext(int $platformLeagueId, ?string $providerTeamId, string $fallbackLabel, ?int $platformTeamId = null): array
     {
-        if (! $fantraxTeamId) {
+        if (! $providerTeamId && ! $platformTeamId) {
             return ['label' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
         }
 
-        $team = PlatformTeam::query()
-            ->where('platform_league_id', $platformLeagueId)
-            ->where('platform_team_id', $fantraxTeamId)
-            ->first(['id', 'name']);
+        $team = $platformTeamId
+            ? PlatformTeam::query()->find($platformTeamId, ['id', 'name'])
+            : PlatformTeam::query()
+                ->where('platform_league_id', $platformLeagueId)
+                ->where('platform_team_id', $providerTeamId)
+                ->first(['id', 'name']);
 
         if (! $team instanceof PlatformTeam) {
             return ['label' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
@@ -222,11 +387,18 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     /**
      * @return array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null
      */
-    private function nextOtcOwnerContext(FantraxDraftPick $draftPick): ?array
+    private function nextOtcOwnerContext(DraftPick $draftPick): ?array
     {
-        $query = FantraxDraftPick::query()
-            ->where('platform_league_id', $draftPick->platform_league_id)
-            ->whereNull('fantrax_player_id')
+        $draft = $draftPick->draft;
+        $platformLeagueId = $draft?->platform_league_id ? (int) $draft->platform_league_id : null;
+
+        if (! $draft instanceof Draft || $platformLeagueId === null) {
+            return null;
+        }
+
+        $query = DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereNull('provider_player_id')
             ->orderByRaw('overall_pick is null')
             ->orderBy('overall_pick')
             ->orderBy('round')
@@ -236,36 +408,42 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             $query->where('overall_pick', '>', $draftPick->overall_pick);
         }
 
-        $nextPick = $query->first(['fantrax_team_id']);
+        $nextPick = $query->first(['platform_team_id', 'provider_team_id']);
 
-        if (! $nextPick instanceof FantraxDraftPick || ! $nextPick->fantrax_team_id) {
+        if (! $nextPick instanceof DraftPick || (! $nextPick->provider_team_id && ! $nextPick->platform_team_id)) {
             return null;
         }
 
-        $teamName = (string) (PlatformTeam::query()
-            ->where('platform_league_id', $draftPick->platform_league_id)
-            ->where('platform_team_id', $nextPick->fantrax_team_id)
-            ->value('name') ?: $nextPick->fantrax_team_id);
+        $teamName = (string) ($nextPick->platformTeam?->name ?: PlatformTeam::query()
+            ->where('platform_league_id', $platformLeagueId)
+            ->where('platform_team_id', $nextPick->provider_team_id)
+            ->value('name') ?: $nextPick->provider_team_id);
 
-        return $this->teamOwnerDiscordContext($draftPick->platform_league_id, $nextPick->fantrax_team_id, $teamName);
+        return $this->teamOwnerDiscordContext(
+            $platformLeagueId,
+            $nextPick->provider_team_id ? (string) $nextPick->provider_team_id : null,
+            $teamName,
+            $nextPick->platform_team_id ? (int) $nextPick->platform_team_id : null,
+        );
     }
 
     /**
      * @return array{name:string|null,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>}
      */
-    private function playerDetails(string $fantraxPlayerId): array
+    private function playerDetails(DraftPick $draftPick): array
     {
+        $providerPlayerId = $draftPick->provider_player_id ? (string) $draftPick->provider_player_id : '';
         $fantraxPlayer = FantraxPlayer::query()
             ->with('player:id,full_name,position,pos_type,head_shot_url')
-            ->where('fantrax_id', $fantraxPlayerId)
+            ->where('fantrax_id', $providerPlayerId)
             ->first();
         $identity = PlayerExternalIdentity::query()
             ->with('player:id,full_name,position,pos_type,head_shot_url')
             ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
-            ->where('provider_player_id', $fantraxPlayerId)
+            ->where('provider_player_id', $providerPlayerId)
             ->first();
-        $player = $fantraxPlayer?->player ?? $identity?->player;
-        $playerId = $fantraxPlayer?->player_id ?: $identity?->player_id;
+        $player = $draftPick->player ?? $fantraxPlayer?->player ?? $identity?->player;
+        $playerId = $draftPick->player_id ?: $fantraxPlayer?->player_id ?: $identity?->player_id;
         $isGoalie = $this->isGoalie($player, $fantraxPlayer?->position, $identity?->position);
 
         $stats = $playerId ? $this->recentSeasonStats((int) $playerId) : [];
@@ -331,7 +509,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->all();
     }
 
-    private function footerText(FantraxDraftPick $draftPick): string
+    private function footerText(DraftPick $draftPick): string
     {
         $parts = [];
 
@@ -358,7 +536,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
         $token = (string) config('apiurls.discord-bot.key');
 
         if ($token === '') {
-            Log::warning('Fantrax draft pick Discord announcement skipped because bot token is missing.', [
+            Log::warning('Draft pick Discord announcement skipped because bot token is missing.', [
                 'channel_id' => $channelId,
             ]);
 
@@ -387,7 +565,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                         ]);
 
                     if (! $imageResponse->successful()) {
-                        Log::warning('Fantrax draft pick Discord image announcement returned an error response.', [
+                        Log::warning('Draft pick Discord image announcement returned an error response.', [
                             'channel_id' => $channelId,
                             'status' => $imageResponse->status(),
                             'response' => str($imageResponse->body())->limit(500)->toString(),
@@ -408,7 +586,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                     ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $this->discordTextPayload($payload));
             }
         } catch (Throwable $exception) {
-            Log::warning('Fantrax draft pick Discord announcement failed.', [
+            Log::warning('Draft pick Discord announcement failed.', [
                 'channel_id' => $channelId,
                 'exception' => $exception->getMessage(),
             ]);
@@ -421,7 +599,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
         }
 
         if (! $response->successful()) {
-            Log::warning('Fantrax draft pick Discord announcement returned an error response.', [
+            Log::warning('Draft pick Discord announcement returned an error response.', [
                 'channel_id' => $channelId,
                 'status' => $response->status(),
                 'response' => str($response->body())->limit(500)->toString(),

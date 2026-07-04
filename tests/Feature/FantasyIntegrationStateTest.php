@@ -13,7 +13,6 @@ use App\Services\FantasyIntegrationState;
 use App\Support\FantasyProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
-use Mockery;
 
 uses(RefreshDatabase::class);
 

@@ -72,6 +72,11 @@ class PlatformLeague extends Model
         return $this->hasMany(FantraxDraftPick::class, 'platform_league_id');
     }
 
+    public function drafts(): HasMany
+    {
+        return $this->hasMany(Draft::class, 'platform_league_id');
+    }
+
     /**
      * Configured roster slots for this platform league.
      */

@@ -29,6 +29,7 @@ return [
         'steven'      => ['Steven', 'Steve'],
         'william'     => ['William', 'Will', 'Bill', 'Billy'],
         'nicholas'    => ['Nicholas', 'Nick', 'Nicky'],
+        'zachary'     => ['Zachary', 'Zach'],
         'john'        => ['John', 'Johnny', 'Jack'],
         'roderick'    => ['Roderick', 'Rod'],
         'mack'        => ['Macklin', 'Mac', 'Mack', 'McDonald', 'MacDonald'],

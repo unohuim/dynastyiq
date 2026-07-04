@@ -6,6 +6,7 @@ use App\Console\Commands\FantraxSyncCommand;
 use App\Console\Commands\GenerateDraftPickCardImageCommand;
 use App\Console\Commands\ImportCapWagesCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
+use App\Console\Commands\BackfillLeagueCommissionersCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
 use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
@@ -25,6 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withCommands([
         PatreonNightlySync::class,
         BackfillShotGeometryCommand::class,
+        BackfillLeagueCommissionersCommand::class,
         FantraxDraftsPollCommand::class,
         GenerateDraftPickCardImageCommand::class,
     ])

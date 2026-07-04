@@ -27,6 +27,7 @@ use App\Models\PlatformLeague;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
+use App\Models\User;
 use App\Models\YahooPlayer;
 use App\Services\ImportCapWagesPlayer;
 use App\Services\ImportFantraxPlayer;
@@ -49,6 +50,7 @@ use Illuminate\Support\Facades\Queue;
 beforeEach(function () {
     Carbon::setTestNow('2026-06-26 12:00:00');
     config(['cache.default' => 'array']);
+    User::factory()->create();
 
     $this->nhlPayload = static function (array $overrides = []): array {
         return array_replace_recursive([
@@ -1993,6 +1995,15 @@ it('capwages import allows identities whose latest contract season matches the c
 });
 
 it('capwages import stores provider profile data for eligible identities', function () {
+    ($this->makePlayer)([
+        'nhl_id' => 123456,
+        'first_name' => 'CapWages',
+        'last_name' => 'Profile Player',
+        'full_name' => 'CapWages Profile Player',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+
     ($this->fakeCapWagesPlayer)('test-player', ($this->capWagesPayload)([
         'name' => 'CapWages Profile Player',
         'slug' => 'test-player',
@@ -2249,7 +2260,7 @@ it('capwages reconciliation creates missing signed transactions for existing con
         'player_id' => $player->id,
         'display_name' => 'Backfilled Contract Player',
         'team' => 'WSH',
-        'status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
     ]);
     CapWagesPlayer::create([
         'player_external_identity_id' => $identity->id,
@@ -2774,9 +2785,12 @@ it('queues NHL identity resolution when a non-NHL identity links to a player wit
         'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,
         'provider_player_id' => 'jack-campbell',
         'provider_slug' => 'jack-campbell',
+        'player_id' => $player->id,
         'display_name' => 'Jack Campbell',
+        'first_name' => 'Jack',
+        'last_name' => 'Campbell',
         'position' => 'G',
-        'match_status' => PlayerExternalIdentity::STATUS_UNMATCHED,
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
         'first_seen_at' => now(),
         'last_seen_at' => now(),
     ]);
@@ -3183,7 +3197,7 @@ it('filters NHL Stats last-name matches down to the exact current-team player', 
         ->exists())->toBeTrue();
 });
 
-it('does not assign an NHL id already owned by another canonical player', function () {
+it('merges a duplicate player when NHL resolution finds an already owned NHL id', function () {
     $existing = ($this->makePlayer)([
         'nhl_id' => 8486256,
         'first_name' => 'Lavr',
@@ -3230,11 +3244,11 @@ it('does not assign an NHL id already owned by another canonical player', functi
         ->handle(app(NhlPlayerIdentityLookup::class));
 
     expect($existing->refresh()->nhl_id)->toBe(8486256);
-    expect($duplicate->refresh()->nhl_id)->toBeNull();
+    expect(Player::query()->whereKey($duplicate->id)->exists())->toBeFalse();
 });
 
-it('marks source identities as conflicts when NHL resolution finds an already owned NHL id', function () {
-    ($this->makePlayer)([
+it('moves source identities to the owner when NHL resolution merges a duplicate player', function () {
+    $existing = ($this->makePlayer)([
         'nhl_id' => 8486256,
         'first_name' => 'Lavr',
         'last_name' => 'Gashilov',
@@ -3289,10 +3303,10 @@ it('marks source identities as conflicts when NHL resolution finds an already ow
 
     $identity->refresh();
 
-    expect($duplicate->refresh()->nhl_id)->toBeNull();
-    expect($identity->player_id)->toBeNull();
-    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_CONFLICT);
-    expect($identity->unmatched_reason)->toBe(PlayerExternalIdentity::REASON_MULTIPLE_CANDIDATES);
+    expect(Player::query()->whereKey($duplicate->id)->exists())->toBeFalse();
+    expect($identity->player_id)->toBe($existing->id);
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->unmatched_reason)->toBeNull();
 });
 
 it('stores NHL candidate identities without mutating a player when multiple same-name position matches exist', function () {
@@ -3528,6 +3542,7 @@ it('resolves NHL identities inline for admin import runs without queueing resolv
         'status' => 'working',
         'command' => 'nhl:resolve',
         'options' => ['--players' => true, '--inline' => true],
+        'ran_at' => now(),
         'started_at' => now(),
     ]);
 

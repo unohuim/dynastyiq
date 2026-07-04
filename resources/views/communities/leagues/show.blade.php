@@ -98,17 +98,19 @@
                     </button>
                 @endif
 
-                <button
-                    type="button"
-                    x-on:click="leagueSettingsOpen = true"
-                    aria-label="League options"
-                    class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.3 4.3 11 2h2l.7 2.3a8.2 8.2 0 0 1 1.6.7l2.1-1.1 1.4 1.4-1.1 2.1c.3.5.5 1 .7 1.6L21 9.7v2l-2.3.7a8.2 8.2 0 0 1-.7 1.6l1.1 2.1-1.4 1.4-2.1-1.1c-.5.3-1 .5-1.6.7L13.3 21h-2l-.7-2.3a8.2 8.2 0 0 1-1.6-.7l-2.1 1.1-1.4-1.4 1.1-2.1a8.2 8.2 0 0 1-.7-1.6L3 13.3v-2l2.3-.7c.2-.6.4-1.1.7-1.6L4.9 6.9l1.4-1.4 2.1 1.1c.5-.3 1-.5 1.6-.7Z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                </button>
+                @if ($vm['header']['can_edit'])
+                    <button
+                        type="button"
+                        x-on:click="leagueSettingsOpen = true"
+                        aria-label="League options"
+                        class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.397-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        </svg>
+                    </button>
+                @endif
             </div>
         </div>
 
@@ -267,15 +269,17 @@
                         </div>
                     </div>
 
-                    <button type="button"
-                            x-on:click="configOpen = true"
-                            aria-label="Draft settings"
-                            class="rounded-md p-1 text-slate-500 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.3 4.3 11 2h2l.7 2.3a8.2 8.2 0 0 1 1.6.7l2.1-1.1 1.4 1.4-1.1 2.1c.3.5.5 1 .7 1.6L21 9.7v2l-2.3.7a8.2 8.2 0 0 1-.7 1.6l1.1 2.1-1.4 1.4-2.1-1.1c-.5.3-1 .5-1.6.7L13.3 21h-2l-.7-2.3a8.2 8.2 0 0 1-1.6-.7l-2.1 1.1-1.4-1.4 1.1-2.1a8.2 8.2 0 0 1-.7-1.6L3 13.3v-2l2.3-.7c.2-.6.4-1.1.7-1.6L4.9 6.9l1.4-1.4 2.1 1.1c.5-.3 1-.5 1.6-.7Z"/>
-                            <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                    </button>
+                    @if ($vm['header']['can_edit'])
+                        <button type="button"
+                                x-on:click="configOpen = !configOpen"
+                                aria-label="Toggle draft settings"
+                                class="rounded-md p-1 text-slate-500 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.397-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            </svg>
+                        </button>
+                    @endif
                 </div>
 
                 <div class="min-h-0 flex flex-1 flex-col">
@@ -420,27 +424,28 @@
                     @endif
                 </div>
 
-                <div
-                    x-cloak
-                    x-show="configOpen"
-                    x-transition.opacity
-                    x-on:click="configOpen = false"
-                    class="absolute inset-0 z-10 bg-slate-900/10"
-                    aria-hidden="true"
-                ></div>
+                @if ($vm['header']['can_edit'])
+                    <div
+                        x-cloak
+                        x-show="configOpen"
+                        x-transition.opacity
+                        x-on:click="configOpen = false"
+                        class="absolute inset-0 z-10 bg-slate-900/10"
+                        aria-hidden="true"
+                    ></div>
 
-                <aside
-                    x-cloak
-                    x-show="configOpen"
-                    x-transition:enter="transition duration-200 ease-out"
-                    x-transition:enter-start="translate-x-full"
-                    x-transition:enter-end="translate-x-0"
-                    x-transition:leave="transition duration-150 ease-in"
-                    x-transition:leave-start="translate-x-0"
-                    x-transition:leave-end="translate-x-full"
-                    class="absolute inset-y-0 right-0 z-20 w-80 border-l border-slate-200 bg-white p-5 shadow-xl"
-                    aria-label="Draft settings"
-                >
+                    <aside
+                        x-cloak
+                        x-show="configOpen"
+                        x-transition:enter="transition duration-200 ease-out"
+                        x-transition:enter-start="translate-x-full"
+                        x-transition:enter-end="translate-x-0"
+                        x-transition:leave="transition duration-150 ease-in"
+                        x-transition:leave-start="translate-x-0"
+                        x-transition:leave-end="translate-x-full"
+                        class="absolute inset-y-0 right-0 z-20 w-80 border-l border-slate-200 bg-white p-5 shadow-xl"
+                        aria-label="Draft settings"
+                    >
                     <div class="mb-5 flex items-center justify-between gap-3">
                         <h4 class="text-sm font-semibold text-slate-900">Draft settings</h4>
                         <button type="button"
@@ -535,7 +540,8 @@
                             <input type="checkbox" x-model="showTeamBadges" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
                         </label>
                     </div>
-                </aside>
+                    </aside>
+                @endif
             </section>
 
             <section
@@ -590,6 +596,7 @@
             </section>
         </div>
 
+        @if ($vm['header']['can_edit'])
         <x-ui.slide-over show="leagueSettingsOpen" close-action="leagueSettingsOpen = false" title-id="league-options-title" max-width="max-w-xl">
             <div class="relative overflow-hidden bg-slate-950 px-6 pb-8 pt-7 text-white">
                 <div class="absolute inset-0 bg-[radial-gradient(circle_at_75%_15%,rgba(59,130,246,0.36),transparent_30%),linear-gradient(135deg,rgba(15,23,42,0.96),rgba(15,23,42,0.74))]" aria-hidden="true"></div>
@@ -748,6 +755,7 @@
                 </div>
             </div>
         </x-ui.slide-over>
+        @endif
 
         {{-- Fantrax modal (only when not connected) --}}
         @if (! $vm['platform']['connected'])

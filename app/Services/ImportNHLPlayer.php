@@ -138,9 +138,10 @@ class ImportNHLPlayer
             }
 
             $goalsAgainstAverage = $this->nullableFloat($row, ['gaa']);
+            $goalieToiMin = parseToiMinutes($row['timeOnIce'] ?? $row['avgToi'] ?? null);
 
-            if ($goalsAgainstAverage === null && $goalsAgainst !== null && $toiMin > 0) {
-                $goalsAgainstAverage = round($goalsAgainst / ($toiMin / 60), 3);
+            if ($goalsAgainstAverage === null && $goalsAgainst !== null && $goalieToiMin > 0) {
+                $goalsAgainstAverage = round($goalsAgainst / ($goalieToiMin / 60), 3);
             }
 
             $key = $this->statIdentityKey($player, $row);

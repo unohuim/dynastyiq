@@ -114,6 +114,7 @@ class StatsController extends BaseController
             'from'          => 'nullable|date',
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
+            'draft_context' => 'nullable|boolean',
         ]);
 
         $user = $request->user();
@@ -255,7 +256,7 @@ class StatsController extends BaseController
                     return false;
                 }
 
-                $playerId = (string) ($row['player_id'] ?? '');
+                $playerId = (string) ($row['player_id'] ?? $row['id'] ?? '');
                 $nhlId = (string) ($row['nhl_player_id'] ?? '');
 
                 return ($playerId !== '' && isset($universe['player_ids'][$playerId]))
@@ -1088,6 +1089,7 @@ class StatsController extends BaseController
         $sort    = $settings['sort']    ?? ['sortKey' => 'pts', 'sortDirection' => 'desc'];
 
         $isProspects   = $this->isProspectsPerspective($perspective, $filters);
+        $isDraftCentralContext = (bool) ($request?->boolean('draft_context') ?? false);
         $lockedSeason  = $filters['season_id']['value'] ?? null;
         $season        = $lockedSeason ?: $seasonFilter;
 
@@ -1131,15 +1133,30 @@ class StatsController extends BaseController
                 ->select('stats.season_id')
                 ->distinct()
                 ->pluck('stats.season_id')
+                ->map(static fn (mixed $seasonId): string => (string) $seasonId)
                 ->sortDesc()
                 ->values()
                 ->all();
-            if (!$season) $season = $availableSeasons[0] ?? null;
+            if (!$season && $isDraftCentralContext) {
+                $lastCompletedSeason = (string) ((int) now()->year - 1) . (string) now()->year;
+                $season = in_array($lastCompletedSeason, $availableSeasons, true)
+                    ? $lastCompletedSeason
+                    : ($availableSeasons[0] ?? null);
+            } elseif (!$season) {
+                $season = $availableSeasons[0] ?? null;
+            }
 
             if ($season) $base->where('season_id', $season);
 
             $stats = $base->get();
-            $rows = $this->assembleRowsFromCollection($stats, $columns, $slice, $canSlice, 'prospects');
+            $rows = $this->assembleRowsFromCollection(
+                $stats,
+                $columns,
+                $slice,
+                $canSlice,
+                'prospects',
+                ['draft_context' => $isDraftCentralContext],
+            );
             $effectiveGameType = 2;
         } else {
             if (!$season) $season = (string) NhlSeasonStat::query()->max('season_id');
@@ -1382,10 +1399,10 @@ class StatsController extends BaseController
         $rows = collect();
         $officialToiByPlayer = $this->officialBoxscoreToiByPlayer($collection, $mode, $filters);
 
-        $grouped = $collection->groupBy(function ($row) use ($mode): string {
+        $grouped = $collection->groupBy(function ($row) use ($mode, $filters): string {
             $playerId = (string) ($row->player_id ?? $row->nhl_player_id ?? '');
 
-            if ($mode === 'prospects') {
+            if ($mode === 'prospects' && ! (bool) ($filters['draft_context'] ?? false)) {
                 return $playerId . '|' . (string) ($row->league_abbrev ?? '');
             }
 
@@ -1395,7 +1412,7 @@ class StatsController extends BaseController
         foreach ($grouped as $playerStats) {
             $entry    = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
             $player   = $entry->player;
-            $isSeason = ($mode === 'season');
+            $isSeason = ($mode === 'season' || ($mode === 'prospects' && (bool) ($filters['draft_context'] ?? false)));
 
             $contract        = $player?->contracts()->exists() ? $player->contracts()->first() : null;
             $contractSeason  = $contract?->seasons->last();

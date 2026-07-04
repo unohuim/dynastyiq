@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\SyncFantraxLeagueJob;
+use App\Models\Draft;
+use App\Models\DraftNotificationSetting;
+use App\Models\DraftPick;
+use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
 use App\Models\PlatformTeam;
 use App\Models\Player;
@@ -12,12 +16,15 @@ use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
+use App\Services\SyncFantraxDraftState;
 use App\Services\YahooFantasyLeagueService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 final class LeagueController extends Controller
@@ -99,6 +106,7 @@ final class LeagueController extends Controller
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
+            'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
         ]);
     }
 
@@ -131,6 +139,7 @@ final class LeagueController extends Controller
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
+            'canManageLeague' => $this->canManageLeague($league, $user),
         ]);
     }
 
@@ -183,6 +192,207 @@ final class LeagueController extends Controller
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+        ]);
+    }
+
+    /**
+     * Create the canonical draft record for the selected league.
+     */
+    public function storeDraft(Request $request, string $leagueId, SyncFantraxDraftState $draftSync): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless($this->canManageLeague($league, $user), 403);
+
+        if ($league->drafts()->exists()) {
+            $draft = $league->drafts()->latest('updated_at')->first();
+
+            if ($draft instanceof Draft) {
+                $this->ensureDraftNotificationSettings($draft, $league);
+            }
+
+            return response()->json([
+                'message' => 'Draft already exists for this league.',
+                'html' => $this->draftPanelHtml($league, $user),
+            ]);
+        }
+
+        $validated = $request->validate([
+            'mode' => ['required', Rule::in(['fantrax', 'manual'])],
+            'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
+            'auto_pick_enabled' => ['nullable', 'boolean'],
+        ]);
+
+        abort_if(
+            $validated['mode'] === 'fantrax' && (string) $league->platform !== 'fantrax',
+            422,
+            'This league cannot connect a Fantrax draft.'
+        );
+
+        if ($validated['mode'] === 'fantrax') {
+            $draftSync->sync((int) $league->id);
+            $draft = $league->drafts()
+                ->where('source_type', 'platform_mirror')
+                ->latest('updated_at')
+                ->first();
+
+            abort_unless($draft instanceof Draft, 422, 'Fantrax did not return draft data for this league.');
+        } else {
+            $draft = Draft::query()->create([
+                'platform_league_id' => (int) $league->id,
+                'source_type' => 'hybrid',
+                'platform' => (string) $league->platform,
+                'external_draft_id' => 'dynastyiq:' . $league->id . ':' . Str::uuid()->toString(),
+                'name' => $league->name . ' Draft',
+                'status' => 'scheduled',
+                'pick_clock_seconds' => $this->minutesToSeconds($validated['pick_clock_minutes'] ?? 5),
+                'pause_between_picks_seconds' => (int) ($validated['pause_between_picks_seconds'] ?? 0),
+                'auto_pick_enabled' => (bool) ($validated['auto_pick_enabled'] ?? false),
+                'settings' => [
+                    'created_from' => 'draft_central',
+                    'mode' => 'manual',
+                ],
+            ]);
+        }
+
+        if ($validated['mode'] === 'fantrax') {
+            $this->applyDraftSettings($draft, $validated);
+        }
+
+        $this->ensureDraftNotificationSettings($draft, $league);
+
+        return response()->json([
+            'message' => $validated['mode'] === 'fantrax'
+                ? 'Fantrax draft connected.'
+                : 'Manual draft created.',
+            'html' => $this->draftPanelHtml($league, $user),
+        ]);
+    }
+
+    /**
+     * Update timer and automation options for the selected canonical draft.
+     */
+    public function updateDraftSettings(Request $request, string $leagueId, Draft $draft): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless($this->canManageLeague($league, $user), 403);
+        abort_unless((int) $draft->platform_league_id === (int) $league->id, 404);
+
+        $validated = $request->validate([
+            'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
+            'auto_pick_enabled' => ['nullable', 'boolean'],
+        ]);
+
+        $this->applyDraftSettings($draft, $validated);
+
+        return response()->json([
+            'message' => 'Draft settings saved.',
+            'html' => $this->draftPanelHtml($league, $user),
+        ]);
+    }
+
+    /**
+     * Add a player to the authenticated user's draft queue.
+     */
+    public function storeDraftQueueItem(Request $request, string $leagueId, Draft $draft): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless((int) $draft->platform_league_id === (int) $league->id, 404);
+
+        $validated = $request->validate([
+            'player_id' => ['required', 'integer', 'exists:players,id'],
+        ]);
+        $playerId = (int) $validated['player_id'];
+
+        abort_if(
+            DraftPick::query()
+                ->where('draft_id', $draft->id)
+                ->where('player_id', $playerId)
+                ->exists(),
+            422,
+            'This player has already been drafted.'
+        );
+
+        $rank = ((int) DraftQueueItem::query()
+            ->where('draft_id', $draft->id)
+            ->where('user_id', $user->id)
+            ->max('rank')) + 1;
+
+        $queueItem = DraftQueueItem::query()->firstOrCreate(
+            [
+                'draft_id' => $draft->id,
+                'user_id' => $user->id,
+                'player_id' => $playerId,
+            ],
+            [
+                'rank' => $rank,
+            ],
+        );
+
+        $queueItem->load('player');
+
+        return response()->json([
+            'item' => $this->draftQueueItemPayload($queueItem, (int) $league->id),
+        ]);
+    }
+
+    /**
+     * Return the authenticated user's enriched draft queue payload.
+     */
+    public function draftQueuePayload(Request $request, string $leagueId, Draft $draft): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless((int) $draft->platform_league_id === (int) $league->id, 404);
+
+        $items = $this->draftQueueItemsForUser($draft, (int) $user->id);
+
+        return response()->json([
+            'items' => $this->draftQueueItemsPayload($items, (int) $league->id),
+        ]);
+    }
+
+    /**
+     * Remove a player from the authenticated user's draft queue.
+     */
+    public function destroyDraftQueueItem(Request $request, string $leagueId, Draft $draft, DraftQueueItem $queueItem): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless((int) $draft->platform_league_id === (int) $league->id, 404);
+        abort_unless((int) $queueItem->draft_id === (int) $draft->id, 404);
+        abort_unless((int) $queueItem->user_id === (int) $user->id, 403);
+
+        $queueItem->delete();
+
+        return response()->json([
+            'deleted' => true,
+            'item_id' => $queueItem->id,
+            'player_id' => $queueItem->player_id,
         ]);
     }
 
@@ -294,7 +504,57 @@ final class LeagueController extends Controller
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
+            'canManageLeague' => $this->canManageLeague($activeLeague, $user),
         ]);
+    }
+
+    /**
+     * Determine whether the current user can manage commissioner-only league settings.
+     */
+    private function canManageLeague($league, $user): bool
+    {
+        if (! $league || ! $user) {
+            return false;
+        }
+
+        $platformLeagueId = (int) $league->id;
+
+        $internalLeagueIds = DB::table('league_platform_league')
+            ->where('platform_league_id', $platformLeagueId)
+            ->pluck('league_id')
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($internalLeagueIds === []) {
+            return false;
+        }
+
+        $hasLeagueRole = DB::table('league_user_roles')
+            ->where('user_id', (int) $user->id)
+            ->whereIn('league_id', $internalLeagueIds)
+            ->whereIn('role', ['commissioner', 'co_commissioner'])
+            ->exists();
+
+        if ($hasLeagueRole) {
+            return true;
+        }
+
+        $hasProviderAssignmentFlag = DB::table('league_user_teams')
+            ->where('user_id', (int) $user->id)
+            ->where('platform_league_id', $platformLeagueId)
+            ->where(static function ($query): void {
+                $query->where('extras->is_commish', true)
+                    ->orWhere('extras->is_admin', true);
+            })
+            ->exists();
+
+        if ($hasProviderAssignmentFlag) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -466,46 +726,368 @@ final class LeagueController extends Controller
     }
 
     /**
-     * Build the selected league draft panel from persisted Fantrax draft state.
-     *
-     * This intentionally does not hydrate missing draft data. League-page discovery
-     * stays in the community league workflow where the platform context is explicit.
+     * Build the selected league draft panel from canonical draft state.
      */
     private function draftingPayload($league): array
     {
-        if ((string) ($league->platform ?? '') !== 'fantrax') {
-            return app(FantraxDraftingWindow::class)->normalize([], []);
+        $draft = $league->drafts()
+            ->with(['picks' => static fn ($query) => $query->orderBy('overall_pick')->orderBy('round')->orderBy('pick_in_round')])
+            ->latest('updated_at')
+            ->first();
+
+        if (! $draft instanceof Draft) {
+            return $this->withDraftCentralMeta(
+                app(FantraxDraftingWindow::class)->normalize([], []),
+                $league,
+                null,
+            );
         }
 
-        $state = $league->fantraxDraftState()->first();
+        if ((string) ($league->platform ?? '') === 'fantrax' && $draft->source_type === 'platform_mirror') {
+            $state = $league->fantraxDraftState()->first();
 
-        if (! $state) {
-            return app(FantraxDraftingWindow::class)->normalize([], []);
+            if ($state) {
+                $draftResults = is_array($state->raw_draft_results) ? $state->raw_draft_results : [];
+                $draftPickInfo = is_array($state->raw_draft_pick_info) ? $state->raw_draft_pick_info : [];
+
+                if ($state->draft_at && ! isset($draftResults['draft_at'])) {
+                    $draftResults['draft_at'] = $state->draft_at->toIso8601String();
+                }
+
+                if ($state->current_draft_pick_count !== null && ! isset($draftPickInfo['currentDraftPicks'])) {
+                    $draftPickInfo['currentDraftPicks'] = array_fill(0, (int) $state->current_draft_pick_count, true);
+                }
+
+                $draftingWindow = app(FantraxDraftingWindow::class);
+                $fantraxPlayerIds = $draftingWindow->fantraxPlayerIds($draftResults);
+
+                return $this->withDraftCentralMeta(
+                    $draftingWindow->normalize(
+                        [],
+                        $draftResults,
+                        null,
+                        null,
+                        $this->fantraxDraftPlayerMap($fantraxPlayerIds),
+                        $this->fantraxDraftTeamMap((int) $league->id),
+                        $draftPickInfo,
+                    ),
+                    $league,
+                    $draft,
+                );
+            }
+
+            return $this->withDraftCentralMeta(
+                app(FantraxDraftingWindow::class)->normalize([], []),
+                $league,
+                $draft,
+            );
         }
 
-        $draftResults = is_array($state->raw_draft_results) ? $state->raw_draft_results : [];
-        $draftPickInfo = is_array($state->raw_draft_pick_info) ? $state->raw_draft_pick_info : [];
+        $payload = app(FantraxDraftingWindow::class)->normalize([], []);
+        $payload['title'] = $draft->starts_at?->format('F j, Y') ?? $draft->name;
+        $payload['draft_at'] = $draft->starts_at?->toIso8601String();
+        $payload['status_text'] = ucfirst((string) $draft->status);
+        $payload['status_tone'] = match ((string) $draft->status) {
+            'live' => 'green',
+            'scheduled' => 'blue',
+            default => 'slate',
+        };
 
-        if ($state->draft_at && ! isset($draftResults['draft_at'])) {
-            $draftResults['draft_at'] = $state->draft_at->toIso8601String();
+        return $this->withDraftCentralMeta($payload, $league, $draft);
+    }
+
+    /**
+     * Add Draft Central metadata used by the league Draft tab.
+     */
+    private function withDraftCentralMeta(array $payload, $league, ?Draft $draft): array
+    {
+        $pickClockSeconds = (int) ($draft?->pick_clock_seconds ?? 0);
+        $lastPickAt = $payload['last_pick_at'] ?? null;
+        $expiresAt = null;
+
+        if ($draft instanceof Draft && $pickClockSeconds > 0 && is_string($lastPickAt) && $lastPickAt !== '') {
+            try {
+                $expiresAt = \Carbon\CarbonImmutable::parse($lastPickAt)
+                    ->addSeconds($pickClockSeconds)
+                    ->toIso8601String();
+            } catch (\Throwable) {
+                $expiresAt = null;
+            }
         }
 
-        if ($state->current_draft_pick_count !== null && ! isset($draftPickInfo['currentDraftPicks'])) {
-            $draftPickInfo['currentDraftPicks'] = array_fill(0, (int) $state->current_draft_pick_count, true);
+        $payload['has_canonical_draft'] = $draft instanceof Draft;
+        $payload['draft_id'] = $draft?->id;
+        $payload['source_type'] = $draft?->source_type;
+        $currentPick = $draft instanceof Draft ? $draft->currentPick()->first() : null;
+
+        if (! $this->payloadHasNextPickMarker($payload)) {
+            $payload = $this->markCurrentDraftPick($payload, $currentPick);
         }
 
-        $draftingWindow = app(FantraxDraftingWindow::class);
-        $fantraxPlayerIds = $draftingWindow->fantraxPlayerIds($draftResults);
+        $payload['pick_clock_seconds'] = $pickClockSeconds;
+        $payload['pick_clock_minutes'] = $pickClockSeconds > 0
+            ? (int) ceil($pickClockSeconds / 60)
+            : 5;
+        $payload['pause_between_picks_seconds'] = (int) ($draft?->pause_between_picks_seconds ?? 0);
+        $payload['auto_pick_enabled'] = (bool) ($draft?->auto_pick_enabled ?? false);
+        $payload['countdown_started_at'] = $lastPickAt;
+        $payload['countdown_expires_at'] = $expiresAt;
+        $payload['draft_commit_season_label'] = $this->seasonLabel($this->draftCommitSeasonId());
+        $payload['create_url'] = route('leagues.drafts.store', $league->id);
+        $payload['settings_url'] = $draft instanceof Draft
+            ? route('leagues.drafts.settings.update', [$league->id, $draft->id])
+            : null;
+        $payload['queue_store_url'] = $draft instanceof Draft
+            ? route('leagues.drafts.queue.store', [$league->id, $draft->id])
+            : null;
+        $payload['queue_payload_url'] = $draft instanceof Draft
+            ? route('leagues.drafts.queue.payload', [$league->id, $draft->id])
+            : null;
+        $payload['queue_items'] = $draft instanceof Draft
+            ? $this->draftQueueItemsForUser($draft, (int) auth()->id())
+                ->pipe(fn ($items): array => $this->draftQueueItemsPayload($items, (int) $league->id))
+            : [];
 
-        return $draftingWindow->normalize(
-            [],
-            $draftResults,
-            null,
-            null,
-            $this->fantraxDraftPlayerMap($fantraxPlayerIds),
-            $this->fantraxDraftTeamMap((int) $league->id),
-            $draftPickInfo,
+        return $payload;
+    }
+
+    /**
+     * Determine whether a draft payload already marks the current pick.
+     */
+    private function payloadHasNextPickMarker(array $payload): bool
+    {
+        if (collect($payload['rows'] ?? [])->contains(static fn (array $row): bool => ! empty($row['is_next_pick']))) {
+            return true;
+        }
+
+        return collect($payload['rounds'] ?? [])
+            ->flatMap(static fn (array $round): array => $round['rows'] ?? [])
+            ->contains(static fn (array $row): bool => ! empty($row['is_next_pick']));
+    }
+
+    /**
+     * Mark the actual canonical current pick in the draft payload.
+     */
+    private function markCurrentDraftPick(array $payload, ?DraftPick $currentPick): array
+    {
+        if (! $currentPick) {
+            return $payload;
+        }
+
+        $matched = false;
+        $payload['current_pick'] = [
+            'id' => (int) $currentPick->id,
+            'overall_pick' => $currentPick->overall_pick !== null ? (int) $currentPick->overall_pick : null,
+            'round' => $currentPick->round !== null ? (int) $currentPick->round : null,
+            'pick_in_round' => $currentPick->pick_in_round !== null ? (int) $currentPick->pick_in_round : null,
+        ];
+
+        $payload['rows'] = collect($payload['rows'] ?? [])
+            ->map(function (array $row) use ($currentPick, &$matched): array {
+                $isCurrent = $this->draftPayloadRowMatchesPick($row, $currentPick);
+
+                $row['is_next_pick'] = $isCurrent;
+                $matched = $matched || $isCurrent;
+
+                return $row;
+            })
+            ->values()
+            ->all();
+
+        $payload['rounds'] = collect($payload['rounds'] ?? [])
+            ->map(function (array $round) use ($currentPick): array {
+                $round['rows'] = collect($round['rows'] ?? [])
+                    ->map(function (array $row) use ($currentPick): array {
+                        $row['is_next_pick'] = $this->draftPayloadRowMatchesPick($row, $currentPick);
+
+                        return $row;
+                    })
+                    ->values()
+                    ->all();
+
+                return $round;
+            })
+            ->values()
+            ->all();
+
+        return $payload;
+    }
+
+    /**
+     * Determine whether a normalized draft row represents the canonical current pick.
+     */
+    private function draftPayloadRowMatchesPick(array $row, DraftPick $pick): bool
+    {
+        if ($pick->overall_pick !== null && (int) ($row['overall_pick'] ?? 0) === (int) $pick->overall_pick) {
+            return true;
+        }
+
+        return $pick->round !== null
+            && $pick->pick_in_round !== null
+            && (int) ($row['round'] ?? 0) === (int) $pick->round
+            && (int) ($row['pick_in_round'] ?? $row['pick'] ?? 0) === (int) $pick->pick_in_round;
+    }
+
+    /**
+     * Format a queue item for Draft Central JSON.
+     *
+     * @param mixed $items
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function draftQueueItemsPayload($items, int $leagueId): array
+    {
+        $playerIds = collect($items)
+            ->pluck('player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $latestStatsByPlayerId = $this->latestStatsByPlayerId($playerIds);
+
+        return collect($items)
+            ->map(fn (DraftQueueItem $item): array => $this->draftQueueItemPayload($item, $leagueId, $latestStatsByPlayerId))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return queue items for a user, excluding players already picked in this draft.
+     *
+     * @return Collection<int,DraftQueueItem>
+     */
+    private function draftQueueItemsForUser(Draft $draft, int $userId): Collection
+    {
+        $draftedPlayerIds = DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereNotNull('player_id')
+            ->pluck('player_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->all();
+
+        return DraftQueueItem::query()
+            ->with('player')
+            ->where('draft_id', $draft->id)
+            ->where('user_id', $userId)
+            ->when($draftedPlayerIds !== [], static function ($query) use ($draftedPlayerIds): void {
+                $query->whereNotIn('player_id', $draftedPlayerIds);
+            })
+            ->orderBy('rank')
+            ->get();
+    }
+
+    /**
+     * Format a queue item for Draft Central JSON.
+     *
+     * @return array<string,mixed>
+     */
+    private function draftQueueItemPayload(DraftQueueItem $item, int $leagueId, array $latestStatsByPlayerId = []): array
+    {
+        $player = $item->player;
+        $latestStats = $latestStatsByPlayerId[(int) $item->player_id] ?? null;
+
+        return [
+            'id' => (int) $item->id,
+            'draft_id' => (int) $item->draft_id,
+            'player_id' => (int) $item->player_id,
+            'rank' => (int) $item->rank,
+            'name' => (string) ($player?->full_name ?? trim(($player?->first_name ?? '') . ' ' . ($player?->last_name ?? ''))),
+            'position' => (string) ($player?->position ?? ''),
+            'team_abbrev' => (string) ($latestStats?->nhl_team_abbrev ?? $player?->team_abbrev ?? ''),
+            'league_abbrev' => (string) ($latestStats?->league_abbrev ?? ''),
+            'age' => $player?->age(),
+            'avatar_url' => (string) ($player?->head_shot_url ?? ''),
+            'stats' => [
+                'gp' => $latestStats?->gp !== null ? (int) $latestStats->gp : null,
+                'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
+                'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
+                'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                'wins' => $latestStats?->wins !== null ? (int) $latestStats->wins : null,
+                'sv_pct' => $latestStats?->sv_pct !== null ? (float) $latestStats->sv_pct : null,
+            ],
+            'delete_url' => route('leagues.drafts.queue.destroy', [$leagueId, $item->draft_id, $item->id]),
+        ];
+    }
+
+    /**
+     * Render the Draft tab partial after an AJAX draft mutation.
+     */
+    private function draftPanelHtml($league, $user): string
+    {
+        $league = $league->fresh();
+
+        return view('leagues._draft-panel', [
+            'league' => $league,
+            'teams' => $this->teamsPayload($league),
+            'drafting' => $this->draftingPayload($league),
+            'canManageLeague' => $this->canManageLeague($league, $user),
+        ])->render();
+    }
+
+    /**
+     * Ensure the neutral notification settings row exists for newly created drafts.
+     */
+    private function ensureDraftNotificationSettings(Draft $draft, $league): void
+    {
+        $channel = $this->legacyDraftNotificationChannel($league);
+        $channelId = is_array($channel) ? trim((string) ($channel['id'] ?? '')) : '';
+        $channelName = is_array($channel) ? trim((string) ($channel['name'] ?? '')) : '';
+
+        DraftNotificationSetting::query()->updateOrCreate(
+            ['draft_id' => $draft->id],
+            [
+                'discord_channel_id' => $channelId !== '' ? $channelId : null,
+                'discord_channel_name' => $channelName !== '' ? $channelName : null,
+                'enabled' => $channelId !== '',
+                'settings' => [
+                    'source' => $channelId !== '' ? 'legacy_community_league_meta' : 'draft_central',
+                ],
+            ],
         );
+    }
+
+    /**
+     * Find the legacy community-league draft Discord channel for this platform league.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function legacyDraftNotificationChannel($league): ?array
+    {
+        $metaRows = DB::table('league_platform_league')
+            ->join('organization_leagues', 'organization_leagues.league_id', '=', 'league_platform_league.league_id')
+            ->where('league_platform_league.platform_league_id', (int) $league->id)
+            ->pluck('organization_leagues.meta');
+
+        foreach ($metaRows as $meta) {
+            $decoded = is_string($meta) && $meta !== '' ? json_decode($meta, true) : null;
+            $channel = is_array($decoded) ? data_get($decoded, 'draft_notifications.discord_channel') : null;
+
+            if (is_array($channel) && filled($channel['id'] ?? null)) {
+                return $channel;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Persist draft timer settings to the canonical draft row.
+     *
+     * @param array<string,mixed> $settings
+     */
+    private function applyDraftSettings(Draft $draft, array $settings): void
+    {
+        $draft->forceFill([
+            'pick_clock_seconds' => $this->minutesToSeconds($settings['pick_clock_minutes'] ?? 5),
+            'pause_between_picks_seconds' => (int) ($settings['pause_between_picks_seconds'] ?? 0),
+            'auto_pick_enabled' => (bool) ($settings['auto_pick_enabled'] ?? false),
+        ])->save();
+    }
+
+    private function minutesToSeconds(mixed $minutes): int
+    {
+        return max(0, (int) $minutes) * 60;
     }
 
     /**
@@ -530,7 +1112,7 @@ final class LeagueController extends Controller
         $map = [];
 
         $fantraxPlayers = FantraxPlayer::query()
-            ->with('player:id,full_name,nhl_id,position,head_shot_url')
+            ->with('player:id,full_name,nhl_id,position,head_shot_url,dob')
             ->whereIn('fantrax_id', $fantraxPlayerIds)
             ->get();
         $playerIds = $fantraxPlayers
@@ -541,30 +1123,40 @@ final class LeagueController extends Controller
             ->values()
             ->all();
         $latestStatsByPlayerId = $this->latestStatsByPlayerId($playerIds);
+        $nextSeasonStatsByPlayerId = $this->seasonStatsByPlayerId($playerIds, $this->draftCommitSeasonId());
 
-        $fantraxPlayers->each(static function (FantraxPlayer $fantraxPlayer) use (&$map, $latestStatsByPlayerId): void {
+        $fantraxPlayers->each(function (FantraxPlayer $fantraxPlayer) use (&$map, $latestStatsByPlayerId, $nextSeasonStatsByPlayerId): void {
             $playerId = $fantraxPlayer->player_id ? (int) $fantraxPlayer->player_id : null;
             $latestStats = $playerId ? ($latestStatsByPlayerId[$playerId] ?? null) : null;
+            $nextSeasonStats = $playerId ? ($nextSeasonStatsByPlayerId[$playerId] ?? null) : null;
 
             $map[(string) $fantraxPlayer->fantrax_id] = [
                 'name' => $fantraxPlayer->name ?: $fantraxPlayer->player?->full_name,
                 'player_id' => $playerId,
                 'nhl_id' => $fantraxPlayer->player?->nhl_id ? (int) $fantraxPlayer->player->nhl_id : null,
                 'position' => $fantraxPlayer->player?->position ?: $fantraxPlayer->position,
+                'age' => $fantraxPlayer->player?->age(),
                 'league_abbrev' => $latestStats?->league_abbrev,
                 'team_abbrev' => $latestStats?->nhl_team_abbrev,
                 'avatar_url' => $fantraxPlayer->player?->head_shot_url,
+                'next_season' => $nextSeasonStats ? [
+                    'season_id' => (string) $nextSeasonStats->season_id,
+                    'label' => $this->seasonLabel((string) $nextSeasonStats->season_id),
+                    'team_name' => (string) ($nextSeasonStats->team_name ?? ''),
+                ] : null,
                 'stats' => [
                     'gp' => $latestStats?->gp !== null ? (int) $latestStats->gp : null,
                     'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
                     'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
                     'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                    'wins' => $latestStats?->wins !== null ? (int) $latestStats->wins : null,
+                    'sv_pct' => $latestStats?->sv_pct !== null ? (float) $latestStats->sv_pct : null,
                 ],
             ];
         });
 
         $externalIdentities = PlayerExternalIdentity::query()
-            ->with('player:id,full_name,nhl_id,position,head_shot_url')
+            ->with('player:id,full_name,nhl_id,position,head_shot_url,dob')
             ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
             ->whereIn('provider_player_id', $fantraxPlayerIds)
             ->get();
@@ -576,21 +1168,29 @@ final class LeagueController extends Controller
             ->values()
             ->all();
         $identityLatestStatsByPlayerId = $this->latestStatsByPlayerId($identityPlayerIds);
+        $identityNextSeasonStatsByPlayerId = $this->seasonStatsByPlayerId($identityPlayerIds, $this->draftCommitSeasonId());
 
-        $externalIdentities->each(function (PlayerExternalIdentity $identity) use (&$map, $identityLatestStatsByPlayerId): void {
+        $externalIdentities->each(function (PlayerExternalIdentity $identity) use (&$map, $identityLatestStatsByPlayerId, $identityNextSeasonStatsByPlayerId): void {
             $fantraxId = (string) $identity->provider_player_id;
             $existing = $map[$fantraxId] ?? [];
             $playerId = $identity->player_id ? (int) $identity->player_id : null;
             $latestStats = $playerId ? ($identityLatestStatsByPlayerId[$playerId] ?? null) : null;
+            $nextSeasonStats = $playerId ? ($identityNextSeasonStatsByPlayerId[$playerId] ?? null) : null;
 
             $map[$fantraxId] = [
                 'name' => $existing['name'] ?? $identity->display_name ?? $identity->player?->full_name,
                 'player_id' => $existing['player_id'] ?? $playerId,
                 'nhl_id' => $existing['nhl_id'] ?? ($identity->player?->nhl_id ? (int) $identity->player->nhl_id : null),
                 'position' => $existing['position'] ?? $identity->position ?? $identity->player?->position,
+                'age' => $existing['age'] ?? $identity->player?->age(),
                 'league_abbrev' => $existing['league_abbrev'] ?? $latestStats?->league_abbrev,
                 'team_abbrev' => $existing['team_abbrev'] ?? $latestStats?->nhl_team_abbrev,
                 'avatar_url' => $existing['avatar_url'] ?? $identity->player?->head_shot_url,
+                'next_season' => $existing['next_season'] ?? ($nextSeasonStats ? [
+                    'season_id' => (string) $nextSeasonStats->season_id,
+                    'label' => $this->seasonLabel((string) $nextSeasonStats->season_id),
+                    'team_name' => (string) ($nextSeasonStats->team_name ?? ''),
+                ] : null),
                 'stats' => $this->hasResolvedStats($existing['stats'] ?? null)
                     ? $existing['stats']
                     : [
@@ -598,6 +1198,8 @@ final class LeagueController extends Controller
                         'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
                         'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
                         'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                        'wins' => $latestStats?->wins !== null ? (int) $latestStats->wins : null,
+                        'sv_pct' => $latestStats?->sv_pct !== null ? (float) $latestStats->sv_pct : null,
                     ],
             ];
         });
@@ -614,7 +1216,7 @@ final class LeagueController extends Controller
             return false;
         }
 
-        return collect(['gp', 'g', 'a', 'pts'])
+        return collect(['gp', 'g', 'a', 'pts', 'wins', 'sv_pct'])
             ->contains(static fn (string $key): bool => ($stats[$key] ?? null) !== null);
     }
 
@@ -636,7 +1238,19 @@ final class LeagueController extends Controller
             ->orderByDesc('season_id')
             ->orderByDesc('gp')
             ->orderByDesc('updated_at')
-            ->get(['player_id', 'league_abbrev', 'nhl_team_abbrev', 'gp', 'g', 'a', 'pts', 'season_id', 'updated_at'])
+            ->get([
+                'player_id',
+                'league_abbrev',
+                'nhl_team_abbrev',
+                'gp',
+                'g',
+                'a',
+                'pts',
+                'wins',
+                'sv_pct',
+                'season_id',
+                'updated_at',
+            ])
             ->groupBy(static fn (Stat $stat): int => (int) $stat->player_id)
             ->mapWithKeys(static function ($playerStats): array {
                 $latestSeasonId = $playerStats->max('season_id');
@@ -648,6 +1262,59 @@ final class LeagueController extends Controller
                 return $stat ? [(int) $stat->player_id => $stat] : [];
             })
             ->all();
+    }
+
+    /**
+     * Return the most-used stat snapshot from a specific season.
+     *
+     * @param array<int,int> $playerIds
+     *
+     * @return array<int,Stat>
+     */
+    private function seasonStatsByPlayerId(array $playerIds, string $seasonId): array
+    {
+        if ($playerIds === [] || $seasonId === '') {
+            return [];
+        }
+
+        return Stat::query()
+            ->whereIn('player_id', $playerIds)
+            ->where('season_id', $seasonId)
+            ->orderByDesc('gp')
+            ->orderByDesc('updated_at')
+            ->get(['player_id', 'team_name', 'season_id', 'gp', 'updated_at'])
+            ->groupBy(static fn (Stat $stat): int => (int) $stat->player_id)
+            ->mapWithKeys(static function ($playerStats): array {
+                $stat = $playerStats
+                    ->sortByDesc(static fn (Stat $stat): int => (int) $stat->gp)
+                    ->first();
+
+                return $stat ? [(int) $stat->player_id => $stat] : [];
+            })
+            ->all();
+    }
+
+    /**
+     * Return the season label/id used for drafted-player commitment display.
+     */
+    private function draftCommitSeasonId(): string
+    {
+        $now = now();
+        $startYear = $now->month >= 6 ? $now->year : $now->year - 1;
+
+        return (string) $startYear . (string) ($startYear + 1);
+    }
+
+    /**
+     * Format an eight-digit season id as a display label.
+     */
+    private function seasonLabel(string $seasonId): string
+    {
+        if (preg_match('/^(\d{4})(\d{4})$/', $seasonId, $matches) !== 1) {
+            return $seasonId;
+        }
+
+        return $matches[1] . '-' . substr($matches[2], -2);
     }
 
     /**
@@ -671,7 +1338,7 @@ final class LeagueController extends Controller
                             ->where('provider', 'discord');
                     }]);
             }])
-            ->get(['id', 'platform_team_id'])
+            ->get(['id', 'platform_team_id', 'name'])
             ->mapWithKeys(static function (PlatformTeam $team): array {
                 $avatar = null;
 
@@ -685,6 +1352,7 @@ final class LeagueController extends Controller
 
                 return [
                     (string) $team->platform_team_id => [
+                        'team_name' => (string) $team->name,
                         'owner_avatar_url' => filled($avatar) ? (string) $avatar : null,
                     ],
                 ];

@@ -1326,6 +1326,75 @@ $drafting = app(FantraxDraftingWindow::class)->normalize($leagueInfo, $draftResu
 
 ---
 
+### Draft Central Draft Model
+
+**Name:** Draft Central Draft Model
+**Type:** First-Party Domain Model
+**Location:**
+- `app/Models/Draft.php`
+- `app/Models/DraftPick.php`
+- `app/Models/DraftNotificationSetting.php`
+- `app/Events/DraftPickMade.php`
+- `database/migrations/*_create_drafts_tables.php`
+
+**Purpose:**
+Store platform-neutral draft configuration, pick order, pick selections, and notification settings for Draft Central.
+
+**When to Use:**
+Building Draft Central UI/API payloads, mirroring provider draft data, or running DynastyIQ-managed drafts.
+
+**When Not to Use:**
+Raw provider polling snapshots or current platform roster sync.
+
+**Public Interface:**
+- `Draft`
+- `DraftPick`
+- `DraftNotificationSetting`
+- `DraftPickMade`
+- `drafts`
+- `draft_picks`
+- `draft_notification_settings`
+
+**Example Usage:**
+```php
+$draft = Draft::query()->with(['picks', 'currentPick'])->findOrFail($draftId);
+```
+
+---
+
+### League Commissioner Role
+
+**Name:** League Commissioner Role
+**Type:** Authorization Pattern
+**Location:**
+- `app/Models/LeagueUserRole.php`
+- `database/migrations/*_create_league_user_roles_table.php`
+- `app/Console/Commands/BackfillLeagueCommissionersCommand.php`
+- `app/Http/Controllers/LeaguesController.php`
+- `app/Http/Controllers/LeagueController.php`
+
+**Purpose:**
+Assign users commissioner authority for one specific internal league.
+
+**When to Use:**
+League-level management controls, default commissioner assignment during community league creation, and backfilling existing community leagues from organization ownership.
+
+**When Not to Use:**
+Organization-wide roles, provider roster ownership, or team membership.
+
+**Public Interface:**
+- `LeagueUserRole`
+- `league_user_roles`
+- `User::isCommissionerForLeague`
+- `leagues:backfill-commissioners`
+
+**Example Usage:**
+```php
+$canManage = $user->isCommissionerForLeague($league->id);
+```
+
+---
+
 ### Platform State Service
 
 **Name:** Platform State Service
@@ -1970,10 +2039,10 @@ Non-league creation flows or new multi-field create flows that should use a page
 - `resources/js/leagues-hub.js`
 
 **Purpose:**
-Provide a reusable shell for league hub pages and progressive enhancement behavior.
+Provide a reusable shell for league hub pages and progressive enhancement behavior, including viewport-constrained Draft Central tab panels.
 
 **When to Use:**
-League hub views that need shared page chrome and JavaScript behavior.
+League hub views that need shared page chrome, JavaScript behavior, or Draft Central tab content that must scroll internally without making the whole page scroll.
 
 **When Not to Use:**
 Community-only pages or generic stats pages.

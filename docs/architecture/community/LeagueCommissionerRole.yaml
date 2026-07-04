@@ -1,0 +1,34 @@
+name: League Commissioner Role
+type: Authorization Pattern
+location:
+  - app/Models/LeagueUserRole.php
+  - app/Models/League.php
+  - app/Models/User.php
+  - app/Console/Commands/BackfillLeagueCommissionersCommand.php
+  - app/Http/Controllers/LeaguesController.php
+  - app/Http/Controllers/LeagueController.php
+  - database/migrations/*_create_league_user_roles_table.php
+purpose: Assign users commissioner authority for one specific internal league.
+when_to_use:
+  - Deciding whether to show league-level management options.
+  - Assigning the creator of a community league as its default commissioner.
+  - Delegating future league-specific commissioner permissions.
+when_not_to_use:
+  - Assigning organization-wide roles.
+  - Determining whether a user has a fantasy team in a provider league.
+  - Storing provider roster ownership.
+rules:
+  - League commissioner authority belongs to the internal leagues table, not directly to platform_leagues.
+  - Organization-scoped commissioner roles must not automatically grant management of every league in the organization.
+  - Creating a league through a community flow should assign the acting user as that league's commissioner.
+  - Existing community leagues may be backfilled from organization owners, with organization admins included only through an explicit command option.
+  - League settings UI should be gated by league_user_roles, with provider-specific legacy flags used only as transition fallback.
+public_interface:
+  - LeagueUserRole
+  - League::userRoles
+  - User::leagueRoles
+  - User::isCommissionerForLeague
+  - leagues:backfill-commissioners
+  - league_user_roles
+example_usage: |
+  $canManage = $user->isCommissionerForLeague($league->id);

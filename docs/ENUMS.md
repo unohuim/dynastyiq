@@ -78,6 +78,27 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### League User Role
+
+**Name:** League user role
+**Storage location(s):** `league_user_roles.role` (string column)
+**Allowed values currently emitted:**
+
+- `commissioner`
+- `co_commissioner`
+
+**Semantic meaning:**
+
+- `commissioner`: User can manage the specific league.
+- `co_commissioner`: User can manage the specific league as a delegated commissioner.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+- Organization-scoped `commissioner` roles do not imply league-scoped commissioner rights.
+
+---
+
 ## Hockey Domain
 
 ### Player Shoots
@@ -1078,6 +1099,80 @@ Do not introduce new enum values without updating this document.
 ---
 
 ## Fantrax Drafts
+
+### Draft Source Type
+
+**Name:** Draft source type
+**Storage location(s):** `drafts.source_type` (string column)
+**Allowed values currently emitted:**
+
+- `platform_mirror`
+- `dynastyiq_managed`
+- `hybrid`
+
+**Semantic meaning:**
+
+- `platform_mirror`: Draft state is mirrored from an external platform draft.
+- `dynastyiq_managed`: Draft picks are managed directly inside DynastyIQ.
+- `hybrid`: Draft is managed in DynastyIQ for a connected platform league and may be exported or reconciled later.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
+
+### Draft Status
+
+**Name:** Draft status
+**Storage location(s):** `drafts.status` (string column)
+**Allowed values currently emitted:**
+
+- `unknown`
+- `scheduled`
+- `live`
+- `paused`
+- `complete`
+
+**Semantic meaning:**
+
+- `unknown`: Draft status could not be determined.
+- `scheduled`: Draft has not started.
+- `live`: Draft is actively running.
+- `paused`: Draft is temporarily stopped by a commissioner or system rule.
+- `complete`: Draft has ended.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
+
+### Draft Pick Status
+
+**Name:** Draft pick status
+**Storage location(s):** `draft_picks.status` (string column)
+**Allowed values currently emitted:**
+
+- `pending`
+- `on_clock`
+- `picked`
+- `skipped`
+- `expired`
+
+**Semantic meaning:**
+
+- `pending`: Pick is not yet active and no player has been selected.
+- `on_clock`: Pick is the current active pick.
+- `picked`: Pick has a selected player.
+- `skipped`: Pick was intentionally skipped.
+- `expired`: Pick clock elapsed without a selection.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
 
 ### Fantrax Draft State Status
 

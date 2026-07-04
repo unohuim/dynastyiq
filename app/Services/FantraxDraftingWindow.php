@@ -38,13 +38,16 @@ final class FantraxDraftingWindow
             $playerNamesByFantraxId,
             $teamMetaByFantraxId
         );
+        $rows = $this->markFirstPendingPick($rows);
         $rounds = $this->rounds($rows);
         $status = $this->status($draftAt, $now, $draftPickInfo, $error);
+        $lastPickAt = $this->lastPickAt($rows);
 
         return [
             'available' => $error === null,
             'title' => $draftAt?->format('F j, Y') ?? 'Draft',
             'draft_at' => $draftAt?->toIso8601String(),
+            'last_pick_at' => $lastPickAt?->toIso8601String(),
             'is_live' => $status['text'] === 'Live',
             'status_text' => $status['text'],
             'status_tone' => $status['tone'],
@@ -146,8 +149,6 @@ final class FantraxDraftingWindow
         array $playerNamesByFantraxId,
         array $teamMetaByFantraxId
     ): array {
-        $nextPickMarked = false;
-
         return collect($this->resultItems($draftResults))
             ->filter(static fn (mixed $item): bool => is_array($item))
             ->map(function (array $item) use ($teamNamesById, $playerNamesByFantraxId, $teamMetaByFantraxId): array {
@@ -199,6 +200,13 @@ final class FantraxDraftingWindow
                     'pickOverall',
                     'overall',
                 ])) ?? ($pickInRound !== null ? $pick : null);
+                $pickedAt = $this->dateValue($this->firstValue($item, [
+                    'time',
+                    'draftedAt',
+                    'drafted_at',
+                    'pickedAt',
+                    'picked_at',
+                ]));
                 $hasPlayer = $playerId !== '';
 
                 return [
@@ -209,9 +217,11 @@ final class FantraxDraftingWindow
                     'player_id' => $mappedPlayer['player_id'] ?? null,
                     'nhl_id' => $mappedPlayer['nhl_id'] ?? null,
                     'position' => $mappedPlayer['position'] ?? null,
+                    'age' => $mappedPlayer['age'] ?? null,
                     'league_abbrev' => $mappedPlayer['league_abbrev'] ?? null,
                     'team_abbrev' => $mappedPlayer['team_abbrev'] ?? null,
                     'avatar_url' => $mappedPlayer['avatar_url'] ?? null,
+                    'next_season' => $mappedPlayer['next_season'] ?? null,
                     'stats' => $mappedPlayer['stats'] ?? [
                         'gp' => null,
                         'g' => null,
@@ -219,12 +229,13 @@ final class FantraxDraftingWindow
                         'pts' => null,
                     ],
                     'team_id' => $teamId,
-                    'team_name' => $teamName ?: ($teamNamesById[$teamId] ?? 'Unknown team'),
+                    'team_name' => $teamName ?: ($teamNamesById[$teamId] ?? ($mappedTeam['team_name'] ?? 'Unknown team')),
                     'team_avatar_url' => $mappedTeam['owner_avatar_url'] ?? null,
                     'round' => $this->integerValue($this->firstValue($item, ['round', 'roundNum', 'round_number'])),
                     'pick' => $pick,
                     'pick_in_round' => $pickInRound,
                     'overall_pick' => $overallPick,
+                    'picked_at' => $pickedAt?->toIso8601String(),
                 ];
             })
             ->filter(static fn (array $row): bool => $row['fantrax_player_id'] !== ''
@@ -238,6 +249,24 @@ final class FantraxDraftingWindow
                 ['player_name', 'asc'],
             ])
             ->values()
+            ->map(function (array $row): array {
+                $row['is_next_pick'] = false;
+
+                return $row;
+            })
+            ->all();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $rows
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function markFirstPendingPick(array $rows): array
+    {
+        $nextPickMarked = false;
+
+        return collect($rows)
             ->map(function (array $row) use (&$nextPickMarked): array {
                 $row['is_next_pick'] = false;
 
@@ -248,7 +277,22 @@ final class FantraxDraftingWindow
 
                 return $row;
             })
+            ->values()
             ->all();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $rows
+     */
+    private function lastPickAt(array $rows): ?CarbonImmutable
+    {
+        return collect($rows)
+            ->pluck('picked_at')
+            ->filter()
+            ->map(fn (string $value): ?CarbonImmutable => $this->dateValue($value))
+            ->filter()
+            ->sortDesc()
+            ->first();
     }
 
     /**
@@ -428,5 +472,28 @@ final class FantraxDraftingWindow
         }
 
         return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function dateValue(mixed $value): ?CarbonImmutable
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_numeric($value)) {
+            $timestamp = (float) $value;
+
+            if (abs($timestamp) > 9999999999) {
+                $timestamp /= 1000;
+            }
+
+            return CarbonImmutable::createFromTimestampUTC($timestamp);
+        }
+
+        try {
+            return CarbonImmutable::parse((string) $value);
+        } catch (Throwable) {
+            return null;
+        }
     }
 }

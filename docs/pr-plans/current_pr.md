@@ -110,6 +110,12 @@ On desktop only, restructure the league detail body so:
 - Recurring scheduled draft polling should only dispatch API-backed sync jobs for persisted draft states currently marked `live`; scheduled, complete, unknown, and missing draft states are hydrated from the community league page instead of background discovery.
 - The first observed persisted draft payload is a baseline and should not emit pick-made side effects.
 - The standalone `/leagues` selected-league panel should expose `Players` and `Draft` tabs; `Players` contains the current player/stat experience and `Draft` reuses the persisted Fantrax draft display without hydrating missing state from Fantrax.
+- The user-facing `/leagues` selected-league shell and Draft Room are an approved scoped UI exception based on `docs/designs/dump/draft_central.png`: the page should present a manager-facing fantasy draft room with the shared app chrome, My Leagues sidebar, premium league hero, Draft Room subnav, compact draft controls, player table, queue/watchlist/recent-picks support panels, roster/draft summary cards, and a full Draft options slide-over.
+- The user-facing `/leagues` Draft tab should show a polished empty state when no canonical draft exists, allowing commissioners to create either a Fantrax read-only mirrored draft or a manual DynastyIQ-managed draft with timer settings.
+- The user-facing `/leagues` Draft tab content panel must be viewport-constrained: the main Draft Central page should not become the scroll container for long draft content.
+- The Live, Available, My Picks, and Watchlist draft tabs must share the same measured panel height so switching tabs does not resize the page.
+- The Live drafted-player list must own vertical scrolling internally, with round controls remaining visible above the list.
+- Draft pick positioning in the Live tab must scroll the internal drafted-player list directly, such as with `scrollTop`; it must not use `scrollIntoView()` in a way that moves the whole page and hides the league header.
 
 The Drafting window should behave like the existing page sections where practical, but new and materially touched UI must follow `docs/UI_DESIGN.md` and `docs/UI_MOTION.md`.
 
@@ -237,8 +243,18 @@ Expected coverage areas:
 - Fantrax team logo URLs are best-effort only; current observed local schema has no guaranteed fantasy team logo column.
 - Fantrax player IDs are enriched from `fantrax_players` first and `player_external_identities` second.
 
+## Approved Scope Updates
+
+- Fantrax draft result persistence is approved as a transition step toward a platform-neutral Draft Central.
+- Draft Central should use platform-neutral `drafts`, `draft_picks`, and `draft_notification_settings` tables for future manager and commissioner surfaces.
+- Active Fantrax Discord notifications are now emitted from canonical `draft_picks`; `fantrax_draft_picks` remains a provider audit/input table.
+- Fantrax sync may continue writing provider audit rows, but notification behavior should key off the neutral draft tables.
+- Draft timer configuration belongs to the `drafts` row because each league can have multiple drafts with different rules.
+- League-level commissioner authority is stored in `league_user_roles` against the internal `leagues` row; organization-level commissioner roles do not automatically grant management of every league.
+- Creating a league through the community league flow assigns the acting user as that league's default commissioner.
+- Existing community leagues can be backfilled with `leagues:backfill-commissioners`, which assigns organization owners by default and includes organization admins only when explicitly requested with `--include-org-admins`.
+
 ## Human Approval Gates
 
-- Explicit approval is required before adding persistence for draft results.
 - Explicit approval is required before adding live polling or auto-refresh.
 - Explicit approval is required before broadening this from desktop-only to mobile.

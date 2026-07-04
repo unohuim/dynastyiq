@@ -188,16 +188,24 @@ class NhlPlayerIdentityLookup
      */
     private function playerCandidates(string $firstName, string $lastName, string $fullName)
     {
-        $payload = $this->getAPIData('nhl_stats', 'players', [], [
-            'limit' => 100,
-            'cayenneExp' => sprintf(
-                'firstName="%s" and lastName="%s"',
-                $this->cayenneString($firstName),
-                $this->cayenneString($lastName),
-            ),
-        ]);
+        $firstNameVariants = collect($this->normalizer->firstNameVariants($firstName))
+            ->map(fn (string $name): string => $this->displayNameVariant($firstName, $name))
+            ->unique()
+            ->values();
 
-        return collect(is_array($payload['data'] ?? null) ? $payload['data'] : [])
+        return $firstNameVariants
+            ->flatMap(function (string $firstNameVariant) use ($lastName): array {
+                $payload = $this->getAPIData('nhl_stats', 'players', [], [
+                    'limit' => 100,
+                    'cayenneExp' => sprintf(
+                        'firstName="%s" and lastName="%s"',
+                        $this->cayenneString($firstNameVariant),
+                        $this->cayenneString($lastName),
+                    ),
+                ]);
+
+                return is_array($payload['data'] ?? null) ? $payload['data'] : [];
+            })
             ->filter(static fn (mixed $candidate): bool => is_array($candidate) && isset($candidate['id']))
             ->filter(fn (array $candidate): bool => $this->candidateNameMatches(
                 $candidate,
@@ -205,6 +213,7 @@ class NhlPlayerIdentityLookup
                 $lastName,
                 $fullName,
             ))
+            ->unique(static fn (array $candidate): string => (string) $candidate['id'])
             ->values();
     }
 
@@ -222,8 +231,23 @@ class NhlPlayerIdentityLookup
             return true;
         }
 
-        return $candidateFirstName === $this->normalizer->normalizeName($firstName)
+        return $this->normalizer->firstNamesAreCompatible($candidateFirstName, $firstName)
             && $candidateLastName === $this->normalizer->normalizeName($lastName);
+    }
+
+    private function displayNameVariant(string $sourceName, string $normalizedVariant): string
+    {
+        foreach ((array) config('name_variants.first_name_variants', []) as $canonical => $aliases) {
+            foreach ([$canonical, ...((array) $aliases)] as $alias) {
+                if ($this->normalizer->normalizeName(is_string($alias) ? $alias : null) === $normalizedVariant) {
+                    return (string) $alias;
+                }
+            }
+        }
+
+        return $this->normalizer->normalizeName($sourceName) === $normalizedVariant
+            ? $sourceName
+            : $normalizedVariant;
     }
 
     /**
@@ -272,7 +296,7 @@ class NhlPlayerIdentityLookup
         );
         $sourceName = ($sourceIdentity?->display_name) ?: $player->full_name;
 
-        return $this->normalizer->normalizeName($landingName) === $this->normalizer->normalizeName($sourceName)
+        return $this->namesAreCompatible($landingName, $sourceName)
             && $this->positionType($landing['position'] ?? null) === $positionType;
     }
 
@@ -290,11 +314,56 @@ class NhlPlayerIdentityLookup
             $this->normalizer->nhlLocalizedDefault($landing, 'lastName'),
         );
 
-        if ($this->normalizer->normalizeName($landingName) !== $this->normalizer->normalizeName($fullName)) {
+        if (! $this->namesAreCompatible($landingName, $fullName)) {
             return false;
         }
 
         return $positionType === null || $this->positionType($landing['position'] ?? null) === $positionType;
+    }
+
+    private function namesAreCompatible(?string $name, ?string $otherName): bool
+    {
+        $normalizedName = $this->normalizer->normalizeName($name);
+        $normalizedOtherName = $this->normalizer->normalizeName($otherName);
+
+        if ($normalizedName !== null && $normalizedName === $normalizedOtherName) {
+            return true;
+        }
+
+        $nameParts = $this->splitName($name);
+        $otherNameParts = $this->splitName($otherName);
+
+        if ($nameParts === null || $otherNameParts === null) {
+            return false;
+        }
+
+        return $nameParts['last'] === $otherNameParts['last']
+            && $this->normalizer->firstNamesAreCompatible($nameParts['first'], $otherNameParts['first']);
+    }
+
+    /**
+     * @return array{first:string,last:string}|null
+     */
+    private function splitName(?string $name): ?array
+    {
+        $normalizedName = $this->normalizer->normalizeName($name);
+
+        if ($normalizedName === null) {
+            return null;
+        }
+
+        $parts = preg_split('/\s+/', $normalizedName) ?: [];
+
+        if (count($parts) < 2) {
+            return null;
+        }
+
+        $firstName = array_shift($parts);
+        $lastName = implode(' ', $parts);
+
+        return $firstName !== '' && $lastName !== ''
+            ? ['first' => $firstName, 'last' => $lastName]
+            : null;
     }
 
     /**

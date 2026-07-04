@@ -314,6 +314,16 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.scoring-settings.update');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
             ->name('leagues.stats.payload');
+        Route::post('/leagues/{league_id}/drafts', [LeagueController::class, 'storeDraft'])
+            ->name('leagues.drafts.store');
+        Route::put('/leagues/{league_id}/drafts/{draft}/settings', [LeagueController::class, 'updateDraftSettings'])
+            ->name('leagues.drafts.settings.update');
+        Route::post('/leagues/{league_id}/drafts/{draft}/queue', [LeagueController::class, 'storeDraftQueueItem'])
+            ->name('leagues.drafts.queue.store');
+        Route::get('/leagues/{league_id}/drafts/{draft}/queue-payload', [LeagueController::class, 'draftQueuePayload'])
+            ->name('leagues.drafts.queue.payload');
+        Route::delete('/leagues/{league_id}/drafts/{draft}/queue/{queueItem}', [LeagueController::class, 'destroyDraftQueueItem'])
+            ->name('leagues.drafts.queue.destroy');
         Route::get('/leagues/{league_id}', [LeagueController::class, 'show'])
             ->name('leagues.show');
         Route::get('/leagues/{league_id}/panel', [LeagueController::class, 'panel'])

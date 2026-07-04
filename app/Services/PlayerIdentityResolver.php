@@ -521,31 +521,7 @@ class PlayerIdentityResolver
             return false;
         }
 
-        return $this->firstNamesAreCompatible($identityFirstName, $playerFirstName);
-    }
-
-    /**
-     * Treat common transliteration endings as compatible first names.
-     */
-    private function firstNamesAreCompatible(?string $identityFirstName, ?string $playerFirstName): bool
-    {
-        if ($identityFirstName === null || $playerFirstName === null) {
-            return false;
-        }
-
-        if ($identityFirstName === $playerFirstName) {
-            return true;
-        }
-
-        return $this->yiEndingVariant($identityFirstName) === $this->yiEndingVariant($playerFirstName);
-    }
-
-    /**
-     * Normalize final y/i variants without changing broader name matching rules.
-     */
-    private function yiEndingVariant(string $name): string
-    {
-        return preg_replace('/[yi]$/', '#', $name) ?? $name;
+        return $this->normalizer->firstNamesAreCompatible($identityFirstName, $playerFirstName);
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\League;
+use App\Models\LeagueUserRole;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,7 @@ class LeaguesController extends Controller
         ]);
 
         // 1) Use existing League from route or create a new one
+        $createdLeague = $league === null;
         $league = $league ?? League::create([
             'name'  => $data['name'],
             'sport' => $data['sport'] ?? 'hockey',
@@ -75,6 +77,14 @@ class LeaguesController extends Controller
         $organization->leagues()->whereKey($league->id)->exists()
             ? $organization->leagues()->updateExistingPivot($league->id, $pivot)
             : $organization->leagues()->attach($league->id, $pivot);
+
+        if ($createdLeague && $request->user()) {
+            LeagueUserRole::query()->firstOrCreate([
+                'league_id' => $league->id,
+                'user_id' => $request->user()->id,
+                'role' => 'commissioner',
+            ]);
+        }
 
         return response()->json([
             'ok' => true,

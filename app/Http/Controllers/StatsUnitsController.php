@@ -72,11 +72,7 @@ class StatsUnitsController extends Controller
             $pos = ['F'];
         }
 
-        // Driver-specific expression for concatenating player names per unit
-        $driver = DB::connection()->getDriverName(); // 'mysql' or 'pgsql'
-        $playerNamesExpr = $driver === 'pgsql'
-            ? "STRING_AGG((p.first_name || ' ' || p.last_name), ' · ' ORDER BY p.last_name)"
-            : "GROUP_CONCAT(CONCAT_WS(' ', p.first_name, p.last_name) ORDER BY p.last_name SEPARATOR ' · ')";
+        $playerNamesExpr = $this->playerNamesExpression();
 
         $availableSeasons = DB::table('nhl_unit_game_strength_summaries as s')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
@@ -157,6 +153,18 @@ class StatsUnitsController extends Controller
             1 => 'Preseason',
             3 => 'Postseason',
             default => 'Regular Season',
+        };
+    }
+
+    /**
+     * Return a driver-compatible aggregate expression for unit player names.
+     */
+    private function playerNamesExpression(): string
+    {
+        return match (DB::connection()->getDriverName()) {
+            'pgsql' => "STRING_AGG(CONCAT_WS(' ', p.first_name, p.last_name), ' · ' ORDER BY p.last_name, p.first_name)",
+            'sqlite' => "GROUP_CONCAT(TRIM(COALESCE(p.first_name, '') || ' ' || COALESCE(p.last_name, '')), ' · ')",
+            default => "GROUP_CONCAT(CONCAT_WS(' ', p.first_name, p.last_name) ORDER BY p.last_name, p.first_name SEPARATOR ' · ')",
         };
     }
 
