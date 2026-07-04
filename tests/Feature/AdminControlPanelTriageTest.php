@@ -2070,6 +2070,28 @@ it('allows super admins to view the player triage inbox', function () {
         ->assertSee($identity->display_name);
 });
 
+it('returns lean embedded player triage json after the initial fragment load', function () {
+    $identity = ($this->makeIdentity)();
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['admin_panel' => 1]))
+        ->assertOk()
+        ->assertJsonPath('inbox.identities.0.display_name', $identity->display_name);
+
+    expect($response->json('html'))->toBeNull();
+});
+
+it('returns the embedded player triage fragment when explicitly requested', function () {
+    $identity = ($this->makeIdentity)();
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1]))
+        ->assertOk()
+        ->assertJsonPath('inbox.identities.0.display_name', $identity->display_name);
+
+    expect($response->json('html'))->toContain('data-player-triage-page');
+});
+
 it('shows unresolved identity statuses in the default inbox', function () {
     ($this->makeIdentity)([
         'provider_player_id' => 'candidate-1',

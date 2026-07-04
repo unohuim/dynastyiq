@@ -48,6 +48,7 @@ rules:
   - Selected identity detail loading should use a dedicated web-authenticated admin JSON route instead of the full triage page refresh route.
   - The triage inbox should own its currently loaded identity JSON in the browser and filter that loaded payload locally for player search input.
   - Triage inbox JSON should distinguish total matching identities from the browser-loaded identity slice when payloads are capped.
+  - Embedded admin-panel triage refreshes should return browser-owned inbox/detail JSON without re-rendering the full Blade fragment after the initial fragment load.
   - The triage inbox should own loaded, loading, empty, and error rendering states for inbox refreshes.
   - Browser-owned triage inbox filtering must not replace the SearchField DOM or steal focus from the active input.
   - The triage inbox module must not query Laravel directly; page-level modules coordinate server refreshes and emit inbox loading, loaded, and error events.
@@ -59,6 +60,7 @@ rules:
   - Matching-source suggestions must only include unlinked identities from the matching source with the same normalized name and compatible position type as the selected source identity.
   - Matching-source search results must query player_external_identities for unlinked identities from the matching source and allow normalized-name variants while preserving compatible position type constraints.
   - The default triage inbox should focus on identities with current resolver confidence below 75 percent or no confidence; explicit filters may include higher-confidence recommendations.
+  - Resolver recommendation previews used by the triage inbox must bound canonical player candidates by provider identity name evidence before applying PHP scoring.
   - The admin control panel may embed the full triage inbox, but the standalone triage route must remain available and protected.
   - The admin control panel top-level tabs may expose Player Imports, Game Imports, Triage, and NHL Validations as approved operational tabs.
   - Admin-only triage routes must remain protected by admin middleware.

@@ -9,6 +9,7 @@ use App\Events\PlayerExternalIdentityLinked;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\YahooPlayer;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
@@ -429,7 +430,7 @@ class PlayerIdentityResolver
      */
     private function scoredCandidatesForIdentity(PlayerExternalIdentity $identity): Collection
     {
-        return Player::query()
+        return $this->candidatePlayerQuery($identity)
             ->get()
             ->filter(fn (Player $player) => $this->identityNameMatchesPlayer($identity, $player))
             ->filter(fn (Player $player) => $this->positionTypesAreCompatible($identity, $player))
@@ -439,6 +440,67 @@ class PlayerIdentityResolver
             ])
             ->sortByDesc('score')
             ->values();
+    }
+
+    /**
+     * Build a bounded canonical player query for one provider identity.
+     */
+    private function candidatePlayerQuery(PlayerExternalIdentity $identity): Builder
+    {
+        $name = $this->candidateNameEvidence($identity);
+
+        return Player::query()
+            ->select(['id', 'full_name', 'first_name', 'last_name', 'dob', 'position', 'team_abbrev'])
+            ->when(
+                $name['full'] === null && $name['last'] === null,
+                static fn (Builder $query) => $query->whereRaw('1 = 0'),
+            )
+            ->when(
+                $name['full'] !== null || $name['last'] !== null,
+                function (Builder $query) use ($name): void {
+                    $query->where(function (Builder $inner) use ($name): void {
+                        if ($name['full'] !== null) {
+                            $inner->orWhereRaw('LOWER(full_name) = ?', [$name['full']]);
+                        }
+
+                        if ($name['last'] !== null) {
+                            $inner->orWhereRaw('LOWER(last_name) = ?', [$name['last']]);
+
+                            $lastInitial = mb_substr($name['last'], 0, 1);
+
+                            if ($lastInitial !== '') {
+                                $inner->orWhereRaw('LOWER(last_name) LIKE ?', ["{$lastInitial}%"]);
+                            }
+                        }
+                    });
+                },
+            );
+    }
+
+    /**
+     * @return array{first:string|null,last:string|null,full:string|null}
+     */
+    private function candidateNameEvidence(PlayerExternalIdentity $identity): array
+    {
+        $firstName = $this->normalizer->normalizeName($identity->first_name);
+        $lastName = $this->normalizer->normalizeName($identity->last_name);
+        $fullName = $this->normalizer->normalizeName($identity->display_name)
+            ?? (trim((string) $identity->normalized_name) ?: null);
+
+        if (($firstName === null || $lastName === null) && $fullName !== null) {
+            $parts = preg_split('/\s+/', $fullName) ?: [];
+
+            if (count($parts) >= 2) {
+                $lastName ??= array_pop($parts);
+                $firstName ??= implode(' ', $parts);
+            }
+        }
+
+        return [
+            'first' => $firstName,
+            'last' => $lastName,
+            'full' => $fullName,
+        ];
     }
 
     /**

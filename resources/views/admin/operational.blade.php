@@ -5,7 +5,7 @@
             imports: @js($imports),
             hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
-            triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1])),
+            triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1])),
             validationsUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1])),
             gameImportStatusUrl: @js(route('admin.nhl-game-imports.status')),
             gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),

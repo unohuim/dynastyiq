@@ -641,12 +641,9 @@ class PlayerTriageController extends Controller
         $data = $this->viewData($request);
         $selected = $data['selectedIdentity'];
 
-        return response()->json(array_merge([
+        $payload = [
             'message' => $message,
             'detail' => $data['detailPayload'],
-            'html' => view('admin.player-triage', array_merge($data, [
-                'embedded' => $request->boolean('admin_panel'),
-            ]))->render(),
             'inbox' => $data['inboxPayload'],
             'meta' => [
                 'inbox_count' => $data['inboxCount'],
@@ -656,7 +653,15 @@ class PlayerTriageController extends Controller
             'selected_identity' => $selected instanceof PlayerExternalIdentity
                 ? $this->externalIdentityPayload($selected)
                 : null,
-        ], $extra));
+        ];
+
+        if ($request->boolean('fragment') || ! $request->boolean('admin_panel')) {
+            $payload['html'] = view('admin.player-triage', array_merge($data, [
+                'embedded' => $request->boolean('admin_panel'),
+            ]))->render();
+        }
+
+        return response()->json(array_merge($payload, $extra));
     }
 
     /**
