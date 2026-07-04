@@ -891,6 +891,33 @@ it('preloads draft notification channels from the connected discord guild and om
         && $request->hasHeader('Authorization', 'Bot bot-token'));
 });
 
+it('updates a community league name without clearing the selected discord server', function (): void {
+    [$user, $organization, $league] = ($this->createCommunityLeague)([
+        'league_name' => 'Original League Name',
+    ]);
+    $discordServer = DiscordServer::create([
+        'organization_id' => $organization->id,
+        'discord_guild_id' => 'guild-1',
+        'discord_guild_name' => 'Guild One',
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'discord_server_id' => $discordServer->id,
+    ]);
+
+    $this->actingAs($user)
+        ->postJson("/organizations/{$organization->id}/leagues/{$league->id}", [
+            'name' => 'Renamed League',
+        ])
+        ->assertOk()
+        ->assertJsonPath('league.name', 'Renamed League');
+
+    $league->refresh();
+    $pivot = $organization->leagues()->whereKey($league->id)->firstOrFail()->pivot;
+
+    expect($league->name)->toBe('Renamed League')
+        ->and((int) $pivot->discord_server_id)->toBe($discordServer->id);
+});
+
 it('surfaces a draft notification channel preload message when the bot token is missing', function (): void {
     [$user, $organization, $league] = ($this->createCommunityLeague)([
         'organization_slug' => 'draft-channel-missing-token-community',

@@ -31,6 +31,11 @@ class LeaguesController extends Controller
             'sport' => $data['sport'] ?? 'hockey',
         ]);
 
+        if ($league && array_key_exists('name', $data)) {
+            $league->name = $data['name'];
+            $league->save();
+        }
+
         // 2) If platform values provided, link PlatformLeague to this League
         if (!empty($data['platform']) && !empty($data['platform_league_id'])) {
             $pl = \App\Models\PlatformLeague::firstOrCreate(
@@ -61,10 +66,11 @@ class LeaguesController extends Controller
         }
 
         // 3) Attach/refresh League ↔ Organization pivot
-        $pivot = [
-            'discord_server_id' => $data['discord_server_id'] ?? null,
-            'linked_at' => now(),
-        ];
+        $pivot = ['linked_at' => now()];
+
+        if (array_key_exists('discord_server_id', $data)) {
+            $pivot['discord_server_id'] = $data['discord_server_id'];
+        }
 
         $organization->leagues()->whereKey($league->id)->exists()
             ? $organization->leagues()->updateExistingPivot($league->id, $pivot)

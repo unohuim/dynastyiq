@@ -3,179 +3,134 @@
     :communities="$vm['sidebar']"
     :mobileBreakpoint="$vm['meta']['mobile_breakpoint']">
 
-    {{-- Header --}}
-    <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-        <a id="desktopCommunityTitle" href="{{ $vm['header']['url'] }}" class="text-2xl font-semibold text-slate-900 hover:text-indigo-700">
-            {{ $vm['header']['title'] }}
-        </a>
-
-        <div class="flex items-center gap-2">
-            @if (! empty($vm['header']['can_export_fantrax_aav']))
-                <a
-                    href="{{ $vm['header']['fantrax_aav_export_url'] }}"
-                    class="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                >
-                    <svg class="h-4 w-4 text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M4.5 19.5h15"/>
-                    </svg>
-                    Fantrax Cap Hit
-                </a>
-            @endif
-
-            @if ($vm['header']['can_edit'])
-                <button
-                    type="button"
-                    id="btnEditName"
-                    class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                >
-                    <svg class="h-4 w-4 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 3.487a2.25 2.25 0 013.182 3.182L7.5 19.313l-4.5 1.125L4.125 16.5 16.862 3.487z"/>
-                    </svg>
-                    Edit name
-                </button>
-            @endif
-        </div>
-    </div>
-
-    {{-- Body --}}
     <div
         x-data="{
             openFantrax: false,
             openDiscord: false,
+            leagueSettingsOpen: false,
+            connectionsOpen: true,
+            activeTab: 'draft',
+            leagueName: @js($vm['header']['title']),
+            leagueNameSaving: false,
+            leagueNameSaved: false,
+            leagueNameError: '',
+            leagueNameTimer: null,
             panelHeight: '42rem',
             updatePanelHeight() {
                 const top = this.$refs.panelTop?.getBoundingClientRect().top || 0;
                 const height = Math.max(560, window.innerHeight - top - 40);
                 this.panelHeight = `${height}px`;
+            },
+            queueLeagueNameSave() {
+                this.leagueNameSaved = false;
+                this.leagueNameError = '';
+                clearTimeout(this.leagueNameTimer);
+                this.leagueNameTimer = setTimeout(() => this.saveLeagueName(), 200);
+            },
+            saveLeagueName() {
+                const name = this.leagueName.trim();
+                if (name.length < 2) {
+                    this.leagueNameSaving = false;
+                    this.leagueNameSaved = false;
+                    this.leagueNameError = 'Use at least 2 characters.';
+                    return;
+                }
+
+                this.leagueNameSaving = true;
+                fetch(@js($vm['fantrax_modal']['action_url']), {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content || ''
+                    },
+                    body: JSON.stringify({ name })
+                })
+                    .then((response) => response.ok ? response.json() : Promise.reject(response))
+                    .then((payload) => {
+                        this.leagueName = payload.league?.name || name;
+                        const pageTitle = document.getElementById('desktopCommunityTitle');
+                        if (pageTitle) pageTitle.textContent = this.leagueName;
+                        this.leagueNameSaved = true;
+                        this.leagueNameError = '';
+                    })
+                    .catch(() => {
+                        this.leagueNameSaved = false;
+                        this.leagueNameError = 'Could not save league name.';
+                    })
+                    .finally(() => {
+                        this.leagueNameSaving = false;
+                    });
             }
         }"
         x-init="updatePanelHeight(); $nextTick(() => updatePanelHeight())"
         x-on:resize.window="updatePanelHeight()"
     >
-        <div x-bind:style="'--league-panel-height: ' + panelHeight" class="grid gap-6 p-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.7fr)]">
-            <div x-ref="panelTop" class="flex min-h-[42rem] flex-col gap-6 lg:h-[var(--league-panel-height)]">
-                <x-card-section title="Connections" is-accordian="true">
-                    <ul class="space-y-3">
-                        {{-- Row: Fantasy platform --}}
-                        <li class="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-                            <div class="flex items-center justify-between gap-4">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div class="h-10 w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center" aria-hidden="true">
-                                        @if ($vm['platform']['connected'])
-                                            <svg viewBox="0 0 24 24" class="h-5 w-5 text-emerald-600"><path fill="currentColor" d="M3 12 12 3l9 9-9 9-9-9Z"/></svg>
-                                        @else
-                                            <svg viewBox="0 0 24 24" class="h-5 w-5 text-slate-500"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>
-                                        @endif
-                                    </div>
-                                    <div class="min-w-0">
-                                        <div class="text-[15px] font-semibold text-slate-900">
-                                            {{ $vm['platform']['title'] }}
-                                        </div>
-                                        <div class="mt-0.5 text-xs">
-                                            <span class="{{ $vm['platform']['status_class'] }}">{{ $vm['platform']['status_text'] }}</span>
-                                            <span class="text-slate-400"> • {{ $vm['platform']['subtext'] }}</span>
-                                        </div>
-                                    </div>
-                                </div>
+        {{-- Header --}}
+        <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+            <a id="desktopCommunityTitle" href="{{ $vm['header']['url'] }}" class="text-2xl font-semibold text-slate-900 hover:text-indigo-700">
+                {{ $vm['header']['title'] }}
+            </a>
 
-                                <div class="shrink-0">
-                                    @if (! $vm['platform']['connected'])
-                                        <button
-                                            type="button"
-                                            @click="openFantrax = true"
-                                            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700">
-                                            {{ $vm['platform']['action_label'] }}
-                                        </button>
-                                    @else
-                                        <button
-                                            type="button"
-                                            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700">
-                                            {{ $vm['platform']['action_label'] }}
-                                        </button>
-                                    @endif
-                                </div>
-                            </div>
-                        </li>
-
-                        {{-- Row: Discord --}}
-                        <li class="rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-3">
-                            <div class="flex items-center justify-between gap-4">
-                                <div class="flex items-center gap-3 min-w-0">
-                                    <div class="h-10 w-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center" aria-hidden="true">
-                                        @if ($vm['discord']['avatar_url'])
-                                            <img src="{{ $vm['discord']['avatar_url'] }}" alt="" class="h-6 w-6 rounded-full object-cover ring-1 ring-slate-200">
-                                        @else
-                                            <svg viewBox="0 0 24 24" class="h-5 w-5 text-indigo-600"><path fill="currentColor" d="M7 5h10a2 2 0 0 1 2 2v10l-3-2-2 2-3-2-2 2-2-2-3 2V7a2 2 0 0 1 2-2z"/></svg>
-                                        @endif
-                                    </div>
-                                    <div class="min-w-0">
-                                        <div class="text-[15px] font-semibold text-slate-900">
-                                            {{ $vm['discord']['title'] }}
-                                        </div>
-                                        <div class="mt-0.5 text-xs">
-                                            <span class="{{ $vm['discord']['status_class'] }}">{{ $vm['discord']['status_text'] }}</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="shrink-0">
-                                    @if (! $vm['discord']['connected'])
-                                        <button type="button"
-                                                @click="openDiscord = true"
-                                                class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700">
-                                            Connect server
-                                        </button>
-                                    @elseif ($vm['discord']['can_change'])
-                                        <button type="button"
-                                                @click="openDiscord = true"
-                                                class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700">
-                                            Change
-                                        </button>
-                                    @endif
-                                </div>
-                            </div>
-                        </li>
-                    </ul>
-                </x-card-section>
-
-                {{-- Teams --}}
-                @if ($vm['platform']['connected'])
-                    <section class="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                        <div class="mb-3 flex items-center justify-between">
-                            <h3 class="text-sm font-semibold uppercase tracking-wider text-slate-600">Teams</h3>
-                            <span class="text-xs text-slate-400">{{ count($vm['teams']) }}</span>
-                        </div>
-                        <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                            @foreach ($vm['teams'] as $team)
-                                <li class="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
-                                    <div class="flex items-center justify-between gap-3">
-                                        <div class="flex min-w-0 items-center gap-2.5">
-                                            <div class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white" aria-hidden="true">
-                                                @if (! empty($team['owner_avatar_url']))
-                                                    <img src="{{ $team['owner_avatar_url'] }}" alt="" class="h-full w-full rounded-full object-cover ring-1 ring-slate-200">
-                                                @elseif (! empty($team['logo_url']))
-                                                    <img src="{{ $team['logo_url'] }}" alt="" class="h-full w-full object-cover">
-                                                @else
-                                                    <span class="text-[10px] font-semibold text-slate-500">
-                                                        {{ collect(explode(' ', $team['name'] ?? ''))->filter()->map(fn ($part) => mb_substr($part, 0, 1))->take(2)->implode('') ?: '?' }}
-                                                    </span>
-                                                @endif
-                                            </div>
-                                            <div class="min-w-0">
-                                                <div class="truncate text-sm font-semibold text-slate-900">
-                                                    {{ $team['name'] }}
-                                                </div>
-                                                <div class="mt-0.5 truncate text-[11px] text-gray-400">
-                                                    {{ $team['id'] }}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </li>
-                            @endforeach
-                        </ul>
-                    </section>
+            <div class="flex items-center gap-2">
+                @if (! empty($vm['header']['can_export_fantrax_aav']))
+                    <a
+                        href="{{ $vm['header']['fantrax_aav_export_url'] }}"
+                        class="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    >
+                        <svg class="h-4 w-4 text-emerald-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M4.5 19.5h15"/>
+                        </svg>
+                        Fantrax Cap Hit
+                    </a>
                 @endif
+
+                @if ($vm['header']['can_edit'])
+                    <button
+                        type="button"
+                        id="btnEditName"
+                        class="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                        <svg class="h-4 w-4 text-slate-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 3.487a2.25 2.25 0 013.182 3.182L7.5 19.313l-4.5 1.125L4.125 16.5 16.862 3.487z"/>
+                        </svg>
+                        Edit name
+                    </button>
+                @endif
+
+                <button
+                    type="button"
+                    x-on:click="leagueSettingsOpen = true"
+                    aria-label="League options"
+                    class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="h-5 w-5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.3 4.3 11 2h2l.7 2.3a8.2 8.2 0 0 1 1.6.7l2.1-1.1 1.4 1.4-1.1 2.1c.3.5.5 1 .7 1.6L21 9.7v2l-2.3.7a8.2 8.2 0 0 1-.7 1.6l1.1 2.1-1.4 1.4-2.1-1.1c-.5.3-1 .5-1.6.7L13.3 21h-2l-.7-2.3a8.2 8.2 0 0 1-1.6-.7l-2.1 1.1-1.4-1.4 1.1-2.1a8.2 8.2 0 0 1-.7-1.6L3 13.3v-2l2.3-.7c.2-.6.4-1.1.7-1.6L4.9 6.9l1.4-1.4 2.1 1.1c.5-.3 1-.5 1.6-.7Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        {{-- Body --}}
+        <div x-ref="panelTop" x-bind:style="'--league-panel-height: ' + panelHeight" class="space-y-4 p-6">
+            <div class="flex items-center gap-2 border-b border-slate-200">
+                <button
+                    type="button"
+                    x-on:click="activeTab = 'draft'; $nextTick(() => updatePanelHeight())"
+                    class="-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'draft' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                >
+                    Draft
+                </button>
+                <button
+                    type="button"
+                    x-on:click="activeTab = 'teams'; $nextTick(() => updatePanelHeight())"
+                    class="-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'teams' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                >
+                    Teams
+                </button>
             </div>
 
             @php
@@ -224,6 +179,9 @@
             @endphp
 
             <section
+                x-cloak
+                x-show="activeTab === 'draft'"
+                x-transition.opacity.duration.150ms
                 x-data="{
                     activeRound: @js($vm['drafting']['active_round_index'] ?? 0),
                     configOpen: false,
@@ -295,7 +253,7 @@
                             .finally(() => { this.channelSaving = false; });
                     }
                 }"
-                class="relative hidden min-h-[42rem] overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:flex lg:h-[var(--league-panel-height)] lg:flex-col"
+                class="relative flex min-h-[42rem] overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:h-[var(--league-panel-height)] lg:flex-col"
             >
                 <div class="mb-2 flex select-none items-start justify-between gap-4">
                     <div class="min-w-0">
@@ -579,7 +537,217 @@
                     </div>
                 </aside>
             </section>
+
+            <section
+                x-cloak
+                x-show="activeTab === 'teams'"
+                x-transition.opacity.duration.150ms
+                class="flex min-h-[42rem] max-w-xl flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:h-[var(--league-panel-height)]"
+            >
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-slate-900">Teams</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">Fantasy teams attached to this platform league.</p>
+                    </div>
+                    <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">{{ count($vm['teams']) }}</span>
+                </div>
+
+                @if ($vm['platform']['connected'])
+                    <ul class="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                        @foreach ($vm['teams'] as $team)
+                            <li class="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2">
+                                <div class="flex items-center justify-between gap-3">
+                                    <div class="flex min-w-0 items-center gap-2.5">
+                                        <div class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white" aria-hidden="true">
+                                            @if (! empty($team['owner_avatar_url']))
+                                                <img src="{{ $team['owner_avatar_url'] }}" alt="" class="h-full w-full rounded-full object-cover ring-1 ring-slate-200">
+                                            @elseif (! empty($team['logo_url']))
+                                                <img src="{{ $team['logo_url'] }}" alt="" class="h-full w-full object-cover">
+                                            @else
+                                                <span class="text-[10px] font-semibold text-slate-500">
+                                                    {{ collect(explode(' ', $team['name'] ?? ''))->filter()->map(fn ($part) => mb_substr($part, 0, 1))->take(2)->implode('') ?: '?' }}
+                                                </span>
+                                            @endif
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="truncate text-sm font-semibold text-slate-900">
+                                                {{ $team['name'] }}
+                                            </div>
+                                            <div class="mt-0.5 truncate text-[11px] text-gray-400">
+                                                {{ $team['id'] }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </li>
+                        @endforeach
+                    </ul>
+                @else
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                        Connect a fantasy platform league to view teams.
+                    </div>
+                @endif
+            </section>
         </div>
+
+        <x-ui.slide-over show="leagueSettingsOpen" close-action="leagueSettingsOpen = false" title-id="league-options-title" max-width="max-w-xl">
+            <div class="relative overflow-hidden bg-slate-950 px-6 pb-8 pt-7 text-white">
+                <div class="absolute inset-0 bg-[radial-gradient(circle_at_75%_15%,rgba(59,130,246,0.36),transparent_30%),linear-gradient(135deg,rgba(15,23,42,0.96),rgba(15,23,42,0.74))]" aria-hidden="true"></div>
+                <div class="absolute right-4 top-8 h-28 w-28 rounded-full border border-blue-300/20" aria-hidden="true"></div>
+                <div class="absolute -right-8 bottom-0 h-24 w-40 rotate-[-18deg] rounded-full border border-white/20 bg-white/5" aria-hidden="true"></div>
+                <div class="absolute bottom-0 left-0 right-0 h-px bg-blue-400/70 shadow-[0_0_24px_rgba(96,165,250,0.9)]" aria-hidden="true"></div>
+
+                <div class="relative flex items-start justify-between gap-4">
+                    <div class="min-w-0 pt-1">
+                        <div class="inline-flex max-w-full items-center gap-2 rounded-full border border-blue-300/40 bg-blue-950/40 px-3 py-1 text-sm font-semibold text-blue-100 shadow-sm">
+                            <span class="flex h-5 w-5 items-center justify-center rounded-full bg-blue-500/20 text-blue-200 ring-1 ring-blue-300/30" aria-hidden="true">
+                                <svg viewBox="0 0 20 20" fill="currentColor" class="h-3.5 w-3.5">
+                                    <path d="M10 2 4 4.5v4.1c0 3.7 2.4 7.2 6 8.7 3.6-1.5 6-5 6-8.7V4.5L10 2Z"/>
+                                </svg>
+                            </span>
+                            <span class="truncate" x-text="leagueName"></span>
+                        </div>
+                        <h3 id="league-options-title" class="mt-7 text-3xl font-semibold tracking-tight text-white">League options</h3>
+                        <p class="mt-3 max-w-sm text-sm leading-6 text-blue-50/90">Manage draft setup, teams, platform links, and Discord connections.</p>
+                    </div>
+                    <button
+                        type="button"
+                        x-on:click="leagueSettingsOpen = false"
+                        aria-label="Close league options"
+                        class="rounded-xl border border-white/15 bg-white/5 p-2 text-white/80 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    >
+                        <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M5.22 5.22a.75.75 0 0 1 1.06 0L10 8.94l3.72-3.72a.75.75 0 1 1 1.06 1.06L11.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 1 1-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                <div class="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                    <label for="league-options-name" class="text-xs font-semibold uppercase tracking-wide text-slate-500">League name</label>
+                    <input
+                        id="league-options-name"
+                        type="text"
+                        x-model="leagueName"
+                        x-on:input="queueLeagueNameSave()"
+                        class="mt-2 block w-full rounded-lg border-slate-200 text-sm font-semibold text-slate-900 focus:border-blue-500 focus:ring-blue-500"
+                    >
+                    <div class="mt-2 min-h-4 text-[11px]">
+                        <span x-show="leagueNameSaving" class="text-slate-500">Saving...</span>
+                        <span x-show="!leagueNameSaving && leagueNameSaved" class="text-emerald-600">Saved</span>
+                        <span x-show="leagueNameError" x-text="leagueNameError" class="text-rose-600"></span>
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-slate-200 bg-white">
+                    <button
+                        type="button"
+                        x-on:click="connectionsOpen = !connectionsOpen"
+                        x-bind:aria-expanded="connectionsOpen.toString()"
+                        aria-controls="league-connections-panel"
+                        class="flex w-full items-center justify-between gap-4 px-4 py-3 text-left"
+                    >
+                        <div>
+                            <div class="text-sm font-semibold text-slate-900">Connections</div>
+                            <div class="mt-0.5 text-xs text-slate-500">Fantasy platform and Discord server.</div>
+                        </div>
+                        <svg
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            class="h-4 w-4 text-slate-400 transition-transform duration-300 ease-out motion-reduce:transition-none"
+                            x-bind:class="connectionsOpen ? 'rotate-180' : ''"
+                            aria-hidden="true"
+                        >
+                            <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+
+                    <div
+                        id="league-connections-panel"
+                        class="grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none"
+                        x-bind:class="connectionsOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'"
+                    >
+                        <div class="min-h-0 overflow-hidden">
+                            <ul class="space-y-3 border-t border-slate-200 p-4">
+                                <li class="rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+                                    <div class="flex items-center justify-between gap-4">
+                                        <div class="flex min-w-0 items-center gap-3">
+                                            <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white" aria-hidden="true">
+                                                @if ($vm['platform']['connected'])
+                                                    <svg viewBox="0 0 24 24" class="h-5 w-5 text-emerald-600"><path fill="currentColor" d="M3 12 12 3l9 9-9 9-9-9Z"/></svg>
+                                                @else
+                                                    <svg viewBox="0 0 24 24" class="h-5 w-5 text-slate-500"><circle cx="12" cy="12" r="8" fill="currentColor"/></svg>
+                                                @endif
+                                            </div>
+                                            <div class="min-w-0">
+                                                <div class="truncate text-[15px] font-semibold text-slate-900">
+                                                    {{ $vm['platform']['title'] }}
+                                                </div>
+                                                <div class="mt-0.5 text-xs">
+                                                    <span class="{{ $vm['platform']['status_class'] }}">{{ $vm['platform']['status_text'] }}</span>
+                                                    <span class="text-slate-400"> • {{ $vm['platform']['subtext'] }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        @if (! $vm['platform']['connected'])
+                                            <button
+                                                type="button"
+                                                x-on:click="leagueSettingsOpen = false; openFantrax = true"
+                                                class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                                            >
+                                                {{ $vm['platform']['action_label'] }}
+                                            </button>
+                                        @else
+                                            <span class="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">Connected</span>
+                                        @endif
+                                    </div>
+                                </li>
+
+                                <li class="rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3">
+                                    <div class="flex items-center justify-between gap-4">
+                                        <div class="flex min-w-0 items-center gap-3">
+                                            <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white" aria-hidden="true">
+                                                @if ($vm['discord']['avatar_url'])
+                                                    <img src="{{ $vm['discord']['avatar_url'] }}" alt="" class="h-6 w-6 rounded-full object-cover ring-1 ring-slate-200">
+                                                @else
+                                                    <svg viewBox="0 0 24 24" class="h-5 w-5 text-indigo-600"><path fill="currentColor" d="M7 5h10a2 2 0 0 1 2 2v10l-3-2-2 2-3-2-2 2-2-2-3 2V7a2 2 0 0 1 2-2z"/></svg>
+                                                @endif
+                                            </div>
+                                            <div class="min-w-0">
+                                                <div class="truncate text-[15px] font-semibold text-slate-900">
+                                                    {{ $vm['discord']['title'] }}
+                                                </div>
+                                                <div class="mt-0.5 text-xs">
+                                                    <span class="{{ $vm['discord']['status_class'] }}">{{ $vm['discord']['status_text'] }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        @if (! $vm['discord']['connected'])
+                                            <button type="button"
+                                                    x-on:click="leagueSettingsOpen = false; openDiscord = true"
+                                                    class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                                                Connect
+                                            </button>
+                                        @elseif ($vm['discord']['can_change'])
+                                            <button type="button"
+                                                    x-on:click="leagueSettingsOpen = false; openDiscord = true"
+                                                    class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                                                Change
+                                            </button>
+                                        @else
+                                            <span class="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">Connected</span>
+                                        @endif
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </x-ui.slide-over>
 
         {{-- Fantrax modal (only when not connected) --}}
         @if (! $vm['platform']['connected'])
@@ -641,11 +809,6 @@
         </div>
     </div>
 
-    {{-- Footer --}}
-    <div class="rounded-2xl border border-white/10 bg-white/5 p-6">
-        <h1 class="text-2xl font-semibold text-gray-600"></h1>
-        <p class="mt-2 text-sm text-gray-400">League: {{ $vm['header']['title'] }}</p>
-    </div>
 </x-community-hub-layout>
 
 {{-- Inline JS (form submits) --}}

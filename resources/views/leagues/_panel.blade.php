@@ -27,6 +27,7 @@
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
+      activeLeagueTab: 'players',
       playerSearch: '',
       settingsOpen: false,
       scoringAlignmentOpen: true,
@@ -220,6 +221,26 @@
       </button>
     </div>
 
+    <div class="mb-4 flex items-center gap-2 border-b border-slate-200 px-2">
+      <button
+        type="button"
+        class="border-b-2 px-1 pb-2 text-sm font-semibold transition"
+        :class="activeLeagueTab === 'players' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        @click="activeLeagueTab = 'players'"
+      >
+        Players
+      </button>
+      <button
+        type="button"
+        class="border-b-2 px-1 pb-2 text-sm font-semibold transition"
+        :class="activeLeagueTab === 'draft' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        @click="activeLeagueTab = 'draft'"
+      >
+        Draft
+      </button>
+    </div>
+
+    <div x-show="activeLeagueTab === 'players'">
     <div x-show="!canShowLeagueStats">
       <x-card-section title="Players" class="border-0">
         <div class="space-y-5">
@@ -374,13 +395,18 @@
     <div x-show="canShowLeagueStats" class="mt-6 rounded-lg border border-slate-200 bg-white shadow-sm">
       <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
         <div>
-          <div class="text-sm font-semibold text-slate-950">League Stats</div>
+          <div class="text-sm font-semibold text-slate-950">Players</div>
           <div class="mt-1 text-xs text-slate-500">League context with fantasy ownership</div>
         </div>
         <div x-show="leagueStatsLoading" class="text-xs text-slate-500">Loading...</div>
       </div>
       <div x-show="leagueStatsError" class="border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueStatsError"></div>
       <div x-ref="leagueStats" class="min-h-[24rem] py-3"></div>
+    </div>
+    </div>
+
+    <div x-show="activeLeagueTab === 'draft'">
+      @include('leagues._draft-panel', ['drafting' => $drafting ?? []])
     </div>
 
     <x-ui.slide-over show="settingsOpen" close-action="settingsOpen = false" title-id="league-options-title" max-width="max-w-2xl">

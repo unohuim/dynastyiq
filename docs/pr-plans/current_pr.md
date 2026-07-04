@@ -74,8 +74,12 @@ Supporting endpoints:
 
 On desktop only, restructure the league detail body so:
 
-- Connections appears above Teams in the left column.
-- A long right-side Drafting window sits beside both sections.
+- The league header has a gear icon that opens a league options drawer.
+- The league options drawer uses a broadcast-style hockey header and includes an editable league-name field that autosaves.
+- Connections are moved off the main page and into a grouped accordion inside the league options drawer.
+- The main page uses tabs with Draft as the first/default tab and Teams as the second tab.
+- The Draft tab contains the Drafting window as the primary panel.
+- The Teams tab contains the teams panel at the top-left of the tab content.
 - The Drafting window title uses the human-readable draft date.
 - Under the title, the status shows a dot indicator: green `Live`, blue `Scheduled`, or neutral `Complete`.
 - The Drafting window lists drafted players and the team that drafted them.
@@ -105,6 +109,7 @@ On desktop only, restructure the league detail body so:
 - API-hydrated draft panel payloads should dispatch a payload-backed persistence job immediately after render preparation.
 - Recurring scheduled draft polling should only dispatch API-backed sync jobs for persisted draft states currently marked `live`; scheduled, complete, unknown, and missing draft states are hydrated from the community league page instead of background discovery.
 - The first observed persisted draft payload is a baseline and should not emit pick-made side effects.
+- The standalone `/leagues` selected-league panel should expose `Players` and `Draft` tabs; `Players` contains the current player/stat experience and `Draft` reuses the persisted Fantrax draft display without hydrating missing state from Fantrax.
 
 The Drafting window should behave like the existing page sections where practical, but new and materially touched UI must follow `docs/UI_DESIGN.md` and `docs/UI_MOTION.md`.
 

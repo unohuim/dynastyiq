@@ -13,6 +13,7 @@
     @include('leagues._panel', [
         'league' => $active,
         'teams' => $teams ?? [],
+        'drafting' => $drafting ?? [],
         'scoringCategories' => $scoringCategories ?? [],
         'scoringAlignmentCategories' => $scoringAlignmentCategories ?? [],
         'manualScoringMappings' => $manualScoringMappings ?? [],
@@ -21,5 +22,6 @@
         'scoringSettingsUpdateUrl' => $scoringSettingsUpdateUrl ?? '',
         'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
         'isScoringFullyMapped' => $isScoringFullyMapped ?? false,
+        'canShowLeagueStats' => $canShowLeagueStats ?? false,
     ])
 </x-leagues-hub-layout>

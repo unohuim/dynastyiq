@@ -5,7 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\SyncFantraxLeagueJob;
+use App\Models\FantraxPlayer;
+use App\Models\PlatformTeam;
 use App\Models\Player;
+use App\Models\PlayerExternalIdentity;
+use App\Models\Stat;
+use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
 use App\Services\YahooFantasyLeagueService;
 use Illuminate\Contracts\View\View;
@@ -75,12 +80,16 @@ final class LeagueController extends Controller
             : $leagues->first();
 
         $teams = $activeLeague ? $this->teamsPayload($activeLeague) : [];
+        $drafting = $activeLeague
+            ? $this->draftingPayload($activeLeague)
+            : app(FantraxDraftingWindow::class)->normalize([], []);
 
         return view('leagues', [
             'leagues' => $leagues,
             'activeLeagueId' => $activeLeague?->id,
             'activeLeague' => $activeLeague,
             'teams' => $teams,
+            'drafting' => $drafting,
             'scoringCategories' => $activeLeague ? $this->scoringCategoriesPayload($activeLeague) : [],
             'scoringAlignmentCategories' => $activeLeague ? $this->scoringAlignmentCategoriesPayload($activeLeague) : [],
             'manualScoringMappings' => $activeLeague ? $this->manualScoringMappingsPayload($activeLeague) : [],
@@ -112,6 +121,7 @@ final class LeagueController extends Controller
         return view('leagues._panel', [
             'league' => $league,
             'teams'  => $this->teamsPayload($league),
+            'drafting' => $this->draftingPayload($league),
             'scoringCategories' => $this->scoringCategoriesPayload($league),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
@@ -274,6 +284,7 @@ final class LeagueController extends Controller
             'activeLeagueId' => $activeLeague->id,
             'activeLeague' => $activeLeague,
             'teams' => $this->teamsPayload($activeLeague),
+            'drafting' => $this->draftingPayload($activeLeague),
             'scoringCategories' => $this->scoringCategoriesPayload($activeLeague),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($activeLeague),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($activeLeague),
@@ -452,6 +463,233 @@ final class LeagueController extends Controller
         ];
 
         return $teams;
+    }
+
+    /**
+     * Build the selected league draft panel from persisted Fantrax draft state.
+     *
+     * This intentionally does not hydrate missing draft data. League-page discovery
+     * stays in the community league workflow where the platform context is explicit.
+     */
+    private function draftingPayload($league): array
+    {
+        if ((string) ($league->platform ?? '') !== 'fantrax') {
+            return app(FantraxDraftingWindow::class)->normalize([], []);
+        }
+
+        $state = $league->fantraxDraftState()->first();
+
+        if (! $state) {
+            return app(FantraxDraftingWindow::class)->normalize([], []);
+        }
+
+        $draftResults = is_array($state->raw_draft_results) ? $state->raw_draft_results : [];
+        $draftPickInfo = is_array($state->raw_draft_pick_info) ? $state->raw_draft_pick_info : [];
+
+        if ($state->draft_at && ! isset($draftResults['draft_at'])) {
+            $draftResults['draft_at'] = $state->draft_at->toIso8601String();
+        }
+
+        if ($state->current_draft_pick_count !== null && ! isset($draftPickInfo['currentDraftPicks'])) {
+            $draftPickInfo['currentDraftPicks'] = array_fill(0, (int) $state->current_draft_pick_count, true);
+        }
+
+        $draftingWindow = app(FantraxDraftingWindow::class);
+        $fantraxPlayerIds = $draftingWindow->fantraxPlayerIds($draftResults);
+
+        return $draftingWindow->normalize(
+            [],
+            $draftResults,
+            null,
+            null,
+            $this->fantraxDraftPlayerMap($fantraxPlayerIds),
+            $this->fantraxDraftTeamMap((int) $league->id),
+            $draftPickInfo,
+        );
+    }
+
+    /**
+     * Build a display map for drafted Fantrax player IDs from local identity tables.
+     *
+     * @param array<int,string> $fantraxPlayerIds
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    private function fantraxDraftPlayerMap(array $fantraxPlayerIds): array
+    {
+        $fantraxPlayerIds = collect($fantraxPlayerIds)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($fantraxPlayerIds === []) {
+            return [];
+        }
+
+        $map = [];
+
+        $fantraxPlayers = FantraxPlayer::query()
+            ->with('player:id,full_name,nhl_id,position,head_shot_url')
+            ->whereIn('fantrax_id', $fantraxPlayerIds)
+            ->get();
+        $playerIds = $fantraxPlayers
+            ->pluck('player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $latestStatsByPlayerId = $this->latestStatsByPlayerId($playerIds);
+
+        $fantraxPlayers->each(static function (FantraxPlayer $fantraxPlayer) use (&$map, $latestStatsByPlayerId): void {
+            $playerId = $fantraxPlayer->player_id ? (int) $fantraxPlayer->player_id : null;
+            $latestStats = $playerId ? ($latestStatsByPlayerId[$playerId] ?? null) : null;
+
+            $map[(string) $fantraxPlayer->fantrax_id] = [
+                'name' => $fantraxPlayer->name ?: $fantraxPlayer->player?->full_name,
+                'player_id' => $playerId,
+                'nhl_id' => $fantraxPlayer->player?->nhl_id ? (int) $fantraxPlayer->player->nhl_id : null,
+                'position' => $fantraxPlayer->player?->position ?: $fantraxPlayer->position,
+                'league_abbrev' => $latestStats?->league_abbrev,
+                'team_abbrev' => $latestStats?->nhl_team_abbrev,
+                'avatar_url' => $fantraxPlayer->player?->head_shot_url,
+                'stats' => [
+                    'gp' => $latestStats?->gp !== null ? (int) $latestStats->gp : null,
+                    'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
+                    'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
+                    'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                ],
+            ];
+        });
+
+        $externalIdentities = PlayerExternalIdentity::query()
+            ->with('player:id,full_name,nhl_id,position,head_shot_url')
+            ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
+            ->whereIn('provider_player_id', $fantraxPlayerIds)
+            ->get();
+        $identityPlayerIds = $externalIdentities
+            ->pluck('player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $identityLatestStatsByPlayerId = $this->latestStatsByPlayerId($identityPlayerIds);
+
+        $externalIdentities->each(function (PlayerExternalIdentity $identity) use (&$map, $identityLatestStatsByPlayerId): void {
+            $fantraxId = (string) $identity->provider_player_id;
+            $existing = $map[$fantraxId] ?? [];
+            $playerId = $identity->player_id ? (int) $identity->player_id : null;
+            $latestStats = $playerId ? ($identityLatestStatsByPlayerId[$playerId] ?? null) : null;
+
+            $map[$fantraxId] = [
+                'name' => $existing['name'] ?? $identity->display_name ?? $identity->player?->full_name,
+                'player_id' => $existing['player_id'] ?? $playerId,
+                'nhl_id' => $existing['nhl_id'] ?? ($identity->player?->nhl_id ? (int) $identity->player->nhl_id : null),
+                'position' => $existing['position'] ?? $identity->position ?? $identity->player?->position,
+                'league_abbrev' => $existing['league_abbrev'] ?? $latestStats?->league_abbrev,
+                'team_abbrev' => $existing['team_abbrev'] ?? $latestStats?->nhl_team_abbrev,
+                'avatar_url' => $existing['avatar_url'] ?? $identity->player?->head_shot_url,
+                'stats' => $this->hasResolvedStats($existing['stats'] ?? null)
+                    ? $existing['stats']
+                    : [
+                        'gp' => $latestStats?->gp !== null ? (int) $latestStats->gp : null,
+                        'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
+                        'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
+                        'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                    ],
+            ];
+        });
+
+        return $map;
+    }
+
+    /**
+     * Determine whether a stored draft stats payload includes at least one rendered value.
+     */
+    private function hasResolvedStats(mixed $stats): bool
+    {
+        if (! is_array($stats)) {
+            return false;
+        }
+
+        return collect(['gp', 'g', 'a', 'pts'])
+            ->contains(static fn (string $key): bool => ($stats[$key] ?? null) !== null);
+    }
+
+    /**
+     * Return the most-used league stat snapshot from each player's latest available season.
+     *
+     * @param array<int,int> $playerIds
+     *
+     * @return array<int,Stat>
+     */
+    private function latestStatsByPlayerId(array $playerIds): array
+    {
+        if ($playerIds === []) {
+            return [];
+        }
+
+        return Stat::query()
+            ->whereIn('player_id', $playerIds)
+            ->orderByDesc('season_id')
+            ->orderByDesc('gp')
+            ->orderByDesc('updated_at')
+            ->get(['player_id', 'league_abbrev', 'nhl_team_abbrev', 'gp', 'g', 'a', 'pts', 'season_id', 'updated_at'])
+            ->groupBy(static fn (Stat $stat): int => (int) $stat->player_id)
+            ->mapWithKeys(static function ($playerStats): array {
+                $latestSeasonId = $playerStats->max('season_id');
+                $stat = $playerStats
+                    ->where('season_id', $latestSeasonId)
+                    ->sortByDesc(static fn (Stat $stat): int => (int) $stat->gp)
+                    ->first();
+
+                return $stat ? [(int) $stat->player_id => $stat] : [];
+            })
+            ->all();
+    }
+
+    /**
+     * Build drafting team owner avatar metadata keyed by Fantrax platform team id.
+     *
+     * @return array<string,array{owner_avatar_url:string|null}>
+     */
+    private function fantraxDraftTeamMap(?int $platformLeagueId): array
+    {
+        if (! $platformLeagueId) {
+            return [];
+        }
+
+        return PlatformTeam::query()
+            ->where('platform_league_id', $platformLeagueId)
+            ->with(['users' => static function ($query): void {
+                $query->wherePivot('is_active', true)
+                    ->select('users.id')
+                    ->with(['socialAccounts' => static function ($query): void {
+                        $query->select('id', 'user_id', 'avatar')
+                            ->where('provider', 'discord');
+                    }]);
+            }])
+            ->get(['id', 'platform_team_id'])
+            ->mapWithKeys(static function (PlatformTeam $team): array {
+                $avatar = null;
+
+                foreach ($team->users as $user) {
+                    $avatar = optional($user->socialAccounts->first())->avatar;
+
+                    if (filled($avatar)) {
+                        break;
+                    }
+                }
+
+                return [
+                    (string) $team->platform_team_id => [
+                        'owner_avatar_url' => filled($avatar) ? (string) $avatar : null,
+                    ],
+                ];
+            })
+            ->all();
     }
 
     /**
