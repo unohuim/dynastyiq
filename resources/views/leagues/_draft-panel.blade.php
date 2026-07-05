@@ -188,6 +188,7 @@
         playerPerspectiveLoading: false,
         playerPerspectiveError: '',
         playerPerspectiveRequestKey: '',
+        playerPerspectiveRequestToken: 0,
         playerPerspectiveCache: {},
         playerSortKey: '',
         playerSortDirection: 'desc',
@@ -572,6 +573,12 @@
 
             return String(value);
         },
+        resetPlayerPerspectiveRows() {
+            this.playerPerspectiveHeadings = [];
+            this.playerPerspectiveRows = [];
+            this.playerPerspectiveRowsById = {};
+            this.playerPerspectiveLoaded = false;
+        },
         async loadPlayerPerspectiveStats(force = false) {
             if (this.showingQueuePerspective || (this.playerPerspectiveLoading && !force)) return;
 
@@ -595,9 +602,14 @@
                 return;
             }
 
+            const requestToken = this.playerPerspectiveRequestToken + 1;
+            this.playerPerspectiveRequestToken = requestToken;
+
             if (this.playerPerspectiveCache[requestKey]) {
-                this.applyPlayerPerspectivePayload(this.playerPerspectiveCache[requestKey], requestKey);
-                this.playerPerspectiveLoading = false;
+                this.applyPlayerPerspectivePayload(this.playerPerspectiveCache[requestKey], requestKey, requestToken);
+                if (this.playerPerspectiveRequestToken === requestToken) {
+                    this.playerPerspectiveLoading = false;
+                }
                 return;
             }
 
@@ -624,14 +636,20 @@
                 }
 
                 this.playerPerspectiveCache[requestKey] = payload;
-                this.applyPlayerPerspectivePayload(payload, requestKey);
+                this.applyPlayerPerspectivePayload(payload, requestKey, requestToken);
             } catch (error) {
-                this.playerPerspectiveError = error?.message || 'Could not load player stats.';
+                if (this.playerPerspectiveRequestToken === requestToken) {
+                    this.playerPerspectiveError = error?.message || 'Could not load player stats.';
+                }
             } finally {
-                this.playerPerspectiveLoading = false;
+                if (this.playerPerspectiveRequestToken === requestToken) {
+                    this.playerPerspectiveLoading = false;
+                }
             }
         },
-        applyPlayerPerspectivePayload(payload, requestKey) {
+        applyPlayerPerspectivePayload(payload, requestKey, requestToken = this.playerPerspectiveRequestToken) {
+            if (requestToken !== this.playerPerspectiveRequestToken) return;
+
             const allowed = this.draftPerspectiveSlugs;
             const perspectives = Array.isArray(payload.perspectives)
                 ? payload.perspectives.filter((perspective) => allowed.includes(String(perspective?.slug ?? perspective?.id ?? perspective?.name ?? '')))
@@ -656,13 +674,15 @@
             this.selectedPlayerPerspective = value;
             this.posTypeFilter = '';
             this.playerPerspectiveRequestKey = '';
-            this.playerPerspectiveLoaded = false;
+            this.playerPerspectiveLoading = true;
+            this.resetPlayerPerspectiveRows();
             if (this.showingQueuePerspective) {
+                this.playerPerspectiveLoading = false;
                 this.refreshDraftQueuePayload();
                 return;
             }
 
-            this.loadPlayerPerspectiveStats();
+            this.loadPlayerPerspectiveStats(true);
         },
         applyDraftQueuePayload(items) {
             this.draftQueueItems = Array.isArray(items) ? items : [];
