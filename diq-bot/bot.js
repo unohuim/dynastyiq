@@ -257,7 +257,10 @@ client.once(Events.ClientReady, async function (c) {
         await registerUserTeams({
             token: process.env.DISCORD_BOT_TOKEN,
             clientId: process.env.CLIENT_ID || process.env.DISCORD_CLIENT_ID,
-            guildId: process.env.GUILD_ID || process.env.DISCORD_GUILD_ID,
+            guildId:
+                process.env.GUILD_ID ||
+                process.env.DISCORD_GUILD_ID ||
+                process.env.DIQ_GUILD_ID,
             additionalCommands: [connectCommandJson()],
         });
         console.log("✅ Registered DIQ commands");
