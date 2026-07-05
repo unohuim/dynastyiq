@@ -216,6 +216,12 @@
         get showingQueuePerspective() {
             return this.selectedPlayerPerspective === '__queue__';
         },
+        get isPlayerPerspectivePending() {
+            return this.activePlayerTab === 'players'
+                && !this.showingQueuePerspective
+                && !this.playerPerspectiveError
+                && (this.playerPerspectiveLoading || !this.playerPerspectiveLoaded);
+        },
         get availablePerspectivePlayers() {
             if (!this.playerPerspectiveLoaded) return [];
 
@@ -640,6 +646,7 @@
             } catch (error) {
                 if (this.playerPerspectiveRequestToken === requestToken) {
                     this.playerPerspectiveError = error?.message || 'Could not load player stats.';
+                    this.playerPerspectiveLoaded = true;
                 }
             } finally {
                 if (this.playerPerspectiveRequestToken === requestToken) {
@@ -1530,10 +1537,10 @@
                                     </template>
                                 </tr>
                             </template>
-                            <tr x-show="!playerPerspectiveLoading && playerPerspectiveLoaded && filteredDraftPlayers.length === 0">
+                            <tr x-show="!isPlayerPerspectivePending && playerPerspectiveLoaded && filteredDraftPlayers.length === 0">
                                 <td :colspan="Math.max(6 + playerStatHeadings.length, 6)" class="px-4 py-8 text-center text-sm text-slate-500">No players match this draft view.</td>
                             </tr>
-                            <template x-for="index in (playerPerspectiveLoading ? 6 : 0)" :key="`players-loading-${index}`">
+                            <template x-for="index in (isPlayerPerspectivePending ? 6 : 0)" :key="`players-loading-${index}`">
                                 <tr class="animate-pulse">
                                     <td class="px-3 py-2.5">
                                         <div class="h-7 w-7 rounded-full bg-slate-100"></div>
