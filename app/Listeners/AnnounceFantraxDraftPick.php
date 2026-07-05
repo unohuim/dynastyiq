@@ -17,6 +17,7 @@ use App\Models\SocialAccount;
 use App\Models\Stat;
 use App\Services\DraftPickCardRenderer;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -40,7 +41,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             return;
         }
 
-        if (! $this->claimDraftPick($draftPick)) {
+        if ($draftPick->announced_at !== null) {
             return;
         }
 
@@ -55,17 +56,19 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
 
         $channelId = (string) data_get($context['notification_settings'], 'discord_channel_id', '');
 
-        if ($channelId !== '') {
-            $this->postDiscordMessage($channelId, $discordPayload);
+        if ($channelId !== '' && ! $this->postDiscordMessage($channelId, $discordPayload)) {
+            return;
         }
+
+        $this->claimDraftPick($draftPick);
     }
 
-    private function claimDraftPick(DraftPick $draftPick): bool
+    private function claimDraftPick(DraftPick $draftPick): void
     {
-        return DraftPick::query()
+        DraftPick::query()
             ->whereKey($draftPick->id)
             ->whereNull('announced_at')
-            ->update(['announced_at' => now()]) === 1;
+            ->update(['announced_at' => now()]);
     }
 
     /**
@@ -424,7 +427,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     /**
      * @param array<string,mixed> $payload
      */
-    private function postDiscordMessage(string $channelId, array $payload): void
+    private function postDiscordMessage(string $channelId, array $payload): bool
     {
         $token = (string) config('apiurls.discord-bot.key');
 
@@ -433,7 +436,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 'channel_id' => $channelId,
             ]);
 
-            return;
+            return false;
         }
 
         $cardPath = app(DraftPickCardRenderer::class)->render(is_array($payload['card'] ?? null) ? $payload['card'] : []);
@@ -443,40 +446,12 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 $cardContents = file_get_contents($cardPath);
 
                 if ($cardContents !== false) {
-                    $imageResponse = Http::withHeaders(['Authorization' => 'Bot ' . $token])
-                        ->acceptJson()
-                        ->asMultipart()
-                        ->attach('files[0]', $cardContents, 'draft-pick-card.png')
-                        ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', [
-                            'payload_json' => json_encode([
-                                'content' => '',
-                                'allowed_mentions' => [
-                                    'parse' => [],
-                                    'users' => [],
-                                ],
-                            ], JSON_UNESCAPED_SLASHES),
-                        ]);
-
-                    if (! $imageResponse->successful()) {
-                        Log::warning('Draft pick Discord image announcement returned an error response.', [
-                            'channel_id' => $channelId,
-                            'status' => $imageResponse->status(),
-                            'response' => str($imageResponse->body())->limit(500)->toString(),
-                        ]);
-                    }
-
-                    $response = Http::withHeaders(['Authorization' => 'Bot ' . $token])
-                        ->acceptJson()
-                        ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $this->discordTextPayload($payload));
+                    $response = $this->sendDiscordMessage($channelId, $token, $payload, $cardContents);
                 } else {
-                    $response = Http::withHeaders(['Authorization' => 'Bot ' . $token])
-                        ->acceptJson()
-                        ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $this->discordTextPayload($payload));
+                    $response = $this->sendDiscordMessage($channelId, $token, $payload);
                 }
             } else {
-                $response = Http::withHeaders(['Authorization' => 'Bot ' . $token])
-                    ->acceptJson()
-                    ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $this->discordTextPayload($payload));
+                $response = $this->sendDiscordMessage($channelId, $token, $payload);
             }
         } catch (Throwable $exception) {
             Log::warning('Draft pick Discord announcement failed.', [
@@ -484,7 +459,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 'exception' => $exception->getMessage(),
             ]);
 
-            return;
+            return false;
         } finally {
             if ($cardPath && file_exists($cardPath)) {
                 @unlink($cardPath);
@@ -497,7 +472,51 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 'status' => $response->status(),
                 'response' => str($response->body())->limit(500)->toString(),
             ]);
+
+            return false;
         }
+
+        return true;
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function sendDiscordMessage(string $channelId, string $token, array $payload, ?string $cardContents = null): Response
+    {
+        $response = $this->discordRequest($channelId, $token, $payload, $cardContents);
+
+        if ($response->status() !== 429) {
+            return $response;
+        }
+
+        $retryAfter = (float) ($response->json('retry_after') ?? 0.5);
+        usleep((int) max(100000, ($retryAfter + 0.15) * 1000000));
+
+        return $this->discordRequest($channelId, $token, $payload, $cardContents);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function discordRequest(string $channelId, string $token, array $payload, ?string $cardContents = null): Response
+    {
+        $request = Http::withHeaders(['Authorization' => 'Bot ' . $token])
+            ->acceptJson();
+
+        if ($cardContents === null) {
+            return $request->post(
+                'https://discord.com/api/v10/channels/' . $channelId . '/messages',
+                $this->discordTextPayload($payload),
+            );
+        }
+
+        return $request
+            ->asMultipart()
+            ->attach('files[0]', $cardContents, 'draft-pick-card.png')
+            ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', [
+                'payload_json' => json_encode($this->discordTextPayload($payload), JSON_UNESCAPED_SLASHES),
+            ]);
     }
 
     /**
