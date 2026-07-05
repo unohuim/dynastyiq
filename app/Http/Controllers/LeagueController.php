@@ -86,7 +86,7 @@ final class LeagueController extends Controller
             ? $leagues->firstWhere('id', $activeLeagueId)
             : $leagues->first();
 
-        $teams = $activeLeague ? $this->teamsPayload($activeLeague) : [];
+        $teams = $activeLeague ? $this->teamsMetaPayload($activeLeague) : [];
         $drafting = $activeLeague
             ? $this->draftingPayload($activeLeague)
             : app(FantraxDraftingWindow::class)->normalize([], []);
@@ -101,9 +101,10 @@ final class LeagueController extends Controller
             'scoringAlignmentCategories' => $activeLeague ? $this->scoringAlignmentCategoriesPayload($activeLeague) : [],
             'manualScoringMappings' => $activeLeague ? $this->manualScoringMappingsPayload($activeLeague) : [],
             'availableStatFields' => $this->availableStatFieldsPayload(),
-            'searchPlayers' => $activeLeague ? $this->searchPlayersPayload() : [],
+            'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
+            'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
             'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
@@ -128,18 +129,47 @@ final class LeagueController extends Controller
 
         return view('leagues._panel', [
             'league' => $league,
-            'teams'  => $this->teamsPayload($league),
+            'teams'  => $this->teamsMetaPayload($league),
             'drafting' => $this->draftingPayload($league),
             'scoringCategories' => $this->scoringCategoriesPayload($league),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
             'availableStatFields' => $this->availableStatFieldsPayload(),
-            'searchPlayers' => $this->searchPlayersPayload(),
+            'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
+        ]);
+    }
+
+    /**
+     * Return heavy player/team data for the selected league on demand.
+     */
+    public function playersPayload(Request $request, string $leagueId): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider to view league players.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->with(['teams' => static fn ($q) => $q->orderBy('name')])
+            ->firstOrFail();
+
+        return response()->json([
+            'teams' => $this->teamsPayload($league),
+            'searchPlayers' => $this->searchPlayersPayload(),
+            'canShowLeagueStats' => $this->canShowLeagueStats($league),
+            'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
         ]);
     }
 
@@ -493,15 +523,16 @@ final class LeagueController extends Controller
             'leagues' => $leagues,
             'activeLeagueId' => $activeLeague->id,
             'activeLeague' => $activeLeague,
-            'teams' => $this->teamsPayload($activeLeague),
+            'teams' => $this->teamsMetaPayload($activeLeague),
             'drafting' => $this->draftingPayload($activeLeague),
             'scoringCategories' => $this->scoringCategoriesPayload($activeLeague),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($activeLeague),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($activeLeague),
             'availableStatFields' => $this->availableStatFieldsPayload(),
-            'searchPlayers' => $this->searchPlayersPayload(),
+            'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
+            'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
             'canManageLeague' => $this->canManageLeague($activeLeague, $user),
@@ -515,6 +546,10 @@ final class LeagueController extends Controller
     {
         if (! $league || ! $user) {
             return false;
+        }
+
+        if (method_exists($user, 'hasGlobalRole') && $user->hasGlobalRole('super-admin')) {
+            return true;
         }
 
         $platformLeagueId = (int) $league->id;
@@ -555,6 +590,52 @@ final class LeagueController extends Controller
         }
 
         return false;
+    }
+
+    /**
+     * Build the team, avatar, ownership, and roster payload for a league.
+     */
+    private function teamsMetaPayload($league): array
+    {
+        $authId = auth()->id();
+
+        return $league->teams()
+            ->select('id', 'platform_team_id', 'name')
+            ->with([
+                'users' => static function ($q): void {
+                    $q->wherePivot('is_active', true)
+                        ->select('users.id')
+                        ->with(['socialAccounts:id,user_id,avatar']);
+                },
+            ])
+            ->orderBy('name')
+            ->get()
+            ->map(static function ($team) use ($authId): array {
+                $defaultAvatar = config('ui.default_team_avatar')
+                    ?: 'https://ui-avatars.com/api/?name=' . urlencode($team->name) . '&background=E5E7EB&color=111827&size=64';
+                $ownerAvatar = $defaultAvatar;
+
+                foreach ($team->users as $user) {
+                    $avatar = optional($user->socialAccounts->first())->avatar;
+                    if (filled($avatar)) {
+                        $ownerAvatar = (string) $avatar;
+                        break;
+                    }
+                }
+
+                $ownerIds = $team->users->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all();
+
+                return [
+                    'id' => (string) $team->platform_team_id,
+                    'name' => (string) $team->name,
+                    'owner_avatar_url' => $ownerAvatar,
+                    'owned_by_me' => $authId ? in_array((int) $authId, $ownerIds, true) : false,
+                    'owner_user_ids' => $ownerIds,
+                    'players' => [],
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**
@@ -1044,9 +1125,12 @@ final class LeagueController extends Controller
 
         return view('leagues._draft-panel', [
             'league' => $league,
-            'teams' => $this->teamsPayload($league),
+            'teams' => $this->teamsMetaPayload($league),
             'drafting' => $this->draftingPayload($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
+            'playersPayloadUrl' => route('leagues.players.payload', $league->id),
+            'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'canShowLeagueStats' => $this->canShowLeagueStats($league),
         ])->render();
     }
 

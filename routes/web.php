@@ -314,6 +314,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.scoring-settings.update');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
             ->name('leagues.stats.payload');
+        Route::get('/leagues/{league_id}/players-payload', [LeagueController::class, 'playersPayload'])
+            ->name('leagues.players.payload');
         Route::post('/leagues/{league_id}/drafts', [LeagueController::class, 'storeDraft'])
             ->name('leagues.drafts.store');
         Route::put('/leagues/{league_id}/drafts/{draft}/settings', [LeagueController::class, 'updateDraftSettings'])

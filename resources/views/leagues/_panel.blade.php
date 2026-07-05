@@ -29,10 +29,14 @@
       searchPlayers: @js($searchPlayers ?? []),
       scoringSettingsUpdateUrl: @js($scoringSettingsUpdateUrl ?? ''),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
+      playersPayloadUrl: @js($playersPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
       activeLeagueTab: 'draft',
       playerSearch: '',
+      playersPayloadLoaded: false,
+      playersPayloadLoading: false,
+      playersPayloadError: '',
       settingsOpen: false,
       scoringAlignmentOpen: true,
       savingScoringAlignment: false,
@@ -43,8 +47,9 @@
       leagueStatsShell: null,
 
       init(){
-        this.$nextTick(() => this.loadLeagueStats());
-        window.addEventListener('diq:stats-page-ready', () => this.loadLeagueStats(), { once: true });
+        window.addEventListener('diq:stats-page-ready', () => {
+          if (this.activeLeagueTab === 'players') this.loadLeagueStats();
+        }, { once: true });
       },
 
       // pick my team as default when possible
@@ -97,6 +102,57 @@
         this.teamQuery = this.teams[idx]?.name ?? '';
         this.playerSearch = '';
         this.teamListOpen = false;
+      },
+      async openLeagueTab(tab){
+        this.activeLeagueTab = tab;
+
+        if (tab === 'players') {
+          await this.loadPlayersPayload();
+          this.$nextTick(() => this.loadLeagueStats());
+        }
+      },
+      resetSelectedTeamIndex(){
+        const me = @js($authId);
+        let idx = (this.teams || []).findIndex(t => t?.owned_by_me === true);
+        if (idx !== -1) {
+          this.i = idx;
+          return;
+        }
+
+        idx = (this.teams || []).findIndex(t => (t?.owner_user_ids || []).includes(me));
+        this.i = idx !== -1 ? idx : 0;
+      },
+      async loadPlayersPayload(){
+        if (this.playersPayloadLoaded || this.playersPayloadLoading || !this.playersPayloadUrl) return;
+
+        this.playersPayloadLoading = true;
+        this.playersPayloadError = '';
+
+        try {
+          const response = await fetch(this.playersPayloadUrl, {
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not load players.');
+          }
+
+          this.teams = payload.teams ?? [];
+          this.searchPlayers = payload.searchPlayers ?? [];
+          this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
+          this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
+          this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
+          this.resetSelectedTeamIndex();
+          this.playersPayloadLoaded = true;
+        } catch (error) {
+          this.playersPayloadError = error?.message || 'Could not load players.';
+        } finally {
+          this.playersPayloadLoading = false;
+        }
       },
       eligibilityLabel(player){
         const raw = player?.eligibility;
@@ -277,9 +333,9 @@
         type="button"
         class="border-b-2 py-3 text-sm font-semibold transition"
         :class="activeLeagueTab === 'players' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
-        @click="activeLeagueTab = 'players'"
+        @click="openLeagueTab('players')"
       >
-        My Team
+        Players
       </button>
       <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
         Standings
@@ -290,6 +346,23 @@
     </div>
 
     <div x-show="activeLeagueTab === 'players'" class="px-6 pb-6">
+    <div x-show="playersPayloadLoading" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div class="animate-pulse space-y-4">
+        <div class="flex items-center justify-between gap-4">
+          <div class="h-9 w-64 rounded-md bg-slate-200"></div>
+          <div class="h-9 w-56 rounded-md bg-slate-200"></div>
+        </div>
+        <div class="space-y-2">
+          <div class="h-10 rounded-lg bg-slate-100"></div>
+          <div class="h-10 rounded-lg bg-slate-100"></div>
+          <div class="h-10 rounded-lg bg-slate-100"></div>
+          <div class="h-10 rounded-lg bg-slate-100"></div>
+          <div class="h-10 rounded-lg bg-slate-100"></div>
+        </div>
+      </div>
+    </div>
+    <div x-show="playersPayloadError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="playersPayloadError"></div>
+    <div x-show="playersPayloadLoaded">
     <div x-show="!canShowLeagueStats">
       <x-card-section title="Players" class="border-0">
         <div class="space-y-5">
@@ -453,6 +526,7 @@
       <div x-ref="leagueStats" class="min-h-[24rem] py-3"></div>
     </div>
     </div>
+    </div>
 
     <div x-show="activeLeagueTab === 'draft'" class="px-6 pb-6">
       @include('leagues._draft-panel', [
@@ -462,6 +536,7 @@
         'canManageLeague' => $canManageLeague,
         'canShowLeagueStats' => $canShowLeagueStats ?? false,
         'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
+        'playersPayloadUrl' => $playersPayloadUrl ?? '',
         'leagueStatsFallbackSlug' => $leagueStatsFallbackSlug,
         'leagueStatsFallbackName' => $leagueStatsFallbackName,
       ])

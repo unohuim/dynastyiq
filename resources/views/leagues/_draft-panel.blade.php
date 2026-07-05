@@ -18,6 +18,7 @@
     $myPlayers = collect(data_get($ownedTeam, 'players', []))->values();
     $ownedTeamId = (string) data_get($ownedTeam, 'id', '');
     $leagueStatsPayloadUrl = (string) ($leagueStatsPayloadUrl ?? '');
+    $playersPayloadUrl = (string) ($playersPayloadUrl ?? '');
     $leagueStatsFallbackSlug = (string) ($leagueStatsFallbackSlug ?? '');
     $leagueStatsFallbackName = (string) ($leagueStatsFallbackName ?? 'League Scoring');
     $draftPerspectiveOptions = [
@@ -173,7 +174,11 @@
         selectedPlayerTeam: '',
         playerTeamOptions: @js($availablePlayerTeams),
         leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl),
+        playersPayloadUrl: @js($playersPayloadUrl),
         canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
+        playersPayloadLoaded: @js($availablePlayers->isNotEmpty()),
+        playersPayloadLoading: false,
+        playersPayloadError: '',
         playerPerspectiveOptions: @js($draftPerspectiveOptions),
         selectedPlayerPerspective: 'prospects',
         playerPerspectiveHeadings: [],
@@ -438,7 +443,52 @@
             }
 
             if (tab === 'players') {
-                this.loadPlayerPerspectiveStats();
+                this.loadDraftPlayersPayload().then(() => this.loadPlayerPerspectiveStats());
+            }
+        },
+        async loadDraftPlayersPayload() {
+            if (this.playersPayloadLoaded || this.playersPayloadLoading || !this.playersPayloadUrl) return;
+
+            this.playersPayloadLoading = true;
+            this.playersPayloadError = '';
+            this.playerPerspectiveLoading = true;
+
+            try {
+                const response = await fetch(this.playersPayloadUrl, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message || 'Could not load draft players.');
+                }
+
+                const teams = Array.isArray(payload.teams) ? payload.teams : [];
+                const allPlayersTeam = teams.find((team) => team?.id === '__all_players__') || {};
+                const freeAgentsTeam = teams.find((team) => team?.id === '__free_agents__') || {};
+                const availablePlayers = Array.isArray(freeAgentsTeam.players) ? freeAgentsTeam.players : [];
+
+                this.allPlayers = Array.isArray(allPlayersTeam.players) ? allPlayersTeam.players : [];
+                this.availablePlayers = availablePlayers;
+                this.availablePlayersById = Object.fromEntries(
+                    availablePlayers.map((player) => [String(player.id), player]),
+                );
+                this.playerTeamOptions = [...new Set(
+                    availablePlayers
+                        .map((player) => String(player.team_abbrev || '').toUpperCase().trim())
+                        .filter(Boolean),
+                )].sort();
+                this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
+                this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
+                this.playersPayloadLoaded = true;
+            } catch (error) {
+                this.playersPayloadError = error?.message || 'Could not load draft players.';
+            } finally {
+                this.playersPayloadLoading = false;
+                this.playerPerspectiveLoading = false;
             }
         },
         playerPerspectiveRow(player) {
@@ -1250,6 +1300,7 @@
                         </button>
                     </div>
 
+                    <div x-show="playersPayloadError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="playersPayloadError"></div>
                     <div x-show="playerPerspectiveError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="playerPerspectiveError"></div>
                     <div x-show="queuePerspectiveError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="queuePerspectiveError"></div>
 

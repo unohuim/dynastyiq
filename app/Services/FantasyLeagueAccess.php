@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\User;
+use App\Models\PlatformLeague;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
@@ -22,14 +24,22 @@ class FantasyLeagueAccess
      */
     public function canViewLeagues(User $user): bool
     {
+        if ($user->hasGlobalRole('super-admin')) {
+            return true;
+        }
+
         return $this->integrationState->canShowAnyLeague($user);
     }
 
     /**
      * Return active leagues from every ready fantasy provider.
      */
-    public function activeLeaguesForUser(User $user): BelongsToMany
+    public function activeLeaguesForUser(User $user): BelongsToMany|Builder
     {
+        if ($user->hasGlobalRole('super-admin')) {
+            return PlatformLeague::query();
+        }
+
         $readyProviders = collect($this->integrationState->forUser($user))
             ->filter(static fn (array $state): bool => $state['show_leagues'])
             ->keys()
