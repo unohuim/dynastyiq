@@ -22,7 +22,7 @@ function getApiBase() {
     );
 }
 
-async function register({ token, clientId, guildId }) {
+async function register({ token, clientId, guildId, additionalCommands = [] }) {
     if (!token || !clientId)
         throw new Error("register: token and clientId are required");
 
@@ -41,11 +41,11 @@ async function register({ token, clientId, guildId }) {
 
     if (guildId) {
         await rest.put(Routes.applicationGuildCommands(clientId, guildId), {
-            body: [cmdJson],
+            body: [cmdJson, ...additionalCommands],
         });
     } else {
         await rest.put(Routes.applicationCommands(clientId), {
-            body: [cmdJson],
+            body: [cmdJson, ...additionalCommands],
         });
     }
 }

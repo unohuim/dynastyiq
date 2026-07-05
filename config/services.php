@@ -42,6 +42,8 @@ return [
         'invite'        => env('DISCORD_INVITE'),
         'diq_install_url' => env('DIQ_INSTALL_URL'),
         'diq_guild_id'  => env('DIQ_GUILD_ID'),
+        'webhook_secret' => env('DISCORD_WEBHOOK_SECRET'),
+        'bot_api_secret' => env('DIQ_BOT_API_SECRET', env('DISCORD_WEBHOOK_SECRET')),
     ],
 
     'diq' => [

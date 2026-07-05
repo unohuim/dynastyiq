@@ -76,6 +76,10 @@ const {
     handle: handleUserTeams,
 } = require("./features/user-teams");
 const {
+    commandJson: connectCommandJson,
+    handle: handleConnect,
+} = require("./features/connect");
+const {
     assignFantraxRole,
     assignFantraxRoleForUser,
 } = require("./features/assign-fantrax-roles");
@@ -254,8 +258,9 @@ client.once(Events.ClientReady, async function (c) {
             token: process.env.DISCORD_BOT_TOKEN,
             clientId: process.env.CLIENT_ID || process.env.DISCORD_CLIENT_ID,
             guildId: process.env.GUILD_ID || process.env.DISCORD_GUILD_ID,
+            additionalCommands: [connectCommandJson()],
         });
-        console.log("✅ Registered DIQ: User Teams");
+        console.log("✅ Registered DIQ commands");
     } catch (e) {
         console.error(
             "❌ Failed to register DIQ: User Teams:",
@@ -342,6 +347,7 @@ client.on(Events.GuildMemberAdd, async function (member) {
 
 // ---------- Interactions ----------
 client.on(Events.InteractionCreate, async function (interaction) {
+    if (await handleConnect(interaction)) return;
     if (await handleUserTeams(interaction)) return;
     // other handlers…
 });

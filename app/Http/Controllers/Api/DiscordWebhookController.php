@@ -7,9 +7,11 @@ use App\Events\DiscordMemberConnected;
 use App\Models\Organization;
 use App\Models\SocialAccount;
 use App\Models\User;
+use App\Services\ConnectFantraxUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 
 class DiscordWebhookController extends Controller
@@ -60,6 +62,61 @@ class DiscordWebhookController extends Controller
 
         return response()->json(['connected_ids' => $connectedDiscordIds]);
 
+    }
+
+    /**
+     * Connect a Discord-linked DynastyIQ user to Fantrax from the DIQ bot.
+     */
+    public function connectFantrax(Request $request, ConnectFantraxUser $connector): \Illuminate\Http\JsonResponse
+    {
+        $botSecret = (string) config('services.discord.bot_api_secret');
+        if ($botSecret === '') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'DIQ bot API secret is not configured.',
+            ], 503);
+        }
+
+        if (! hash_equals($botSecret, (string) $request->header('X-DIQ-Bot-Secret'))) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Unauthorized.',
+            ], 401);
+        }
+
+        $data = $request->validate([
+            'discord_user_id' => 'required|string|max:32',
+            'guild_id' => 'nullable|string|max:32',
+            'secret_id' => 'required|string|max:255',
+        ]);
+
+        $social = SocialAccount::query()
+            ->with('user')
+            ->where('provider', 'discord')
+            ->where('provider_user_id', (string) $data['discord_user_id'])
+            ->first();
+
+        if (! $social?->user) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Connect your Discord account to DynastyIQ before connecting Fantrax.',
+            ], 404);
+        }
+
+        try {
+            $result = $connector->connect($social->user, (string) $data['secret_id']);
+        } catch (RuntimeException $e) {
+            return response()->json([
+                'ok' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Fantrax connected.',
+            'league_count' => $result['league_count'],
+        ]);
     }
 
 

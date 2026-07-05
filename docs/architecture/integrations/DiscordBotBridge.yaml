@@ -19,10 +19,12 @@ rules:
   - The bot must consume Laravel-provided API and event contracts.
   - Laravel remains the source of truth for user, team, and integration state.
   - Bot-facing payload changes must preserve compatibility with diq-bot consumers.
+  - Bot-originated account connection actions must call Laravel APIs; Laravel remains responsible for validating and persisting integration credentials.
 public_interface:
   - /api/discord/users/{discord_id}
+  - /api/discord/fantrax/connect
   - /api/diq/is-fantrax
   - BotFantraxLinked
+  - /diq connect
 example_usage: |
   event(new BotFantraxLinked($user));
-

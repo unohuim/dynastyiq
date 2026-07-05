@@ -36,6 +36,9 @@ Route::get('/discord/users/{discord_id}', [DiscordWebhookController::class, 'get
 
 Route::post('/diq/is-fantrax', [DiscordWebhookController::class, 'isFantrax']);
 
+Route::post('/discord/fantrax/connect', [DiscordWebhookController::class, 'connectFantrax'])
+    ->name('discord.fantrax.connect');
+
 // Patreon Webhooks
 Route::post('/patreon/webhook', [PatreonWebhookController::class, 'handle'])
     ->name('patreon.webhook');

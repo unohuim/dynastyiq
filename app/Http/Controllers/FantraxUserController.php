@@ -4,62 +4,33 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Events\FantraxUserConnected;
 use App\Models\IntegrationSecret;
+use App\Services\ConnectFantraxUser;
 use App\Services\FantasyIntegrationState;
-use App\Services\FantraxLeagueService;
 use App\Support\FantasyProvider;
-use App\Traits\HasAPITrait;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Http\Client\RequestException;
+use RuntimeException;
 
 class FantraxUserController extends Controller
 {
-    use HasAPITrait;
-
     /**
      * Store or update the Fantrax secret key for the authenticated user.
      */
-    public function save(Request $request): RedirectResponse|JsonResponse
+    public function save(Request $request, ConnectFantraxUser $connector): RedirectResponse|JsonResponse
     {
-
         $data = $request->validate([
             'fantrax_secret_key' => 'required|string|max:255',
         ]);
 
-
         try {
-            $resp = $this->getAPIData('fantrax', 'user_leagues', [
-                'userSecretId' => $data['fantrax_secret_key']
-            ]);
-        } catch (RequestException $e) {
-
-            return $this->respondError($request, 'Unable to reach Fantrax. Try again.');
+            $result = $connector->connect(Auth::user(), $data['fantrax_secret_key']);
+        } catch (RuntimeException $e) {
+            return $this->respondError($request, $e->getMessage());
         }
-
-
-        $leagues = $resp['leagues'] ?? [];
-        if (count($leagues) === 0) {
-            return $this->respondError($request, 'Invalid Fantrax Secret Key.');
-        }
-
-
-        // 1) Save/confirm integration
-        IntegrationSecret::updateOrCreate(
-            ['user_id' => Auth::id(), 'provider' => 'fantrax'],
-            ['secret' => $data['fantrax_secret_key'], 'status' => 'connected']
-        );
-
-        // 2) Sync unified Leagues/Teams and user↔team assignments
-        app(FantraxLeagueService::class)->upsertLeaguesForUser(Auth::user(), $leagues);
-
-        // 3) Notify listeners
-        FantraxUserConnected::dispatch(Auth::user());
 
         session()->put('fantrax.connected', true);
 
@@ -71,9 +42,11 @@ class FantraxUserController extends Controller
             ]);
         }
 
+        $leagueCount = $result['league_count'];
+
         return back()->with([
-            'status' => 'Fantrax connected (' . count($leagues) . ' league(s) found).',
-            'success' => 'Fantrax connected (' . count($leagues) . ' league(s) found).',
+            'status' => 'Fantrax connected (' . $leagueCount . ' league(s) found).',
+            'success' => 'Fantrax connected (' . $leagueCount . ' league(s) found).',
         ]);
     }
 

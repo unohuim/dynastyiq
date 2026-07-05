@@ -4,6 +4,7 @@ location:
   - app/Http/Controllers/FantraxUserController.php
   - app/Models/IntegrationSecret.php
   - app/Support/FantasyProvider.php
+  - app/Services/ConnectFantraxUser.php
   - app/Services/FantasyIntegrationState.php
   - app/Services/ImportUserFantraxLeagues.php
   - app/Events/FantraxUserConnected.php
@@ -19,6 +20,7 @@ when_not_to_use:
   - Discord OAuth login.
 rules:
   - Fantrax credentials belong in IntegrationSecret.
+  - User Fantrax connection writes must flow through the shared connection service so browser and bot entrypoints validate, persist, sync, and emit events consistently.
   - Fantrax user-facing readiness state must be exposed through FantasyIntegrationState, not inferred directly from a saved secret.
   - The Leagues navigation affordance must be controlled by the shared FantasyProviderLeagueAccess pattern.
   - Direct Leagues route access must enforce the same Fantrax readiness rule as navigation visibility.
@@ -28,6 +30,7 @@ rules:
 public_interface:
   - integrations.fantrax.save
   - integrations.fantrax.disconnect
+  - ConnectFantraxUser
   - IntegrationSecret
   - FantasyProvider::FANTRAX
   - FantasyIntegrationState

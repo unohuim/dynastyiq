@@ -123,6 +123,7 @@ ImportYahooPlayersPageJob::dispatch($connection->id, $importRun->id, 0, 25);
 **Type:** External Node Service
 **Location:**
 - `diq-bot/bot.js`
+- `diq-bot/features/connect.js`
 - `diq-bot/features/user-teams.js`
 - `diq-bot/features/assign-fantrax-roles.js`
 
@@ -138,6 +139,7 @@ Laravel web routes, domain persistence, or app authorization rules.
 **Public Interface:**
 - Discord bot process
 - Laravel API endpoints under `/api/discord/*`
+- `/diq connect`
 - Reverb/Pusher channel events emitted by Laravel
 
 **Example Usage:**
@@ -1225,6 +1227,7 @@ $leagues = app(FantasyLeagueAccess::class)->activeLeaguesForUser($user)->get();
 **Location:**
 - `app/Http/Controllers/FantraxUserController.php`
 - `app/Models/IntegrationSecret.php`
+- `app/Services/ConnectFantraxUser.php`
 - `app/Services/FantasyIntegrationState.php`
 - `app/Services/ImportUserFantraxLeagues.php`
 - `app/Events/FantraxUserConnected.php`
@@ -1242,6 +1245,7 @@ Provider accounts owned by an organization, Patreon sync, or Discord OAuth login
 **Public Interface:**
 - `integrations.fantrax.save`
 - `integrations.fantrax.disconnect`
+- `ConnectFantraxUser`
 - `IntegrationSecret`
 - `FantasyIntegrationState`
 - `FantraxUserConnected`
@@ -1612,6 +1616,7 @@ event(new DiscordMemberConnected($user, $discordServer));
 - `app/Http/Controllers/Api/DiscordWebhookController.php`
 - `resources/js/echo.js`
 - `diq-bot/bot.js`
+- `diq-bot/features/connect.js`
 - `diq-bot/features/user-teams.js`
 - `diq-bot/features/assign-fantrax-roles.js`
 
@@ -1619,15 +1624,17 @@ event(new DiscordMemberConnected($user, $discordServer));
 Bridge Laravel domain events and HTTP APIs to the Discord bot process.
 
 **When to Use:**
-Bot-facing user team lookup, Fantrax linked status checks, and bot role assignment events.
+Bot-facing user team lookup, Fantrax linked status checks, bot-originated Fantrax connection, and bot role assignment events.
 
 **When Not to Use:**
 Browser-only realtime UI or backend-only sync logic.
 
 **Public Interface:**
 - `/api/discord/users/{discord_id}`
+- `/api/discord/fantrax/connect`
 - `/api/diq/is-fantrax`
 - `BotFantraxLinked`
+- `/diq connect`
 
 **Example Usage:**
 ```php
