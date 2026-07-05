@@ -184,6 +184,7 @@
         playerPerspectiveHeadings: [],
         playerPerspectiveRows: [],
         playerPerspectiveRowsById: {},
+        playerPerspectiveLoaded: false,
         playerPerspectiveLoading: false,
         playerPerspectiveError: '',
         playerPerspectiveRequestKey: '',
@@ -215,7 +216,7 @@
             return this.selectedPlayerPerspective === '__queue__';
         },
         get availablePerspectivePlayers() {
-            if (this.playerPerspectiveRows.length === 0) return this.availablePlayers;
+            if (!this.playerPerspectiveLoaded) return [];
 
             return this.playerPerspectiveRows
                 .filter((row) => this.availablePlayersById[this.perspectivePlayerId(row)])
@@ -443,7 +444,9 @@
             }
 
             if (tab === 'players') {
-                this.loadDraftPlayersPayload().then(() => this.loadPlayerPerspectiveStats());
+                this.playerPerspectiveLoaded = false;
+                this.playerPerspectiveLoading = true;
+                this.loadDraftPlayersPayload().then(() => this.loadPlayerPerspectiveStats(true));
             }
         },
         async loadDraftPlayersPayload() {
@@ -451,7 +454,6 @@
 
             this.playersPayloadLoading = true;
             this.playersPayloadError = '';
-            this.playerPerspectiveLoading = true;
 
             try {
                 const response = await fetch(this.playersPayloadUrl, {
@@ -488,7 +490,6 @@
                 this.playersPayloadError = error?.message || 'Could not load draft players.';
             } finally {
                 this.playersPayloadLoading = false;
-                this.playerPerspectiveLoading = false;
             }
         },
         playerPerspectiveRow(player) {
@@ -571,17 +572,32 @@
 
             return String(value);
         },
-        async loadPlayerPerspectiveStats() {
-            if (this.showingQueuePerspective || !this.canShowLeagueStats || !this.leagueStatsPayloadUrl || this.playerPerspectiveLoading) return;
+        async loadPlayerPerspectiveStats(force = false) {
+            if (this.showingQueuePerspective || (this.playerPerspectiveLoading && !force)) return;
+
+            if (!this.canShowLeagueStats || !this.leagueStatsPayloadUrl) {
+                this.playerPerspectiveLoaded = true;
+                this.playerPerspectiveLoading = false;
+                return;
+            }
 
             const perspective = this.selectedPlayerPerspective || this.playerPerspectiveOptions[0]?.slug || '';
-            if (!perspective) return;
+            if (!perspective) {
+                this.playerPerspectiveLoaded = true;
+                this.playerPerspectiveLoading = false;
+                return;
+            }
 
             const requestKey = perspective;
-            if (this.playerPerspectiveRequestKey === requestKey && this.playerPerspectiveHeadings.length > 0) return;
+            if (this.playerPerspectiveRequestKey === requestKey && this.playerPerspectiveHeadings.length > 0) {
+                this.playerPerspectiveLoaded = true;
+                this.playerPerspectiveLoading = false;
+                return;
+            }
 
             if (this.playerPerspectiveCache[requestKey]) {
                 this.applyPlayerPerspectivePayload(this.playerPerspectiveCache[requestKey], requestKey);
+                this.playerPerspectiveLoading = false;
                 return;
             }
 
@@ -634,11 +650,13 @@
                     .map((row) => [this.perspectivePlayerId(row), row]),
             );
             this.playerPerspectiveRequestKey = requestKey;
+            this.playerPerspectiveLoaded = true;
         },
         setPlayerPerspective(value) {
             this.selectedPlayerPerspective = value;
             this.posTypeFilter = '';
             this.playerPerspectiveRequestKey = '';
+            this.playerPerspectiveLoaded = false;
             if (this.showingQueuePerspective) {
                 this.refreshDraftQueuePayload();
                 return;
@@ -1492,7 +1510,7 @@
                                     </template>
                                 </tr>
                             </template>
-                            <tr x-show="!playerPerspectiveLoading && filteredDraftPlayers.length === 0">
+                            <tr x-show="!playerPerspectiveLoading && playerPerspectiveLoaded && filteredDraftPlayers.length === 0">
                                 <td :colspan="Math.max(6 + playerStatHeadings.length, 6)" class="px-4 py-8 text-center text-sm text-slate-500">No players match this draft view.</td>
                             </tr>
                             <template x-for="index in (playerPerspectiveLoading ? 6 : 0)" :key="`players-loading-${index}`">
