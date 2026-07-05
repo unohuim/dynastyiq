@@ -1143,17 +1143,24 @@ final class LeagueController extends Controller
         $channelId = is_array($channel) ? trim((string) ($channel['id'] ?? '')) : '';
         $channelName = is_array($channel) ? trim((string) ($channel['name'] ?? '')) : '';
 
-        DraftNotificationSetting::query()->updateOrCreate(
-            ['draft_id' => $draft->id],
-            [
-                'discord_channel_id' => $channelId !== '' ? $channelId : null,
-                'discord_channel_name' => $channelName !== '' ? $channelName : null,
-                'enabled' => $channelId !== '',
-                'settings' => [
-                    'source' => $channelId !== '' ? 'legacy_community_league_meta' : 'draft_central',
-                ],
+        $settings = DraftNotificationSetting::query()->firstOrNew(['draft_id' => $draft->id]);
+
+        if ($settings->exists && $settings->discord_channel_id) {
+            return;
+        }
+
+        if ($settings->exists && $channelId === '') {
+            return;
+        }
+
+        $settings->fill([
+            'discord_channel_id' => $channelId !== '' ? $channelId : null,
+            'discord_channel_name' => $channelName !== '' ? $channelName : null,
+            'enabled' => $channelId !== '',
+            'settings' => [
+                'source' => $channelId !== '' ? 'legacy_community_league_meta' : 'draft_central',
             ],
-        );
+        ])->save();
     }
 
     /**

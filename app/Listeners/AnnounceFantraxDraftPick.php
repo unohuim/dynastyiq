@@ -237,10 +237,6 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ])
             ->first();
 
-        if (! $row && ! $draft->organization_id) {
-            return null;
-        }
-
         $pivotMeta = is_string($row?->pivot_meta) && $row->pivot_meta !== ''
             ? json_decode($row->pivot_meta, true)
             : [];
@@ -255,12 +251,17 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->where('fantrax_id', $providerPlayerId)
             ->value('name');
         $playerDetails = $this->playerDetails($draftPick);
-        $userIds = DB::table('organization_user')
-            ->where('organization_id', (int) ($draft->organization_id ?: $row?->organization_id))
-            ->pluck('user_id')
-            ->map(static fn (mixed $userId): int => (int) $userId)
-            ->values()
-            ->all();
+        $organizationId = $draft->organization_id
+            ? (int) $draft->organization_id
+            : ($row?->organization_id ? (int) $row->organization_id : null);
+        $userIds = $organizationId
+            ? DB::table('organization_user')
+                ->where('organization_id', $organizationId)
+                ->pluck('user_id')
+                ->map(static fn (mixed $userId): int => (int) $userId)
+                ->values()
+                ->all()
+            : [];
 
         return [
             'team_name' => (string) ($teamName ?: $providerTeamId ?: 'Unknown team'),
