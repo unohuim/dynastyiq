@@ -40,11 +40,13 @@ it('stores preferences as json and returns ok', function () {
             'ok' => true,
         ]);
 
-    $this->assertDatabaseHas('user_preferences', [
-        'user_id' => $user->id,
-        'key' => 'notifications.discord.dm',
-        'value' => json_encode(true),
-    ]);
+    $preference = DB::table('user_preferences')
+        ->where('user_id', $user->id)
+        ->where('key', 'notifications.discord.dm')
+        ->first();
+
+    expect($preference)->not->toBeNull()
+        ->and(json_decode((string) $preference->value, true))->toBeTrue();
 });
 
 it('deletes preferences when value is null or empty', function () {
@@ -99,15 +101,17 @@ it('only mutates preferences for the authenticated user', function () {
             'ok' => true,
         ]);
 
-    $this->assertDatabaseHas('user_preferences', [
-        'user_id' => $owner->id,
-        'key' => 'notifications.discord.dm',
-        'value' => json_encode(false),
-    ]);
+    $ownerPreference = DB::table('user_preferences')
+        ->where('user_id', $owner->id)
+        ->where('key', 'notifications.discord.dm')
+        ->first();
+    $otherPreference = DB::table('user_preferences')
+        ->where('user_id', $other->id)
+        ->where('key', 'notifications.discord.dm')
+        ->first();
 
-    $this->assertDatabaseHas('user_preferences', [
-        'user_id' => $other->id,
-        'key' => 'notifications.discord.dm',
-        'value' => json_encode('other-value'),
-    ]);
+    expect($ownerPreference)->not->toBeNull()
+        ->and(json_decode((string) $ownerPreference->value, true))->toBeFalse()
+        ->and($otherPreference)->not->toBeNull()
+        ->and(json_decode((string) $otherPreference->value, true))->toBe('other-value');
 });

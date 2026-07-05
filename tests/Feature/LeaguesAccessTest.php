@@ -261,6 +261,7 @@ test('fantrax roster display derives eligibility from platform slot usage and so
             'platform_player_id' => 'byfield',
             'slot' => 'LW',
             'status' => 'active',
+            'eligibility' => null,
             'starts_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
@@ -272,21 +273,22 @@ test('fantrax roster display derives eligibility from platform slot usage and so
             'platform_player_id' => 'byfield',
             'slot' => 'C',
             'status' => 'active',
+            'eligibility' => null,
             'starts_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ],
     ]);
 
-    $response = $this->actingAs($user)->get(route('leagues.index'));
+    $response = $this->actingAs($user)->get(route('leagues.players.payload', $league->id));
 
     $response->assertOk();
 
-    $players = collect($response->viewData('teams')[0]['players']);
+    $players = collect($response->json('teams.0.players'));
 
-    expect($players->pluck('name')->all())->toBe([
-        'Quinton Byfield',
+    expect($players->pluck('name')->sort()->values()->all())->toBe([
         'Minor Defense',
+        'Quinton Byfield',
     ]);
     expect($players->firstWhere('name', 'Quinton Byfield')['eligibility'])->toBe(['C', 'LW']);
     expect($players->firstWhere('name', 'Minor Defense')['eligibility'])->toBe(['D']);

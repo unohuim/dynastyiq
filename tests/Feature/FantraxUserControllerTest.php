@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Events\FantraxUserConnected;
-use App\Http\Controllers\FantraxUserController;
+use App\Services\ConnectFantraxUser;
 use App\Models\IntegrationSecret;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
@@ -36,13 +36,13 @@ class FantraxUserControllerTest extends TestCase
             ['id' => 'abc123', 'name' => 'League One'],
         ];
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->with('fantrax', 'user_leagues', ['userSecretId' => 'secret-key'])
             ->andReturn(['leagues' => $leagues]);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $this->mock(FantraxLeagueService::class, function ($mock) use ($user, $leagues) {
             $mock->shouldReceive('upsertLeaguesForUser')
@@ -87,13 +87,13 @@ class FantraxUserControllerTest extends TestCase
             ['id' => 'abc123', 'name' => 'League One'],
         ];
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->with('fantrax', 'user_leagues', ['userSecretId' => 'secret-key'])
             ->andReturn(['leagues' => $leagues]);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $this->mock(FantraxLeagueService::class, function ($mock) use ($user, $leagues) {
             $mock->shouldReceive('upsertLeaguesForUser')
@@ -118,12 +118,12 @@ class FantraxUserControllerTest extends TestCase
 
         $exception = new RequestException(new HttpClientResponse(new \GuzzleHttp\Psr7\Response(500)));
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->andThrow($exception);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $response = $this->actingAs($user)->postJson(route('integrations.fantrax.save'), [
             'fantrax_secret_key' => 'secret-key',
@@ -144,12 +144,12 @@ class FantraxUserControllerTest extends TestCase
 
         $exception = new RequestException(new HttpClientResponse(new \GuzzleHttp\Psr7\Response(500)));
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->andThrow($exception);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $response = $this->from('/settings')->actingAs($user)->post(route('integrations.fantrax.save'), [
             'fantrax_secret_key' => 'secret-key',
@@ -167,12 +167,12 @@ class FantraxUserControllerTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->andReturn(['leagues' => []]);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $response = $this->actingAs($user)->postJson(route('integrations.fantrax.save'), [
             'fantrax_secret_key' => 'secret-key',
@@ -181,7 +181,7 @@ class FantraxUserControllerTest extends TestCase
         $response->assertStatus(422)
             ->assertJson([
                 'ok' => false,
-                'error' => 'Invalid Fantrax Secret Key.',
+                'error' => 'Invalid Fantrax Secret ID.',
             ]);
     }
 
@@ -189,12 +189,12 @@ class FantraxUserControllerTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->andReturn(['leagues' => []]);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         Event::fake([FantraxUserConnected::class]);
 
@@ -205,7 +205,7 @@ class FantraxUserControllerTest extends TestCase
         $response->assertStatus(422)
             ->assertJson([
                 'ok' => false,
-                'error' => 'Invalid Fantrax Secret Key.',
+                'error' => 'Invalid Fantrax Secret ID.',
             ]);
 
         $this->assertDatabaseCount('integration_secrets', 0);
@@ -217,12 +217,12 @@ class FantraxUserControllerTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-        $controller->shouldReceive('getAPIData')
+        $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+        $connector->shouldReceive('getAPIData')
             ->once()
             ->andReturn(['leagues' => []]);
 
-        $this->app->instance(FantraxUserController::class, $controller);
+        $this->app->instance(ConnectFantraxUser::class, $connector);
 
         $response = $this->from('/settings')->actingAs($user)->post(route('integrations.fantrax.save'), [
             'fantrax_secret_key' => 'secret-key',
@@ -230,7 +230,7 @@ class FantraxUserControllerTest extends TestCase
 
         $response->assertRedirect('/settings');
         $response->assertSessionHasErrors([
-            'fantrax_secret_key' => 'Invalid Fantrax Secret Key.',
+            'fantrax_secret_key' => 'Invalid Fantrax Secret ID.',
         ]);
     }
 

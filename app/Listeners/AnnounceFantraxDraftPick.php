@@ -18,6 +18,7 @@ use App\Models\Stat;
 use App\Services\DraftPickCardRenderer;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -41,26 +42,32 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             return;
         }
 
-        if ($draftPick->announced_at !== null) {
-            return;
-        }
+        Cache::lock('draft-pick-announcement:' . $draftPick->id, 30)->block(5, function () use ($draftPick, $context): void {
+            $lockedDraftPick = DraftPick::query()
+                ->with(['draft.notificationSettings', 'platformTeam', 'player'])
+                ->find($draftPick->id);
 
-        $message = $this->message($draftPick, $context);
-        $discordPayload = $this->discordPayload($draftPick, $message, $context);
+            if (! $lockedDraftPick instanceof DraftPick || $lockedDraftPick->announced_at !== null) {
+                return;
+            }
 
-        $eventPayload = DraftPickMade::fromDraftPick($draftPick)->pick;
+            $message = $this->message($lockedDraftPick, $context);
+            $discordPayload = $this->discordPayload($lockedDraftPick, $message, $context);
 
-        foreach ($context['user_ids'] as $userId) {
-            FantraxDraftPickToast::dispatch((int) $userId, $message, $eventPayload);
-        }
+            $eventPayload = DraftPickMade::fromDraftPick($lockedDraftPick)->pick;
 
-        $channelId = (string) data_get($context['notification_settings'], 'discord_channel_id', '');
+            foreach ($context['user_ids'] as $userId) {
+                FantraxDraftPickToast::dispatch((int) $userId, $message, $eventPayload);
+            }
 
-        if ($channelId !== '' && ! $this->postDiscordMessage($channelId, $discordPayload)) {
-            return;
-        }
+            $channelId = (string) data_get($context['notification_settings'], 'discord_channel_id', '');
 
-        $this->claimDraftPick($draftPick);
+            if ($channelId !== '' && ! $this->postDiscordMessage($channelId, $discordPayload)) {
+                return;
+            }
+
+            $this->claimDraftPick($lockedDraftPick);
+        });
     }
 
     private function claimDraftPick(DraftPick $draftPick): void

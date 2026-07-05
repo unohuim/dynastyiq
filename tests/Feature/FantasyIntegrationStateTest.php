@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use App\Events\FantraxUserConnected;
-use App\Http\Controllers\FantraxUserController;
+use App\Services\ConnectFantraxUser;
 use App\Models\IntegrationSecret;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
@@ -56,13 +56,13 @@ test('fantrax save returns ready integration state when active league assignment
         ],
     ];
 
-    $controller = Mockery::mock(FantraxUserController::class)->makePartial();
-    $controller->shouldReceive('getAPIData')
+    $connector = Mockery::mock(ConnectFantraxUser::class)->makePartial();
+    $connector->shouldReceive('getAPIData')
         ->once()
         ->with('fantrax', 'user_leagues', ['userSecretId' => 'secret-key'])
         ->andReturn(['leagues' => $leagues]);
 
-    app()->instance(FantraxUserController::class, $controller);
+    app()->instance(ConnectFantraxUser::class, $connector);
     Event::fake([FantraxUserConnected::class]);
 
     $response = $this->actingAs($user)->postJson(route('integrations.fantrax.save'), [

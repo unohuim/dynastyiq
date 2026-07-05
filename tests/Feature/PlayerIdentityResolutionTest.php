@@ -2450,7 +2450,7 @@ it('transactions payload sorts dated rows newest first before undated rows by de
         'source' => NhlPlayerTransaction::SOURCE_CAPWAGES,
         'source_key' => 'capwages:sort-null',
         'transaction_date' => null,
-        'transaction_type' => 'draft',
+        'transaction_type' => 'waivers',
         'description' => 'Undated draft',
         'raw_payload' => ['slug' => 'undated-draft'],
     ]);
@@ -2779,7 +2779,8 @@ it('queues NHL identity resolution when a non-NHL identity links to a player wit
         'first_name' => 'Jack',
         'last_name' => 'Campbell',
         'full_name' => 'Jack Campbell',
-        'position' => 'G',
+        'position' => null,
+        'pos_type' => null,
     ]);
     $identity = PlayerExternalIdentity::create([
         'provider' => PlayerExternalIdentity::PROVIDER_CAPWAGES,

@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\HasOneThrough;
 
 class League extends Model
@@ -42,6 +43,18 @@ class League extends Model
             'platform_league_id'
         )->withPivot(['linked_at', 'status', 'meta', 'created_at', 'updated_at'])
          ->withTimestamps();
+    }
+
+    public function drafts(): HasManyThrough
+    {
+        return $this->hasManyThrough(
+            Draft::class,
+            LeaguePlatformLeague::class,
+            'league_id',
+            'platform_league_id',
+            'id',
+            'platform_league_id',
+        );
     }
 
     public function userRoles(): HasMany

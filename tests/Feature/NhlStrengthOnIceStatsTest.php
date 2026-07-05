@@ -455,7 +455,7 @@ it('counts goals as shots for', function (): void {
     ($this->makePlayer)(1);
     $unit = app(ResolveNhlUnit::class)->resolve('F', [1], 'TOR');
     $shiftId = ($this->insertUnitShift)($unit->id, 'F');
-    $eventId = ($this->insertEvent)('goal', 30);
+    $eventId = ($this->insertEvent)('goal', 30, ['shot_type' => 'wrist']);
     DB::table('event_unit_shifts')->insert(['event_id' => $eventId, 'unit_shift_id' => $shiftId, 'created_at' => now(), 'updated_at' => now()]);
 
     app()->make(SumNhlGameStrengthUnits::class, ['gameId' => 2026020001])->sum();
@@ -1089,7 +1089,7 @@ it('uses official boxscore toi for stats page per-60 rate calculations', functio
     $row = $response->json('data.0');
 
     expect($row['toi'])->toBe('20:00')
-        ->and($row['g'])->toBe(3.0);
+        ->and($row['g'])->toEqual(3.0);
 });
 
 it('maps wing position filters to stored NHL left and right position codes', function (): void {
@@ -1356,7 +1356,7 @@ it('exposes prospect goalie stats from legacy stats goalie columns', function ()
         ->and($row['shots_against'])->toBe(100)
         ->and($row['goals_against'])->toBe(10)
         ->and($row['sv_pct'])->toBe(0.9)
-        ->and($row['gaa'])->toBe(2.0);
+        ->and($row['gaa'])->toEqual(2.0);
 });
 
 it('groups prospect stats by player and league while summing same league teams', function (): void {

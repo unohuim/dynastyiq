@@ -56,10 +56,12 @@ class UserPreferencesControllerTest extends TestCase
         $response->assertOk()
             ->assertJson(['ok' => true]);
 
-        $this->assertDatabaseHas('user_preferences', [
-            'user_id' => $user->id,
-            'key' => 'notifications.discord.channel',
-            'value' => json_encode('12345'),
-        ]);
+        $preference = DB::table('user_preferences')
+            ->where('user_id', $user->id)
+            ->where('key', 'notifications.discord.channel')
+            ->first();
+
+        $this->assertNotNull($preference);
+        $this->assertSame('12345', json_decode((string) $preference->value, true));
     }
 }

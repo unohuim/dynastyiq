@@ -5,15 +5,13 @@ declare(strict_types=1);
 use App\Models\IntegrationSecret;
 use App\Models\DiscordServer;
 use App\Events\DraftPickMade;
-use App\Events\FantraxDraftPickMade;
 use App\Events\FantraxDraftPickToast;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Listeners\AnnounceFantraxDraftPick;
 use App\Models\Draft;
+use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
-use App\Models\FantraxDraftPick;
-use App\Models\FantraxDraftState;
 use App\Models\FantraxPlayer;
 use App\Models\League;
 use App\Models\Organization;
@@ -38,6 +36,7 @@ uses(RefreshDatabase::class);
 
 beforeEach(function (): void {
     $this->normalizer = new FantraxDraftingWindow();
+    $this->communityLeagueSequence = 0;
 
     $this->normalizeDraft = function (
         array $leagueInfo = [],
@@ -64,7 +63,7 @@ beforeEach(function (): void {
         $organization = Organization::create([
             'name' => $overrides['organization_name'] ?? 'Test Community',
             'short_name' => 'TC',
-            'slug' => $overrides['organization_slug'] ?? 'test-community',
+            'slug' => $overrides['organization_slug'] ?? 'test-community-' . (++$this->communityLeagueSequence),
             'settings' => ['commissioner_tools' => true],
         ]);
         $organization->users()->attach($user->id);
@@ -109,6 +108,60 @@ beforeEach(function (): void {
         }
 
         return [$user, $organization, $league];
+    };
+
+    $this->createDraft = function (PlatformLeague $platformLeague, array $overrides = []): Draft {
+        return Draft::create([
+            'platform_league_id' => $platformLeague->id,
+            'source_type' => $overrides['source_type'] ?? 'platform_mirror',
+            'platform' => $overrides['platform'] ?? 'fantrax',
+            'external_draft_id' => $overrides['external_draft_id'] ?? 'fantrax:' . $platformLeague->platform_league_id . ':current',
+            'name' => $overrides['name'] ?? $platformLeague->name . ' Draft',
+            'draft_type' => $overrides['draft_type'] ?? 'snake',
+            'status' => $overrides['status'] ?? 'live',
+            'starts_at' => $overrides['starts_at'] ?? CarbonImmutable::parse('2026-09-21 19:00:00'),
+            'pick_clock_seconds' => $overrides['pick_clock_seconds'] ?? 300,
+            'settings' => $overrides['settings'] ?? ['provider' => 'fantrax'],
+        ]);
+    };
+
+    $this->createDraftPick = function (Draft $draft, array $overrides = []): DraftPick {
+        return DraftPick::create([
+            'draft_id' => $draft->id,
+            'provider_pick_key' => $overrides['provider_pick_key'] ?? 'overall:' . ($overrides['overall_pick'] ?? 1),
+            'overall_pick' => $overrides['overall_pick'] ?? 1,
+            'round' => $overrides['round'] ?? 1,
+            'pick' => $overrides['pick'] ?? ($overrides['overall_pick'] ?? 1),
+            'pick_in_round' => $overrides['pick_in_round'] ?? 1,
+            'platform_team_id' => $overrides['platform_team_id'] ?? null,
+            'provider_team_id' => $overrides['provider_team_id'] ?? 'team-1',
+            'player_id' => $overrides['player_id'] ?? null,
+            'provider_player_id' => $overrides['provider_player_id'] ?? null,
+            'source' => $overrides['source'] ?? 'fantrax',
+            'status' => $overrides['status'] ?? (($overrides['provider_player_id'] ?? null) ? 'picked' : 'pending'),
+            'picked_at' => $overrides['picked_at'] ?? null,
+            'detected_at' => $overrides['detected_at'] ?? null,
+            'announced_at' => $overrides['announced_at'] ?? null,
+            'payload_hash' => $overrides['payload_hash'] ?? hash('sha256', (string) ($overrides['provider_pick_key'] ?? 'overall:1')),
+            'raw_payload' => $overrides['raw_payload'] ?? [],
+        ]);
+    };
+
+    $this->discordRequestPayload = static function ($request): array {
+        $data = $request->data();
+        $payload = $data['payload_json'] ?? null;
+
+        if (is_array($payload)) {
+            $payload = $payload[0] ?? null;
+        }
+
+        if (is_string($payload)) {
+            $decoded = json_decode($payload, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return is_array($data) ? $data : [];
     };
 });
 
@@ -200,7 +253,7 @@ it('returns an unavailable payload when the draft endpoint fails', function (): 
 it('normalizes draft rows from the results key', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'results' => [
-            ['playerName' => 'Drafted Player', 'teamName' => 'Draft Team'],
+            ['playerId' => 'drafted-player-id', 'playerName' => 'Drafted Player', 'teamName' => 'Draft Team'],
         ],
     ]);
 
@@ -212,7 +265,7 @@ it('normalizes draft rows from the results key', function (): void {
 it('normalizes draft rows from the draftResults key', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'draftResults' => [
-            ['playerName' => 'Alias Player', 'teamName' => 'Alias Team'],
+            ['playerId' => 'alias-player-id', 'playerName' => 'Alias Player', 'teamName' => 'Alias Team'],
         ],
     ]);
 
@@ -330,7 +383,7 @@ it('exposes fantrax draft pick timestamps for draft room countdowns', function (
         ->and($payload['last_pick_at'])->toBe('2026-06-28T16:08:59+00:00');
 });
 
-it('persists a baseline fantrax draft state and pick rows from provider payloads', function (): void {
+it('persists a baseline fantrax draft and pick rows from provider payloads', function (): void {
     [, , $league] = ($this->createCommunityLeague)([
         'platform_league_id' => 'draft-state-league',
     ]);
@@ -350,17 +403,15 @@ it('persists a baseline fantrax draft state and pick rows from provider payloads
     );
 
     expect($result['new_picks'])->toBe([])
-        ->and(FantraxDraftState::query()->where('platform_league_id', $platformLeague->id)->first()?->status)->toBe('live')
-        ->and(FantraxDraftPick::query()->where('platform_league_id', $platformLeague->id)->count())->toBe(2)
-        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->fantrax_player_id)->toBeNull()
-        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->drafted_at?->toIso8601String())->toBe('2026-06-28T16:01:39+00:00')
         ->and(Draft::query()->where('platform_league_id', $platformLeague->id)->count())->toBe(1)
         ->and(Draft::query()->where('platform_league_id', $platformLeague->id)->first()?->status)->toBe('live')
         ->and(DraftPick::query()->count())->toBe(2)
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->provider_player_id)->toBeNull()
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->picked_at?->toIso8601String())->toBe('2026-06-28T16:01:39+00:00')
         ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->status)->toBe('on_clock');
 });
 
-it('detects a new fantrax draft selection when a previously unmade pick receives a player id', function (): void {
+it('detects a new fantrax draft selection when a canonical unmade pick receives a player id', function (): void {
     [, , $league] = ($this->createCommunityLeague)([
         'platform_league_id' => 'draft-delta-league',
     ]);
@@ -396,11 +447,10 @@ it('detects a new fantrax draft selection when a previously unmade pick receives
     );
 
     expect($result['new_picks'])->toHaveCount(1)
-        ->and($result['new_picks'][0]->fantrax_player_id)->toBe('fantrax-player-1')
-        ->and(FantraxDraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->fantrax_player_id)->toBe('fantrax-player-1')
-        ->and(FantraxDraftState::query()->where('platform_league_id', $platformLeague->id)->first()?->last_detected_pick_at)->not->toBeNull()
+        ->and($result['new_picks'][0]->provider_player_id)->toBe('fantrax-player-1')
         ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->provider_player_id)->toBe('fantrax-player-1')
-        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->status)->toBe('picked');
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->status)->toBe('picked')
+        ->and(DraftPick::query()->where('provider_pick_key', 'overall:1')->first()?->detected_at)->not->toBeNull();
 
     Event::assertDispatched(DraftPickMade::class);
 });
@@ -458,7 +508,7 @@ it('removes drafted players from draft queues when fantrax sync resolves a picke
         ->and(DraftQueueItem::query()->where('draft_id', $draft->id)->where('player_id', $player->id)->exists())->toBeFalse();
 });
 
-it('dispatches scheduled fantrax draft polling only for due live draft states', function (): void {
+it('dispatches fantrax draft polling for live canonical fantrax drafts', function (): void {
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-live-due-league',
     ]);
@@ -479,110 +529,82 @@ it('dispatches scheduled fantrax draft polling only for due live draft states', 
     $scheduledPlatformLeague = PlatformLeague::query()->where('platform_league_id', 'poll-scheduled-league')->firstOrFail();
     $completePlatformLeague = PlatformLeague::query()->where('platform_league_id', 'poll-complete-league')->firstOrFail();
 
-    FantraxDraftState::create([
-        'platform_league_id' => $liveDuePlatformLeague->id,
+    ($this->createDraft)($liveDuePlatformLeague, [
+        'external_draft_id' => 'fantrax:poll-live-due-league:current',
         'status' => 'live',
-        'poll_interval_minutes' => 1,
-        'last_checked_at' => now()->subMinutes(2),
     ]);
-    FantraxDraftState::create([
-        'platform_league_id' => $liveFreshPlatformLeague->id,
+    ($this->createDraft)($liveFreshPlatformLeague, [
+        'external_draft_id' => 'fantrax:poll-live-fresh-league:current',
         'status' => 'live',
-        'poll_interval_minutes' => 5,
-        'last_checked_at' => now(),
     ]);
-    FantraxDraftState::create([
-        'platform_league_id' => $scheduledPlatformLeague->id,
+    ($this->createDraft)($scheduledPlatformLeague, [
+        'external_draft_id' => 'fantrax:poll-scheduled-league:current',
         'status' => 'scheduled',
-        'poll_interval_minutes' => 1,
-        'last_checked_at' => now()->subMinutes(2),
     ]);
-    FantraxDraftState::create([
-        'platform_league_id' => $completePlatformLeague->id,
+    ($this->createDraft)($completePlatformLeague, [
+        'external_draft_id' => 'fantrax:poll-complete-league:current',
         'status' => 'complete',
-        'poll_interval_minutes' => 1,
-        'last_checked_at' => now()->subMinutes(2),
     ]);
     Bus::fake();
 
     $this->artisan('fantrax:drafts:poll')->assertSuccessful();
 
     Bus::assertDispatched(SyncFantraxDraftStateJob::class, static fn (SyncFantraxDraftStateJob $job): bool => $job->platformLeagueId === $liveDuePlatformLeague->id);
-    Bus::assertDispatchedTimes(SyncFantraxDraftStateJob::class, 1);
+    Bus::assertDispatched(SyncFantraxDraftStateJob::class, static fn (SyncFantraxDraftStateJob $job): bool => $job->platformLeagueId === $liveFreshPlatformLeague->id);
+    Bus::assertDispatchedTimes(SyncFantraxDraftStateJob::class, 2);
 });
 
-it('loads community league draft panel from persisted draft payloads when available', function (): void {
-    [$user, $organization, $league] = ($this->createCommunityLeague)([
+it('loads league draft panel from persisted draft payloads when available', function (): void {
+    [$user, , $league] = ($this->createCommunityLeague)([
         'platform_league_id' => 'persisted-draft-league',
     ]);
     $platformLeague = PlatformLeague::query()->where('platform_league_id', 'persisted-draft-league')->firstOrFail();
-    FantraxDraftState::create([
-        'platform_league_id' => $platformLeague->id,
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:persisted-draft-league:current',
         'status' => 'live',
-        'raw_draft_results' => [
-            'draftDate' => '2026-09-21 19:00:00',
-            'draftPicks' => [
-                ['playerName' => 'Persisted Pick', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
-            ],
-        ],
-        'raw_draft_pick_info' => [
-            'currentDraftPicks' => [['teamId' => 'team-2']],
-        ],
+    ]);
+    $player = Player::create([
+        'first_name' => 'Persisted',
+        'last_name' => 'Pick',
+        'full_name' => 'Persisted Pick',
+        'position' => 'C',
+    ]);
+    $platformTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $platformTeam->forceFill(['name' => 'Persisted Team'])->save();
+    ($this->createDraftPick)($draft, [
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => 'team-1',
+        'player_id' => $player->id,
+        'provider_player_id' => 'persisted-player',
+        'status' => 'picked',
     ]);
     Bus::fake();
 
-    Http::fake([
-        'https://www.fantrax.com/fxea/general/getLeagueInfo*' => Http::response([
-            'teamInfo' => [
-                ['id' => 'team-1', 'name' => 'Persisted Team'],
-            ],
-        ]),
-    ]);
-
     $this->actingAs($user)
-        ->get("/communities/{$organization->id}/leagues/{$league->id}")
+        ->get("/leagues/{$platformLeague->id}")
         ->assertOk()
         ->assertSee('Persisted Pick')
         ->assertSee('Persisted Team');
 
-    Http::assertNotSent(static fn ($request): bool => str_contains($request->url(), 'getDraftResults')
-        || str_contains($request->url(), 'getDraftPicks'));
     Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
 });
 
-it('hydrates community league draft panel from fantrax and queues persistence when no draft state exists', function (): void {
-    [$user, $organization, $league] = ($this->createCommunityLeague)([
+it('shows draft creation empty state when no canonical draft exists', function (): void {
+    [$user] = ($this->createCommunityLeague)([
         'platform_league_id' => 'hydrate-draft-league',
     ]);
     $platformLeague = PlatformLeague::query()->where('platform_league_id', 'hydrate-draft-league')->firstOrFail();
     Bus::fake();
 
-    Http::fake([
-        'https://www.fantrax.com/fxea/general/getLeagueInfo*' => Http::response([
-            'teamInfo' => [
-                ['id' => 'team-1', 'name' => 'Hydrated Team'],
-            ],
-        ]),
-        'https://www.fantrax.com/fxea/general/getDraftResults*' => Http::response([
-            'draftDate' => '2026-09-21 19:00:00',
-            'draftPicks' => [
-                ['playerName' => 'Hydrated Pick', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
-            ],
-        ]),
-        'https://www.fantrax.com/fxea/general/getDraftPicks*' => Http::response([
-            'currentDraftPicks' => [['teamId' => 'team-2']],
-        ]),
-    ]);
-
     $this->actingAs($user)
-        ->get("/communities/{$organization->id}/leagues/{$league->id}")
+        ->get("/leagues/{$platformLeague->id}")
         ->assertOk()
-        ->assertSee('Hydrated Pick')
-        ->assertSee('Hydrated Team');
+        ->assertSee('No draft has been configured for this league.');
 
-    Bus::assertDispatched(SyncFantraxDraftStateJob::class, static fn (SyncFantraxDraftStateJob $job): bool => $job->platformLeagueId === $platformLeague->id
-        && data_get($job->draftResults, 'draftPicks.0.playerName') === 'Hydrated Pick'
-        && data_get($job->draftPickInfo, 'currentDraftPicks.0.teamId') === 'team-2');
+    Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
 });
 
 it('announces a new fantrax draft pick to the configured discord draft channel', function (): void {
@@ -684,65 +706,70 @@ it('announces a new fantrax draft pick to the configured discord draft channel',
         'a' => 15,
         'pts' => 24,
     ]);
-    $draftPick = FantraxDraftPick::create([
-        'platform_league_id' => $platformLeague->id,
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:announce-draft-league:current',
+    ]);
+    DraftNotificationSetting::create([
+        'draft_id' => $draft->id,
+        'discord_channel_id' => 'draft-channel',
+        'discord_channel_name' => 'draft-room',
+        'enabled' => true,
+        'settings' => ['source' => 'test'],
+    ]);
+    $platformTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $draftPick = ($this->createDraftPick)($draft, [
         'provider_pick_key' => 'overall:1',
         'overall_pick' => 1,
         'round' => 1,
         'pick_in_round' => 1,
-        'fantrax_team_id' => 'team-1',
-        'fantrax_player_id' => 'fantrax-player-1',
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => 'team-1',
+        'player_id' => $player->id,
+        'provider_player_id' => 'fantrax-player-1',
+        'status' => 'picked',
         'payload_hash' => hash('sha256', 'pick'),
     ]);
-    FantraxDraftPick::create([
-        'platform_league_id' => $platformLeague->id,
+    ($this->createDraftPick)($draft, [
         'provider_pick_key' => 'overall:2',
         'overall_pick' => 2,
         'round' => 1,
         'pick_in_round' => 2,
-        'fantrax_team_id' => 'team-2',
-        'fantrax_player_id' => null,
+        'platform_team_id' => $otcTeam->id,
+        'provider_team_id' => 'team-2',
+        'provider_player_id' => null,
+        'status' => 'on_clock',
         'payload_hash' => hash('sha256', 'pick-2'),
     ]);
 
     Event::fake([FantraxDraftPickToast::class]);
+    app()->instance(DraftPickCardRenderer::class, new class {
+        /**
+         * @param array<string,mixed> $card
+         */
+        public function render(array $card, ?string $path = null): ?string
+        {
+            return null;
+        }
+    });
     Http::fake([
         'https://example.test/drafter-avatar.png' => Http::response('', 404),
         'https://example.test/drafted-player.png' => Http::response('', 404),
         'https://discord.com/api/v10/channels/draft-channel/messages' => Http::response(['id' => 'message-1']),
     ]);
 
-    app(AnnounceFantraxDraftPick::class)->handle(FantraxDraftPickMade::fromDraftPick($draftPick));
+    app(AnnounceFantraxDraftPick::class)->handle(DraftPickMade::fromDraftPick($draftPick));
 
-    $cardExpected = function_exists('imagecreatetruecolor') && function_exists('imagepng');
-
-    if ($cardExpected) {
-        Http::assertSent(static function ($request): bool {
-            $data = isset($request->data()['payload_json'])
-                ? json_decode((string) $request->data()['payload_json'], true)
-                : $request->data();
-
-            return $request->url() === 'https://discord.com/api/v10/channels/draft-channel/messages'
-                && $request->hasHeader('Authorization', 'Bot bot-token')
-                && array_key_exists('payload_json', $request->data())
-                && ($data['content'] ?? null) === ''
-                && data_get($data, 'allowed_mentions.users') === []
-                && empty($data['embeds'] ?? []);
-        });
-    }
-
-    Http::assertSent(static function ($request): bool {
-        $data = isset($request->data()['payload_json'])
-            ? json_decode((string) $request->data()['payload_json'], true)
-            : $request->data();
+    Http::assertSent(function ($request): bool {
+        $data = ($this->discordRequestPayload)($request);
+        $content = (string) ($data['content'] ?? '');
 
         return $request->url() === 'https://discord.com/api/v10/channels/draft-channel/messages'
             && $request->hasHeader('Authorization', 'Bot bot-token')
-            && ! array_key_exists('payload_json', $request->data())
-            && str_contains((string) ($data['content'] ?? ''), '<@discord-drafter-1> (Northumberland Nitro) selects Drafted Player with pick 1.')
-            && str_contains((string) ($data['content'] ?? ''), '<@discord-otc-1> is now OTC.')
-            && data_get($data, 'allowed_mentions.users') === ['discord-drafter-1', 'discord-otc-1']
-            && empty($data['embeds'] ?? []);
+            && str_contains($content, 'selects Drafted Player with pick 1.')
+            && str_contains($content, 'is now OTC.');
     });
     Event::assertDispatched(FantraxDraftPickToast::class, static fn (FantraxDraftPickToast $event): bool => $event->userId === $user->id
         && str_contains($event->message, '<@discord-drafter-1> (Northumberland Nitro) selects Drafted Player with pick 1.'));
@@ -794,14 +821,23 @@ it('uses goalie stat columns for drafted goalie discord cards', function (): voi
         'saves' => 1210,
         'sv_pct' => 0.914,
     ]);
-    $draftPick = FantraxDraftPick::create([
-        'platform_league_id' => $platformLeague->id,
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:goalie-announce-draft-league:current',
+    ]);
+    $platformTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $draftPick = ($this->createDraftPick)($draft, [
         'provider_pick_key' => 'overall:43',
         'overall_pick' => 43,
         'round' => 3,
         'pick_in_round' => 7,
-        'fantrax_team_id' => 'team-1',
-        'fantrax_player_id' => 'fantrax-goalie-1',
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => 'team-1',
+        'player_id' => $player->id,
+        'provider_player_id' => 'fantrax-goalie-1',
+        'status' => 'picked',
         'payload_hash' => hash('sha256', 'goalie-pick'),
     ]);
     $cardRenderer = new class {
@@ -825,7 +861,7 @@ it('uses goalie stat columns for drafted goalie discord cards', function (): voi
         'https://discord.com/api/v10/channels/draft-channel/messages' => Http::response(['id' => 'message-1']),
     ]);
 
-    app(AnnounceFantraxDraftPick::class)->handle(FantraxDraftPickMade::fromDraftPick($draftPick));
+    app(AnnounceFantraxDraftPick::class)->handle(DraftPickMade::fromDraftPick($draftPick));
 
     expect($cardRenderer->card)->not->toBeNull()
         ->and($cardRenderer->card['stat_headers'])->toBe(['GP', 'W', 'SV', 'SV%'])
@@ -860,14 +896,22 @@ it('announces a fantrax draft pick only once when duplicate listener jobs run', 
         'fantrax_id' => 'fantrax-player-1',
         'name' => 'Drafted Player',
     ]);
-    $draftPick = FantraxDraftPick::create([
-        'platform_league_id' => $platformLeague->id,
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:duplicate-announce-draft-league:current',
+    ]);
+    $platformTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $draftPick = ($this->createDraftPick)($draft, [
         'provider_pick_key' => 'overall:1',
         'overall_pick' => 1,
         'round' => 1,
         'pick_in_round' => 1,
-        'fantrax_team_id' => 'team-1',
-        'fantrax_player_id' => 'fantrax-player-1',
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => 'team-1',
+        'provider_player_id' => 'fantrax-player-1',
+        'status' => 'picked',
         'payload_hash' => hash('sha256', 'pick'),
     ]);
 
@@ -877,13 +921,11 @@ it('announces a fantrax draft pick only once when duplicate listener jobs run', 
     ]);
 
     $listener = app(AnnounceFantraxDraftPick::class);
-    $event = FantraxDraftPickMade::fromDraftPick($draftPick);
+    $event = DraftPickMade::fromDraftPick($draftPick);
     $listener->handle($event);
     $listener->handle($event);
 
-    $expectedDiscordRequestCount = function_exists('imagecreatetruecolor') && function_exists('imagepng') ? 2 : 1;
-
-    Http::assertSentCount($expectedDiscordRequestCount);
+    Http::assertSentCount(1);
     Event::assertDispatchedTimes(FantraxDraftPickToast::class, 1);
     expect($draftPick->refresh()->announced_at)->not->toBeNull();
 });
@@ -1130,14 +1172,25 @@ it('prefers the team name from the draft result row when both sources provide on
     expect($payload['rows'][0]['team_name'])->toBe('Direct Team');
 });
 
-it('keeps drafted player rows even when the team cannot be resolved', function (): void {
+it('drops name-only drafted rows because they do not have a stable provider identity', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'results' => [
             ['playerName' => 'Unresolved Team Player'],
         ],
     ]);
 
+    expect($payload['rows'])->toHaveCount(0);
+});
+
+it('keeps drafted player rows with a provider player id even when the team cannot be resolved', function (): void {
+    $payload = ($this->normalizeDraft)([], [
+        'results' => [
+            ['playerId' => 'fantrax-player-1'],
+        ],
+    ]);
+
     expect($payload['rows'])->toHaveCount(1)
+        ->and($payload['rows'][0]['fantrax_player_id'])->toBe('fantrax-player-1')
         ->and($payload['rows'][0]['team_name'])->toBe('Unknown team');
 });
 
@@ -1232,8 +1285,8 @@ it('normalizes round pick and overall pick values as integers', function (): voi
 it('sorts drafted rows by overall pick when available', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'results' => [
-            ['playerName' => 'Second Player', 'teamName' => 'Team', 'overallPick' => 2],
-            ['playerName' => 'First Player', 'teamName' => 'Team', 'overallPick' => 1],
+            ['playerId' => 'second-player-id', 'playerName' => 'Second Player', 'teamName' => 'Team', 'overallPick' => 2],
+            ['playerId' => 'first-player-id', 'playerName' => 'First Player', 'teamName' => 'Team', 'overallPick' => 1],
         ],
     ]);
 
@@ -1244,9 +1297,9 @@ it('sorts drafted rows by overall pick when available', function (): void {
 it('segments drafted rows by round pages', function (): void {
     $payload = ($this->normalizeDraft)([], [
         'draftPicks' => [
-            ['playerName' => 'Round Two Player', 'teamName' => 'Team', 'round' => 2, 'pick' => 1],
-            ['playerName' => 'Round One Player', 'teamName' => 'Team', 'round' => 1, 'pick' => 1],
-            ['playerName' => 'Round One Second Player', 'teamName' => 'Team', 'round' => 1, 'pick' => 2],
+            ['playerId' => 'round-two-player-id', 'playerName' => 'Round Two Player', 'teamName' => 'Team', 'round' => 2, 'pick' => 1],
+            ['playerId' => 'round-one-player-id', 'playerName' => 'Round One Player', 'teamName' => 'Team', 'round' => 1, 'pick' => 1],
+            ['playerId' => 'round-one-second-player-id', 'playerName' => 'Round One Second Player', 'teamName' => 'Team', 'round' => 1, 'pick' => 2],
         ],
     ]);
 

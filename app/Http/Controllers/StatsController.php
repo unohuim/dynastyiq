@@ -2476,10 +2476,11 @@ class StatsController extends BaseController
      */
     private function bounds($base, string $key): array
     {
+        $table = $base->getModel()->getTable();
         $col = $this->mapFilterColumn($base, $key);
         if (!$col) return ['min' => 0, 'max' => 0];
 
-        $qb = $base->cloneWithout(['orders', 'columns']);
+        $qb = (clone $base)->reorder();
 
         try {
             $minVal = (clone $qb)->min($col);
@@ -2516,7 +2517,8 @@ class StatsController extends BaseController
     /** │ Age bounds: portable */
     private function ageBoundsForBase($base): array
     {
-        $qb = $base->cloneWithout(['orders', 'columns'])
+        $qb = (clone $base)
+            ->reorder()
             ->whereNotNull('pf.dob');
 
         $earliestDob = $qb->clone()->min('pf.dob');

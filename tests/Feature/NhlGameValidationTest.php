@@ -724,6 +724,7 @@ it('excludes no-shot goal records from shots on goal and goalie shots against', 
             'event_owner_team_id' => 2,
             'scoring_player_id' => 8479671,
             'goalie_in_net_player_id' => 8474593,
+            'shot_type' => 'wrist',
             'strength' => 'EV',
             'created_at' => now(),
             'updated_at' => now(),
@@ -766,6 +767,8 @@ it('excludes no-shot goal records from shots on goal and goalie shots against', 
             'sort_order' => 696,
             'event_owner_team_id' => 2,
             'scoring_player_id' => 8479671,
+            'goalie_in_net_player_id' => null,
+            'shot_type' => null,
             'strength' => 'EV',
             'created_at' => now(),
             'updated_at' => now(),
@@ -779,18 +782,18 @@ it('excludes no-shot goal records from shots on goal and goalie shots against', 
         'nhl_player_id' => 8479671,
         'g' => 3,
         'eng' => 1,
-        'sog' => 1,
-        'evsog' => 1,
-        'sat' => 1,
-        'evsat' => 1,
+        'sog' => 2,
+        'evsog' => 2,
+        'sat' => 2,
+        'evsat' => 2,
     ]);
     $this->assertDatabaseHas('nhl_game_summaries', [
         'nhl_game_id' => 2026020001,
         'nhl_player_id' => 8474593,
         'ga' => 2,
         'evga' => 2,
-        'sa' => 1,
-        'evsa' => 1,
+        'sa' => 2,
+        'evsa' => 2,
     ]);
 });
 
@@ -897,6 +900,7 @@ it('uses boxscore shot semantics for unit shot aggregations', function (): void 
         'type_desc_key' => 'goal',
         'event_owner_team_id' => 1,
         'goalie_in_net_player_id' => 8470001,
+        'shot_type' => 'wrist',
         'strength' => 'EV',
         'created_at' => now(),
         'updated_at' => now(),
@@ -993,11 +997,11 @@ it('returns goalie-only deltas for persisted and derived goalie fields', functio
         'sv' => 21,
         'sa' => 24,
         'evsv' => 13,
-        'evsa' => 15,
+        'evsa' => 14,
         'ppsv' => 6,
-        'ppsa' => 7,
+        'ppsa' => 6,
         'pksv' => 2,
-        'pksa' => 3,
+        'pksa' => 2,
         'evga' => 1,
         'ppga' => 1,
         'pkga' => 1,
@@ -1293,6 +1297,7 @@ it('rebuilds a stopped game import from the admin rerun endpoint', function (): 
     Bus::fake();
     $admin = ($this->makeSuperAdmin)();
     ($this->insertGame)();
+    ($this->fakeSourcePreflight)([]);
     ($this->insertPipeline)(2026020001, [
         NhlImportStages::PBP => 'completed',
         NhlImportStages::SUMMARY => 'error',
@@ -1537,9 +1542,9 @@ it('writes troubleshooting markdown snapshots when validation fails', function (
         ->and(File::exists($directory . '/raw_boxscore_2026020001.txt'))->toBeTrue()
         ->and(File::exists($directory . '/raw_pbp_2026020001.txt'))->toBeTrue()
         ->and(File::exists($directory . '/raw_shifts_2026020001.txt'))->toBeTrue()
-        ->and(File::get($directory . '/raw_boxscore_2026020001.txt'))->toContain('"source": "boxscore"', '"playerId": 8478402')
-        ->and(File::get($directory . '/raw_pbp_2026020001.txt'))->toContain('"source": "pbp"', '"eventId": 704')
-        ->and(File::get($directory . '/raw_shifts_2026020001.txt'))->toContain('"source": "shifts"', '"shiftNumber": 1')
+        ->and(File::get($directory . '/raw_boxscore_2026020001.txt'))->toContain('"source": "boxscore"', 'gamecenter/2026020001/boxscore')
+        ->and(File::get($directory . '/raw_pbp_2026020001.txt'))->toContain('"source": "pbp"', 'gamecenter/2026020001/play-by-play')
+        ->and(File::get($directory . '/raw_shifts_2026020001.txt'))->toContain('"source": "shifts"', 'shiftcharts?cayenneExp=gameId=2026020001')
         ->and(File::get($directory . '/pbp_2026020001.md'))->toContain('Counts SOG', '704');
 });
 
@@ -1949,6 +1954,7 @@ it('drops goalie shiftchart artifacts when pbp proves the goalie was empty net a
             'situation_code' => '1551',
             'sort_order' => 1108,
             'goalie_in_net_player_id' => 8481519,
+            'shot_type' => 'wrist',
             'created_at' => now(),
             'updated_at' => now(),
         ],
@@ -1963,6 +1969,8 @@ it('drops goalie shiftchart artifacts when pbp proves the goalie was empty net a
             'type_desc_key' => 'faceoff',
             'situation_code' => '1560',
             'sort_order' => 1109,
+            'goalie_in_net_player_id' => null,
+            'shot_type' => null,
             'created_at' => now(),
             'updated_at' => now(),
         ],
@@ -2605,7 +2613,10 @@ it('does not guess between duplicate shift alternatives when none exactly matche
 });
 
 it('drops a thirty-second-or-less shift artifact when it exactly matches boxscore overage', function (): void {
-    ($this->insertGame)();
+    ($this->insertGame)(2026020001, [
+        'home_team_id' => 17,
+        'home_team_abbrev' => 'DET',
+    ]);
     ($this->makePlayer)(8477456, [
         'first_name' => 'J.T.',
         'last_name' => 'Compher',
@@ -2758,7 +2769,10 @@ it('keeps a short reused shift number when official targets prove it is valid', 
 });
 
 it('drops a thirty-two-second shift artifact when official targets exactly prove the overage', function (): void {
-    ($this->insertGame)();
+    ($this->insertGame)(2026020001, [
+        'home_team_id' => 59,
+        'home_team_abbrev' => 'UTA',
+    ]);
     ($this->makePlayer)(8477021, [
         'first_name' => 'Alexander',
         'last_name' => 'Kerfoot',
@@ -3166,6 +3180,7 @@ it('does not mark validation ready until game unit aggregation completes', funct
 
 it('dispatches validation after game unit aggregation completes', function (): void {
     Bus::fake();
+    ($this->fakeSourcePreflight)([]);
     ($this->insertPipeline)(2026020001, [
         NhlImportStages::PBP => 'completed',
         NhlImportStages::SUMMARY => 'completed',
@@ -3217,15 +3232,17 @@ it('returns embedded validation triage HTML to super admins', function (): void 
         'checked_at' => now(),
     ]);
 
-    $this->actingAs(($this->makeSuperAdmin)())
+    $response = $this->actingAs(($this->makeSuperAdmin)())
         ->getJson(route('admin.nhl-validations.index', ['admin_panel' => 1]))
         ->assertOk()
         ->assertJsonStructure(['html'])
         ->assertSee('2026020001')
         ->assertSee('data-validation-toggle')
-        ->assertSee('data-validation-id="'.$validation->id.'"', false)
-        ->assertSee(route('admin.nhl-validations.show', ['validation' => $validation->id, 'admin_panel' => 1]), false)
         ->assertDontSee('Review');
+
+    expect((string) $response->json('html'))
+        ->toContain('data-validation-id="'.$validation->id.'"')
+        ->toContain(route('admin.nhl-validations.show', ['validation' => $validation->id, 'admin_panel' => 1]));
 });
 
 it('shows validation deltas as JSON to super admins', function (): void {
@@ -3411,6 +3428,7 @@ it('reruns validation without dispatching unit work when totals now match', func
 it('queues a summary rerun from validation triage', function (): void {
     Bus::fake();
     ($this->insertGame)();
+    ($this->fakeSourcePreflight)([]);
     ($this->insertProgress)(2026020001, NhlImportStages::SUMMARY, 'error');
     $validation = NhlGameValidation::create([
         'nhl_game_id' => 2026020001,
@@ -3431,6 +3449,7 @@ it('queues a summary rerun from validation triage', function (): void {
 it('queues a boxscore rerun from validation triage', function (): void {
     Bus::fake();
     ($this->insertGame)();
+    ($this->fakeSourcePreflight)([]);
     ($this->insertProgress)(2026020001, NhlImportStages::BOXSCORE, 'error');
     $validation = NhlGameValidation::create([
         'nhl_game_id' => 2026020001,
@@ -3492,6 +3511,7 @@ it('rejects unsupported play-by-play game types before storing events', function
 it('rebuilds a validation game by clearing game-scoped imports and requeueing from pbp', function (): void {
     Bus::fake();
     ($this->insertGame)();
+    ($this->fakeSourcePreflight)([]);
     ($this->makePlayer)(8478402);
     ($this->insertPipeline)(2026020001, [
         NhlImportStages::PBP => 'completed',

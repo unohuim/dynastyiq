@@ -52,6 +52,13 @@ jobs:
           echo "DB_PASSWORD=postgres" >> .env
 
       - name: Migrate + Seed
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: testing
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
         run: php artisan migrate:fresh --seed --force
 
       - name: Build Assets
@@ -60,4 +67,11 @@ jobs:
           npm run build
           
       - name: Run Tests
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: testing
+          DB_USERNAME: postgres
+          DB_PASSWORD: postgres
         run: php artisan test

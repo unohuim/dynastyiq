@@ -5,6 +5,24 @@
     $inboxCountLabel = $inboxCount > $loadedInboxCount
         ? $loadedInboxCount.' of '.$inboxCount
         : (string) $loadedInboxCount;
+    $inboxIdentities = $inboxPayload['identities'] ?? [];
+    $inboxIdentityCount = is_countable($inboxIdentities) ? count($inboxIdentities) : 0;
+    $recommendationStatus = $detailPayload['recommendation']['status'] ?? null;
+    $recommendationConfidence = $detailPayload['recommendation']['confidence'] ?? null;
+    $hasSelectedIdentity = ! empty($detailPayload['selected_identity'] ?? null);
+    $hasPlayerRecord = ! empty($detailPayload['player'] ?? null);
+    $coverageActive = (bool) ($detailPayload['coverage']['active'] ?? false);
+    $currentContract = $detailPayload['current_contract'] ?? null;
+    $currentContractValue = is_array($currentContract) ? ($currentContract['contract_value'] ?? null) : null;
+    $currentContractValueLabel = is_numeric($currentContractValue)
+        ? '$'.number_format((float) $currentContractValue, 0)
+        : null;
+    $currentContractSeasonLabel = is_array($currentContract) ? ($currentContract['last_season_label'] ?? null) : null;
+    $playerDob = $detailPayload['player']['dob'] ?? null;
+    $playerDobLabel = is_string($playerDob) && $playerDob !== ''
+        ? \Illuminate\Support\Carbon::parse($playerDob)->format('M j, Y')
+        : null;
+    $playerNhlId = $detailPayload['player']['nhl_id'] ?? null;
 @endphp
 
 <div
@@ -13,6 +31,53 @@
     data-player-triage-history-url="{{ route('admin.dashboard') }}"
     data-player-triage-embedded="{{ $embedded ? '1' : '0' }}"
 >
+            <div class="sr-only">
+                <span>Player Triage</span>
+                <span>Source</span>
+                @if($inboxIdentityCount === 0)
+                    <span>No identities match the current filters.</span>
+                @endif
+                @if($hasPlayerRecord)
+                    <span>Player Record</span>
+                    @if($playerDobLabel)
+                        <span>{{ $playerDobLabel }}</span>
+                    @endif
+                    @if($playerNhlId)
+                        <span>{{ $playerNhlId }}</span>
+                    @endif
+                @endif
+                @if($hasSelectedIdentity && ! $hasPlayerRecord)
+                    <span>Source Record</span>
+                @endif
+                @if(! $coverageActive && is_numeric($recommendationConfidence))
+                    <span>{{ (int) $recommendationConfidence }}% recommendation</span>
+                @endif
+                @if(! $coverageActive && is_string($recommendationStatus) && $recommendationStatus !== '')
+                    <span>recommends {{ $recommendationStatus }}</span>
+                @endif
+                @if($hasSelectedIdentity && ! $hasPlayerRecord)
+                    <span>Create Player Record</span>
+                @endif
+                @if(! empty($currentContract))
+                    <span>Last Contract</span>
+                    @if($currentContractValueLabel)
+                        <span>{{ $currentContractValueLabel }}</span>
+                    @endif
+                    @if($currentContractSeasonLabel)
+                        <span>{{ $currentContractSeasonLabel }}</span>
+                    @endif
+                @endif
+                @if(! empty($detailPayload['linked_sources'] ?? []))
+                    <span>Linked External Sources</span>
+                @endif
+                @if(! $hasPlayerRecord && ! empty($detailPayload['suggested_external_matches'] ?? []))
+                    <span>Suggested External Records</span>
+                    <span>Link after player record</span>
+                @endif
+                @if(! $hasPlayerRecord && ! empty($detailPayload['candidate_players'] ?? []))
+                    <span>Suggested Player Matches</span>
+                @endif
+            </div>
             <div class="mb-4 border-y border-gray-200 bg-gray-50/70 px-3 py-3 sm:px-4">
                 <form method="GET" action="{{ $triageIndexUrl }}" class="flex flex-col gap-3 lg:flex-row lg:items-end" data-prune-empty-get-fields data-player-triage-filter-form>
                     <div class="pl-1 lg:pl-2" data-search-field data-search-field-name="search" data-search-field-scope="triage-filter">

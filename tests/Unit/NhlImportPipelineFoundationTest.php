@@ -403,16 +403,16 @@ it('records command-line single-date discovery as an admin-visible game import r
         '--date' => '2026-01-15',
     ])->assertSuccessful();
 
-    $this->assertDatabaseHas('nhl_game_import_runs', [
-        'action' => NhlGameImportRun::ACTION_DISCOVER,
-        'mode' => NhlGameImportRun::MODE_DATE,
-        'status' => NhlGameImportRun::STATUS_QUEUED,
-        'start_date' => '2026-01-15',
-        'end_date' => '2026-01-15',
-        'date_count' => 1,
-        'queued_jobs' => 1,
-        'created_by' => null,
-    ]);
+    $run = NhlGameImportRun::query()->firstOrFail();
+
+    expect($run->action)->toBe(NhlGameImportRun::ACTION_DISCOVER)
+        ->and($run->mode)->toBe(NhlGameImportRun::MODE_DATE)
+        ->and($run->status)->toBe(NhlGameImportRun::STATUS_QUEUED)
+        ->and($run->start_date->toDateString())->toBe('2026-01-15')
+        ->and($run->end_date->toDateString())->toBe('2026-01-15')
+        ->and($run->date_count)->toBe(1)
+        ->and($run->queued_jobs)->toBe(1)
+        ->and($run->created_by)->toBeNull();
 
     Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
         return $job->start->toDateString() === '2026-01-15'
@@ -432,16 +432,16 @@ it('records command-line range discovery as an admin-visible game import run', f
         '--end' => '2026-01-15',
     ])->assertSuccessful();
 
-    $this->assertDatabaseHas('nhl_game_import_runs', [
-        'action' => NhlGameImportRun::ACTION_DISCOVER,
-        'mode' => NhlGameImportRun::MODE_RANGE,
-        'status' => NhlGameImportRun::STATUS_QUEUED,
-        'start_date' => '2026-01-17',
-        'end_date' => '2026-01-15',
-        'date_count' => 3,
-        'queued_jobs' => 1,
-        'created_by' => null,
-    ]);
+    $run = NhlGameImportRun::query()->firstOrFail();
+
+    expect($run->action)->toBe(NhlGameImportRun::ACTION_DISCOVER)
+        ->and($run->mode)->toBe(NhlGameImportRun::MODE_RANGE)
+        ->and($run->status)->toBe(NhlGameImportRun::STATUS_QUEUED)
+        ->and($run->start_date->toDateString())->toBe('2026-01-17')
+        ->and($run->end_date->toDateString())->toBe('2026-01-15')
+        ->and($run->date_count)->toBe(3)
+        ->and($run->queued_jobs)->toBe(1)
+        ->and($run->created_by)->toBeNull();
 
     Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
         return $job->start->toDateString() === '2026-01-17'
