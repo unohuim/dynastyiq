@@ -116,7 +116,7 @@
                                 $teamBadgeBackground = $teamGradients[$teamAbbrev] ?? $fallbackTeamGradient;
                                 $pickInRound = $row['pick_in_round'] ?? $row['pick'] ?? null;
                                 $overallPick = $row['overall_pick'] ?? $row['pick'] ?? null;
-                                $hasDraftedPlayer = ! empty($row['fantrax_player_id']);
+                                $hasDraftedPlayer = (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id']));
                                 $isNextPick = ! empty($row['is_next_pick']);
                                 $isGoalie = strtoupper((string) ($row['position'] ?? '')) === 'G';
                                 $statColumns = $isGoalie

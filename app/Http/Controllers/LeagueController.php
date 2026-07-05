@@ -812,7 +812,11 @@ final class LeagueController extends Controller
     private function draftingPayload($league): array
     {
         $draft = $league->drafts()
-            ->with(['picks' => static fn ($query) => $query->orderBy('overall_pick')->orderBy('round')->orderBy('pick_in_round')])
+            ->with(['picks' => static fn ($query) => $query
+                ->with(['player', 'platformTeam'])
+                ->orderBy('overall_pick')
+                ->orderBy('round')
+                ->orderBy('pick_in_round')])
             ->latest('updated_at')
             ->first();
 
@@ -824,57 +828,209 @@ final class LeagueController extends Controller
             );
         }
 
-        if ((string) ($league->platform ?? '') === 'fantrax' && $draft->source_type === 'platform_mirror') {
-            $state = $league->fantraxDraftState()->first();
+        return $this->withDraftCentralMeta(
+            $this->canonicalDraftingPayload($draft, (int) $league->id),
+            $league,
+            $draft,
+        );
+    }
 
-            if ($state) {
-                $draftResults = is_array($state->raw_draft_results) ? $state->raw_draft_results : [];
-                $draftPickInfo = is_array($state->raw_draft_pick_info) ? $state->raw_draft_pick_info : [];
+    /**
+     * Build the Draft Central payload exclusively from canonical draft tables.
+     *
+     * @return array<string,mixed>
+     */
+    private function canonicalDraftingPayload(Draft $draft, int $leagueId): array
+    {
+        $picks = $draft->picks instanceof Collection
+            ? $draft->picks
+            : $draft->picks()->with(['player', 'platformTeam'])->orderBy('overall_pick')->get();
+        $providerPlayerIds = $picks
+            ->pluck('provider_player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): string => (string) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $canonicalPlayerIds = $picks
+            ->pluck('player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $providerPlayerMap = $this->fantraxDraftPlayerMap($providerPlayerIds);
+        $canonicalPlayerMap = $this->canonicalDraftPlayerMap($canonicalPlayerIds);
+        $teamMap = $this->fantraxDraftTeamMap($leagueId);
 
-                if ($state->draft_at && ! isset($draftResults['draft_at'])) {
-                    $draftResults['draft_at'] = $state->draft_at->toIso8601String();
+        $rows = $picks
+            ->map(function (DraftPick $pick) use ($providerPlayerMap, $canonicalPlayerMap, $teamMap): array {
+                $providerPlayerId = $pick->provider_player_id ? (string) $pick->provider_player_id : '';
+                $playerId = $pick->player_id ? (int) $pick->player_id : null;
+                $mappedPlayer = $providerPlayerId !== ''
+                    ? ($providerPlayerMap[$providerPlayerId] ?? [])
+                    : [];
+                $mappedPlayer = $mappedPlayer !== []
+                    ? $mappedPlayer
+                    : ($playerId ? ($canonicalPlayerMap[$playerId] ?? []) : []);
+                $providerTeamId = $pick->provider_team_id ? (string) $pick->provider_team_id : '';
+                $mappedTeam = $providerTeamId !== '' ? ($teamMap[$providerTeamId] ?? []) : [];
+                $hasPlayer = $providerPlayerId !== '' || $playerId !== null;
+
+                return [
+                    'player_name' => $hasPlayer
+                        ? ((string) ($mappedPlayer['name'] ?? '') ?: (string) ($pick->player?->full_name ?? 'Unknown player'))
+                        : '',
+                    'fantrax_player_id' => $providerPlayerId,
+                    'is_picked' => $hasPlayer,
+                    'player_id' => $playerId,
+                    'nhl_id' => $mappedPlayer['nhl_id'] ?? ($pick->player?->nhl_id ? (int) $pick->player->nhl_id : null),
+                    'position' => $mappedPlayer['position'] ?? $pick->player?->position,
+                    'age' => $mappedPlayer['age'] ?? $pick->player?->age(),
+                    'league_abbrev' => $mappedPlayer['league_abbrev'] ?? null,
+                    'team_abbrev' => $mappedPlayer['team_abbrev'] ?? null,
+                    'avatar_url' => $mappedPlayer['avatar_url'] ?? $pick->player?->head_shot_url,
+                    'next_season' => $mappedPlayer['next_season'] ?? null,
+                    'stats' => $mappedPlayer['stats'] ?? [
+                        'gp' => null,
+                        'g' => null,
+                        'a' => null,
+                        'pts' => null,
+                        'wins' => null,
+                        'sv_pct' => null,
+                    ],
+                    'team_id' => $providerTeamId,
+                    'team_name' => (string) ($pick->platformTeam?->name ?: ($mappedTeam['team_name'] ?? ($providerTeamId ?: 'Unknown team'))),
+                    'team_avatar_url' => $mappedTeam['owner_avatar_url'] ?? null,
+                    'round' => $pick->round !== null ? (int) $pick->round : null,
+                    'pick' => $pick->pick !== null ? (int) $pick->pick : null,
+                    'pick_in_round' => $pick->pick_in_round !== null ? (int) $pick->pick_in_round : null,
+                    'overall_pick' => $pick->overall_pick !== null ? (int) $pick->overall_pick : null,
+                    'picked_at' => $pick->picked_at?->toIso8601String(),
+                    'is_next_pick' => (string) $pick->status === 'on_clock',
+                ];
+            })
+            ->values()
+            ->all();
+        $rounds = $this->draftRounds($rows);
+
+        return [
+            'available' => true,
+            'title' => $draft->starts_at?->format('F j, Y') ?? $draft->name,
+            'draft_at' => $draft->starts_at?->toIso8601String(),
+            'last_pick_at' => $this->lastCanonicalDraftPickTimestamp($draft),
+            'is_live' => (string) $draft->status === 'live',
+            'status_text' => ucfirst((string) $draft->status),
+            'status_tone' => match ((string) $draft->status) {
+                'live' => 'green',
+                'scheduled' => 'blue',
+                default => 'slate',
+            },
+            'rows' => $rows,
+            'rounds' => $rounds,
+            'active_round_index' => $this->activeDraftRoundIndex($rounds),
+            'empty_text' => 'No drafted players yet.',
+            'error_text' => null,
+        ];
+    }
+
+    /**
+     * Build draft round groups from canonical draft rows.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     *
+     * @return array<int,array{round:int|null,label:string,count:int,rows:array<int,array<string,mixed>>}>
+     */
+    private function draftRounds(array $rows): array
+    {
+        return collect($rows)
+            ->groupBy(static fn (array $row): string => $row['round'] === null ? 'unknown' : (string) $row['round'])
+            ->map(static function ($roundRows, string $round): array {
+                $roundNumber = $round === 'unknown' ? null : (int) $round;
+                $rows = $roundRows->values()->all();
+
+                return [
+                    'round' => $roundNumber,
+                    'label' => $roundNumber === null ? 'Round' : 'Round ' . $roundNumber,
+                    'count' => count($rows),
+                    'rows' => $rows,
+                ];
+            })
+            ->sortBy(static fn (array $round): int => $round['round'] ?? PHP_INT_MAX)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Pick the active round from the canonical current pick marker.
+     *
+     * @param array<int,array{round:int|null,label:string,count:int,rows:array<int,array<string,mixed>>}> $rounds
+     */
+    private function activeDraftRoundIndex(array $rounds): int
+    {
+        foreach ($rounds as $index => $round) {
+            foreach ($round['rows'] as $row) {
+                if (! empty($row['is_next_pick'])) {
+                    return $index;
                 }
-
-                if ($state->current_draft_pick_count !== null && ! isset($draftPickInfo['currentDraftPicks'])) {
-                    $draftPickInfo['currentDraftPicks'] = array_fill(0, (int) $state->current_draft_pick_count, true);
-                }
-
-                $draftingWindow = app(FantraxDraftingWindow::class);
-                $fantraxPlayerIds = $draftingWindow->fantraxPlayerIds($draftResults);
-
-                return $this->withDraftCentralMeta(
-                    $draftingWindow->normalize(
-                        [],
-                        $draftResults,
-                        null,
-                        null,
-                        $this->fantraxDraftPlayerMap($fantraxPlayerIds),
-                        $this->fantraxDraftTeamMap((int) $league->id),
-                        $draftPickInfo,
-                    ),
-                    $league,
-                    $draft,
-                );
             }
-
-            return $this->withDraftCentralMeta(
-                app(FantraxDraftingWindow::class)->normalize([], []),
-                $league,
-                $draft,
-            );
         }
 
-        $payload = app(FantraxDraftingWindow::class)->normalize([], []);
-        $payload['title'] = $draft->starts_at?->format('F j, Y') ?? $draft->name;
-        $payload['draft_at'] = $draft->starts_at?->toIso8601String();
-        $payload['status_text'] = ucfirst((string) $draft->status);
-        $payload['status_tone'] = match ((string) $draft->status) {
-            'live' => 'green',
-            'scheduled' => 'blue',
-            default => 'slate',
-        };
+        return max(0, count($rounds) - 1);
+    }
 
-        return $this->withDraftCentralMeta($payload, $league, $draft);
+    /**
+     * Build player display metadata directly from canonical players.
+     *
+     * @param array<int,int> $playerIds
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function canonicalDraftPlayerMap(array $playerIds): array
+    {
+        if ($playerIds === []) {
+            return [];
+        }
+
+        $players = Player::query()
+            ->whereIn('id', $playerIds)
+            ->get(['id', 'full_name', 'nhl_id', 'position', 'head_shot_url', 'dob']);
+        $latestStatsByPlayerId = $this->latestStatsByPlayerId($playerIds);
+        $nextSeasonStatsByPlayerId = $this->seasonStatsByPlayerId($playerIds, $this->draftCommitSeasonId());
+
+        return $players
+            ->mapWithKeys(function (Player $player) use ($latestStatsByPlayerId, $nextSeasonStatsByPlayerId): array {
+                $playerId = (int) $player->id;
+                $latestStats = $latestStatsByPlayerId[$playerId] ?? null;
+                $nextSeasonStats = $nextSeasonStatsByPlayerId[$playerId] ?? null;
+
+                return [
+                    $playerId => [
+                        'name' => $player->full_name,
+                        'player_id' => $playerId,
+                        'nhl_id' => $player->nhl_id ? (int) $player->nhl_id : null,
+                        'position' => $player->position,
+                        'age' => $player->age(),
+                        'league_abbrev' => $latestStats?->league_abbrev,
+                        'team_abbrev' => $latestStats?->nhl_team_abbrev,
+                        'avatar_url' => $player->head_shot_url,
+                        'next_season' => $nextSeasonStats ? [
+                            'season_id' => (string) $nextSeasonStats->season_id,
+                            'label' => $this->seasonLabel((string) $nextSeasonStats->season_id),
+                            'team_name' => (string) ($nextSeasonStats->team_name ?? ''),
+                        ] : null,
+                        'stats' => [
+                            'gp' => $latestStats?->gp !== null ? (int) $latestStats->gp : null,
+                            'g' => $latestStats?->g !== null ? (int) $latestStats->g : null,
+                            'a' => $latestStats?->a !== null ? (int) $latestStats->a : null,
+                            'pts' => $latestStats?->pts !== null ? (int) $latestStats->pts : null,
+                            'wins' => $latestStats?->wins !== null ? (int) $latestStats->wins : null,
+                            'sv_pct' => $latestStats?->sv_pct !== null ? (float) $latestStats->sv_pct : null,
+                        ],
+                    ],
+                ];
+            })
+            ->all();
     }
 
     /**

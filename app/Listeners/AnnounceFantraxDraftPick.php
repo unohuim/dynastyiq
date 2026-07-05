@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace App\Listeners;
 
 use App\Events\DraftPickMade;
-use App\Events\FantraxDraftPickMade;
 use App\Events\FantraxDraftPickToast;
 use App\Models\Draft;
 use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
-use App\Models\FantraxDraftPick;
 use App\Models\FantraxPlayer;
 use App\Models\PlatformTeam;
 use App\Models\Player;
@@ -26,11 +24,11 @@ use Throwable;
 
 final class AnnounceFantraxDraftPick implements ShouldQueue
 {
-    public function handle(DraftPickMade|FantraxDraftPickMade $event): void
+    public function handle(DraftPickMade $event): void
     {
-        $draftPick = $event instanceof DraftPickMade
-            ? DraftPick::query()->with(['draft.notificationSettings', 'platformTeam', 'player'])->find($event->draftPickId)
-            : $this->canonicalDraftPickFromLegacyEvent($event);
+        $draftPick = DraftPick::query()
+            ->with(['draft.notificationSettings', 'platformTeam', 'player'])
+            ->find($event->draftPickId);
 
         if (! $draftPick instanceof DraftPick) {
             return;
@@ -44,13 +42,6 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
 
         if (! $this->claimDraftPick($draftPick)) {
             return;
-        }
-
-        if ($event instanceof FantraxDraftPickMade) {
-            FantraxDraftPick::query()
-                ->whereKey($event->draftPickId)
-                ->whereNull('announced_at')
-                ->update(['announced_at' => now()]);
         }
 
         $message = $this->message($draftPick, $context);
@@ -75,105 +66,6 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->whereKey($draftPick->id)
             ->whereNull('announced_at')
             ->update(['announced_at' => now()]) === 1;
-    }
-
-    private function canonicalDraftPickFromLegacyEvent(FantraxDraftPickMade $event): ?DraftPick
-    {
-        $legacyPick = FantraxDraftPick::query()->find($event->draftPickId);
-
-        if (! $legacyPick instanceof FantraxDraftPick) {
-            return null;
-        }
-
-        $draft = Draft::query()
-            ->where('platform_league_id', $legacyPick->platform_league_id)
-            ->where('platform', 'fantrax')
-            ->latest('updated_at')
-            ->first();
-
-        if (! $draft instanceof Draft) {
-            $leagueName = (string) (DB::table('platform_leagues')
-                ->where('id', $legacyPick->platform_league_id)
-                ->value('name') ?: 'Fantrax League');
-
-            $draft = Draft::query()->create([
-                'platform_league_id' => (int) $legacyPick->platform_league_id,
-                'source_type' => 'platform_mirror',
-                'platform' => 'fantrax',
-                'external_draft_id' => 'fantrax:legacy:' . $legacyPick->platform_league_id,
-                'name' => $leagueName . ' Draft',
-                'status' => 'live',
-                'settings' => [
-                    'provider' => 'fantrax',
-                    'source' => 'legacy_fantrax_event',
-                ],
-            ]);
-        }
-
-        $platformTeamIds = PlatformTeam::query()
-            ->where('platform_league_id', $legacyPick->platform_league_id)
-            ->pluck('id', 'platform_team_id');
-        $draftPick = null;
-
-        FantraxDraftPick::query()
-            ->where('platform_league_id', $legacyPick->platform_league_id)
-            ->orderByRaw('overall_pick is null')
-            ->orderBy('overall_pick')
-            ->orderBy('round')
-            ->orderBy('pick_in_round')
-            ->get()
-            ->each(function (FantraxDraftPick $fantraxPick) use ($draft, $legacyPick, $platformTeamIds, &$draftPick): void {
-                $mirroredPick = DraftPick::query()->updateOrCreate(
-                    [
-                        'draft_id' => $draft->id,
-                        'provider_pick_key' => $fantraxPick->provider_pick_key,
-                    ],
-                    [
-                        'overall_pick' => $fantraxPick->overall_pick,
-                        'round' => $fantraxPick->round,
-                        'pick' => $fantraxPick->pick,
-                        'pick_in_round' => $fantraxPick->pick_in_round,
-                        'platform_team_id' => $fantraxPick->fantrax_team_id ? ($platformTeamIds[$fantraxPick->fantrax_team_id] ?? null) : null,
-                        'provider_team_id' => $fantraxPick->fantrax_team_id,
-                        'player_id' => $fantraxPick->fantrax_player_id ? $this->canonicalPlayerIdForFantraxPlayer((string) $fantraxPick->fantrax_player_id) : null,
-                        'provider_player_id' => $fantraxPick->fantrax_player_id,
-                        'source' => 'fantrax',
-                        'status' => $fantraxPick->fantrax_player_id ? 'picked' : 'pending',
-                        'picked_at' => $fantraxPick->drafted_at,
-                        'detected_at' => $fantraxPick->detected_at,
-                        'payload_hash' => $fantraxPick->payload_hash,
-                        'raw_payload' => $fantraxPick->raw_payload,
-                    ],
-                );
-
-                if ((string) $fantraxPick->provider_pick_key === (string) $legacyPick->provider_pick_key) {
-                    $draftPick = $mirroredPick;
-                }
-            });
-
-        if (! $draftPick instanceof DraftPick) {
-            return null;
-        }
-
-        return $draftPick->load(['draft.notificationSettings', 'platformTeam', 'player']);
-    }
-
-    private function canonicalPlayerIdForFantraxPlayer(string $fantraxPlayerId): ?int
-    {
-        $playerId = FantraxPlayer::query()
-            ->where('fantrax_id', $fantraxPlayerId)
-            ->value('player_id');
-
-        if ($playerId !== null) {
-            return (int) $playerId;
-        }
-
-        $playerId = PlayerExternalIdentity::query()
-            ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
-            ->where('provider_player_id', $fantraxPlayerId)
-            ->value('player_id');
-
-        return $playerId !== null ? (int) $playerId : null;
     }
 
     /**

@@ -109,33 +109,26 @@ class CommunityLeagues extends Controller
         $draftError = null;
 
         if ($isFantraxLeague && $platformLeague instanceof PlatformLeague) {
-            $draftState = $platformLeague->fantraxDraftState()->first();
+            try {
+                $resp = $this->getAPIData('fantrax', 'draft_results', [
+                    'leagueId' => (string) $platformLeagueId,
+                ]);
+                $draftResults = is_array($resp) ? $resp : [];
+            } catch (Throwable $e) {
+                $draftError = $e;
+            }
 
-            if ($draftState && is_array($draftState->raw_draft_results)) {
-                $draftResults = $draftState->raw_draft_results;
-                $draftPickInfo = is_array($draftState->raw_draft_pick_info) ? $draftState->raw_draft_pick_info : [];
-            } else {
-                try {
-                    $resp = $this->getAPIData('fantrax', 'draft_results', [
-                        'leagueId' => (string) $platformLeagueId,
-                    ]);
-                    $draftResults = is_array($resp) ? $resp : [];
-                } catch (Throwable $e) {
-                    $draftError = $e;
-                }
+            try {
+                $resp = $this->getAPIData('fantrax', 'draft_picks', [
+                    'leagueId' => (string) $platformLeagueId,
+                ]);
+                $draftPickInfo = is_array($resp) ? $resp : [];
+            } catch (Throwable $e) {
+                $draftPickInfo = [];
+            }
 
-                try {
-                    $resp = $this->getAPIData('fantrax', 'draft_picks', [
-                        'leagueId' => (string) $platformLeagueId,
-                    ]);
-                    $draftPickInfo = is_array($resp) ? $resp : [];
-                } catch (Throwable $e) {
-                    $draftPickInfo = [];
-                }
-
-                if ($draftError === null && $draftResults !== []) {
-                    SyncFantraxDraftStateJob::dispatch((int) $platformLeague->id, $draftResults, $draftPickInfo);
-                }
+            if ($draftError === null && $draftResults !== []) {
+                SyncFantraxDraftStateJob::dispatch((int) $platformLeague->id, $draftResults, $draftPickInfo);
             }
         }
 

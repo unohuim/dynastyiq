@@ -157,26 +157,24 @@ Laravel web routes, domain persistence, or app authorization rules.
 - `app/Services/SyncFantraxDraftState.php`
 - `app/Jobs/SyncFantraxDraftStateJob.php`
 - `app/Console/Commands/FantraxDraftsPollCommand.php`
-- `app/Models/FantraxDraftState.php`
-- `app/Models/FantraxDraftPick.php`
-- `app/Events/FantraxDraftPickMade.php`
+- `app/Events/DraftPickMade.php`
 
 **Purpose:**
-Persist current Fantrax draft payload state so periodic syncs can detect newly made picks.
+Fetch Fantrax draft payloads and mirror them into canonical Draft Central tables.
 
 **When to Use:**
-Polling Fantrax draft payloads, comparing latest provider draft rows against persisted pick state, and emitting events when a previously unmade pick receives a Fantrax player id.
+Polling Fantrax draft payloads, comparing latest provider draft rows against canonical draft picks, and emitting events when a previously unmade canonical pick receives a Fantrax player id.
 Discord draft announcement cards use skater columns GP/G/A/PTS and goalie columns GP/W/SV/SV% based on canonical or provider position.
 
 **When Not to Use:**
-Rendering the draft window directly, storing every raw polling snapshot, or syncing Fantrax rosters.
+Rendering the draft window directly from Fantrax cache tables, storing every raw polling snapshot, or syncing Fantrax rosters.
 
 **Public Interface:**
 - `SyncFantraxDraftState::sync`
 - `SyncFantraxDraftState::syncPayloads`
 - `SyncFantraxDraftStateJob`
 - `fantrax:drafts:poll`
-- `FantraxDraftPickMade`
+- `DraftPickMade`
 
 **Example Usage:**
 ```php

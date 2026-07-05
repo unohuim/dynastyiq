@@ -8,8 +8,6 @@ use App\Events\DraftPickMade;
 use App\Models\Draft;
 use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
-use App\Models\FantraxDraftPick;
-use App\Models\FantraxDraftState;
 use App\Models\FantraxPlayer;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
@@ -27,7 +25,7 @@ final class SyncFantraxDraftState
     /**
      * Fetch Fantrax draft payloads and persist the latest draft state.
      *
-     * @return array{state:FantraxDraftState|null,new_picks:array<int,FantraxDraftPick>}
+     * @return array{state:null,new_picks:array<int,DraftPick>}
      */
     public function sync(int $platformLeagueId, ?CarbonInterface $now = null): array
     {
@@ -55,7 +53,7 @@ final class SyncFantraxDraftState
     /**
      * Persist supplied draft payloads and return picks that transitioned from unmade to made.
      *
-     * @return array{state:FantraxDraftState,new_picks:array<int,FantraxDraftPick>}
+     * @return array{state:null,new_picks:array<int,DraftPick>}
      */
     public function syncPayloads(
         PlatformLeague $league,
@@ -65,80 +63,22 @@ final class SyncFantraxDraftState
     ): array {
         $now = $now ? CarbonImmutable::instance($now) : CarbonImmutable::now();
         $rows = $this->draftRows($draftResults);
-        $newPicks = [];
-        $newDraftPicks = [];
 
-        $state = DB::transaction(function () use ($league, $draftResults, $draftPickInfo, $rows, $now, &$newPicks, &$newDraftPicks): FantraxDraftState {
-            $state = FantraxDraftState::query()->updateOrCreate(
-                ['platform_league_id' => $league->id],
-                [
-                    'draft_at' => $this->draftAt($draftResults),
-                    'status' => $this->status($draftResults, $draftPickInfo, $now),
-                    'current_draft_pick_count' => $this->currentDraftPickCount($draftPickInfo),
-                    'draft_results_hash' => $this->payloadHash($draftResults),
-                    'draft_picks_hash' => $this->payloadHash($draftPickInfo),
-                    'raw_draft_results' => $draftResults,
-                    'raw_draft_pick_info' => $draftPickInfo,
-                    'last_checked_at' => $now,
-                ]
-            );
-
-            foreach ($rows as $row) {
-                $existing = FantraxDraftPick::query()
-                    ->where('platform_league_id', $league->id)
-                    ->where('provider_pick_key', $row['provider_pick_key'])
-                    ->first();
-                $oldPlayerId = trim((string) ($existing?->fantrax_player_id ?? ''));
-                $newPlayerId = trim((string) ($row['fantrax_player_id'] ?? ''));
-
-                $draftPick = FantraxDraftPick::query()->updateOrCreate(
-                    [
-                        'platform_league_id' => $league->id,
-                        'provider_pick_key' => $row['provider_pick_key'],
-                    ],
-                    [
-                        'overall_pick' => $row['overall_pick'],
-                        'round' => $row['round'],
-                        'pick' => $row['pick'],
-                        'pick_in_round' => $row['pick_in_round'],
-                        'fantrax_team_id' => $row['fantrax_team_id'],
-                        'fantrax_player_id' => $newPlayerId !== '' ? $newPlayerId : null,
-                        'drafted_at' => $row['drafted_at'],
-                        'detected_at' => $newPlayerId !== '' ? ($existing?->detected_at ?? $now) : null,
-                        'payload_hash' => $row['payload_hash'],
-                        'raw_payload' => $row['raw_payload'],
-                    ]
-                );
-
-                if ($existing instanceof FantraxDraftPick && $oldPlayerId === '' && $newPlayerId !== '') {
-                    $newPicks[] = $draftPick;
-                }
-            }
-
-            $newDraftPicks = $this->mirrorNeutralDraft(
+        $newDraftPicks = DB::transaction(function () use ($league, $draftResults, $draftPickInfo, $rows, $now): array {
+            return $this->mirrorNeutralDraft(
                 $league,
                 $draftResults,
                 $draftPickInfo,
                 $rows,
                 $now,
-                collect($newPicks)
-                    ->pluck('provider_pick_key')
-                    ->map(static fn (mixed $providerPickKey): string => (string) $providerPickKey)
-                    ->all(),
             );
-
-            if ($newPicks !== []) {
-                $state->forceFill(['last_detected_pick_at' => $now])->save();
-            }
-
-            return $state;
         });
 
         foreach ($newDraftPicks as $newPick) {
             event(DraftPickMade::fromDraftPick($newPick));
         }
 
-        return ['state' => $state, 'new_picks' => $newPicks];
+        return ['state' => null, 'new_picks' => $newDraftPicks];
     }
 
     /**
@@ -156,7 +96,6 @@ final class SyncFantraxDraftState
         array $draftPickInfo,
         array $rows,
         CarbonImmutable $now,
-        array $newProviderPickKeys = [],
     ): array
     {
         $newDraftPicks = [];
@@ -237,10 +176,7 @@ final class SyncFantraxDraftState
                 $this->removeDraftedPlayerFromQueues($draft, $playerId);
             }
 
-            if (
-                $providerPlayerId
-                && ($wasUnpicked || in_array((string) $row['provider_pick_key'], $newProviderPickKeys, true))
-            ) {
+            if ($providerPlayerId && $wasUnpicked) {
                 $newDraftPicks[] = $draftPick;
             }
         }

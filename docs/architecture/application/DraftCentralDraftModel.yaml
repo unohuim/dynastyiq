@@ -20,11 +20,13 @@ rules:
   - Draft Central must read normalized draft state from drafts and draft_picks when available.
   - When no canonical draft exists, Draft Central may offer commissioners a provider-mirrored draft or a DynastyIQ-managed manual draft creation flow.
   - Provider-specific draft syncs must mirror picked-player transitions into drafts and draft_picks before emitting draft notification side effects.
+  - Draft Central Live panel rendering must read from drafts and draft_picks, not provider-specific Fantrax draft cache tables.
   - Draft timer configuration belongs to drafts because each league may have multiple drafts with different timing rules.
   - Pick countdowns should derive from draft_picks picked_at or expires_at plus drafts pick_clock_seconds.
   - Provider IDs should be retained on draft_picks during transition, but canonical player and platform team links should be used when resolvable.
   - Notification settings that are draft-specific should be attached to the draft rather than hidden inside league metadata.
   - Draft pick notifications must use draft_picks as the idempotency and payload source; provider-specific draft pick tables are raw/audit inputs only.
+  - Fantrax draft cache tables must not drive Draft Central UI, polling eligibility, current-pick selection, queue removal, or Discord notifications.
 public_interface:
   - Draft
   - DraftPick

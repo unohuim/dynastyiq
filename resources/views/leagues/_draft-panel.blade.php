@@ -34,7 +34,9 @@
     $draftCommitSeasonLabel = (string) ($drafting['draft_commit_season_label'] ?? '');
     $draftRows = collect($drafting['rows'] ?? []);
     $draftRounds = collect($drafting['rounds'] ?? []);
-    $completedRows = $draftRows->filter(static fn (array $row): bool => ! empty($row['fantrax_player_id']))->values();
+    $completedRows = $draftRows
+        ->filter(static fn (array $row): bool => (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])))
+        ->values();
     $myDraftPickRows = $completedRows
         ->filter(static fn (array $row): bool => $ownedTeamId !== '' && (string) ($row['team_id'] ?? '') === $ownedTeamId)
         ->values();
@@ -59,12 +61,12 @@
         ])
         ->values();
     $nextPick = $draftRows->first(static fn (array $row): bool => ! empty($row['is_next_pick']))
-        ?? $draftRows->first(static fn (array $row): bool => empty($row['fantrax_player_id']));
+        ?? $draftRows->first(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])));
     $upNextPick = $draftRows
-        ->filter(static fn (array $row): bool => empty($row['fantrax_player_id']) && ! empty($nextPick) && ((int) ($row['overall_pick'] ?? 0)) > ((int) ($nextPick['overall_pick'] ?? 0)))
+        ->filter(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])) && ! empty($nextPick) && ((int) ($row['overall_pick'] ?? 0)) > ((int) ($nextPick['overall_pick'] ?? 0)))
         ->first();
     $pendingDraftRows = $draftRows
-        ->filter(static fn (array $row): bool => empty($row['fantrax_player_id']))
+        ->filter(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])))
         ->values();
     $picksUntilOtc = $ownedTeamId !== ''
         ? $pendingDraftRows->search(static fn (array $row): bool => (string) ($row['team_id'] ?? '') === $ownedTeamId)

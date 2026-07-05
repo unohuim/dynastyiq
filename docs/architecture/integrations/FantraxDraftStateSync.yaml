@@ -4,18 +4,14 @@ location:
   - app/Services/SyncFantraxDraftState.php
   - app/Jobs/SyncFantraxDraftStateJob.php
   - app/Console/Commands/FantraxDraftsPollCommand.php
-  - app/Models/FantraxDraftState.php
-  - app/Models/FantraxDraftPick.php
-  - app/Events/FantraxDraftPickMade.php
   - app/Events/FantraxDraftPickToast.php
   - app/Listeners/AnnounceFantraxDraftPick.php
-  - database/migrations/*_create_fantrax_draft_states_table.php
-  - database/migrations/*_create_fantrax_draft_picks_table.php
-purpose: Persist current Fantrax draft payload state so periodic syncs can detect newly made picks.
+  - database/migrations/*_create_drafts_tables.php
+purpose: Fetch Fantrax draft payloads and mirror them into canonical Draft Central tables.
 when_to_use:
   - Polling Fantrax draft payloads for connected platform leagues.
-  - Persisting Fantrax draft payloads already fetched for the community league draft panel.
-  - Comparing the latest provider draft result against the last persisted pick state.
+  - Persisting Fantrax draft payloads already fetched for the community league draft panel into canonical draft rows.
+  - Comparing the latest provider draft result against canonical draft_picks.
   - Emitting app events when an unmade pick receives a Fantrax player id.
   - Posting pick-made announcements to a configured Discord draft channel.
   - Broadcasting user-channel toast events for detected draft picks.
@@ -24,17 +20,17 @@ when_not_to_use:
   - Persisting every raw polling snapshot for audit history.
   - Syncing Fantrax roster memberships.
 rules:
-  - The first observed draft payload establishes baseline state and must not emit pick-made events.
+  - The first observed draft payload establishes baseline canonical draft_picks and must not emit pick-made events.
   - Community league page API fallbacks may dispatch payload-backed draft sync jobs instead of forcing a second immediate Fantrax fetch.
-  - A pick-made delta occurs when an existing persisted pick has no Fantrax player id and the latest provider payload supplies one.
-  - Recurring background polling must only dispatch API-backed draft sync jobs for persisted draft states whose status is live.
-  - Scheduled, complete, unknown, and missing draft states must not be discovered or refreshed by recurring background polling.
-  - Poll cadence is stored per draft state and scheduler wake frequency must not be treated as per-league cadence.
+  - A pick-made delta occurs when an existing canonical draft_picks row has no provider player id and the latest provider payload supplies one.
+  - Recurring background polling must only dispatch API-backed draft sync jobs for canonical drafts whose platform is fantrax, source_type is platform_mirror, and status is live.
+  - Scheduled, complete, unknown, and missing drafts must not be discovered or refreshed by recurring background polling.
   - Provider pick order must be keyed by provider pick data, preferring overall pick when available.
   - Raw provider payloads may be retained for comparison diagnostics but migrations remain the schema source of truth.
-  - Discord posting and other side effects should subscribe to FantraxDraftPickMade rather than duplicating comparison logic.
+  - Discord posting and other side effects must subscribe to DraftPickMade and use canonical draft_picks as their source.
   - Draft pick announcement side effects must atomically claim the persisted draft pick before broadcasting toast or posting to Discord.
-  - A non-null draft pick announced_at means toast and Discord announcement side effects have already been attempted for that pick.
+  - A non-null draft_picks.announced_at means toast and Discord announcement side effects have already been attempted for that pick.
+  - Fantrax draft cache tables are legacy audit/cache surfaces and must not drive Draft Central UI, polling eligibility, current-pick selection, queue removal, or Discord notifications.
   - Discord draft announcements must use the organization league pivot draft notification channel.
   - Discord draft announcements should post generated player-card images as direct file attachments when runtime image support is available.
   - Discord draft announcement cards must use GP/G/A/PTS for skaters and GP/W/SV/SV% for goalies detected by canonical or provider position.
@@ -47,7 +43,6 @@ public_interface:
   - SyncFantraxDraftState::syncPayloads
   - SyncFantraxDraftStateJob
   - fantrax:drafts:poll
-  - FantraxDraftPickMade
   - FantraxDraftPickToast
   - AnnounceFantraxDraftPick
 example_usage: |
