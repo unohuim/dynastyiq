@@ -195,6 +195,10 @@ final class SyncFantraxDraftState
             ]
         );
 
+        if ($draft->pick_clock_seconds === null) {
+            $draft->forceFill(['pick_clock_seconds' => 300])->save();
+        }
+
         foreach ($rows as $row) {
             $providerTeamId = $row['fantrax_team_id'] ?: null;
             $providerPlayerId = $row['fantrax_player_id'] ?: null;

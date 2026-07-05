@@ -801,8 +801,13 @@ final class LeagueController extends Controller
      */
     private function withDraftCentralMeta(array $payload, $league, ?Draft $draft): array
     {
-        $pickClockSeconds = (int) ($draft?->pick_clock_seconds ?? 0);
+        $pickClockSeconds = $draft instanceof Draft
+            ? (int) ($draft->pick_clock_seconds ?? 300)
+            : 0;
         $lastPickAt = $payload['last_pick_at'] ?? null;
+        $lastPickAt = is_string($lastPickAt) && $lastPickAt !== ''
+            ? $lastPickAt
+            : $this->lastCanonicalDraftPickTimestamp($draft);
         $expiresAt = null;
 
         if ($draft instanceof Draft && $pickClockSeconds > 0 && is_string($lastPickAt) && $lastPickAt !== '') {
@@ -849,6 +854,26 @@ final class LeagueController extends Controller
             : [];
 
         return $payload;
+    }
+
+    /**
+     * Return the latest canonical picked-row timestamp usable for the draft clock.
+     */
+    private function lastCanonicalDraftPickTimestamp(?Draft $draft): ?string
+    {
+        if (! $draft instanceof Draft) {
+            return null;
+        }
+
+        $pick = DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereNotNull('provider_player_id')
+            ->orderByRaw('COALESCE(picked_at, detected_at) desc')
+            ->first(['picked_at', 'detected_at']);
+
+        $timestamp = $pick?->picked_at ?? $pick?->detected_at;
+
+        return $timestamp?->toIso8601String();
     }
 
     /**

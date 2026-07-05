@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Events\FantraxTeamCreated;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\PlayerExternalIdentity;
 use App\Traits\HasAPITrait;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Client\RequestException;
@@ -182,12 +183,7 @@ final class SyncFantraxLeague
             return;
         }
 
-        // Map fantrax id -> player_id via fantrax_players
-        $fantraxToPlayerId = DB::table('fantrax_players')
-            ->whereIn('fantrax_id', $allFantraxIds)
-            ->whereNotNull('player_id')
-            ->pluck('player_id', 'fantrax_id')
-            ->toArray();
+        $fantraxToPlayerId = self::canonicalPlayerIdsByFantraxId($allFantraxIds, $now);
 
         // Invert for quick lookup player_id -> fantrax id
         $playerIdToFantrax = [];
@@ -897,6 +893,106 @@ final class SyncFantraxLeague
             ?? [];
 
         return is_array($items) ? array_values($items) : [];
+    }
+
+    /**
+     * Resolve Fantrax player ids to canonical player ids.
+     *
+     * The staged fantrax_players table is the normal fast path, but matched
+     * PlayerExternalIdentity rows are the authoritative repair path when a
+     * mirror row is stale or has been nulled during duplicate cleanup.
+     *
+     * @param array<int,string> $fantraxIds
+     * @return array<string,int>
+     */
+    private static function canonicalPlayerIdsByFantraxId(array $fantraxIds, CarbonInterface $now): array
+    {
+        $fantraxIds = array_values(array_unique(array_filter(
+            array_map(static fn (string $fantraxId): string => trim($fantraxId), $fantraxIds),
+            static fn (string $fantraxId): bool => $fantraxId !== '',
+        )));
+
+        if ($fantraxIds === []) {
+            return [];
+        }
+
+        $fantraxToPlayerId = DB::table('fantrax_players')
+            ->whereIn('fantrax_id', $fantraxIds)
+            ->whereNotNull('player_id')
+            ->pluck('player_id', 'fantrax_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->toArray();
+
+        $unresolvedFantraxIds = array_values(array_diff($fantraxIds, array_keys($fantraxToPlayerId)));
+
+        if ($unresolvedFantraxIds === []) {
+            return $fantraxToPlayerId;
+        }
+
+        $identityFallbacks = PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_FANTRAX)
+            ->where('match_status', PlayerExternalIdentity::STATUS_MATCHED)
+            ->whereIn('provider_player_id', $unresolvedFantraxIds)
+            ->whereNotNull('player_id')
+            ->pluck('player_id', 'provider_player_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->toArray();
+
+        if ($identityFallbacks === []) {
+            return $fantraxToPlayerId;
+        }
+
+        foreach ($identityFallbacks as $fantraxId => $playerId) {
+            $fantraxToPlayerId[(string) $fantraxId] = $playerId;
+        }
+
+        self::mirrorRecoveredFantraxPlayerLinks($identityFallbacks, $now);
+
+        return $fantraxToPlayerId;
+    }
+
+    /**
+     * Repair stale Fantrax mirror rows when the linked PEI can safely identify
+     * the canonical player.
+     *
+     * @param array<string,int> $fantraxToPlayerId
+     */
+    private static function mirrorRecoveredFantraxPlayerLinks(array $fantraxToPlayerId, CarbonInterface $now): void
+    {
+        foreach ($fantraxToPlayerId as $fantraxId => $playerId) {
+            $fantraxId = (string) $fantraxId;
+            $playerId = (int) $playerId;
+
+            $existingForPlayer = DB::table('fantrax_players')
+                ->where('player_id', $playerId)
+                ->where('fantrax_id', '!=', $fantraxId)
+                ->exists();
+
+            if ($existingForPlayer) {
+                Log::warning('[FX Sync] PEI fallback resolved rostered Fantrax player, but mirror row is claimed by another Fantrax id.', [
+                    'fantrax_id' => $fantraxId,
+                    'player_id' => $playerId,
+                ]);
+
+                continue;
+            }
+
+            $updated = DB::table('fantrax_players')
+                ->where('fantrax_id', $fantraxId)
+                ->update([
+                    'player_id' => $playerId,
+                    'updated_at' => $now,
+                ]);
+
+            if ($updated === 0) {
+                DB::table('fantrax_players')->insert([
+                    'fantrax_id' => $fantraxId,
+                    'player_id' => $playerId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        }
     }
 
     /**
