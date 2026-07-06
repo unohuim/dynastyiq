@@ -9,11 +9,13 @@ use App\Services\ConnectFantraxUser;
 use App\Models\IntegrationSecret;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\Role;
 use App\Models\User;
 use App\Services\FantraxLeagueService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response as HttpClientResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Mockery;
 use Tests\TestCase;
@@ -271,5 +273,50 @@ class FantraxUserControllerTest extends TestCase
             'platform_league_id' => $league->id,
             'is_active' => false,
         ]);
+    }
+
+    public function test_fantrax_logo_profile_connection_blocks_non_super_admins(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->postJson(route('integrations.fantrax.logos.connect'))
+            ->assertForbidden();
+    }
+
+    public function test_fantrax_logo_profile_connection_initializes_configured_profile_for_super_admins(): void
+    {
+        $user = User::factory()->create();
+        $role = Role::create([
+            'name' => 'Super Admin',
+            'slug' => 'super-admin',
+            'level' => 100,
+            'scope' => 'global',
+            'is_active' => true,
+        ]);
+        DB::table('role_user')->insert([
+            'role_id' => $role->id,
+            'user_id' => $user->id,
+            'organization_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $profilePath = sys_get_temp_dir() . '/dynastyiq-fantrax-profile-test-' . uniqid('', true);
+        config()->set('apiurls.fantrax.browser_profile_path', $profilePath);
+
+        try {
+            $this->actingAs($user)
+                ->postJson(route('integrations.fantrax.logos.connect'))
+                ->assertOk()
+                ->assertJsonPath('integration.provider', 'fantrax_logos')
+                ->assertJsonPath('integration.connected', true)
+                ->assertJsonPath('integration.ready', true);
+
+            $this->assertDirectoryExists($profilePath);
+        } finally {
+            if (is_dir($profilePath)) {
+                rmdir($profilePath);
+            }
+        }
     }
 }

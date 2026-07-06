@@ -19,6 +19,7 @@ class PlatformLeague extends Model
         'platform_league_id',
         'name',
         'sport',
+        'logo_url',
         'settings',
         'scoring_settings',
         'synced_at',
@@ -82,7 +83,7 @@ class PlatformLeague extends Model
             'league_user_teams',
             'platform_league_id',
             'user_id'
-        )->withPivot(['team_id', 'is_active', 'is_visible', 'extras', 'synced_at'])
+        )->withPivot(['team_id', 'is_active', 'is_visible', 'sort_order', 'extras', 'synced_at'])
          ->withTimestamps();
     }
 

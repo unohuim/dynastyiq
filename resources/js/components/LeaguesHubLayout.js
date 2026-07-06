@@ -1,4 +1,6 @@
 // resources/js/components/LeaguesHubLayout.js
+import { mountSortableLists } from "./SortableList/sortable-list";
+
 function mount(root) {
     if (!root) return;
     if (root.dataset.leaguesHubMounted === "true") return;
@@ -68,6 +70,74 @@ function mount(root) {
             track: link?.querySelector("[data-league-sync-progress]") || null,
             bar: link?.querySelector("[data-league-sync-progress-bar]") || null,
         };
+    }
+
+    function initialsForLeague(link) {
+        const title = link?.querySelector(".min-w-0 .block")?.textContent || "DI";
+
+        return title
+            .trim()
+            .slice(0, 2)
+            .toUpperCase() || "DI";
+    }
+
+    function renderLeagueLogoAvatar(avatar, logoUrl, initials = "DI") {
+        if (!avatar) return;
+
+        avatar.replaceChildren();
+
+        const srOnly = document.createElement("span");
+
+        srOnly.className = "sr-only";
+        srOnly.textContent = "League logo";
+        avatar.append(srOnly);
+
+        if (logoUrl) {
+            const image = document.createElement("img");
+
+            image.src = logoUrl;
+            image.alt = "";
+            image.loading = "lazy";
+            image.referrerPolicy = "no-referrer";
+            image.className = "h-full w-full object-cover";
+            image.dataset.leagueLogoImage = "";
+            avatar.append(image);
+            return;
+        }
+
+        const fallback = document.createElement("span");
+
+        fallback.dataset.leagueLogoFallback = "";
+        fallback.textContent = initials;
+        avatar.append(fallback);
+    }
+
+    function updateLeagueLogo(event) {
+        const platformLeagueId = String(event?.platform_league_id || "");
+        const logoUrl = String(event?.logo_url || "");
+
+        if (!platformLeagueId) return;
+
+        root.querySelectorAll(
+            `[data-league-option-row][data-league-id="${platformLeagueId}"]`
+        ).forEach((optionRow) => {
+            optionRow.dataset.leagueLogoUrl = logoUrl;
+        });
+
+        const link = leagueLink(platformLeagueId);
+        const avatar = link?.querySelector("[data-league-logo-avatar]");
+
+        renderLeagueLogoAvatar(avatar, logoUrl, initialsForLeague(link));
+    }
+
+    async function refreshLeaguesRootFromServer() {
+        const page = await fetch(window.location.href, {
+            headers: { "X-Requested-With": "XMLHttpRequest" },
+        });
+
+        if (page.ok) {
+            updateRootFromHtml(await page.text());
+        }
     }
 
     function progressColor(percent) {
@@ -262,6 +332,7 @@ function mount(root) {
         document.documentElement.classList.remove("overflow-hidden");
         document.body.classList.remove("overflow-hidden");
         restoreLeagueSyncState();
+        mountSortableLists(root);
 
         return true;
     }
@@ -293,13 +364,7 @@ function mount(root) {
                 throw new Error(payload.message || `Could not refresh ${label}.`);
             }
 
-            const page = await fetch(window.location.href, {
-                headers: { "X-Requested-With": "XMLHttpRequest" },
-            });
-
-            if (page.ok) {
-                updateRootFromHtml(await page.text());
-            }
+            await refreshLeaguesRootFromServer();
 
             notify("success", payload.message || `${label} sync queued.`);
         } catch (error) {
@@ -353,6 +418,7 @@ function mount(root) {
 
             const name = optionRow.dataset.leagueName || "League";
             const platformLabel = optionRow.dataset.leaguePlatformLabel || "League";
+            const logoUrl = optionRow.dataset.leagueLogoUrl || "";
             const listItem = document.createElement("li");
             const anchor = document.createElement("a");
             const content = document.createElement("div");
@@ -376,8 +442,9 @@ function mount(root) {
 
             content.className = "flex items-center gap-2.5";
             avatar.className =
-                "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 group-aria-[current=page]:bg-indigo-600 group-aria-[current=page]:text-white group-aria-[current=page]:ring-indigo-600";
-            avatar.textContent = name.slice(0, 2).toUpperCase();
+                "inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 group-aria-[current=page]:bg-indigo-600 group-aria-[current=page]:text-white group-aria-[current=page]:ring-indigo-600";
+            avatar.dataset.leagueLogoAvatar = "";
+            renderLeagueLogoAvatar(avatar, logoUrl, name.slice(0, 2).toUpperCase());
             textWrap.className = "min-w-0 flex-1";
             title.className =
                 "block truncate text-[13px] font-medium leading-4 text-slate-900 group-aria-[current=page]:text-indigo-950";
@@ -407,6 +474,21 @@ function mount(root) {
         if (!item) return;
 
         item.classList.toggle("hidden", !isVisible);
+    }
+
+    function syncLeagueListOrder(ids) {
+        const currentList = list();
+
+        if (!currentList) return;
+
+        ids.forEach((leagueId) => {
+            const link = leagueLink(String(leagueId));
+            const item = link?.closest("li");
+
+            if (item) {
+                currentList.append(item);
+            }
+        });
     }
 
     async function toggleLeagueVisibility(form) {
@@ -481,6 +563,19 @@ function mount(root) {
         loadPanel(link, true);
     });
 
+    root.addEventListener("sortable-list:changed", (event) => {
+        syncLeagueListOrder(event.detail?.ids || []);
+    });
+
+    root.addEventListener("sortable-list:saved", (event) => {
+        notify("success", event.detail?.payload?.message || "League order saved.");
+    });
+
+    root.addEventListener("sortable-list:failed", (event) => {
+        syncLeagueListOrder(event.detail?.previousIds || []);
+        notify("error", event.detail?.error?.message || "Could not save league order.");
+    });
+
     window.addEventListener("popstate", () => {
         const currentList = list();
         const params = new URLSearchParams(location.search);
@@ -495,6 +590,18 @@ function mount(root) {
     });
 
     window.DIQ?.userChannel?.listen(".league.sync.status", handleLeagueSyncStatus);
+    window.addEventListener("league:logos-synced", (event) => {
+        const detail = event.detail || {};
+
+        updateLeagueLogo(detail);
+
+        if (detail.refresh_from_server === true) {
+            refreshLeaguesRootFromServer().catch((error) => {
+                console.error("League logo refresh failed", error);
+            });
+        }
+    });
+    mountSortableLists(root);
 }
 
 function mountAll() {

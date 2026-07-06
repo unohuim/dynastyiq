@@ -44,7 +44,9 @@ class FantasyLeagueAccess
 
         return $user->platformLeagues()
             ->whereIn('platform_leagues.platform', $readyProviders)
-            ->wherePivot('is_active', true);
+            ->wherePivot('is_active', true)
+            ->orderByPivot('sort_order')
+            ->orderBy('platform_leagues.name');
     }
 
     /**

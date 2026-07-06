@@ -24,6 +24,7 @@ rules:
   - Yahoo league discovery must use user-scoped Yahoo Fantasy API resources.
   - Yahoo league records must persist to platform_leagues with platform yahoo.
   - Yahoo league settings and scoring categories must persist to platform_leagues from the league settings endpoint.
+  - Yahoo league and team logo URLs should persist to platform_leagues.logo_url and platform_teams.logo_url when Yahoo exposes them.
   - Yahoo roster position settings must persist to provider-neutral roster slot rows before roster display relies on provider slot order.
   - Yahoo teams must persist to platform_teams using Yahoo team_key as the provider team id.
   - User-owned Yahoo teams must attach through league_user_teams.
@@ -32,6 +33,7 @@ rules:
   - Stale Yahoo league_user_teams assignments for the synced user must be deactivated when absent from the latest owned-team payload.
   - Yahoo league sync must feed FantasyProviderLeagueAccess instead of adding Yahoo-specific Leagues route behavior.
   - User-triggered Yahoo league refresh may be exposed from the Leagues UI and must use the stored connected Yahoo OAuth grant instead of forcing OAuth.
+  - User-triggered Yahoo team logo sync must reuse the shared Leagues team-logo sync routes and must use Yahoo OAuth/XML rather than a browser inspection flow.
   - Yahoo-specific XML parsing must remain inside Yahoo integration services.
 public_interface:
   - SyncYahooTeamRosterJob
@@ -42,5 +44,7 @@ public_interface:
   - admin.yahoo.oauth.callback
   - leagues.resync
   - leagues.yahoo.resync
+  - leagues.team-logos.sync
+  - community.leagues.team-logos.sync
 example_usage: |
   $summary = app(YahooFantasyLeagueService::class)->syncForConnection($connection);

@@ -759,6 +759,7 @@ Migrations remain the **sole source of truth**.
 | team_id | bigint | No | FK -> platform_teams.id (CASCADE) |
 | is_active | boolean | No | Defaults to `true` |
 | is_visible | boolean | No | Defaults to `true`; user-specific Leagues list visibility |
+| sort_order | unsigned integer | No | Defaults to `0`; user-specific Leagues list ordering |
 | extras | json | Yes | Platform metadata |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -2000,6 +2001,7 @@ Migrations remain the **sole source of truth**.
 | platform_league_id | string | No | External league ID |
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
+| logo_url | string | Yes | Provider league logo URL when exposed |
 | settings | json | Yes | Provider league settings payload |
 | scoring_settings | json | Yes | Provider scoring categories and modifiers |
 | synced_at | timestamp | Yes | Last sync timestamp |
@@ -2120,6 +2122,7 @@ Migrations remain the **sole source of truth**.
 | platform_team_id | string | No | External team ID |
 | name | string | No | Team name |
 | short_name | string | Yes | Short team name |
+| logo_url | string | Yes | Provider team logo URL when exposed |
 | extras | json | Yes | Platform metadata |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |

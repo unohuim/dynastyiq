@@ -90,6 +90,7 @@
                             $panel = route('leagues.panel', $id);
                             $platform = (string) data_get($lg, 'platform', '');
                             $platformLabel = $platformLabels[$platform] ?? ucfirst($platform);
+                            $logoUrl = (string) (data_get($lg, 'user_team_logo_url') ?: data_get($lg, 'logo_url', ''));
                             $isActive = $id !== '' && $id === $active;
                         @endphp
                         <li>
@@ -101,8 +102,20 @@
                                 aria-current="{{ $isActive ? 'page' : 'false' }}"
                             >
                                 <div class="flex items-center gap-2.5">
-                                    <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 group-aria-[current=page]:bg-indigo-600 group-aria-[current=page]:text-white group-aria-[current=page]:ring-indigo-600">
-                                        {{ strtoupper(mb_substr($name, 0, 2)) }}
+                                    <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 group-aria-[current=page]:bg-indigo-600 group-aria-[current=page]:text-white group-aria-[current=page]:ring-indigo-600" data-league-logo-avatar>
+                                        <span class="sr-only">{{ $name }} logo</span>
+                                        @if ($logoUrl !== '')
+                                            <img
+                                                src="{{ $logoUrl }}"
+                                                alt=""
+                                                class="h-full w-full object-cover"
+                                                loading="lazy"
+                                                referrerpolicy="no-referrer"
+                                                data-league-logo-image
+                                            >
+                                        @else
+                                            <span data-league-logo-fallback>{{ strtoupper(mb_substr($name, 0, 2)) }}</span>
+                                        @endif
                                     </span>
                                     <span class="min-w-0 flex-1">
                                         <span class="block truncate text-[13px] font-medium leading-4 text-slate-900 group-aria-[current=page]:text-indigo-950">{{ $name }}</span>
@@ -145,7 +158,7 @@
             <div
                 x-show="leagueOptionsOpen"
                 x-transition.opacity.duration.300ms
-                class="pointer-events-auto absolute inset-0 bg-slate-900/30"
+                class="pointer-events-auto absolute inset-0 bg-slate-950/30 backdrop-blur-sm"
                 data-leagues-options-overlay
                 @click="leagueOptionsOpen = false"
             ></div>
@@ -158,49 +171,81 @@
                 x-transition:leave="transition-transform ease-in duration-300 motion-reduce:transition-none"
                 x-transition:leave-start="translate-x-0"
                 x-transition:leave-end="translate-x-full motion-reduce:translate-x-0"
-                class="pointer-events-auto absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-white shadow-xl"
+                class="pointer-events-auto absolute right-0 top-2 flex w-full flex-col overflow-hidden rounded-l-2xl bg-white shadow-2xl ring-1 ring-slate-900/5"
+                style="height: calc(100% - 1rem); max-width: 24rem;"
                 data-leagues-options-panel
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="leaguesOptionsTitle"
                 tabindex="-1"
             >
-                <div class="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-                    <div>
-                        <h2 id="leaguesOptionsTitle" class="text-sm font-semibold text-slate-950">League list options</h2>
-                        <p class="mt-1 text-xs text-slate-500">Choose which leagues appear in your list.</p>
+                <div class="shrink-0 px-4 pb-3.5 pt-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="min-w-0">
+                            <h2 id="leaguesOptionsTitle" class="text-xl font-semibold leading-7 text-slate-950">League list options</h2>
+                            <p class="mt-1 text-xs leading-5 text-slate-500">Choose which leagues appear in your list.</p>
+                        </div>
+                        <button
+                            type="button"
+                            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            data-leagues-options-close
+                            aria-label="Close league list options"
+                            @click="leagueOptionsOpen = false"
+                        >
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                            </svg>
+                        </button>
                     </div>
-                    <button
-                        type="button"
-                        class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        data-leagues-options-close
-                        aria-label="Close league list options"
-                        @click="leagueOptionsOpen = false"
-                    >
-                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
-                        </svg>
-                    </button>
+
+                    <div class="mt-3.5 rounded-xl border border-slate-200/80 bg-slate-50/70 p-2 shadow-sm">
+                        <h3 class="text-xs font-semibold leading-4 text-slate-950">List display</h3>
+                        <div class="mt-2 grid grid-cols-2 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+                            <button
+                                type="button"
+                                class="rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-center text-xs font-semibold text-indigo-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                aria-pressed="true"
+                            >
+                                Static
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-md px-2.5 py-1.5 text-center text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                aria-pressed="false"
+                            >
+                                Flex
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-                    <div class="divide-y divide-slate-100">
+                <div class="min-h-0 flex-1 overflow-y-auto border-t border-slate-100 px-4">
+                    <div
+                        class="divide-y divide-slate-200"
+                        data-sortable-list
+                        data-sortable-url="{{ route('leagues.order.update') }}"
+                        data-sortable-payload-key="league_ids"
+                    >
                         @forelse ($options as $lg)
                             @php
                                 $id = (string) data_get($lg, 'id', '');
                                 $name = (string) data_get($lg, 'name', '');
                                 $platform = (string) data_get($lg, 'platform', '');
                                 $platformLabel = $platformLabels[$platform] ?? ucfirst($platform);
+                                $logoUrl = (string) (data_get($lg, 'user_team_logo_url') ?: data_get($lg, 'logo_url', ''));
                                 $isVisible = (bool) data_get($lg, 'is_visible', true);
                             @endphp
                             <div
-                                class="flex items-center justify-between gap-3 px-2 py-2.5"
+                                class="flex items-center justify-between gap-3 py-2"
                                 data-league-option-row
+                                data-sortable-row
+                                data-sortable-id="{{ $id }}"
                                 data-league-id="{{ $id }}"
                                 data-league-name="{{ $name }}"
                                 data-league-href="{{ route('leagues.index', ['active' => $id]) }}"
                                 data-league-panel-url="{{ route('leagues.panel', $id) }}"
                                 data-league-platform-label="{{ $platform !== '' ? $platformLabel : 'League' }}"
+                                data-league-logo-url="{{ $logoUrl }}"
                                 x-data="{
                                     isVisible: @js($isVisible),
                                     saving: false,
@@ -264,9 +309,23 @@
                                     },
                                 }"
                             >
-                                <div class="min-w-0">
-                                    <p class="truncate text-sm font-medium text-slate-900">{{ $name }}</p>
-                                    <p class="mt-0.5 text-xs text-slate-500">{{ $platform !== '' ? $platformLabel : 'League' }}</p>
+                                <div class="flex min-w-0 items-center gap-3">
+                                    <button
+                                        type="button"
+                                        class="inline-flex h-7 w-7 shrink-0 cursor-grab items-center justify-center rounded-full bg-slate-100 text-slate-400 ring-1 ring-slate-200 transition-colors hover:bg-slate-200 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-200 active:cursor-grabbing"
+                                        draggable="true"
+                                        data-sortable-handle
+                                        aria-label="Drag {{ $name }} to reorder"
+                                        title="Drag to reorder"
+                                    >
+                                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 7.5h15M4.5 12h15M4.5 16.5h15" />
+                                        </svg>
+                                    </button>
+                                    <div class="min-w-0">
+                                        <p class="truncate text-sm font-semibold leading-5 text-slate-950">{{ $name }}</p>
+                                        <p class="text-xs leading-4 text-slate-500">{{ $platform !== '' ? $platformLabel : 'League' }}</p>
+                                    </div>
                                 </div>
                                 <form
                                     method="POST"
@@ -312,7 +371,7 @@
                                 </form>
                             </div>
                         @empty
-                            <div class="px-2 py-8 text-sm text-slate-500">No leagues are available.</div>
+                            <div class="py-8 text-xs text-slate-500">No leagues are available.</div>
                         @endforelse
                     </div>
                 </div>

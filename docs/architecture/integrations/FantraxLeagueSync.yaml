@@ -3,10 +3,15 @@ type: External Platform Sync Pattern
 location:
   - app/Services/FantraxLeagueService.php
   - app/Services/SyncFantraxLeague.php
+  - app/Services/FantraxLogoSyncService.php
+  - app/Support/FantraxLogoBrowserProfile.php
   - app/Services/ImportFantraxLeagues.php
   - app/Services/ImportFantraxPlayers.php
+  - app/Console/Commands/FantraxInspectLogosCommand.php
   - app/Http/Controllers/LeagueController.php
+  - app/Http/Controllers/CommunityLeagues.php
   - routes/web.php
+  - app/Events/TeamLogosSynced.php
   - app/Events/LeagueSyncStatusUpdated.php
   - app/Jobs/SyncFantraxLeagueJob.php
   - app/Jobs/SyncFantraxTeamJob.php
@@ -28,6 +33,13 @@ rules:
   - Fantrax-specific data must map into platform-neutral models when it powers app features.
   - Roster sync must preserve canonical player identity links through platform player IDs.
   - Roster sync must repair stale or missing fantrax_players mirrors from matched Fantrax player_external_identities before deciding current roster memberships.
+  - Fantrax league and team logo URLs should be persisted on platform-neutral league and team rows when exposed by provider payloads, and must remain optional.
+  - Fantrax logo source paths must be discovered from provider payloads before persistence logic depends on a new logo field.
+  - Fantrax team logo URLs must not be derived from provider team IDs because Fantrax web logo paths use a logo id that can differ from the team id.
+  - Queued Fantrax league refreshes must preserve existing platform_teams.logo_url values when provider refresh payloads omit logo fields.
+  - Authenticated Fantrax web logo sync must be skipped unless a configured persistent browser profile directory is ready.
+  - Authenticated Fantrax web logo sync must be league-scoped, commissioner-triggered from league options, and persist only explicit provider logo URLs.
+  - Completed authenticated Fantrax web logo syncs must broadcast a user-scoped logo update event so league list UI can update without a page refresh.
   - Roster sync must persist provider roster slot, membership status, and eligibility metadata when Fantrax exposes those values.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.
   - Fantrax roster item status is authoritative for roster grouping; ACTIVE maps to active, RESERVE maps to reserve/bench, and MINORS maps to minor.
@@ -36,12 +48,20 @@ rules:
   - Fantrax enum-like values must remain documented in docs/ENUMS.md.
 public_interface:
   - leagues.resync
+  - leagues.team-logos.sync
+  - community.leagues.team-logos.sync
   - LeagueController::resync
+  - LeagueController::syncTeamLogos
+  - CommunityLeagues::syncTeamLogos
+  - TeamLogosSynced
   - LeagueSyncStatusUpdated
   - SyncFantraxLeagueJob
   - SyncFantraxTeamJob
   - SyncFantraxRosterMembershipsForLinkedIdentity
   - FantraxLeagueService
+  - FantraxLogoSyncService
+  - fantrax:inspect-logos
+  - FantraxLogoBrowserProfile
   - PlatformLeague
   - PlatformTeam
   - PlatformRosterMembership

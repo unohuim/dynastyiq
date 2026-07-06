@@ -128,6 +128,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::put('/communities/{c_id}/leagues/{l_id}/draft-settings', [CommunityLeagues::class, 'updateDraftSettings'])
             ->middleware('auth')
             ->name('community.leagues.draft-settings.update');
+        Route::post('/communities/{c_id}/leagues/{l_id}/team-logos/sync', [CommunityLeagues::class, 'syncTeamLogos'])
+            ->middleware('auth')
+            ->name('community.leagues.team-logos.sync');
 
         // User preferences
         Route::put('/me/preferences', [\App\Http\Controllers\UserPreferencesController::class, 'upsert'])
@@ -310,10 +313,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.resync');
         Route::post('/leagues/yahoo/resync', [LeagueController::class, 'resyncYahoo'])
             ->name('leagues.yahoo.resync');
+        Route::put('/leagues/order', [LeagueController::class, 'updateOrder'])
+            ->name('leagues.order.update');
         Route::put('/leagues/{league_id}/visibility', [LeagueController::class, 'updateVisibility'])
             ->name('leagues.visibility.update');
         Route::put('/leagues/{league_id}/scoring-settings', [LeagueController::class, 'updateScoringSettings'])
             ->name('leagues.scoring-settings.update');
+        Route::post('/leagues/{league_id}/team-logos/sync', [LeagueController::class, 'syncTeamLogos'])
+            ->name('leagues.team-logos.sync');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
             ->name('leagues.stats.payload');
         Route::get('/leagues/{league_id}/players-payload', [LeagueController::class, 'playersPayload'])

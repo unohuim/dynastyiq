@@ -39,4 +39,8 @@ if (window.DIQ?.userId) {
       },
     }));
   });
+
+  window.DIQ.userChannel.listen('.league.logos.synced', (e) => {
+    window.dispatchEvent(new CustomEvent('league:logos-synced', { detail: e }));
+  });
 }

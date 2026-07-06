@@ -94,6 +94,9 @@ return [
     */
     'fantrax' => [
         'base'      => env('FANTRAX_BASE_URL', 'https://www.fantrax.com/fxea'),
+        'browser_profile_path' => env('FANTRAX_BROWSER_PROFILE_PATH'),
+        'browser_headless' => env('FANTRAX_BROWSER_HEADLESS', false),
+        'node_path' => env('FANTRAX_NODE_PATH'),
         'auth'      => [
             'in'   => 'none',
         ],

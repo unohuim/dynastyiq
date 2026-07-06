@@ -13,9 +13,12 @@ use App\Models\Role;
 use App\Models\User;
 use App\Models\YahooFantasyConnection;
 use App\Jobs\SyncFantraxLeagueJob;
+use App\Services\FantraxLeagueService;
+use App\Services\SyncFantraxLeague;
 use App\Support\FantasyProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);
@@ -40,6 +43,9 @@ beforeEach(function (): void {
         bool $isActive = true,
         bool $isVisible = true,
         string $provider = FantasyProvider::FANTRAX,
+        int $sortOrder = 0,
+        ?string $logoUrl = null,
+        ?string $teamLogoUrl = null,
     ): PlatformLeague {
         $slug = str($name)->slug()->toString();
         $league = PlatformLeague::create([
@@ -47,17 +53,20 @@ beforeEach(function (): void {
             'platform_league_id' => $slug,
             'name' => $name,
             'sport' => 'hockey',
+            'logo_url' => $logoUrl,
         ]);
         $team = PlatformTeam::create([
             'platform_league_id' => $league->id,
             'platform_team_id' => $slug . '-team',
             'name' => $name . ' Team',
+            'logo_url' => $teamLogoUrl,
         ]);
 
         $user->platformLeagues()->attach($league->id, [
             'team_id' => $team->id,
             'is_active' => $isActive,
             'is_visible' => $isVisible,
+            'sort_order' => $sortOrder,
             'extras' => json_encode(['provider' => $provider]),
             'synced_at' => now(),
         ]);
@@ -605,6 +614,324 @@ it('leagues options drawer includes user hidden leagues', function (): void {
         ->assertSee('data-league-visible="false"', false);
 });
 
+it('leagues page renders provider league logos when available', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)(
+        $user,
+        'Logo League',
+        logoUrl: 'https://img.fantrax.test/leagues/logo.png',
+    );
+
+    $this->actingAs($user)
+        ->get(route('leagues.index'))
+        ->assertOk()
+        ->assertSee('src="https://img.fantrax.test/leagues/logo.png"', false)
+        ->assertSee('data-panel-url="' . route('leagues.panel', $league->id) . '"', false);
+});
+
+it('leagues page prefers the current user team logo over the provider league logo', function (): void {
+    $user = ($this->createConnectedUser)();
+    ($this->createPlatformLeagueAssignment)(
+        $user,
+        'Team Logo League',
+        logoUrl: 'https://img.fantrax.test/leagues/logo.png',
+        teamLogoUrl: 'https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_128.webp',
+    );
+
+    $this->actingAs($user)
+        ->get(route('leagues.index'))
+        ->assertOk()
+        ->assertSee('src="https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_128.webp"', false)
+        ->assertDontSee('src="https://img.fantrax.test/leagues/logo.png"', false);
+});
+
+it('leagues page keeps initials fallback when no provider league logo exists', function (): void {
+    $user = ($this->createConnectedUser)();
+    ($this->createPlatformLeagueAssignment)($user, 'Initials League');
+
+    $this->actingAs($user)
+        ->get(route('leagues.index'))
+        ->assertOk()
+        ->assertSee('IN');
+});
+
+it('fantrax league sync stores provider league and team logo urls', function (): void {
+    $user = User::factory()->create();
+
+    app(FantraxLeagueService::class)->upsertLeaguesForUser($user, [[
+        'leagueId' => 'logo-league',
+        'leagueName' => 'Logo League',
+        'leagueLogoUrl' => 'https://img.fantrax.test/leagues/logo.png',
+        'teamId' => 'logo-team',
+        'teamName' => 'Logo Team',
+        'teamShortName' => 'LOGO',
+        'teamLogoUrl' => 'https://img.fantrax.test/teams/logo.png',
+    ]]);
+
+    $league = PlatformLeague::query()
+        ->where('platform', FantasyProvider::FANTRAX)
+        ->where('platform_league_id', 'logo-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $league->id)
+        ->where('platform_team_id', 'logo-team')
+        ->firstOrFail();
+
+    expect($league->logo_url)->toBe('https://img.fantrax.test/leagues/logo.png')
+        ->and($team->logo_url)->toBe('https://img.fantrax.test/teams/logo.png');
+});
+
+it('fantrax league sync does not derive team logo urls from provider team ids', function (): void {
+    $user = User::factory()->create();
+
+    app(FantraxLeagueService::class)->upsertLeaguesForUser($user, [[
+        'leagueId' => 'no-logo-league',
+        'leagueName' => 'No Logo League',
+        'teamId' => 'yyu4dyusmora3ff8',
+        'teamName' => 'No Logo Team',
+        'teamShortName' => 'NONE',
+    ]]);
+
+    $league = PlatformLeague::query()
+        ->where('platform', FantasyProvider::FANTRAX)
+        ->where('platform_league_id', 'no-logo-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $league->id)
+        ->where('platform_team_id', 'yyu4dyusmora3ff8')
+        ->firstOrFail();
+
+    expect($team->logo_url)->toBeNull();
+});
+
+it('fantrax league sync accepts alternate provider logo field names', function (): void {
+    $user = User::factory()->create();
+
+    app(FantraxLeagueService::class)->upsertLeaguesForUser($user, [[
+        'leagueId' => 'alternate-logo-league',
+        'leagueName' => 'Alternate Logo League',
+        'leagueLogo' => 'https://img.fantrax.test/leagues/alternate.png',
+        'teamId' => 'alternate-logo-team',
+        'teamName' => 'Alternate Logo Team',
+        'teamShortName' => 'ALT',
+        'imageUrl' => 'https://img.fantrax.test/teams/alternate.png',
+    ]]);
+
+    $league = PlatformLeague::query()
+        ->where('platform', FantasyProvider::FANTRAX)
+        ->where('platform_league_id', 'alternate-logo-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $league->id)
+        ->where('platform_team_id', 'alternate-logo-team')
+        ->firstOrFail();
+
+    expect($league->logo_url)->toBe('https://img.fantrax.test/leagues/alternate.png')
+        ->and($team->logo_url)->toBe('https://img.fantrax.test/teams/alternate.png');
+});
+
+it('fantrax league sync preserves team logo urls when later payloads omit explicit logos', function (): void {
+    $user = User::factory()->create();
+    $service = app(FantraxLeagueService::class);
+
+    $service->upsertLeaguesForUser($user, [[
+        'leagueId' => 'persistent-logo-league',
+        'leagueName' => 'Persistent Logo League',
+        'leagueLogoUrl' => 'https://img.fantrax.test/leagues/persistent.png',
+        'teamId' => 'persistent-logo-team',
+        'teamName' => 'Persistent Logo Team',
+        'teamShortName' => 'PER',
+        'teamLogoUrl' => 'https://img.fantrax.test/teams/persistent.png',
+    ]]);
+    $service->upsertLeaguesForUser($user, [[
+        'leagueId' => 'persistent-logo-league',
+        'leagueName' => 'Persistent Logo League',
+        'teamId' => 'persistent-logo-team',
+        'teamName' => 'Persistent Logo Team',
+        'teamShortName' => 'PER',
+    ]]);
+
+    $league = PlatformLeague::query()
+        ->where('platform', FantasyProvider::FANTRAX)
+        ->where('platform_league_id', 'persistent-logo-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $league->id)
+        ->where('platform_team_id', 'persistent-logo-team')
+        ->firstOrFail();
+
+    expect($league->logo_url)->toBe('https://img.fantrax.test/leagues/persistent.png')
+        ->and($team->logo_url)->toBe('https://img.fantrax.test/teams/persistent.png');
+});
+
+it('queued fantrax league refresh does not derive team logo urls', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+    $league = PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'refresh-logo-league',
+        'name' => 'Refresh Logo League',
+        'sport' => 'hockey',
+    ]);
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo?leagueId=refresh-logo-league' => Http::response([], 200),
+        'https://fantrax.test/fxea/general/getTeamRosters?leagueId=refresh-logo-league' => Http::response([
+            'rosters' => [
+                'yyu4dyusmora3ff8' => [
+                    'teamName' => 'Refresh Logo Team',
+                    'rosterItems' => [],
+                ],
+            ],
+        ], 200),
+    ]);
+
+    app(SyncFantraxLeague::class)->sync($league->id);
+
+    $this->assertDatabaseHas('platform_teams', [
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'yyu4dyusmora3ff8',
+        'logo_url' => null,
+    ]);
+});
+
+it('queued fantrax league refresh stores explicit team logo urls when present', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+    $league = PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'explicit-refresh-logo-league',
+        'name' => 'Explicit Refresh Logo League',
+        'sport' => 'hockey',
+    ]);
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo?leagueId=explicit-refresh-logo-league' => Http::response([], 200),
+        'https://fantrax.test/fxea/general/getTeamRosters?leagueId=explicit-refresh-logo-league' => Http::response([
+            'rosters' => [
+                'abc4dyusmora3ff8' => [
+                    'teamName' => 'Explicit Refresh Logo Team',
+                    'teamLogoUrl' => 'https://img.fantrax.test/custom/logo.webp',
+                    'rosterItems' => [],
+                ],
+            ],
+        ], 200),
+    ]);
+
+    app(SyncFantraxLeague::class)->sync($league->id);
+
+    $this->assertDatabaseHas('platform_teams', [
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'abc4dyusmora3ff8',
+        'logo_url' => 'https://img.fantrax.test/custom/logo.webp',
+    ]);
+});
+
+it('fantrax logo inspection command reports logo-like payload paths', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'logo-command-league',
+        'name' => 'Logo Command League',
+        'sport' => 'hockey',
+    ]);
+    Http::fake([
+        'https://www.fantrax.com/fxea/general/getLeagueInfo?leagueId=logo-command-league' => Http::response([
+            'league' => [
+                'leagueLogoUrl' => 'https://img.fantrax.test/leagues/logo.png',
+            ],
+        ]),
+        'https://www.fantrax.com/fxea/general/getTeamRosters?leagueId=logo-command-league' => Http::response([
+            'rosters' => [
+                ['teamId' => '1', 'teamLogoUrl' => 'https://img.fantrax.test/teams/logo.webp'],
+            ],
+        ]),
+        'https://www.fantrax.com/fxea/general/getStandings?leagueId=logo-command-league' => Http::response([
+            'standings' => [
+                ['teamId' => '1', 'iconUrl' => 'https://img.fantrax.test/teams/icon.jpg'],
+            ],
+        ]),
+    ]);
+
+    $this->artisan('fantrax:inspect-logos', ['league' => (string) $league->id, '--json' => true])
+        ->assertExitCode(0)
+        ->expectsOutputToContain('$.league.leagueLogoUrl')
+        ->expectsOutputToContain('$.rosters.0.teamLogoUrl')
+        ->expectsOutputToContain('$.standings.0.iconUrl')
+        ->expectsOutputToContain('https://img.fantrax.test/leagues/logo.png');
+});
+
+it('fantrax logo inspection command accepts provider league ids', function (): void {
+    PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'provider-logo-command-league',
+        'name' => 'Provider Logo Command League',
+        'sport' => 'hockey',
+    ]);
+    Http::fake([
+        'https://www.fantrax.com/fxea/general/getLeagueInfo?leagueId=provider-logo-command-league' => Http::response([
+            'league' => ['imageUrl' => 'https://img.fantrax.test/leagues/provider.png'],
+        ]),
+        'https://www.fantrax.com/fxea/general/getTeamRosters?leagueId=provider-logo-command-league' => Http::response([]),
+        'https://www.fantrax.com/fxea/general/getStandings?leagueId=provider-logo-command-league' => Http::response([]),
+    ]);
+
+    $this->artisan('fantrax:inspect-logos', [
+        'league' => 'provider-logo-command-league',
+        '--platform-id' => true,
+        '--json' => true,
+    ])
+        ->assertExitCode(0)
+        ->expectsOutputToContain('$.league.imageUrl')
+        ->expectsOutputToContain('https://img.fantrax.test/leagues/provider.png');
+});
+
+it('fantrax logo inspection command treats non numeric arguments as provider league ids', function (): void {
+    PlatformLeague::create([
+        'platform' => FantasyProvider::FANTRAX,
+        'platform_league_id' => 'nonnumeric-provider-league',
+        'name' => 'Nonnumeric Provider League',
+        'sport' => 'hockey',
+    ]);
+    Http::fake([
+        'https://www.fantrax.com/fxea/general/getLeagueInfo?leagueId=nonnumeric-provider-league' => Http::response([
+            'league' => ['imageUrl' => 'https://img.fantrax.test/leagues/nonnumeric.png'],
+        ]),
+        'https://www.fantrax.com/fxea/general/getTeamRosters?leagueId=nonnumeric-provider-league' => Http::response([]),
+        'https://www.fantrax.com/fxea/general/getStandings?leagueId=nonnumeric-provider-league' => Http::response([]),
+    ]);
+
+    $this->artisan('fantrax:inspect-logos', [
+        'league' => 'nonnumeric-provider-league',
+        '--json' => true,
+    ])
+        ->assertExitCode(0)
+        ->expectsOutputToContain('$.league.imageUrl')
+        ->expectsOutputToContain('https://img.fantrax.test/leagues/nonnumeric.png');
+});
+
+it('leagues page uses the current user saved league order', function (): void {
+    $user = ($this->createConnectedUser)();
+    $thirdLeague = ($this->createPlatformLeagueAssignment)($user, 'Charlie League', sortOrder: 30);
+    $firstLeague = ($this->createPlatformLeagueAssignment)($user, 'Alpha League', sortOrder: 10);
+    $secondLeague = ($this->createPlatformLeagueAssignment)($user, 'Bravo League', sortOrder: 20);
+
+    $this->actingAs($user)
+        ->get(route('leagues.index'))
+        ->assertOk()
+        ->assertSeeInOrder([
+            'data-panel-url="' . route('leagues.panel', $firstLeague->id) . '"',
+            'data-panel-url="' . route('leagues.panel', $secondLeague->id) . '"',
+            'data-panel-url="' . route('leagues.panel', $thirdLeague->id) . '"',
+        ], false);
+});
+
+it('visible league access orders by user sort order before name fallback', function (): void {
+    $user = ($this->createConnectedUser)();
+    $bravoLeague = ($this->createPlatformLeagueAssignment)($user, 'Bravo League', sortOrder: 1);
+    $alphaLeague = ($this->createPlatformLeagueAssignment)($user, 'Alpha League', sortOrder: 1);
+    $charlieLeague = ($this->createPlatformLeagueAssignment)($user, 'Charlie League', sortOrder: 2);
+    $access = app(\App\Services\FantasyLeagueAccess::class);
+
+    expect($access->visibleLeaguesForUser($user)->pluck('platform_leagues.id')->all())
+        ->toBe([$alphaLeague->id, $bravoLeague->id, $charlieLeague->id]);
+});
+
 it('visible league access filters hidden leagues without removing active access', function (): void {
     $user = ($this->createConnectedUser)();
     $visibleLeague = ($this->createPlatformLeagueAssignment)($user, 'Visible League');
@@ -616,6 +943,70 @@ it('visible league access filters hidden leagues without removing active access'
         ->and($access->visibleLeaguesForUser($user)->pluck('platform_leagues.id')->all())
         ->toContain($visibleLeague->id)
         ->not->toContain($hiddenLeague->id);
+});
+
+it('league order endpoint persists the current user league order', function (): void {
+    $user = ($this->createConnectedUser)();
+    $firstLeague = ($this->createPlatformLeagueAssignment)($user, 'First League', sortOrder: 1);
+    $secondLeague = ($this->createPlatformLeagueAssignment)($user, 'Second League', sortOrder: 2);
+    $thirdLeague = ($this->createPlatformLeagueAssignment)($user, 'Third League', sortOrder: 3);
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.order.update'), [
+            'league_ids' => [$thirdLeague->id, $firstLeague->id, $secondLeague->id],
+        ])
+        ->assertOk()
+        ->assertJsonPath('league_ids', [$thirdLeague->id, $firstLeague->id, $secondLeague->id]);
+
+    expect(DB::table('league_user_teams')
+        ->where('user_id', $user->id)
+        ->where('platform_league_id', $thirdLeague->id)
+        ->value('sort_order'))->toBe(1)
+        ->and(DB::table('league_user_teams')
+            ->where('user_id', $user->id)
+            ->where('platform_league_id', $firstLeague->id)
+            ->value('sort_order'))->toBe(2)
+        ->and(DB::table('league_user_teams')
+            ->where('user_id', $user->id)
+            ->where('platform_league_id', $secondLeague->id)
+            ->value('sort_order'))->toBe(3);
+});
+
+it('league order endpoint rejects leagues outside the current user assignments', function (): void {
+    $user = ($this->createConnectedUser)();
+    $otherUser = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($otherUser, 'Other League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.order.update'), ['league_ids' => [$league->id]])
+        ->assertNotFound();
+});
+
+it('league order endpoint rejects inactive current user assignments', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Inactive League', isActive: false);
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.order.update'), ['league_ids' => [$league->id]])
+        ->assertNotFound();
+});
+
+it('league order endpoint rejects users without a ready provider', function (): void {
+    $user = User::factory()->create();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Unready League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.order.update'), ['league_ids' => [$league->id]])
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'Connect a fantasy provider before updating league order.');
+});
+
+it('league order endpoint requires authentication', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Auth League');
+
+    $this->putJson(route('leagues.order.update'), ['league_ids' => [$league->id]])
+        ->assertUnauthorized();
 });
 
 it('league visibility endpoint hides a current user league', function (): void {

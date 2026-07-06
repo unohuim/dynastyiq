@@ -1,0 +1,34 @@
+name: Sortable List
+type: Frontend Component
+location:
+  - resources/js/components/SortableList/sortable-list.js
+purpose: Provide reusable native drag-and-drop reordering for page-local lists that persist ordered item identifiers.
+when_to_use:
+  - Lists whose rows can be manually reordered by the current user.
+  - Settings or navigation lists that can persist an ordered identifier payload through a page-owned endpoint.
+when_not_to_use:
+  - Lists that need cross-list dragging.
+  - Lists whose ordering is controlled only by server-side ranking or sorting rules.
+  - Rich board interactions that require approved domain-specific behavior.
+rules:
+  - SortableList must use native JavaScript and must not introduce a drag-and-drop dependency.
+  - SortableList must remain markup-driven through data-sortable attributes.
+  - SortableList owns drag mechanics only; Blade and page modules own row rendering, styling, and domain meaning.
+  - SortableList may persist ordered identifiers to a configured endpoint, but endpoint authorization and data ownership remain page-specific.
+  - SortableList must emit page-local changed, saved, and failed events so host modules can update related UI and feedback.
+public_interface:
+  - mountSortableList()
+  - mountSortableLists()
+  - data-sortable-list
+  - data-sortable-row
+  - data-sortable-id
+  - data-sortable-handle
+  - sortable-list:changed
+  - sortable-list:saved
+  - sortable-list:failed
+example_usage: |
+  <div data-sortable-list data-sortable-url="/leagues/order" data-sortable-payload-key="league_ids">
+      <div data-sortable-row data-sortable-id="1">
+          <button type="button" draggable="true" data-sortable-handle>Move</button>
+      </div>
+  </div>

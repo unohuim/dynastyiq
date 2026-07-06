@@ -14,6 +14,7 @@
   $teamCountForHeader = $teamRowsForHeader->count();
   $teamCountLabel = $teamCountForHeader === 1 ? 'Team' : 'Teams';
   $canManageLeague = (bool) ($canManageLeague ?? false);
+  $canSyncTeamLogos = $canManageLeague && in_array($league?->platform, ['fantrax', 'yahoo'], true) && filled($teamLogoSyncUrl ?? null);
 @endphp
 
 @if (! $league)
@@ -28,6 +29,7 @@
       availableStatFields: @js($availableStatFields ?? []),
       searchPlayers: @js($searchPlayers ?? []),
       scoringSettingsUpdateUrl: @js($scoringSettingsUpdateUrl ?? ''),
+      teamLogoSyncUrl: @js($teamLogoSyncUrl ?? ''),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       playersPayloadUrl: @js($playersPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
@@ -42,6 +44,9 @@
       savingScoringAlignment: false,
       scoringAlignmentMessage: '',
       scoringAlignmentError: '',
+      teamLogosSyncing: false,
+      teamLogosMessage: '',
+      teamLogosError: '',
       leagueStatsLoading: false,
       leagueStatsError: '',
       leagueStatsShell: null,
@@ -214,6 +219,46 @@
           this.scoringAlignmentError = error?.message || 'Could not save scoring alignment.';
         } finally {
           this.savingScoringAlignment = false;
+        }
+      },
+      async syncTeamLogos(){
+        if (!this.teamLogoSyncUrl || this.teamLogosSyncing) return;
+
+        this.teamLogosSyncing = true;
+        this.teamLogosMessage = '';
+        this.teamLogosError = '';
+
+        try {
+          const response = await fetch(this.teamLogoSyncUrl, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not sync team logos.');
+          }
+
+          window.dispatchEvent(new CustomEvent('league:logos-synced', {
+            detail: {
+              platform_league_id: payload.platform_league_id,
+              platform: payload.platform,
+              logo_url: payload.logo_url,
+              refresh_from_server: true,
+            },
+          }));
+          this.teamLogosMessage = payload.message || 'Team logos synced.';
+          if (window.toast?.success) window.toast.success(this.teamLogosMessage);
+        } catch (error) {
+          this.teamLogosError = error?.message || 'Could not sync team logos.';
+          if (window.toast?.error) window.toast.error(this.teamLogosError);
+        } finally {
+          this.teamLogosSyncing = false;
         }
       },
       async loadLeagueStats(force = false){
@@ -562,6 +607,30 @@
       </div>
 
       <div class="flex-1 overflow-y-auto p-6">
+        @if ($canSyncTeamLogos)
+        <section class="mb-4 rounded-lg border border-blue-100 bg-blue-50/70 p-4 shadow-sm">
+          <div class="flex items-center justify-between gap-4">
+            <div class="min-w-0">
+              <div class="text-sm font-semibold text-slate-950">Sync Team Logos</div>
+              <div class="mt-1 text-xs leading-5 text-slate-600">Pull the latest team logos for this league.</div>
+            </div>
+            <button
+              type="button"
+              class="inline-flex shrink-0 items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+              @click="syncTeamLogos"
+              :disabled="teamLogosSyncing"
+            >
+              <span x-show="!teamLogosSyncing">Sync</span>
+              <span x-show="teamLogosSyncing">Syncing...</span>
+            </button>
+          </div>
+          <div class="mt-2 min-h-4 text-xs">
+            <span x-show="teamLogosMessage" class="text-emerald-700" x-text="teamLogosMessage"></span>
+            <span x-show="teamLogosError" class="text-red-600" x-text="teamLogosError"></span>
+          </div>
+        </section>
+        @endif
+
         @if (in_array($league->platform, ['yahoo', 'fantrax'], true))
         <section class="rounded-lg border border-slate-200 bg-white">
           <button

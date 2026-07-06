@@ -31,6 +31,25 @@ class ConnectFantraxUser
             throw new RuntimeException('Fantrax Secret ID is required.');
         }
 
+        IntegrationSecret::updateOrCreate(
+            ['user_id' => $user->id, 'provider' => 'fantrax'],
+            ['secret' => $secretId, 'status' => 'connected'],
+        );
+
+        $result = $this->syncLeagues($user, $secretId);
+
+        FantraxUserConnected::dispatch($user);
+
+        return $result;
+    }
+
+    /**
+     * Refresh discovered Fantrax leagues for a connected user.
+     *
+     * @return array{league_count:int}
+     */
+    public function syncLeagues(User $user, string $secretId): array
+    {
         try {
             $response = $this->getAPIData('fantrax', 'user_leagues', [
                 'userSecretId' => $secretId,
@@ -44,14 +63,7 @@ class ConnectFantraxUser
             throw new RuntimeException('Invalid Fantrax Secret ID.');
         }
 
-        IntegrationSecret::updateOrCreate(
-            ['user_id' => $user->id, 'provider' => 'fantrax'],
-            ['secret' => $secretId, 'status' => 'connected'],
-        );
-
         app(FantraxLeagueService::class)->upsertLeaguesForUser($user, $leagues);
-
-        FantraxUserConnected::dispatch($user);
 
         return ['league_count' => count($leagues)];
     }

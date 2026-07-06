@@ -6,12 +6,15 @@ namespace App\Http\Controllers;
 
 use App\Models\FantraxPlayer;
 use App\Models\DiscordServer;
+use App\Events\TeamLogosSynced;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Services\FantraxDraftingWindow;
+use App\Services\FantraxLogoSyncService;
+use App\Services\YahooFantasyLeagueService;
 use App\Traits\HasAPITrait;
 use App\ViewModels\LeagueShowViewModel;
 use Illuminate\Http\Client\RequestException;
@@ -19,6 +22,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -76,6 +80,9 @@ class CommunityLeagues extends Controller
         $platformLeague = $league->primaryPlatformLeague();
         $platformLeagueId = $platformLeague?->platform_league_id;
         $isFantraxLeague = $league->getPlatformAttribute() === 'fantrax' && filled($platformLeagueId);
+        $canSyncTeamLogos = $platformLeague instanceof PlatformLeague
+            && in_array($platformLeague->platform, ['fantrax', 'yahoo'], true)
+            && $this->canManageLeague($league, $user);
 
         $leagueInfo = [];
         $teams = [];
@@ -180,9 +187,103 @@ class CommunityLeagues extends Controller
             'c_id' => $community->id,
             'l_id' => $league->id,
         ]);
+        $payload['team_logo_sync'] = [
+            'can_sync' => $canSyncTeamLogos,
+            'action_url' => route('community.leagues.team-logos.sync', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+        ];
 
         return view('communities.leagues.show', [
             'vm' => $payload,
+        ]);
+    }
+
+    /**
+     * Sync team logos for the connected fantasy league.
+     */
+    public function syncTeamLogos(
+        int $cId,
+        int $lId,
+        FantraxLogoSyncService $fantraxLogoSync,
+        YahooFantasyLeagueService $yahooLeagueService,
+    ): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+
+        abort_unless($this->canManageLeague($league, $user), 403);
+
+        $platformLeague = $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        if ($platformLeague->platform === 'fantrax') {
+            $summary = $fantraxLogoSync->syncForPlatformLeagueIds([(int) $platformLeague->id]);
+
+            if (! $summary['ran']) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => match ($summary['skipped_reason']) {
+                        'browser_profile_not_configured' => 'Fantrax logo sync is not configured.',
+                        'browser_profile_not_ready' => 'Fantrax logo sync profile is not ready.',
+                        default => 'Team logo sync was skipped.',
+                    },
+                    'summary' => $summary,
+                ], 409);
+            }
+        } elseif ($platformLeague->platform === 'yahoo') {
+            $connection = $user->yahooFantasyConnection()
+                ->where('status', 'connected')
+                ->first();
+
+            if ($connection === null) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Connect Yahoo before syncing team logos.',
+                ], 409);
+            }
+
+            $summary = $yahooLeagueService->syncLogosForLeague($connection, $platformLeague);
+
+            if (! $summary['ran']) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Yahoo team logo sync was skipped.',
+                    'summary' => $summary,
+                ], 409);
+            }
+        } else {
+            abort(404);
+        }
+
+        $logoUrl = $this->leagueDisplayLogoUrl($platformLeague, $user);
+
+        TeamLogosSynced::dispatch(
+            (int) $user->id,
+            (int) $platformLeague->id,
+            (string) $platformLeague->platform,
+            $logoUrl,
+        );
+
+        return response()->json([
+            'ok' => true,
+            'message' => $summary['updated_team_count'] > 0
+                ? 'Team logos synced.'
+                : 'Logo sync ran, but no team logos changed.',
+            'platform_league_id' => (int) $platformLeague->id,
+            'platform' => (string) $platformLeague->platform,
+            'logo_url' => $logoUrl,
+            'summary' => $summary,
         ]);
     }
 
@@ -315,6 +416,44 @@ class CommunityLeagues extends Controller
             'ok' => true,
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
         ]);
+    }
+
+    /**
+     * Determine whether the current user can manage this league.
+     */
+    private function canManageLeague(mixed $league, mixed $user): bool
+    {
+        if (! $league || ! $user) {
+            return false;
+        }
+
+        return Gate::allows('refresh-leagues') || $user->isCommissionerForLeague((int) $league->id);
+    }
+
+    private function leagueDisplayLogoUrl(PlatformLeague $league, mixed $user): ?string
+    {
+        if (! $user) {
+            return null;
+        }
+
+        $logoUrl = PlatformTeam::query()
+            ->select('platform_teams.logo_url')
+            ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+            ->where('logo_lut.platform_league_id', (int) $league->id)
+            ->where('logo_lut.user_id', (int) $user->id)
+            ->where('logo_lut.is_active', true)
+            ->whereNotNull('platform_teams.logo_url')
+            ->value('platform_teams.logo_url');
+
+        if (is_string($logoUrl) && trim($logoUrl) !== '') {
+            return trim($logoUrl);
+        }
+
+        $leagueLogoUrl = $league->getAttribute('logo_url');
+
+        return is_string($leagueLogoUrl) && trim($leagueLogoUrl) !== ''
+            ? trim($leagueLogoUrl)
+            : null;
     }
 
     /**

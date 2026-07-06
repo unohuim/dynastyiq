@@ -19,6 +19,8 @@ rules:
   - League navigation items should show the platform provider when platform leagues can come from more than one provider.
   - League provider refresh actions should live in the shared left navigation header when they affect the visible league list.
   - League list options should live in the shared left navigation header and update per-user league visibility without changing provider access state.
+  - League list option rows may be reordered by the current user through SortableList, and the shared layout must keep the visible league list in sync with that saved order.
+  - League navigation icons should prefer the current user's linked team logo when available, then the platform league logo, then initials.
   - League sync status feedback should remain transient in the shared left navigation, be driven by LeagueSyncStatusUpdated broadcasts, and use per-league bottom progress bars rather than row-level badges or border states.
   - Draft Central tab bodies must use a viewport-constrained measured height so the main league page does not become the scroll container.
   - Draft Central tabs that display long content, including Live, Available, My Picks, and Watchlist, must share the same measured panel height and scroll internally.

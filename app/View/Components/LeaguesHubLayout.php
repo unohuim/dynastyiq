@@ -33,6 +33,8 @@ final class LeaguesHubLayout extends Component
                 $name = (string) $l->getAttribute('name');
                 $slug = (string) ($l->getAttribute('slug') ?? $id);
                 $platform = (string) ($l->getAttribute('platform') ?? '');
+                $logoUrl = (string) ($l->getAttribute('logo_url') ?? '');
+                $userTeamLogoUrl = (string) ($l->getAttribute('user_team_logo_url') ?? '');
                 $isVisible = (bool) ($l->pivot?->is_visible ?? true);
             } else {
                 $a    = (array) $l;
@@ -40,6 +42,8 @@ final class LeaguesHubLayout extends Component
                 $name = (string) ($a['name'] ?? '');
                 $slug = (string) ($a['slug'] ?? $id);
                 $platform = (string) ($a['platform'] ?? '');
+                $logoUrl = (string) ($a['logo_url'] ?? '');
+                $userTeamLogoUrl = (string) ($a['user_team_logo_url'] ?? '');
                 $isVisible = (bool) ($a['is_visible'] ?? true);
             }
 
@@ -48,6 +52,8 @@ final class LeaguesHubLayout extends Component
                 'slug'       => $slug,
                 'name'       => $name,
                 'platform'   => $platform,
+                'logo_url'   => $logoUrl,
+                'user_team_logo_url' => $userTeamLogoUrl,
                 'is_visible' => $isVisible,
                 'short_name' => $name,
                 'href'       => route('leagues.index', ['active' => $id]),

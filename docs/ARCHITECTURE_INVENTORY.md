@@ -147,6 +147,42 @@ Laravel web routes, domain persistence, or app authorization rules.
 // Bot feature code calls Laravel API endpoints to resolve Discord user team data.
 ```
 
+### Sortable List
+
+**Name:** Sortable List
+**Type:** Frontend Component
+**Location:**
+- `resources/js/components/SortableList/sortable-list.js`
+
+**Purpose:**
+Provide reusable native drag-and-drop row reordering for page-local lists that persist ordered item identifiers through page-owned endpoints.
+
+**When to Use:**
+Settings, navigation, or option lists where the current user can manually reorder rows and the page owns the persistence contract.
+
+**When Not to Use:**
+Cross-list dragging, rich board interactions, or server-ranked lists where manual row order is not a user preference.
+
+**Public Interface:**
+- `mountSortableList()`
+- `mountSortableLists()`
+- `data-sortable-list`
+- `data-sortable-row`
+- `data-sortable-id`
+- `data-sortable-handle`
+- `sortable-list:changed`
+- `sortable-list:saved`
+- `sortable-list:failed`
+
+**Example Usage:**
+```html
+<div data-sortable-list data-sortable-url="/leagues/order" data-sortable-payload-key="league_ids">
+    <div data-sortable-row data-sortable-id="1">
+        <button type="button" draggable="true" data-sortable-handle>Move</button>
+    </div>
+</div>
+```
+
 ---
 
 ### Fantrax Draft State Sync
@@ -1261,11 +1297,15 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 **Type:** External Platform Sync Pattern
 **Location:**
 - `app/Services/FantraxLeagueService.php`
+- `app/Console/Commands/FantraxInspectLogosCommand.php`
 - `app/Services/SyncFantraxLeague.php`
+- `app/Services/FantraxLogoSyncService.php`
+- `app/Support/FantraxLogoBrowserProfile.php`
 - `app/Services/ImportFantraxLeagues.php`
 - `app/Services/ImportFantraxPlayers.php`
 - `app/Jobs/SyncFantraxLeagueJob.php`
 - `app/Jobs/SyncFantraxTeamJob.php`
+- `app/Events/TeamLogosSynced.php`
 - `app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php`
 - `app/Models/PlatformLeague.php`
 - `app/Models/PlatformTeam.php`
@@ -1274,6 +1314,9 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 
 **Purpose:**
 Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
+Provider league and team logo URLs may be stored on the platform-neutral league and team rows when Fantrax exposes them. Fantrax team logos must come from explicit provider payload fields, not derived team-id paths.
+Authenticated browser logo extraction is league-scoped, commissioner-triggered from league options, and persists only explicit provider logo URLs when the browser profile is ready.
+Completed browser logo extraction broadcasts a user-scoped logo update event so the league list can update without a page refresh.
 
 **When to Use:**
 Syncing Fantrax leagues, updating rosters, resolving Fantrax player identity, or rendering league availability.
@@ -1286,6 +1329,12 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 - `SyncFantraxTeamJob`
 - `SyncFantraxRosterMembershipsForLinkedIdentity`
 - `FantraxLeagueService`
+- `FantraxLogoSyncService`
+- `leagues.team-logos.sync`
+- `community.leagues.team-logos.sync`
+- `TeamLogosSynced`
+- `fantrax:inspect-logos`
+- `FantraxLogoBrowserProfile`
 - Platform league/team/roster models
 
 **Example Usage:**

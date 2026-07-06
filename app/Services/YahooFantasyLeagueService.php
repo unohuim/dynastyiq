@@ -105,11 +105,12 @@ class YahooFantasyLeagueService
                     'platform' => FantasyProvider::YAHOO,
                     'platform_league_id' => $leaguePayload['league_key'],
                 ],
-                [
+                array_filter([
                     'name' => $leaguePayload['name'] ?? 'Unnamed Yahoo League',
                     'sport' => 'hockey',
+                    'logo_url' => $leaguePayload['logo_url'],
                     'synced_at' => $now,
-                ],
+                ], static fn (mixed $value): bool => $value !== null),
             );
             $syncedLeagueIds[] = $platformLeague->id;
             $this->syncLeagueSettings($connection, $platformLeague, $leaguePayload['league_key'], $now);
@@ -129,12 +130,13 @@ class YahooFantasyLeagueService
                         'platform_league_id' => $platformLeague->id,
                         'platform_team_id' => $teamPayload['team_key'],
                     ],
-                    [
+                    array_filter([
                         'name' => $teamPayload['name'] ?? 'Unnamed Yahoo Team',
                         'short_name' => $teamPayload['short_name'],
+                        'logo_url' => $teamPayload['logo_url'],
                         'extras' => $teamPayload['raw_payload'],
                         'synced_at' => $now,
-                    ],
+                    ], static fn (mixed $value): bool => $value !== null),
                 );
                 $syncedTeamCount++;
                 SyncYahooTeamRosterJob::dispatch($platformTeam->id, $broadcastUserId);
@@ -237,6 +239,73 @@ class YahooFantasyLeagueService
     }
 
     /**
+     * Sync Yahoo team and league logos for one platform league.
+     *
+     * @return array{ran:bool,skipped_reason:string|null,candidate_count:int,updated_team_count:int,updated_league_count:int}
+     */
+    public function syncLogosForLeague(YahooFantasyConnection $connection, PlatformLeague $platformLeague): array
+    {
+        $summary = [
+            'ran' => false,
+            'skipped_reason' => null,
+            'candidate_count' => 0,
+            'updated_team_count' => 0,
+            'updated_league_count' => 0,
+        ];
+
+        if ($platformLeague->platform !== FantasyProvider::YAHOO) {
+            $summary['skipped_reason'] = 'not_yahoo_league';
+
+            return $summary;
+        }
+
+        $leagueKey = (string) $platformLeague->platform_league_id;
+        if ($leagueKey === '') {
+            $summary['skipped_reason'] = 'missing_league_key';
+
+            return $summary;
+        }
+
+        $leagueXml = $this->client->fantasyXmlForConnection($connection, "league/{$leagueKey}");
+        $leagueLogoUrl = $this->logoUrl($this->firstTextByPath(
+            $leagueXml,
+            '//*[local-name()="league"]/*[local-name()="logo_url"]',
+        ));
+
+        if ($leagueLogoUrl !== null && $platformLeague->logo_url !== $leagueLogoUrl) {
+            $platformLeague->forceFill(['logo_url' => $leagueLogoUrl])->save();
+            $summary['updated_league_count']++;
+        }
+
+        foreach ($this->teamsForLeague($connection, $leagueKey) as $teamPayload) {
+            $logoUrl = $this->logoUrl($teamPayload['logo_url'] ?? null);
+            $teamKey = $teamPayload['team_key'] ?? null;
+
+            if (! is_string($teamKey) || $teamKey === '' || $logoUrl === null) {
+                continue;
+            }
+
+            $summary['candidate_count']++;
+
+            $team = PlatformTeam::query()
+                ->where('platform_league_id', $platformLeague->id)
+                ->where('platform_team_id', $teamKey)
+                ->first(['id', 'logo_url']);
+
+            if ($team === null || $team->logo_url === $logoUrl) {
+                continue;
+            }
+
+            $team->forceFill(['logo_url' => $logoUrl])->save();
+            $summary['updated_team_count']++;
+        }
+
+        $summary['ran'] = true;
+
+        return $summary;
+    }
+
+    /**
      * Upsert the connected user's owned team assignment for a platform league.
      */
     private function upsertUserTeamAssignment(
@@ -260,7 +329,13 @@ class YahooFantasyLeagueService
         $updated = DB::table('league_user_teams')->where($keys)->update($values);
 
         if ($updated === 0) {
-            DB::table('league_user_teams')->insert($keys + $values + ['created_at' => $now]);
+            $nextSortOrder = (int) DB::table('league_user_teams')
+                ->where('user_id', $userId)
+                ->max('sort_order') + 1;
+
+            DB::table('league_user_teams')->insert(
+                $keys + $values + ['sort_order' => $nextSortOrder, 'created_at' => $now]
+            );
         }
     }
 
@@ -305,6 +380,7 @@ class YahooFantasyLeagueService
                 'league_id' => $this->childText($league, 'league_id'),
                 'name' => $this->childText($league, 'name'),
                 'url' => $this->childText($league, 'url'),
+                'logo_url' => $this->logoUrl($this->childText($league, 'logo_url')),
                 'season' => $this->childText($league, 'season'),
                 'raw_payload' => $this->xmlToArray($league),
             ])
@@ -333,6 +409,7 @@ class YahooFantasyLeagueService
                     'name' => $this->childText($team, 'name'),
                     'short_name' => $this->childText($team, 'short_name'),
                     'url' => $this->childText($team, 'url'),
+                    'logo_url' => $this->teamLogoUrl($team),
                     'raw_payload' => $this->xmlToArray($team),
                 ];
             })
@@ -638,6 +715,39 @@ class YahooFantasyLeagueService
         }
 
         return null;
+    }
+
+    private function teamLogoUrl(SimpleXMLElement $team): ?string
+    {
+        return $this->logoUrl($this->firstTextByPath(
+            $team,
+            './*[local-name()="team_logos"]/*[local-name()="team_logo"]/*[local-name()="url"]',
+        ));
+    }
+
+    private function firstTextByPath(SimpleXMLElement $xml, string $path): ?string
+    {
+        $nodes = $xml->xpath($path) ?: [];
+        $node = $nodes[0] ?? null;
+
+        if (! $node instanceof SimpleXMLElement) {
+            return null;
+        }
+
+        $value = trim((string) $node);
+
+        return $value === '' ? null : $value;
+    }
+
+    private function logoUrl(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $url = trim($value);
+
+        return str_starts_with($url, 'https://') ? $url : null;
     }
 
     /**

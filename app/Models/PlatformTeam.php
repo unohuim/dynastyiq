@@ -18,6 +18,7 @@ class PlatformTeam extends Model
         'platform_team_id',
         'name',
         'short_name',
+        'logo_url',
         'extras',
         'synced_at',
     ];

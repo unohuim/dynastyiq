@@ -80,7 +80,7 @@ class User extends Authenticatable
     public function platformLeagues(): BelongsToMany
     {
         return $this->belongsToMany(PlatformLeague::class, 'league_user_teams', 'user_id', 'platform_league_id')
-            ->withPivot(['team_id', 'is_active', 'is_visible', 'extras', 'synced_at'])
+            ->withPivot(['team_id', 'is_active', 'is_visible', 'sort_order', 'extras', 'synced_at'])
             ->withTimestamps();
     }
 

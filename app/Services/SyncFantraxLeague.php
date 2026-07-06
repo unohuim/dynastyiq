@@ -82,6 +82,7 @@ final class SyncFantraxLeague
                 'platform_team_id' => (string) ($teamId ?? ''),
                 'name' => (string) ($team['teamName'] ?? 'Unnamed Team'),
                 'short_name' => $team['shortName'] ?? null,
+                'logo_url' => self::teamLogoUrl($team),
                 'synced_at' => $now,
                 'updated_at' => $now,
             ];
@@ -92,16 +93,22 @@ final class SyncFantraxLeague
 
         DB::transaction(static function () use ($rows, &$created, &$teamIdMap): void {
             foreach ($rows as $row) {
+                $values = [
+                    'name'       => $row['name'] ?? null,
+                    'short_name' => $row['short_name'] ?? null,
+                    'synced_at'  => now(),
+                ];
+
+                if (! empty($row['logo_url'])) {
+                    $values['logo_url'] = $row['logo_url'];
+                }
+
                 $platformTeam = PlatformTeam::query()->updateOrCreate(
                     [
                         'platform_league_id' => $row['platform_league_id'],
                         'platform_team_id'   => $row['platform_team_id'],
                     ],
-                    [
-                        'name'       => $row['name'] ?? null,
-                        'short_name' => $row['short_name'] ?? null,
-                        'synced_at'  => now(),
-                    ]
+                    $values
                 );
 
                 $teamIdMap[(string) $row['platform_team_id']] = (int) $platformTeam->id;
@@ -893,6 +900,24 @@ final class SyncFantraxLeague
             ?? [];
 
         return is_array($items) ? array_values($items) : [];
+    }
+
+    /**
+     * Resolve a Fantrax team logo URL from explicit payload fields.
+     *
+     * @param array<string,mixed> $team
+     */
+    private static function teamLogoUrl(array $team): ?string
+    {
+        foreach (['teamLogoUrl', 'teamLogoURL', 'teamLogo', 'logoUrl', 'logoURL', 'logo_url', 'avatarUrl', 'avatar_url', 'imageUrl', 'image_url', 'iconUrl', 'icon_url'] as $key) {
+            $value = data_get($team, $key);
+
+            if (is_string($value) && filled($value)) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     /**

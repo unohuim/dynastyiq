@@ -27,6 +27,14 @@ const html = () => `
             </li>
         </ul>
         <main id="leagueMain">Initial</main>
+        <div data-sortable-list data-sortable-url="/leagues/order" data-sortable-payload-key="league_ids">
+            <div data-sortable-row data-sortable-id="1">
+                <button type="button" draggable="true" data-sortable-handle>Move League One</button>
+            </div>
+            <div data-sortable-row data-sortable-id="2">
+                <button type="button" draggable="true" data-sortable-handle>Move League Two</button>
+            </div>
+        </div>
         <form method="POST" action="/leagues/1/visibility" data-league-visibility-form>
             <input type="hidden" name="_method" value="PUT" />
             <input type="hidden" name="is_visible" value="1" data-league-visibility-input />
@@ -51,6 +59,7 @@ const html = () => `
             data-league-href="/leagues?active=3"
             data-league-panel-url="/leagues/3/panel"
             data-league-platform-label="Fantrax"
+            data-league-logo-url="https://img.fantrax.test/leagues/three.png"
         >
             <form method="POST" action="/leagues/3/visibility" data-league-visibility-form>
                 <input type="hidden" name="_method" value="PUT" />
@@ -85,6 +94,18 @@ const response = (body, ok = true, status = 200) => ({
     text: async () => body,
     json: async () => JSON.parse(body),
 });
+
+const dragEvent = (type, target, properties = {}) => {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+
+    Object.entries(properties).forEach(([key, value]) => {
+        Object.defineProperty(event, key, { value });
+    });
+
+    target.dispatchEvent(event);
+
+    return event;
+};
 
 describe('LeaguesHubLayout', () => {
     let root;
@@ -214,6 +235,7 @@ describe('LeaguesHubLayout', () => {
         expect(link).not.toBeNull();
         expect(link.textContent).toContain('League Three');
         expect(link.dataset.panelUrl).toBe('/leagues/3/panel');
+        expect(link.querySelector('img').src).toBe('https://img.fantrax.test/leagues/three.png');
         expect(fetch).toHaveBeenCalledWith('/leagues/3/visibility', expect.objectContaining({
             body: JSON.stringify({ is_visible: true }),
         }));
@@ -262,6 +284,91 @@ describe('LeaguesHubLayout', () => {
         expect(button.style.width).toBe('28px');
         expect(knob.style.height).toBe('10px');
         expect(knob.style.width).toBe('10px');
+    });
+
+    it('persists sortable list order with csrf and json payload', async () => {
+        fetch.mockResolvedValueOnce(response('{"message":"Saved"}'));
+        mount(root);
+        const rows = root.querySelectorAll('[data-sortable-row]');
+        const secondHandle = rows[1].querySelector('[data-sortable-handle]');
+
+        dragEvent('dragstart', secondHandle, {
+            dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        });
+        dragEvent('dragover', rows[0], {
+            clientY: -1,
+            dataTransfer: { dropEffect: '' },
+        });
+        dragEvent('drop', root.querySelector('[data-sortable-list]'));
+        await Promise.resolve();
+
+        expect(fetch).toHaveBeenCalledWith('/leagues/order', expect.objectContaining({
+            method: 'PUT',
+            headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'token-123' }),
+            body: JSON.stringify({ league_ids: ['2', '1'] }),
+        }));
+    });
+
+    it('reorders the visible league list when the drawer sort order changes', async () => {
+        fetch.mockResolvedValueOnce(response('{"message":"Saved"}'));
+        mount(root);
+        const rows = root.querySelectorAll('[data-sortable-row]');
+
+        dragEvent('dragstart', rows[1].querySelector('[data-sortable-handle]'), {
+            dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        });
+        dragEvent('dragover', rows[0], {
+            clientY: -1,
+            dataTransfer: { dropEffect: '' },
+        });
+        dragEvent('drop', root.querySelector('[data-sortable-list]'));
+        await Promise.resolve();
+
+        const links = Array.from(root.querySelectorAll('#leagueList a.league-item'));
+
+        expect(links.map((link) => link.dataset.leagueId)).toEqual(['2', '1']);
+    });
+
+    it('shows sortable persistence errors as toasts', async () => {
+        fetch.mockResolvedValueOnce(response('{"message":"Nope"}', false, 422));
+        mount(root);
+        const rows = root.querySelectorAll('[data-sortable-row]');
+
+        dragEvent('dragstart', rows[1].querySelector('[data-sortable-handle]'), {
+            dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        });
+        dragEvent('dragover', rows[0], {
+            clientY: -1,
+            dataTransfer: { dropEffect: '' },
+        });
+        dragEvent('drop', root.querySelector('[data-sortable-list]'));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(window.toast.error).toHaveBeenCalledWith('Nope');
+    });
+
+    it('restores league order when sortable persistence fails', async () => {
+        fetch.mockResolvedValueOnce(response('{"message":"Nope"}', false, 422));
+        mount(root);
+        const rows = root.querySelectorAll('[data-sortable-row]');
+
+        dragEvent('dragstart', rows[1].querySelector('[data-sortable-handle]'), {
+            dataTransfer: { setData: vi.fn(), effectAllowed: '' },
+        });
+        dragEvent('dragover', rows[0], {
+            clientY: -1,
+            dataTransfer: { dropEffect: '' },
+        });
+        dragEvent('drop', root.querySelector('[data-sortable-list]'));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const links = Array.from(root.querySelectorAll('#leagueList a.league-item'));
+        const sortableRows = Array.from(root.querySelectorAll('[data-sortable-row]'));
+
+        expect(links.map((link) => link.dataset.leagueId)).toEqual(['1', '2']);
+        expect(sortableRows.map((row) => row.dataset.sortableId)).toEqual(['1', '2']);
     });
 
     it('posts refresh requests with csrf headers', async () => {

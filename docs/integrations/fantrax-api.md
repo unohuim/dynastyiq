@@ -283,6 +283,64 @@ curl -s "https://www.fantrax.com/fxea/general/getStandings?leagueId=${FANTRAX_LE
 curl -s "https://www.fantrax.com/fxea/general/getPlayerProfile?leagueId=${FANTRAX_LEAGUE_ID}&playerId=${FANTRAX_PLAYER_ID}" | jq .
 ```
 
+Inspect logo-like fields for a synced Fantrax league:
+
+```bash
+php artisan fantrax:inspect-logos "${FANTRAX_LEAGUE_ID}" --platform-id --json
+```
+
+Use this before wiring logo persistence to a new Fantrax payload shape. The command checks
+`getLeagueInfo`, `getTeamRosters`, and `getStandings`, then prints only logo-like keys
+or image URLs with their JSON paths.
+
+Inspect browser network responses for the authenticated Fantrax web app:
+
+```bash
+node scripts/inspect-fantrax-network.mjs
+```
+
+The script uses `FANTRAX_BROWSER_PROFILE_PATH` for its persistent Chromium profile,
+falling back to `/tmp/dynastyiq-fantrax-profile` when the variable is not set. If the
+Fantrax page requires login, use the opened browser window to log in, then reload
+the page. It prints matching XHR/fetch/document excerpts and `fantraximg.com` image
+requests. For matched POST/PUT/PATCH browser requests, it
+also writes the request body so authenticated `fxpa/req` payload names can be
+identified without logging cookies or authorization headers. Inspection dumps are
+written under `docs/inspection` as you browse, using the current league and page route, such as
+`league_uf1sdl47mo6nzpr6_home_reload_1.txt` or
+`league_uf1sdl47mo6nzpr6_standings.txt`.
+
+The community league options drawer and the `/leagues/{id}` options drawer can
+trigger a league-scoped Fantrax team logo sync for commissioner-managed leagues.
+The sync uses the configured profile directory only; it does not store Fantrax
+credentials or prove that the profile is currently authenticated.
+When visible Chromium is used and Fantrax requires login, the logo sync waits for
+the commissioner to authenticate, captures the logo payload after the Fantrax
+league page loads, and then closes Chromium automatically. The login wait is
+bounded so the browser does not stay open indefinitely.
+
+Pass a URL only when a specific starting page is needed:
+
+```bash
+node scripts/inspect-fantrax-network.mjs "https://www.fantrax.com/fantasy/league/${FANTRAX_LEAGUE_ID}/standings"
+```
+
+Observed Fantrax web team logo format:
+
+```text
+https://fantraximg.com/logos/{bucket}/tmLogo_{logoId}_128.webp
+```
+
+Example:
+
+```text
+https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_128.webp
+```
+
+The `logoId` is not the Fantrax team ID. Authenticated web payloads observed via
+`fxpa/req` can include direct mappings such as `fantasyTeams.*.id` to
+`fantasyTeams.*.logoUrl128` and user league-list `teamId` to `teamLogo`.
+
 Minimum inspection checklist:
 
 - `getLeagueInfo.playerInfo`: count records, sample rostered IDs, compare `eligiblePos` against Fantrax UI.

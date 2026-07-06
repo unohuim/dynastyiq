@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\SyncFantraxLeagueJob;
+use App\Events\TeamLogosSynced;
 use App\Models\Draft;
 use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
+use App\Models\IntegrationSecret;
 use App\Models\PlatformTeam;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
+use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
+use App\Services\FantraxLogoSyncService;
 use App\Services\SyncFantraxDraftState;
 use App\Services\YahooFantasyLeagueService;
 use Illuminate\Contracts\View\View;
@@ -78,11 +82,27 @@ final class LeagueController extends Controller
         }
 
         $leagues = $leagueAccess->visibleLeaguesForUser($user)
+            ->addSelect([
+                'user_team_logo_url' => PlatformTeam::query()
+                    ->select('platform_teams.logo_url')
+                    ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+                    ->whereColumn('logo_lut.platform_league_id', 'platform_leagues.id')
+                    ->where('logo_lut.user_id', $user->id)
+                    ->where('logo_lut.is_active', true)
+                    ->limit(1),
+            ])
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
-            ->orderBy('name')
             ->get();
         $leagueOptions = $leagueAccess->activeLeaguesForUser($user)
-            ->orderBy('name')
+            ->addSelect([
+                'user_team_logo_url' => PlatformTeam::query()
+                    ->select('platform_teams.logo_url')
+                    ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+                    ->whereColumn('logo_lut.platform_league_id', 'platform_leagues.id')
+                    ->where('logo_lut.user_id', $user->id)
+                    ->where('logo_lut.is_active', true)
+                    ->limit(1),
+            ])
             ->get();
 
         $activeLeagueId = $request->integer('active') ?? ($leagues->first()->id ?? null);
@@ -110,6 +130,7 @@ final class LeagueController extends Controller
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
+            'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
             'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
@@ -144,6 +165,7 @@ final class LeagueController extends Controller
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
+            'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
@@ -456,7 +478,11 @@ final class LeagueController extends Controller
     /**
      * Refresh all connected fantasy leagues for the current user.
      */
-    public function resync(Request $request, YahooFantasyLeagueService $leagueService): JsonResponse
+    public function resync(
+        Request $request,
+        YahooFantasyLeagueService $leagueService,
+        ConnectFantraxUser $fantraxConnector,
+    ): JsonResponse
     {
         Gate::authorize('refresh-leagues');
 
@@ -475,6 +501,7 @@ final class LeagueController extends Controller
                 'platform' => 'fantrax',
                 'platform_league_ids' => [],
                 'queued_job_count' => 0,
+                'api' => null,
             ],
         ];
 
@@ -485,6 +512,22 @@ final class LeagueController extends Controller
 
         if ($connection) {
             $summary['yahoo'] = $leagueService->syncForConnection($connection, $user->id);
+        }
+
+        $fantraxSecret = IntegrationSecret::query()
+            ->where('user_id', $user->id)
+            ->where('provider', 'fantrax')
+            ->where('status', 'connected')
+            ->first();
+
+        if ($fantraxSecret !== null) {
+            try {
+                $summary['fantrax']['api'] = $fantraxConnector->syncLeagues($user, $fantraxSecret->secret);
+            } catch (\Throwable $e) {
+                $summary['fantrax']['api'] = [
+                    'error' => $e->getMessage(),
+                ];
+            }
         }
 
         $fantraxLeagueIds = $leagueAccess->activeLeaguesForUser($user)
@@ -559,6 +602,141 @@ final class LeagueController extends Controller
         ]);
     }
 
+    /**
+     * Sync team logos for a commissioner-managed fantasy league.
+     */
+    public function syncTeamLogos(
+        Request $request,
+        string $leagueId,
+        FantraxLogoSyncService $fantraxLogoSync,
+        YahooFantasyLeagueService $yahooLeagueService,
+    ): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before syncing team logos.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless($this->canManageLeague($league, $user), 403);
+
+        if ($league->platform === 'fantrax') {
+            $summary = $fantraxLogoSync->syncForPlatformLeagueIds([(int) $league->id]);
+
+            if (! $summary['ran']) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => match ($summary['skipped_reason']) {
+                        'browser_profile_not_configured' => 'Fantrax logo sync is not configured.',
+                        'browser_profile_not_ready' => 'Fantrax logo sync profile is not ready.',
+                        default => 'Team logo sync was skipped.',
+                    },
+                    'summary' => $summary,
+                ], 409);
+            }
+        } elseif ($league->platform === 'yahoo') {
+            $connection = $user->yahooFantasyConnection()
+                ->where('status', 'connected')
+                ->first();
+
+            if ($connection === null) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Connect Yahoo before syncing team logos.',
+                ], 409);
+            }
+
+            $summary = $yahooLeagueService->syncLogosForLeague($connection, $league);
+
+            if (! $summary['ran']) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Yahoo team logo sync was skipped.',
+                    'summary' => $summary,
+                ], 409);
+            }
+        } else {
+            abort(404);
+        }
+
+        $logoUrl = $this->leagueDisplayLogoUrl($league, $user);
+
+        TeamLogosSynced::dispatch(
+            (int) $user->id,
+            (int) $league->id,
+            (string) $league->platform,
+            $logoUrl,
+        );
+
+        return response()->json([
+            'ok' => true,
+            'message' => $summary['updated_team_count'] > 0
+                ? 'Team logos synced.'
+                : 'Logo sync ran, but no team logos changed.',
+            'platform_league_id' => (int) $league->id,
+            'platform' => (string) $league->platform,
+            'logo_url' => $logoUrl,
+            'summary' => $summary,
+        ]);
+    }
+
+    /**
+     * Persist the current user's preferred Leagues list order.
+     */
+    public function updateOrder(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before updating league order.',
+            ], 409);
+        }
+
+        $validated = $request->validate([
+            'league_ids' => ['required', 'array', 'min:1'],
+            'league_ids.*' => ['integer', 'distinct'],
+        ]);
+        $leagueIds = collect($validated['league_ids'])
+            ->map(static fn (int|string $leagueId): int => (int) $leagueId)
+            ->values();
+        $activeLeagueIds = DB::table('league_user_teams')
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->whereIn('platform_league_id', $leagueIds)
+            ->pluck('platform_league_id')
+            ->map(static fn (int|string $leagueId): int => (int) $leagueId)
+            ->all();
+
+        abort_if(count($activeLeagueIds) !== $leagueIds->count(), 404);
+
+        DB::transaction(function () use ($leagueIds, $user): void {
+            foreach ($leagueIds as $index => $leagueId) {
+                DB::table('league_user_teams')
+                    ->where('user_id', $user->id)
+                    ->where('platform_league_id', $leagueId)
+                    ->where('is_active', true)
+                    ->update([
+                        'sort_order' => $index + 1,
+                        'updated_at' => now(),
+                    ]);
+            }
+        });
+
+        return response()->json([
+            'message' => 'League order saved.',
+            'league_ids' => $leagueIds->all(),
+        ]);
+    }
+
     public function show(Request $request, string $leagueId): View|RedirectResponse
     {
         $user = $request->user();
@@ -571,11 +749,27 @@ final class LeagueController extends Controller
         }
 
         $leagues = $leagueAccess->visibleLeaguesForUser($user)
+            ->addSelect([
+                'user_team_logo_url' => PlatformTeam::query()
+                    ->select('platform_teams.logo_url')
+                    ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+                    ->whereColumn('logo_lut.platform_league_id', 'platform_leagues.id')
+                    ->where('logo_lut.user_id', $user->id)
+                    ->where('logo_lut.is_active', true)
+                    ->limit(1),
+            ])
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
-            ->orderBy('name')
             ->get();
         $leagueOptions = $leagueAccess->activeLeaguesForUser($user)
-            ->orderBy('name')
+            ->addSelect([
+                'user_team_logo_url' => PlatformTeam::query()
+                    ->select('platform_teams.logo_url')
+                    ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+                    ->whereColumn('logo_lut.platform_league_id', 'platform_leagues.id')
+                    ->where('logo_lut.user_id', $user->id)
+                    ->where('logo_lut.is_active', true)
+                    ->limit(1),
+            ])
             ->get();
 
         $activeLeague = $leagueAccess->activeLeaguesForUser($user)
@@ -599,6 +793,7 @@ final class LeagueController extends Controller
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
             'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
+            'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
             'canManageLeague' => $this->canManageLeague($activeLeague, $user),
@@ -656,6 +851,32 @@ final class LeagueController extends Controller
         }
 
         return false;
+    }
+
+    private function leagueDisplayLogoUrl($league, $user): ?string
+    {
+        if (! $league || ! $user) {
+            return null;
+        }
+
+        $logoUrl = PlatformTeam::query()
+            ->select('platform_teams.logo_url')
+            ->join('league_user_teams as logo_lut', 'logo_lut.team_id', '=', 'platform_teams.id')
+            ->where('logo_lut.platform_league_id', (int) $league->id)
+            ->where('logo_lut.user_id', (int) $user->id)
+            ->where('logo_lut.is_active', true)
+            ->whereNotNull('platform_teams.logo_url')
+            ->value('platform_teams.logo_url');
+
+        if (is_string($logoUrl) && trim($logoUrl) !== '') {
+            return trim($logoUrl);
+        }
+
+        $leagueLogoUrl = $league->getAttribute('logo_url');
+
+        return is_string($leagueLogoUrl) && trim($leagueLogoUrl) !== ''
+            ? trim($leagueLogoUrl)
+            : null;
     }
 
     /**
