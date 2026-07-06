@@ -47,6 +47,10 @@ class AppServiceProvider extends ServiceProvider
                 ->exists();
         });
 
+        Gate::define('refresh-leagues', function (User $user) {
+            return $user->hasGlobalRole('super-admin');
+        });
+
 
         // Socialite: extend with Discord provider
         Event::listen(function (\SocialiteProviders\Manager\SocialiteWasCalled $event) {

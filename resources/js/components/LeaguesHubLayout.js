@@ -259,6 +259,8 @@ function mount(root) {
         if (!nextRoot) return false;
 
         root.innerHTML = nextRoot.innerHTML;
+        document.documentElement.classList.remove("overflow-hidden");
+        document.body.classList.remove("overflow-hidden");
         restoreLeagueSyncState();
 
         return true;
@@ -308,7 +310,160 @@ function mount(root) {
         }
     }
 
+    function renderVisibilityToggle(button, isVisible) {
+        const knob = button.querySelector("[data-league-visibility-knob]");
+        const form = button.closest("[data-league-visibility-form]");
+        const input = form?.querySelector("[data-league-visibility-input]");
+        const label = button.getAttribute("aria-label") || "";
+
+        button.dataset.leagueVisible = isVisible ? "true" : "false";
+        button.setAttribute("aria-pressed", isVisible ? "true" : "false");
+        button.classList.toggle("bg-indigo-600", isVisible);
+        button.classList.toggle("bg-slate-200", !isVisible);
+        knob?.classList.toggle("translate-x-4", isVisible);
+        knob?.classList.toggle("translate-x-0.5", !isVisible);
+
+        if (knob) {
+            knob.style.transform = `translateX(${isVisible ? "16px" : "2px"})`;
+        }
+
+        if (input) {
+            input.value = isVisible ? "1" : "0";
+        }
+
+        if (label.startsWith("Hide ") || label.startsWith("Show ")) {
+            button.setAttribute(
+                "aria-label",
+                `${isVisible ? "Hide" : "Show"} ${label.replace(/^(Hide|Show) /, "")}`
+            );
+        }
+    }
+
+    function updateLeagueListVisibility(platformLeagueId, isVisible) {
+        const currentList = list();
+        const link = leagueLink(String(platformLeagueId));
+        const item = link?.closest("li");
+
+        if (!item && isVisible && currentList) {
+            const optionRow = root.querySelector(
+                `[data-league-option-row][data-league-id="${platformLeagueId}"]`
+            );
+
+            if (!optionRow) return;
+
+            const name = optionRow.dataset.leagueName || "League";
+            const platformLabel = optionRow.dataset.leaguePlatformLabel || "League";
+            const listItem = document.createElement("li");
+            const anchor = document.createElement("a");
+            const content = document.createElement("div");
+            const avatar = document.createElement("span");
+            const textWrap = document.createElement("span");
+            const title = document.createElement("span");
+            const meta = document.createElement("span");
+            const platform = document.createElement("span");
+            const dot = document.createElement("span");
+            const type = document.createElement("span");
+            const status = document.createElement("span");
+            const progress = document.createElement("span");
+            const progressBar = document.createElement("span");
+
+            anchor.href = optionRow.dataset.leagueHref || `/leagues?active=${platformLeagueId}`;
+            anchor.className =
+                "league-item group relative block overflow-hidden rounded-md px-2.5 py-2 text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200";
+            anchor.dataset.leagueId = String(platformLeagueId);
+            anchor.dataset.panelUrl = optionRow.dataset.leaguePanelUrl || "";
+            anchor.setAttribute("aria-current", "false");
+
+            content.className = "flex items-center gap-2.5";
+            avatar.className =
+                "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 group-aria-[current=page]:bg-indigo-600 group-aria-[current=page]:text-white group-aria-[current=page]:ring-indigo-600";
+            avatar.textContent = name.slice(0, 2).toUpperCase();
+            textWrap.className = "min-w-0 flex-1";
+            title.className =
+                "block truncate text-[13px] font-medium leading-4 text-slate-900 group-aria-[current=page]:text-indigo-950";
+            title.textContent = name;
+            meta.className = "mt-0.5 flex items-center gap-1.5 text-[10px] font-medium leading-3 text-slate-500";
+            platform.textContent = platformLabel;
+            dot.className = "h-0.5 w-0.5 rounded-full bg-slate-300";
+            type.textContent = "League";
+            status.className = "h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300";
+            progress.className = "absolute inset-x-0 bottom-0 hidden h-0.5 bg-slate-100";
+            progress.dataset.leagueSyncProgress = "";
+            progress.setAttribute("aria-hidden", "true");
+            progressBar.className = "block h-full w-0 transition-[width,background-color] duration-300";
+            progressBar.dataset.leagueSyncProgressBar = "";
+
+            meta.append(platform, dot, type);
+            textWrap.append(title, meta);
+            content.append(avatar, textWrap, status);
+            progress.append(progressBar);
+            anchor.append(content, progress);
+            listItem.append(anchor);
+            currentList.append(listItem);
+            restoreLeagueSyncState();
+            return;
+        }
+
+        if (!item) return;
+
+        item.classList.toggle("hidden", !isVisible);
+    }
+
+    async function toggleLeagueVisibility(form) {
+        const button = form.querySelector("[data-league-visibility-toggle]");
+        const input = form.querySelector("[data-league-visibility-input]");
+        const url = form.getAttribute("action") || button?.dataset.leagueVisibilityUrl;
+
+        if (!button || !url || button.disabled) return;
+
+        const wasVisible = button.dataset.leagueVisible === "true";
+        const isVisible = !wasVisible;
+
+        button.disabled = true;
+        renderVisibilityToggle(button, isVisible);
+
+        try {
+            const response = await fetch(url, {
+                method: "PUT",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                    "X-CSRF-TOKEN": csrfToken(),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+                body: JSON.stringify({ is_visible: isVisible }),
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(payload.message || "Could not update league visibility.");
+            }
+
+            updateLeagueListVisibility(payload.league_id || button.dataset.leagueId, isVisible);
+
+            notify("success", payload.message || "League visibility updated.");
+        } catch (error) {
+            renderVisibilityToggle(button, wasVisible);
+            notify("error", error.message || "Could not update league visibility.");
+        } finally {
+            button.disabled = false;
+        }
+    }
+
     root.addEventListener("click", (e) => {
+        const visibilityToggle = e.target.closest("[data-league-visibility-toggle]");
+
+        if (visibilityToggle) {
+            const visibilityForm = visibilityToggle.closest("[data-league-visibility-form]");
+
+            if (!visibilityForm || !root.contains(visibilityForm)) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+            toggleLeagueVisibility(visibilityForm);
+            return;
+        }
+
         const resyncButton = e.target.closest("[data-provider-resync-button]");
 
         if (resyncButton) {
@@ -342,10 +497,17 @@ function mount(root) {
     window.DIQ?.userChannel?.listen(".league.sync.status", handleLeagueSyncStatus);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+function mountAll() {
     document
         .querySelectorAll('[data-component="leagues-hub-layout"]')
         .forEach(mount);
-});
+}
 
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", mountAll);
+} else {
+    mountAll();
+}
+
+export { mountAll };
 export default mount;

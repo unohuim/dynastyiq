@@ -20,7 +20,53 @@ use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);
 
-test('direct leagues access redirects when fantrax is not ready', function (): void {
+beforeEach(function (): void {
+    $this->createConnectedUser = function (): User {
+        $user = User::factory()->create();
+
+        IntegrationSecret::create([
+            'user_id' => $user->id,
+            'provider' => FantasyProvider::FANTRAX,
+            'secret' => 'secret-key',
+            'status' => 'connected',
+        ]);
+
+        return $user;
+    };
+
+    $this->createPlatformLeagueAssignment = function (
+        User $user,
+        string $name,
+        bool $isActive = true,
+        bool $isVisible = true,
+        string $provider = FantasyProvider::FANTRAX,
+    ): PlatformLeague {
+        $slug = str($name)->slug()->toString();
+        $league = PlatformLeague::create([
+            'platform' => $provider,
+            'platform_league_id' => $slug,
+            'name' => $name,
+            'sport' => 'hockey',
+        ]);
+        $team = PlatformTeam::create([
+            'platform_league_id' => $league->id,
+            'platform_team_id' => $slug . '-team',
+            'name' => $name . ' Team',
+        ]);
+
+        $user->platformLeagues()->attach($league->id, [
+            'team_id' => $team->id,
+            'is_active' => $isActive,
+            'is_visible' => $isVisible,
+            'extras' => json_encode(['provider' => $provider]),
+            'synced_at' => now(),
+        ]);
+
+        return $league;
+    };
+});
+
+it('direct leagues access redirects when fantrax is not ready', function (): void {
     $user = User::factory()->create();
     $league = PlatformLeague::create([
         'platform' => 'fantrax',
@@ -46,7 +92,7 @@ test('direct leagues access redirects when fantrax is not ready', function (): v
         ->assertSessionHas('status', 'Connect a fantasy provider to view leagues.');
 });
 
-test('leagues page renders when fantrax secret and active league assignment exist', function (): void {
+it('leagues page renders when fantrax secret and active league assignment exist', function (): void {
     $user = User::factory()->create();
     IntegrationSecret::create([
         'user_id' => $user->id,
@@ -79,7 +125,7 @@ test('leagues page renders when fantrax secret and active league assignment exis
         ->assertSee('Fantrax');
 });
 
-test('leagues page renders when yahoo connection and active league assignment exist', function (): void {
+it('leagues page renders when yahoo connection and active league assignment exist', function (): void {
     $user = User::factory()->create();
     YahooFantasyConnection::create([
         'user_id' => $user->id,
@@ -111,10 +157,24 @@ test('leagues page renders when yahoo connection and active league assignment ex
         ->assertSee('Yahoo');
 });
 
-test('top level league refresh queues visible fantrax leagues for current user', function (): void {
+it('top level league refresh queues fantrax leagues for super admins', function (): void {
     Queue::fake([SyncFantraxLeagueJob::class]);
 
     $user = User::factory()->create();
+    $role = Role::create([
+        'name' => 'Super Admin',
+        'slug' => 'super-admin',
+        'level' => 100,
+        'scope' => 'global',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
     IntegrationSecret::create([
         'user_id' => $user->id,
         'provider' => FantasyProvider::FANTRAX,
@@ -152,7 +212,7 @@ test('top level league refresh queues visible fantrax leagues for current user',
     );
 });
 
-test('fantrax roster display derives eligibility from platform slot usage and sorts minors by it', function (): void {
+it('fantrax roster display derives eligibility from platform slot usage and sorts minors by it', function (): void {
     $user = User::factory()->create();
     IntegrationSecret::create([
         'user_id' => $user->id,
@@ -294,7 +354,7 @@ test('fantrax roster display derives eligibility from platform slot usage and so
     expect($players->firstWhere('name', 'Minor Defense')['eligibility'])->toBe(['D']);
 });
 
-test('creating a community league assigns the acting user as league commissioner', function (): void {
+it('creating a community league assigns the acting user as league commissioner', function (): void {
     $user = User::factory()->create();
     $organization = Organization::create([
         'name' => 'Commissioner Community',
@@ -321,7 +381,7 @@ test('creating a community league assigns the acting user as league commissioner
         ->exists())->toBeTrue();
 });
 
-test('league settings are gated by league-scoped commissioner role', function (): void {
+it('league settings are gated by league-scoped commissioner role', function (): void {
     $user = User::factory()->create();
     IntegrationSecret::create([
         'user_id' => $user->id,
@@ -396,7 +456,7 @@ test('league settings are gated by league-scoped commissioner role', function ()
         ->assertSee('League settings');
 });
 
-test('league commissioner backfill assigns organization owners only by default', function (): void {
+it('league commissioner backfill assigns organization owners only by default', function (): void {
     $owner = User::factory()->create();
     $admin = User::factory()->create();
     $organization = Organization::create([
@@ -446,7 +506,7 @@ test('league commissioner backfill assigns organization owners only by default',
             ->exists())->toBeFalse();
 });
 
-test('league commissioner backfill can include organization admins when requested', function (): void {
+it('league commissioner backfill can include organization admins when requested', function (): void {
     $owner = User::factory()->create();
     $admin = User::factory()->create();
     $organization = Organization::create([
@@ -492,4 +552,175 @@ test('league commissioner backfill can include organization admins when requeste
             ->where('user_id', $admin->id)
             ->where('role', 'commissioner')
             ->exists())->toBeTrue();
+});
+
+it('leagues page left list excludes user hidden leagues', function (): void {
+    $user = ($this->createConnectedUser)();
+    $visibleLeague = ($this->createPlatformLeagueAssignment)($user, 'Visible League');
+    $hiddenLeague = ($this->createPlatformLeagueAssignment)($user, 'Hidden League', isVisible: false);
+
+    $response = $this->actingAs($user)->get(route('leagues.index'));
+
+    $response->assertOk()
+        ->assertSee('data-panel-url="' . route('leagues.panel', $visibleLeague->id) . '"', false)
+        ->assertDontSee('data-panel-url="' . route('leagues.panel', $hiddenLeague->id) . '"', false);
+});
+
+it('leagues page left list excludes hidden leagues for super admins', function (): void {
+    $user = ($this->createConnectedUser)();
+    $role = Role::create([
+        'name' => 'Super Admin',
+        'slug' => 'super-admin',
+        'level' => 100,
+        'scope' => 'global',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $visibleLeague = ($this->createPlatformLeagueAssignment)($user, 'Visible League');
+    $hiddenLeague = ($this->createPlatformLeagueAssignment)($user, 'Hidden League', isVisible: false);
+
+    $response = $this->actingAs($user)->get(route('leagues.index'));
+
+    $response->assertOk()
+        ->assertSee('data-panel-url="' . route('leagues.panel', $visibleLeague->id) . '"', false)
+        ->assertDontSee('data-panel-url="' . route('leagues.panel', $hiddenLeague->id) . '"', false);
+});
+
+it('leagues options drawer includes user hidden leagues', function (): void {
+    $user = ($this->createConnectedUser)();
+    ($this->createPlatformLeagueAssignment)($user, 'Visible League');
+    $hiddenLeague = ($this->createPlatformLeagueAssignment)($user, 'Hidden League', isVisible: false);
+
+    $this->actingAs($user)
+        ->get(route('leagues.index'))
+        ->assertOk()
+        ->assertSee('Hidden League')
+        ->assertSee('data-league-visibility-url="' . route('leagues.visibility.update', $hiddenLeague->id) . '"', false)
+        ->assertSee('data-league-visible="false"', false);
+});
+
+it('visible league access filters hidden leagues without removing active access', function (): void {
+    $user = ($this->createConnectedUser)();
+    $visibleLeague = ($this->createPlatformLeagueAssignment)($user, 'Visible League');
+    $hiddenLeague = ($this->createPlatformLeagueAssignment)($user, 'Hidden League', isVisible: false);
+    $access = app(\App\Services\FantasyLeagueAccess::class);
+
+    expect($access->activeLeaguesForUser($user)->pluck('platform_leagues.id')->all())
+        ->toContain($visibleLeague->id, $hiddenLeague->id)
+        ->and($access->visibleLeaguesForUser($user)->pluck('platform_leagues.id')->all())
+        ->toContain($visibleLeague->id)
+        ->not->toContain($hiddenLeague->id);
+});
+
+it('league visibility endpoint hides a current user league', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Toggle League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => false])
+        ->assertOk()
+        ->assertJsonPath('league_id', $league->id)
+        ->assertJsonPath('is_visible', false);
+
+    expect(DB::table('league_user_teams')
+        ->where('user_id', $user->id)
+        ->where('platform_league_id', $league->id)
+        ->value('is_visible'))->toBe(0);
+});
+
+it('league visibility endpoint supports native form fallback submissions', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Fallback League');
+
+    $this->actingAs($user)
+        ->post(route('leagues.visibility.update', $league->id), [
+            '_method' => 'PUT',
+            'is_visible' => '0',
+        ])
+        ->assertRedirect(route('leagues.index'))
+        ->assertSessionHas('status', 'League hidden from your list.');
+
+    $this->assertDatabaseHas('league_user_teams', [
+        'user_id' => $user->id,
+        'platform_league_id' => $league->id,
+        'is_visible' => false,
+    ]);
+});
+
+it('league visibility endpoint shows a current user league', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Toggle League', isVisible: false);
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => true])
+        ->assertOk()
+        ->assertJsonPath('league_id', $league->id)
+        ->assertJsonPath('is_visible', true);
+
+    expect(DB::table('league_user_teams')
+        ->where('user_id', $user->id)
+        ->where('platform_league_id', $league->id)
+        ->value('is_visible'))->toBe(1);
+});
+
+it('league visibility endpoint requires boolean visibility', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Toggle League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => 'invalid'])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['is_visible']);
+});
+
+it('league visibility endpoint rejects leagues outside the current user assignments', function (): void {
+    $user = ($this->createConnectedUser)();
+    $otherUser = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($otherUser, 'Other League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => false])
+        ->assertNotFound();
+});
+
+it('league visibility endpoint rejects inactive current user assignments', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Inactive League', isActive: false);
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => false])
+        ->assertNotFound();
+});
+
+it('league visibility endpoint rejects users without a ready provider', function (): void {
+    $user = User::factory()->create();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Unready League');
+
+    $this->actingAs($user)
+        ->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => false])
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'Connect a fantasy provider before updating league visibility.');
+});
+
+it('league visibility endpoint requires authentication', function (): void {
+    $user = ($this->createConnectedUser)();
+    $league = ($this->createPlatformLeagueAssignment)($user, 'Auth League');
+
+    $this->putJson(route('leagues.visibility.update', $league->id), ['is_visible' => false])
+        ->assertUnauthorized();
+});
+
+it('non super admins cannot refresh leagues through the refresh endpoint', function (): void {
+    $user = ($this->createConnectedUser)();
+    ($this->createPlatformLeagueAssignment)($user, 'Refresh League');
+
+    $this->actingAs($user)
+        ->postJson(route('leagues.resync'))
+        ->assertForbidden();
 });

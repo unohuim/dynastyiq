@@ -36,10 +36,6 @@ class FantasyLeagueAccess
      */
     public function activeLeaguesForUser(User $user): BelongsToMany|Builder
     {
-        if ($user->hasGlobalRole('super-admin')) {
-            return PlatformLeague::query();
-        }
-
         $readyProviders = collect($this->integrationState->forUser($user))
             ->filter(static fn (array $state): bool => $state['show_leagues'])
             ->keys()
@@ -49,5 +45,14 @@ class FantasyLeagueAccess
         return $user->platformLeagues()
             ->whereIn('platform_leagues.platform', $readyProviders)
             ->wherePivot('is_active', true);
+    }
+
+    /**
+     * Return active leagues the user has not hidden from the Leagues list.
+     */
+    public function visibleLeaguesForUser(User $user): BelongsToMany|Builder
+    {
+        return $this->activeLeaguesForUser($user)
+            ->wherePivot('is_visible', true);
     }
 }

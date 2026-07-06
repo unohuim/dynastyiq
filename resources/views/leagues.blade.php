@@ -7,6 +7,7 @@
 
 <x-leagues-hub-layout
     :leagues="$leagues"
+    :league-options="$leagueOptions ?? $leagues"
     :active-league-id="$active?->id"
     :initial-league="['slug' => (string) ($active?->id ?? ''), 'name' => (string) ($active?->name ?? '')]"
 >

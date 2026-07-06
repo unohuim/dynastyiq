@@ -51,7 +51,7 @@ class PlatformTeam extends Model
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'league_user_teams', 'team_id', 'user_id')
-            ->withPivot(['is_active', 'extras', 'synced_at'])
+            ->withPivot(['is_active', 'is_visible', 'extras', 'synced_at'])
             ->withTimestamps();
     }
 

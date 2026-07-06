@@ -18,6 +18,7 @@ rules:
   - League hub behavior must remain scoped to league pages.
   - League navigation items should show the platform provider when platform leagues can come from more than one provider.
   - League provider refresh actions should live in the shared left navigation header when they affect the visible league list.
+  - League list options should live in the shared left navigation header and update per-user league visibility without changing provider access state.
   - League sync status feedback should remain transient in the shared left navigation, be driven by LeagueSyncStatusUpdated broadcasts, and use per-league bottom progress bars rather than row-level badges or border states.
   - Draft Central tab bodies must use a viewport-constrained measured height so the main league page does not become the scroll container.
   - Draft Central tabs that display long content, including Live, Available, My Picks, and Watchlist, must share the same measured panel height and scroll internally.

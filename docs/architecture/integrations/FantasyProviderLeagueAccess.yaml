@@ -22,6 +22,7 @@ rules:
   - A provider may show leagues only when it is connected and has at least one active league_user_teams assignment for that provider.
   - The Leagues navigation affordance and direct Leagues routes must use FantasyLeagueAccess instead of provider-specific credential checks.
   - Active league queries for the Leagues experience must exclude inactive league_user_teams rows.
+  - User-hidden league rows must keep league_user_teams.is_active unchanged and use league_user_teams.is_visible only to filter the user's rendered Leagues list.
 public_interface:
   - FantasyProvider::leagueProviders()
   - FantasyIntegrationState::forProvider()
@@ -29,6 +30,7 @@ public_interface:
   - FantasyIntegrationState::canShowAnyLeague()
   - FantasyLeagueAccess::canViewLeagues()
   - FantasyLeagueAccess::activeLeaguesForUser()
+  - FantasyLeagueAccess::visibleLeaguesForUser()
 example_usage: |
   if (app(FantasyLeagueAccess::class)->canViewLeagues($user)) {
       $leagues = app(FantasyLeagueAccess::class)->activeLeaguesForUser($user)->get();

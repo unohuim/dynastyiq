@@ -24,6 +24,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -76,8 +77,11 @@ final class LeagueController extends Controller
                 ->with('status', 'Connect a fantasy provider to view leagues.');
         }
 
-        $leagues = $leagueAccess->activeLeaguesForUser($user)
+        $leagues = $leagueAccess->visibleLeaguesForUser($user)
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
+            ->orderBy('name')
+            ->get();
+        $leagueOptions = $leagueAccess->activeLeaguesForUser($user)
             ->orderBy('name')
             ->get();
 
@@ -93,6 +97,7 @@ final class LeagueController extends Controller
 
         return view('leagues', [
             'leagues' => $leagues,
+            'leagueOptions' => $leagueOptions,
             'activeLeagueId' => $activeLeague?->id,
             'activeLeague' => $activeLeague,
             'teams' => $teams,
@@ -453,6 +458,8 @@ final class LeagueController extends Controller
      */
     public function resync(Request $request, YahooFantasyLeagueService $leagueService): JsonResponse
     {
+        Gate::authorize('refresh-leagues');
+
         $user = $request->user();
         $leagueAccess = app(FantasyLeagueAccess::class);
 
@@ -500,6 +507,58 @@ final class LeagueController extends Controller
         ]);
     }
 
+    /**
+     * Update whether the selected platform league appears in the current user's Leagues list.
+     */
+    public function updateVisibility(Request $request, string $leagueId): JsonResponse|RedirectResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            if (! $request->expectsJson()) {
+                return redirect()
+                    ->route('dashboard')
+                    ->with('status', 'Connect a fantasy provider before updating league visibility.');
+            }
+
+            return response()->json([
+                'message' => 'Connect a fantasy provider before updating league visibility.',
+            ], 409);
+        }
+
+        $validated = $request->validate([
+            'is_visible' => ['required', 'boolean'],
+        ]);
+
+        $updated = DB::table('league_user_teams')
+            ->where('user_id', $user->id)
+            ->where('platform_league_id', $leagueId)
+            ->where('is_active', true)
+            ->update([
+                'is_visible' => (bool) $validated['is_visible'],
+                'updated_at' => now(),
+            ]);
+
+        abort_if($updated === 0, 404);
+
+        $message = (bool) $validated['is_visible']
+            ? 'League shown in your list.'
+            : 'League hidden from your list.';
+
+        if (! $request->expectsJson()) {
+            return redirect()
+                ->route('leagues.index')
+                ->with('status', $message);
+        }
+
+        return response()->json([
+            'message' => $message,
+            'league_id' => (int) $leagueId,
+            'is_visible' => (bool) $validated['is_visible'],
+        ]);
+    }
+
     public function show(Request $request, string $leagueId): View|RedirectResponse
     {
         $user = $request->user();
@@ -511,16 +570,23 @@ final class LeagueController extends Controller
                 ->with('status', 'Connect a fantasy provider to view leagues.');
         }
 
-        $leagues = $leagueAccess->activeLeaguesForUser($user)
+        $leagues = $leagueAccess->visibleLeaguesForUser($user)
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->orderBy('name')
             ->get();
+        $leagueOptions = $leagueAccess->activeLeaguesForUser($user)
+            ->orderBy('name')
+            ->get();
 
-        $activeLeague = $leagues->firstWhere('id', (int) $leagueId);
+        $activeLeague = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->with(['teams' => static fn ($q) => $q->orderBy('name')])
+            ->first();
         abort_if($activeLeague === null, 404);
 
         return view('leagues', [
             'leagues' => $leagues,
+            'leagueOptions' => $leagueOptions,
             'activeLeagueId' => $activeLeague->id,
             'activeLeague' => $activeLeague,
             'teams' => $this->teamsMetaPayload($activeLeague),

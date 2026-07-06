@@ -758,6 +758,7 @@ Migrations remain the **sole source of truth**.
 | platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
 | team_id | bigint | No | FK -> platform_teams.id (CASCADE) |
 | is_active | boolean | No | Defaults to `true` |
+| is_visible | boolean | No | Defaults to `true`; user-specific Leagues list visibility |
 | extras | json | Yes | Platform metadata |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
