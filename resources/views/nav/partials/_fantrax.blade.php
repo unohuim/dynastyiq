@@ -56,7 +56,7 @@
           window.dispatchEvent(new CustomEvent('integration:updated', { detail: integration }));
         })
         .catch(e => {
-          error = (e?.errors?.fantrax_secret_key?.[0]) ?? 'Unable to save key.';
+          error = (e?.errors?.fantrax_secret_key?.[0]) ?? e?.error ?? 'Unable to save key.';
         })
         .finally(() => saving=false);
       " class="flex items-end gap-2">
@@ -84,6 +84,6 @@
         <span x-show="saving">Saving…</span>
       </button>
     </form>
-</div>
+  </div>
 
 </div>

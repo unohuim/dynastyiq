@@ -20,8 +20,9 @@ when_not_to_use:
   - Discord OAuth login.
 rules:
   - Fantrax credentials belong in IntegrationSecret.
-  - User Fantrax connection writes must flow through the shared connection service so browser and bot entrypoints validate, persist, sync, and emit events consistently.
+  - User Fantrax connection writes must flow through the shared connection service so user-facing and bot entrypoints validate, persist, sync, and emit events consistently.
   - Fantrax user-facing readiness state must be exposed through FantasyIntegrationState, not inferred directly from a saved secret.
+  - Fantrax user connection and refresh should persist league and team logo URLs from direct Fantrax API payloads when exposed, but must not require authenticated browser logo inspection.
   - The Leagues navigation affordance must be controlled by the shared FantasyProviderLeagueAccess pattern.
   - Direct Leagues route access must enforce the same Fantrax readiness rule as navigation visibility.
   - Disconnecting Fantrax must remove the user credential and deactivate that user's Fantrax league_user_teams assignments.
