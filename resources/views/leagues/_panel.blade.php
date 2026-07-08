@@ -45,6 +45,9 @@
       playersPayloadLoaded: false,
       playersPayloadLoading: false,
       playersPayloadError: '',
+      capTeamId: '',
+      capTeamLoading: false,
+      capTeamError: '',
       settingsOpen: false,
       scoringAlignmentOpen: true,
       savingScoringAlignment: false,
@@ -138,8 +141,31 @@
         idx = (this.teams || []).findIndex(t => (t?.owner_user_ids || []).includes(me));
         this.i = idx !== -1 ? idx : 0;
       },
-      async loadPlayersPayload(){
-        if (this.playersPayloadLoaded || this.playersPayloadLoading || !this.playersPayloadUrl) return;
+      defaultCapTeamId(){
+        const team = (this.teams || []).find(team => team?.owned_by_me === true)
+          || (this.teams || []).find(team => (team?.owner_user_ids || []).includes(this.currentUserId))
+          || null;
+
+        return String(team?.id || '');
+      },
+      ensureCapTeamSelection(preferredId = ''){
+        const selectableIds = (this.teams || [])
+          .filter(team => !['__all_players__', '__free_agents__'].includes(String(team?.id || '')))
+          .map(team => String(team.id));
+        const preferred = String(preferredId || '');
+
+        if (preferred && selectableIds.includes(preferred)) {
+          this.capTeamId = preferred;
+          return;
+        }
+
+        if (this.capTeamId && selectableIds.includes(String(this.capTeamId))) return;
+
+        this.capTeamId = this.defaultCapTeamId() || selectableIds[0] || '';
+      },
+      async loadPlayersPayload(force = false){
+        if (!force && this.playersPayloadLoaded) return true;
+        if (this.playersPayloadLoading || !this.playersPayloadUrl) return false;
 
         this.playersPayloadLoading = true;
         this.playersPayloadError = '';
@@ -164,9 +190,14 @@
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
           this.resetSelectedTeamIndex();
+          this.ensureCapTeamSelection();
           this.playersPayloadLoaded = true;
+
+          return true;
         } catch (error) {
           this.playersPayloadError = error?.message || 'Could not load players.';
+
+          return false;
         } finally {
           this.playersPayloadLoading = false;
         }
@@ -196,9 +227,40 @@
           .join('') || 'DI';
       },
       get capTeam(){
-        return (this.teams || []).find(team => team?.owned_by_me === true)
+        const selected = String(this.capTeamId || '');
+
+        return (this.teams || []).find(team => String(team?.id || '') === selected)
+          || (this.teams || []).find(team => team?.owned_by_me === true)
           || (this.teams || []).find(team => (team?.owner_user_ids || []).includes(this.currentUserId))
           || null;
+      },
+      get capTeamOptions(){
+        return (this.teams || []).filter(team => !['__all_players__', '__free_agents__'].includes(String(team?.id || '')));
+      },
+      async changeCapTeam(event){
+        const nextTeamId = String(event?.target?.value || '');
+        const previousTeamId = String(this.capTeamId || '');
+
+        if (!nextTeamId || nextTeamId === previousTeamId || this.capTeamLoading) {
+          event.target.value = previousTeamId;
+          return;
+        }
+
+        this.capTeamLoading = true;
+        this.capTeamError = '';
+
+        const loaded = await this.loadPlayersPayload(true);
+
+        if (!loaded) {
+          event.target.value = previousTeamId;
+          this.capTeamError = this.playersPayloadError || 'Could not load team cap data.';
+          this.capTeamLoading = false;
+          return;
+        }
+
+        this.ensureCapTeamSelection(nextTeamId);
+        event.target.value = this.capTeamId;
+        this.capTeamLoading = false;
       },
       get capSeasonColumns(){
         const seasons = new Map();
@@ -298,23 +360,38 @@
         return totals;
       },
       capPositionKey(player){
+        const eligibility = this.capEligibilityValues(player);
         const raw = String(player?.position || '').toUpperCase();
-        const eligibility = Array.isArray(player?.eligibility)
-          ? player.eligibility.map(value => String(value).toUpperCase())
-          : [];
 
         if (player?.is_goalie || raw === 'G') return 'G';
-        if (raw === 'C') return 'C';
-        if (raw === 'LW' || raw === 'L') return 'LW';
-        if (raw === 'RW' || raw === 'R') return 'RW';
-        if (raw.includes('D')) return 'D';
         if (eligibility.includes('C')) return 'C';
         if (eligibility.includes('LW') || eligibility.includes('L')) return 'LW';
         if (eligibility.includes('RW') || eligibility.includes('R')) return 'RW';
         if (eligibility.includes('D')) return 'D';
         if (eligibility.includes('G')) return 'G';
+        if (raw === 'C') return 'C';
+        if (raw === 'LW' || raw === 'L') return 'LW';
+        if (raw === 'RW' || raw === 'R') return 'RW';
+        if (raw.includes('D')) return 'D';
 
         return raw || '-';
+      },
+      capPositionLabel(player){
+        const values = this.capEligibilityValues(player);
+        const visible = values.filter(value => !['F', 'UTIL', 'UTILS', 'UTILITY', 'UTL', 'W/R/T'].includes(value));
+
+        return visible.length ? visible.join('/') : this.capPositionKey(player);
+      },
+      capEligibilityValues(player){
+        const raw = player?.eligibility;
+        const values = Array.isArray(raw)
+          ? raw
+          : (typeof raw === 'object' && raw !== null ? Object.values(raw).flat() : [raw]);
+
+        return values
+          .filter(Boolean)
+          .map(value => String(value).trim().toUpperCase())
+          .filter(value => value !== '');
       },
       capSeasonForPlayer(player, key){
         if (this.customCap) {
@@ -336,6 +413,7 @@
       capSortValue(player, key, positionOrder){
         if (key === 'player') return String(player?.name || '').toLowerCase();
         if (key === 'position') return Number(positionOrder[player?.cap_position_key] || 90);
+        if (key === 'age') return Number(player?.age || 0);
         if (key.startsWith('season:')) {
           const seasonKey = key.slice(7);
           const season = this.capSeasonForPlayer(player, seasonKey);
@@ -868,11 +946,30 @@
               <h3 class="text-sm font-semibold text-slate-950">Cap</h3>
               <p class="mt-1 truncate text-xs text-slate-500" x-text="capTeam ? `${capTeam.name} ${customCap ? 'Fantrax salary outlook' : 'contract outlook'}` : 'No fantasy team is linked for this league.'"></p>
             </div>
-            <div x-show="capTeam" class="text-right text-xs text-slate-500">
-              <span class="font-semibold text-slate-700" x-text="capPlayers.length"></span>
-              <span x-text="capPlayers.length === 1 ? 'player' : 'players'"></span>
+            <div x-show="capTeam" class="flex flex-wrap items-center justify-end gap-3">
+              <label class="block">
+                <span class="sr-only">Cap team</span>
+                <select
+                  class="block w-56 rounded-md border-0 bg-white py-1.5 pl-3 pr-9 text-sm font-medium text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:bg-slate-50 disabled:text-slate-500"
+                  :value="capTeamId"
+                  :disabled="capTeamLoading"
+                  @change="changeCapTeam"
+                >
+                  <template x-for="team in capTeamOptions" :key="team.id">
+                    <option :value="team.id" x-text="team.name"></option>
+                  </template>
+                </select>
+              </label>
+              <div class="min-w-16 text-right text-xs text-slate-500">
+                <div>
+                  <span class="font-semibold text-slate-700" x-text="capPlayers.length"></span>
+                  <span x-text="capPlayers.length === 1 ? 'player' : 'players'"></span>
+                </div>
+                <div x-show="capTeamLoading" class="mt-1 text-[11px] text-slate-500">Loading...</div>
+              </div>
             </div>
           </div>
+          <div x-show="capTeamError" class="border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700" x-text="capTeamError"></div>
 
           <template x-if="!capTeam">
             <div class="px-4 py-8 text-sm text-slate-500">No fantasy team is linked to your account for this league.</div>
@@ -886,28 +983,34 @@
             <div class="px-4 py-8 text-sm text-slate-500" x-text="customCap ? 'No Fantrax salary data is available for your roster yet.' : 'No contract data is available for your roster yet.'"></div>
           </template>
 
-          <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto">
-            <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto pb-12 pr-2">
+            <table class="min-w-max divide-y divide-slate-200 text-sm">
               <thead class="sticky top-0 z-20 bg-slate-50">
                 <tr>
-                  <th scope="col" class="sticky left-0 z-10 w-40 bg-slate-50 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th scope="col" class="sticky left-0 z-10 w-56 bg-slate-50 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                     <button type="button" class="inline-flex items-center gap-1 hover:text-slate-800" @click="setCapSort('player')">
                       Player <span class="text-slate-400" x-text="capSortIndicator('player')"></span>
                     </button>
                   </th>
-                  <th scope="col" class="w-10 px-1.5 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th scope="col" class="w-12 px-1.5 py-1.5 pl-4 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                     <button type="button" class="inline-flex items-center gap-1 hover:text-slate-800" @click="setCapSort('position')">
                       Pos <span class="text-slate-400" x-text="capSortIndicator('position')"></span>
                     </button>
                   </th>
-                  <template x-for="column in capSeasonColumns" :key="column.key">
-                    <th scope="col" class="w-16 px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th scope="col" class="w-10 px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    <button type="button" class="inline-flex items-center justify-end gap-1 hover:text-slate-800" @click="setCapSort('age')">
+                      Age <span class="text-slate-400" x-text="capSortIndicator('age')"></span>
+                    </button>
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="column.key">
+                    <th scope="col" class="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
                       <button type="button" class="inline-flex items-center justify-end gap-1 hover:text-slate-800" @click="setCapSort(`season:${column.key}`)">
                         <span x-text="column.label"></span>
                         <span class="text-slate-400" x-text="capSortIndicator(`season:${column.key}`)"></span>
                       </button>
                     </th>
                   </template>
+                  <th scope="col" class="w-3 px-0 py-1.5" aria-hidden="true"></th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 bg-white">
@@ -915,12 +1018,12 @@
                   <tr>
                     <td
                       x-show="row.type === 'group'"
-                      :colspan="2 + capSeasonColumns.length"
+                      :colspan="4 + capSeasonColumns.length"
                       class="bg-slate-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
                       x-text="row.label"
                     ></td>
                     <td x-show="row.type === 'player'" class="sticky left-0 z-10 bg-white px-2 py-1.5">
-                      <div class="flex min-w-40 items-center gap-2">
+                      <div class="flex min-w-56 items-center gap-2">
                         <template x-if="row.player.avatar_url">
                           <img :src="row.player.avatar_url" alt="" class="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
                         </template>
@@ -935,9 +1038,10 @@
                         </div>
                       </div>
                     </td>
-                    <td x-show="row.type === 'player'" class="px-1.5 py-1.5 text-xs font-medium text-slate-700" x-text="capPositionKey(row.player)"></td>
-                    <template x-for="column in capSeasonColumns" :key="`${row.id}-${column.key}`">
-                      <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right">
+                    <td x-show="row.type === 'player'" class="px-1.5 py-1.5 pl-4 text-xs font-medium text-slate-700" x-text="capPositionLabel(row.player)"></td>
+                    <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right text-xs font-medium text-slate-700" x-text="row.player.age ?? '-'"></td>
+                    <template x-for="(column, index) in capSeasonColumns" :key="`${row.id}-${column.key}`">
+                      <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
                         <template x-if="capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-'">
                           <div class="text-xs font-semibold text-slate-900" x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label"></div>
                         </template>
@@ -953,15 +1057,20 @@
                         </template>
                       </td>
                     </template>
+                    <td x-show="row.type === 'player'" class="px-0 py-1.5" aria-hidden="true"></td>
                   </tr>
                 </template>
+                <tr aria-hidden="true">
+                  <td :colspan="4 + capSeasonColumns.length" class="h-12 border-0 p-0"></td>
+                </tr>
               </tbody>
               <tfoot class="border-t border-slate-200 bg-slate-50">
                 <tr>
-                  <th scope="row" colspan="2" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
-                  <template x-for="column in capSeasonColumns" :key="`total-${column.key}`">
-                    <td class="px-1 py-1.5 text-right text-xs font-semibold text-slate-900" x-text="capMoney(capTotals[column.key])"></td>
+                  <th scope="row" colspan="3" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`total-${column.key}`">
+                    <td class="px-1 py-1.5 text-right text-xs font-semibold text-slate-900" :class="index === 0 ? 'w-24 pl-8' : 'w-16'" x-text="capMoney(capTotals[column.key])"></td>
                   </template>
+                  <td class="px-0 py-1.5" aria-hidden="true"></td>
                 </tr>
               </tfoot>
             </table>
