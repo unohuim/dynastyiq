@@ -34,6 +34,17 @@
     $draftCommitSeasonLabel = (string) ($drafting['draft_commit_season_label'] ?? '');
     $draftRows = collect($drafting['rows'] ?? []);
     $draftRounds = collect($drafting['rounds'] ?? []);
+    $draftStatusText = (string) ($drafting['status_text'] ?? 'Draft');
+    $isCompletedDraft = strtolower($draftStatusText) === 'complete';
+    $draftAtLabel = '';
+
+    if (strtolower($draftStatusText) === 'scheduled' && ! empty($drafting['draft_at'])) {
+        try {
+            $draftAtLabel = \Carbon\CarbonImmutable::parse((string) $drafting['draft_at'])->format('M j, Y g:i A');
+        } catch (\Throwable) {
+            $draftAtLabel = '';
+        }
+    }
     $completedRows = $draftRows
         ->filter(static fn (array $row): bool => (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])))
         ->values();
@@ -60,15 +71,19 @@
             'status_detail' => data_get($row, 'next_season.team_name'),
         ])
         ->values();
-    $nextPick = $draftRows->first(static fn (array $row): bool => ! empty($row['is_next_pick']))
-        ?? $draftRows->first(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])));
-    $upNextPick = $draftRows
-        ->filter(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])) && ! empty($nextPick) && ((int) ($row['overall_pick'] ?? 0)) > ((int) ($nextPick['overall_pick'] ?? 0)))
-        ->first();
+    $nextPick = $isCompletedDraft
+        ? null
+        : ($draftRows->first(static fn (array $row): bool => ! empty($row['is_next_pick']))
+            ?? $draftRows->first(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id']))));
+    $upNextPick = $isCompletedDraft
+        ? null
+        : $draftRows
+            ->filter(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])) && ! empty($nextPick) && ((int) ($row['overall_pick'] ?? 0)) > ((int) ($nextPick['overall_pick'] ?? 0)))
+            ->first();
     $pendingDraftRows = $draftRows
         ->filter(static fn (array $row): bool => ! (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id'])))
         ->values();
-    $picksUntilOtc = $ownedTeamId !== ''
+    $picksUntilOtc = ! $isCompletedDraft && $ownedTeamId !== ''
         ? $pendingDraftRows->search(static fn (array $row): bool => (string) ($row['team_id'] ?? '') === $ownedTeamId)
         : false;
     $recentPicks = $completedRows->reverse()->take(5)->values();
@@ -91,8 +106,8 @@
     $draftPickClockMinutes = (int) ($drafting['pick_clock_minutes'] ?? 5);
     $draftPauseSeconds = (int) ($drafting['pause_between_picks_seconds'] ?? 0);
     $draftAutoPickEnabled = (bool) ($drafting['auto_pick_enabled'] ?? false);
-    $draftCountdownExpiresAt = (string) ($drafting['countdown_expires_at'] ?? '');
-    $draftCanCountdown = (bool) ($drafting['is_live'] ?? false) && $draftCountdownExpiresAt !== '';
+    $draftCountdownExpiresAt = $isCompletedDraft ? '' : (string) ($drafting['countdown_expires_at'] ?? '');
+    $draftCanCountdown = ! $isCompletedDraft && (bool) ($drafting['is_live'] ?? false) && $draftCountdownExpiresAt !== '';
     $draftQueueItems = collect($drafting['queue_items'] ?? [])->values();
     $draftQueuedPlayerIds = $draftQueueItems
         ->pluck('player_id')
@@ -962,9 +977,9 @@
                         <span class="h-2 w-2 rounded-full bg-blue-500"></span>
                         Draft Central
                     </div>
-                    <h3 class="mt-5 text-2xl font-semibold tracking-tight text-slate-950">No draft has been configured for this league.</h3>
+                    <h3 class="mt-5 text-2xl font-semibold tracking-tight text-slate-950">No draft data is available for this league yet.</h3>
                     <p class="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-                        Create a draft room for this league. You can mirror Fantrax as a read-only source, or run a manual DynastyIQ draft that stays independent from Fantrax until you decide to export or reconcile results.
+                        Fantrax draft details are mirrored automatically during league refresh when Fantrax exposes a scheduled or live draft. Commissioners can still create a manual DynastyIQ draft when this league should not use Fantrax as the read-only source.
                     </p>
                     <div class="mt-6 flex flex-wrap items-center gap-3">
                         @if ($canManageDraft)
@@ -980,7 +995,7 @@
                             </button>
                         @else
                             <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-                                A league commissioner can create the draft room.
+                                Draft details will appear here after Fantrax exposes them and the league refreshes.
                             </div>
                         @endif
                     </div>
@@ -989,8 +1004,8 @@
                 <div class="rounded-2xl border border-white/70 bg-white/85 p-4 shadow-xl ring-1 ring-slate-200/70">
                     <div class="grid gap-3">
                         <div class="rounded-xl border border-blue-100 bg-blue-50/70 p-4">
-                            <div class="text-sm font-semibold text-slate-950">Connect Fantrax draft</div>
-                            <p class="mt-1 text-xs leading-5 text-slate-600">Mirrors Fantrax picks into canonical draft tables. Fantrax remains the live source.</p>
+                            <div class="text-sm font-semibold text-slate-950">Fantrax draft mirror</div>
+                            <p class="mt-1 text-xs leading-5 text-slate-600">League refresh imports scheduled, live, and completed Fantrax draft details as a read-only source when available.</p>
                         </div>
                         <div class="rounded-xl border border-slate-200 bg-white p-4">
                             <div class="text-sm font-semibold text-slate-950">Manual draft</div>
@@ -1080,12 +1095,12 @@
                 @if (! empty($nextPick['team_avatar_url']))
                     <img src="{{ $nextPick['team_avatar_url'] }}" alt="" class="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
                 @else
-                    <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">OTC</span>
+                    <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">{{ $isCompletedDraft ? '-' : 'OTC' }}</span>
                 @endif
                 <div class="min-w-0">
-                    <div class="truncate text-sm font-semibold text-slate-900">{{ data_get($nextPick, 'team_name', 'Awaiting pick') }}</div>
+                    <div class="truncate text-sm font-semibold text-slate-900">{{ $isCompletedDraft ? '-' : data_get($nextPick, 'team_name', 'Awaiting pick') }}</div>
                     <div class="mt-0.5 text-xs text-slate-500">
-                        Round {{ data_get($nextPick, 'round', '-') }}, Pick {{ data_get($nextPick, 'pick_in_round', data_get($nextPick, 'pick', '-')) }}
+                        {{ $isCompletedDraft ? '-' : 'Round ' . data_get($nextPick, 'round', '-') . ', Pick ' . data_get($nextPick, 'pick_in_round', data_get($nextPick, 'pick', '-')) }}
                     </div>
                 </div>
             </div>
@@ -1094,8 +1109,8 @@
         <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Time Remaining</div>
             <div class="mt-2 grid grid-cols-[minmax(0,1fr)_2.25rem] items-center gap-2">
-                <div class="min-w-0 truncate text-2xl font-semibold tracking-tight text-slate-950 tabular-nums" x-text="draftTimerLabel">--:--</div>
-                <span class="flex h-9 w-9 justify-self-end rounded-full p-1" :style="draftTimerRingStyle" aria-hidden="true">
+                <div class="min-w-0 truncate text-2xl font-semibold tracking-tight text-slate-950 tabular-nums" @if (! $isCompletedDraft) x-text="draftTimerLabel" @endif>{{ $isCompletedDraft ? '-' : '--:--' }}</div>
+                <span class="flex h-9 w-9 justify-self-end rounded-full p-1" @if (! $isCompletedDraft) :style="draftTimerRingStyle" @endif aria-hidden="true">
                     <span class="h-full w-full rounded-full bg-white"></span>
                 </span>
             </div>
@@ -1107,12 +1122,12 @@
                 @if (! empty($upNextPick['team_avatar_url']))
                     <img src="{{ $upNextPick['team_avatar_url'] }}" alt="" class="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
                 @else
-                    <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">UP</span>
+                    <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">{{ $isCompletedDraft ? '-' : 'UP' }}</span>
                 @endif
                 <div class="min-w-0">
-                    <div class="truncate text-sm font-semibold text-slate-900">{{ data_get($upNextPick, 'team_name', 'No upcoming pick') }}</div>
+                    <div class="truncate text-sm font-semibold text-slate-900">{{ $isCompletedDraft ? '-' : data_get($upNextPick, 'team_name', 'No upcoming pick') }}</div>
                     <div class="mt-0.5 text-xs text-slate-500">
-                        Round {{ data_get($upNextPick, 'round', '-') }}, Pick {{ data_get($upNextPick, 'pick_in_round', data_get($upNextPick, 'pick', '-')) }}
+                        {{ $isCompletedDraft ? '-' : 'Round ' . data_get($upNextPick, 'round', '-') . ', Pick ' . data_get($upNextPick, 'pick_in_round', data_get($upNextPick, 'pick', '-')) }}
                     </div>
                 </div>
             </div>
@@ -1127,7 +1142,11 @@
                     </div>
                     <div class="mt-1 flex items-center gap-2 text-xs font-medium text-slate-500">
                         <span class="h-2 w-2 rounded-full {{ $statusDotClass }}"></span>
-                        <span>{{ $drafting['status_text'] ?? 'Draft' }}</span>
+                        <span>{{ $draftStatusText }}</span>
+                        @if ($draftAtLabel !== '')
+                            <span class="text-slate-300">/</span>
+                            <span>{{ $draftAtLabel }}</span>
+                        @endif
                     </div>
                 </div>
                 <div class="text-right text-xs font-semibold text-slate-500">

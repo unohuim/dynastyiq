@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Events\FantraxTeamCreated;
+use App\Models\Draft;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
 use App\Models\PlayerExternalIdentity;
@@ -13,10 +14,16 @@ use Carbon\CarbonInterface;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final class SyncFantraxLeague
 {
     use HasAPITrait;
+
+    public function __construct(
+        private readonly SyncFantraxDraftState $draftStateSync,
+    ) {
+    }
 
     public function sync(int $platformLeagueId): void
     {
@@ -413,6 +420,28 @@ final class SyncFantraxLeague
                 ]);
             }
         });
+
+        $this->bootstrapReadOnlyDraftWhenMissing($league);
+    }
+
+    /**
+     * Mirror Fantrax draft data for all league users when no draft exists yet.
+     */
+    private function bootstrapReadOnlyDraftWhenMissing(PlatformLeague $league): void
+    {
+        if (Draft::query()->where('platform_league_id', $league->id)->exists()) {
+            return;
+        }
+
+        try {
+            $this->draftStateSync->syncIfAvailable((int) $league->id);
+        } catch (Throwable $throwable) {
+            Log::info('[FX Sync] Draft mirror bootstrap skipped', [
+                'platform_league_id' => $league->id,
+                'provider_league_id' => $league->platform_league_id,
+                'message' => $throwable->getMessage(),
+            ]);
+        }
     }
 
     /**

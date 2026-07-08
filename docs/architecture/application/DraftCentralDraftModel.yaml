@@ -19,6 +19,7 @@ when_not_to_use:
 rules:
   - Draft Central must read normalized draft state from drafts and draft_picks when available.
   - When no canonical draft exists, Draft Central may offer commissioners a provider-mirrored draft or a DynastyIQ-managed manual draft creation flow.
+  - Fantrax platform_mirror drafts may be created automatically by Fantrax league refresh so league users can view scheduled, live, or completed provider drafts without commissioner setup.
   - Provider-specific draft syncs must mirror picked-player transitions into drafts and draft_picks before emitting draft notification side effects.
   - Draft Central Live panel rendering must read from drafts and draft_picks, not provider-specific Fantrax draft cache tables.
   - Draft timer configuration belongs to drafts because each league may have multiple drafts with different timing rules.

@@ -51,6 +51,35 @@ final class SyncFantraxDraftState
     }
 
     /**
+     * Fetch and persist Fantrax draft state only when Fantrax exposes draft data.
+     *
+     * @return array{state:null,new_picks:array<int,DraftPick>}
+     */
+    public function syncIfAvailable(int $platformLeagueId, ?CarbonInterface $now = null): array
+    {
+        $league = PlatformLeague::query()->find($platformLeagueId);
+
+        if (! $league instanceof PlatformLeague || $league->platform !== 'fantrax') {
+            return ['state' => null, 'new_picks' => []];
+        }
+
+        $draftResults = $this->getAPIData('fantrax', 'draft_results', [
+            'leagueId' => (string) $league->platform_league_id,
+        ]);
+        $draftPickInfo = $this->getAPIData('fantrax', 'draft_picks', [
+            'leagueId' => (string) $league->platform_league_id,
+        ]);
+        $draftResults = is_array($draftResults) ? $draftResults : [];
+        $draftPickInfo = is_array($draftPickInfo) ? $draftPickInfo : [];
+
+        if (! $this->hasDraftPayload($draftResults)) {
+            return ['state' => null, 'new_picks' => []];
+        }
+
+        return $this->syncPayloads($league, $draftResults, $draftPickInfo, $now);
+    }
+
+    /**
      * Persist supplied draft payloads and return picks that transitioned from unmade to made.
      *
      * @return array{state:null,new_picks:array<int,DraftPick>}
@@ -190,6 +219,17 @@ final class SyncFantraxDraftState
             ->orderBy('pick_in_round')
             ->first();
 
+        if ((string) $draft->status === 'complete') {
+            DraftPick::query()
+                ->where('draft_id', $draft->id)
+                ->where('status', 'on_clock')
+                ->update(['status' => 'pending']);
+
+            $draft->forceFill(['current_draft_pick_id' => null])->save();
+
+            return $newDraftPicks;
+        }
+
         DraftPick::query()
             ->where('draft_id', $draft->id)
             ->whereIn('status', ['pending', 'on_clock'])
@@ -315,6 +355,12 @@ final class SyncFantraxDraftState
             ?? $draftResults;
 
         return is_array($items) ? array_values($items) : [];
+    }
+
+    private function hasDraftPayload(array $draftResults): bool
+    {
+        return $this->draftAt($draftResults) instanceof CarbonImmutable
+            || $this->resultItems($draftResults) !== [];
     }
 
     private function providerPickKey(?int $overallPick, ?int $round, ?int $pickInRound, ?int $pick, array $item): string

@@ -1402,6 +1402,7 @@ final class LeagueController extends Controller
      */
     private function withDraftCentralMeta(array $payload, $league, ?Draft $draft): array
     {
+        $isCompletedDraft = $draft instanceof Draft && (string) $draft->status === 'complete';
         $pickClockSeconds = $draft instanceof Draft
             ? (int) ($draft->pick_clock_seconds ?? 300)
             : 0;
@@ -1411,7 +1412,7 @@ final class LeagueController extends Controller
             : $this->lastCanonicalDraftPickTimestamp($draft);
         $expiresAt = null;
 
-        if ($draft instanceof Draft && $pickClockSeconds > 0 && is_string($lastPickAt) && $lastPickAt !== '') {
+        if (! $isCompletedDraft && $draft instanceof Draft && $pickClockSeconds > 0 && is_string($lastPickAt) && $lastPickAt !== '') {
             try {
                 $expiresAt = \Carbon\CarbonImmutable::parse($lastPickAt)
                     ->addSeconds($pickClockSeconds)
@@ -1424,10 +1425,16 @@ final class LeagueController extends Controller
         $payload['has_canonical_draft'] = $draft instanceof Draft;
         $payload['draft_id'] = $draft?->id;
         $payload['source_type'] = $draft?->source_type;
-        $currentPick = $draft instanceof Draft ? $draft->currentPick()->first() : null;
+        $currentPick = $isCompletedDraft
+            ? null
+            : ($draft instanceof Draft ? $draft->currentPick()->first() : null);
 
         if (! $this->payloadHasNextPickMarker($payload)) {
             $payload = $this->markCurrentDraftPick($payload, $currentPick);
+        }
+
+        if ($isCompletedDraft) {
+            $payload = $this->clearCurrentDraftPick($payload);
         }
 
         $payload['pick_clock_seconds'] = $pickClockSeconds;
@@ -1453,6 +1460,41 @@ final class LeagueController extends Controller
             ? $this->draftQueueItemsForUser($draft, (int) auth()->id())
                 ->pipe(fn ($items): array => $this->draftQueueItemsPayload($items, (int) $league->id))
             : [];
+
+        return $payload;
+    }
+
+    /**
+     * Remove current-pick markers from completed draft payloads.
+     */
+    private function clearCurrentDraftPick(array $payload): array
+    {
+        unset($payload['current_pick']);
+
+        $payload['rows'] = collect($payload['rows'] ?? [])
+            ->map(static function (array $row): array {
+                $row['is_next_pick'] = false;
+
+                return $row;
+            })
+            ->values()
+            ->all();
+
+        $payload['rounds'] = collect($payload['rounds'] ?? [])
+            ->map(static function (array $round): array {
+                $round['rows'] = collect($round['rows'] ?? [])
+                    ->map(static function (array $row): array {
+                        $row['is_next_pick'] = false;
+
+                        return $row;
+                    })
+                    ->values()
+                    ->all();
+
+                return $round;
+            })
+            ->values()
+            ->all();
 
         return $payload;
     }
