@@ -41,7 +41,7 @@ class PlatformTeam extends Model
     public function roster(): BelongsToMany
     {
         return $this->belongsToMany(Player::class, 'platform_roster_memberships', 'platform_team_id', 'player_id')
-            ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at'])
+            ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'metadata', 'starts_at', 'ends_at'])
             ->wherePivotNull('ends_at');
     }
 

@@ -319,6 +319,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.visibility.update');
         Route::put('/leagues/{league_id}/scoring-settings', [LeagueController::class, 'updateScoringSettings'])
             ->name('leagues.scoring-settings.update');
+        Route::put('/leagues/{league_id}/cap-settings', [LeagueController::class, 'updateCapSettings'])
+            ->name('leagues.cap-settings.update');
         Route::post('/leagues/{league_id}/team-logos/sync', [LeagueController::class, 'syncTeamLogos'])
             ->name('leagues.team-logos.sync');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])

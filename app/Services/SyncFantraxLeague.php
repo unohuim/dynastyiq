@@ -455,6 +455,10 @@ final class SyncFantraxLeague
             return;
         }
 
+        $existingSettings = array_replace(
+            ['custom_cap' => false],
+            is_array($league->settings) ? $league->settings : [],
+        );
         $existingScoringSettings = is_array($league->scoring_settings) ? $league->scoring_settings : [];
         $manualMappings = is_array($existingScoringSettings['manual_mappings'] ?? null)
             ? $existingScoringSettings['manual_mappings']
@@ -463,7 +467,7 @@ final class SyncFantraxLeague
 
         if ($normalizedCategories === []) {
             $league->forceFill([
-                'settings' => array_merge(is_array($league->settings) ? $league->settings : [], [
+                'settings' => array_merge($existingSettings, [
                     'fantrax_league_info_keys' => array_keys($leagueInfo),
                 ]),
             ])->save();
@@ -477,7 +481,7 @@ final class SyncFantraxLeague
         );
 
         $league->forceFill([
-            'settings' => array_merge(is_array($league->settings) ? $league->settings : [], [
+            'settings' => array_merge($existingSettings, [
                 'fantrax_league_info_keys' => array_keys($leagueInfo),
             ]),
             'scoring_settings' => [
@@ -691,7 +695,40 @@ final class SyncFantraxLeague
             'slot' => $slot,
             'status' => $status,
             'eligibility' => $eligibility === [] ? null : json_encode($eligibility),
+            'metadata' => self::rosterItemProviderMetadata($item),
         ], static fn (mixed $value): bool => $value !== null && $value !== '');
+    }
+
+    /**
+     * Extract provider-specific roster metadata that powers Fantrax-only UI features.
+     *
+     * @param array<string,mixed> $item
+     */
+    private static function rosterItemProviderMetadata(array $item): ?string
+    {
+        $metadata = [];
+        $salary = $item['salary'] ?? null;
+
+        if (is_numeric($salary)) {
+            $metadata['fantrax_salary'] = (int) $salary;
+        }
+
+        if (is_array($item['contract'] ?? null)) {
+            $contract = array_filter([
+                'small_id' => self::firstString($item['contract'], ['smallId', 'small_id']),
+                'name' => self::firstString($item['contract'], ['name']),
+            ], static fn (?string $value): bool => $value !== null && $value !== '');
+
+            if ($contract !== []) {
+                $metadata['fantrax_contract'] = $contract;
+            }
+        }
+
+        if ($metadata === []) {
+            return null;
+        }
+
+        return json_encode($metadata) ?: null;
     }
 
     /**

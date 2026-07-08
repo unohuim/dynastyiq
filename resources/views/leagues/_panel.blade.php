@@ -21,6 +21,7 @@
   <div class="p-6 text-sm text-slate-500">No active league selected.</div>
 @else
   <div
+    class="flex h-full min-h-0 flex-col overflow-hidden"
     x-data="{
       teams: @js($teams ?? []),
       currentUserId: @js($authId),
@@ -30,11 +31,13 @@
       availableStatFields: @js($availableStatFields ?? []),
       searchPlayers: @js($searchPlayers ?? []),
       scoringSettingsUpdateUrl: @js($scoringSettingsUpdateUrl ?? ''),
+      capSettingsUpdateUrl: @js($capSettingsUpdateUrl ?? ''),
       teamLogoSyncUrl: @js($teamLogoSyncUrl ?? ''),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       playersPayloadUrl: @js($playersPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
+      customCap: @js((bool) ($customCap ?? false)),
       activeLeagueTab: 'draft',
       playerSearch: '',
       capSortKey: '',
@@ -47,6 +50,9 @@
       savingScoringAlignment: false,
       scoringAlignmentMessage: '',
       scoringAlignmentError: '',
+      savingCapSettings: false,
+      capSettingsMessage: '',
+      capSettingsError: '',
       teamLogosSyncing: false,
       teamLogosMessage: '',
       teamLogosError: '',
@@ -155,6 +161,7 @@
           this.searchPlayers = payload.searchPlayers ?? [];
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
+          this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
           this.resetSelectedTeamIndex();
           this.playersPayloadLoaded = true;
@@ -196,6 +203,14 @@
       get capSeasonColumns(){
         const seasons = new Map();
         const currentSeasonKey = this.currentCapSeasonKey();
+
+        if (this.customCap) {
+          return [{
+            key: String(currentSeasonKey),
+            label: this.capSeasonLabel(currentSeasonKey),
+            sort: currentSeasonKey,
+          }];
+        }
 
         (this.capTeam?.players || []).forEach(player => {
           (player?.contract?.seasons || []).forEach(season => {
@@ -265,6 +280,9 @@
 
         return rows;
       },
+      get hasCustomCapSalaryData(){
+        return (this.capTeam?.players || []).some(player => Number(player?.fantasy_salary?.cap_hit || 0) > 0);
+      },
       get capTotals(){
         const totals = {};
 
@@ -299,6 +317,20 @@
         return raw || '-';
       },
       capSeasonForPlayer(player, key){
+        if (this.customCap) {
+          const currentSeasonKey = String(this.currentCapSeasonKey());
+          const salary = player?.fantasy_salary || null;
+
+          if (String(key) !== currentSeasonKey || !salary?.cap_hit) return null;
+
+          return {
+            season_key: Number(currentSeasonKey),
+            label: this.capSeasonLabel(currentSeasonKey),
+            cap_hit: Number(salary.cap_hit || 0),
+            cap_hit_label: salary.label || this.capMoney(salary.cap_hit),
+          };
+        }
+
         return (player?.contract?.seasons || []).find(season => String(season?.season_key ?? season?.label ?? '') === String(key)) || null;
       },
       capSortValue(player, key, positionOrder){
@@ -314,6 +346,8 @@
         return '';
       },
       capExpiryBadge(player, key){
+        if (this.customCap) return null;
+
         const status = String(player?.contract?.expiry_status || '').trim().toUpperCase();
 
         if (!['RFA', 'UFA'].includes(status)) return null;
@@ -359,12 +393,62 @@
 
         return (startYear * 10000) + startYear + 1;
       },
+      capSeasonLabel(seasonKey){
+        const value = String(seasonKey || '');
+
+        if (value.length >= 8) {
+          const startYear = Number(value.slice(0, 4));
+          const endYear = Number(value.slice(4, 8));
+
+          if (Number.isFinite(startYear) && Number.isFinite(endYear)) {
+            return `${startYear}-${String(endYear).slice(-2)}`;
+          }
+        }
+
+        return value;
+      },
       capMoney(value){
         const number = Number(value || 0);
 
         if (!Number.isFinite(number) || number <= 0) return '-';
 
         return `$${(number / 1000000).toFixed(2)}M`;
+      },
+      async toggleCustomCap(){
+        if (!this.capSettingsUpdateUrl || this.savingCapSettings) return;
+
+        const previous = this.customCap;
+        const next = !previous;
+        this.savingCapSettings = true;
+        this.customCap = next;
+        this.capSettingsMessage = '';
+        this.capSettingsError = '';
+
+        try {
+          const response = await fetch(this.capSettingsUpdateUrl, {
+            method: 'PUT',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+            body: JSON.stringify({ custom_cap: next }),
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not save cap settings.');
+          }
+
+          this.customCap = Boolean(payload.customCap ?? next);
+          this.capSettingsMessage = payload.message || 'Cap settings saved.';
+        } catch (error) {
+          this.customCap = previous;
+          this.capSettingsError = error?.message || 'Could not save cap settings.';
+        } finally {
+          this.savingCapSettings = false;
+        }
       },
       async saveScoringMappings(){
         if (!this.scoringSettingsUpdateUrl) return;
@@ -491,7 +575,7 @@
     }"
     x-cloak
   >
-    <div class="overflow-hidden bg-white">
+    <div class="shrink-0 overflow-hidden bg-white">
       <div class="relative min-h-44 overflow-hidden bg-slate-950 text-white">
         <div class="absolute inset-0 bg-[linear-gradient(110deg,rgba(2,6,23,0.98),rgba(15,23,42,0.86)_46%,rgba(29,78,216,0.72)),radial-gradient(circle_at_78%_16%,rgba(96,165,250,0.62),transparent_25%)]" aria-hidden="true"></div>
         <div class="absolute inset-x-0 bottom-0 h-px bg-blue-300/70 shadow-[0_0_28px_rgba(96,165,250,0.92)]" aria-hidden="true"></div>
@@ -545,7 +629,7 @@
       </div>
     </div>
 
-    <div class="mb-4 flex items-center gap-7 border-b border-slate-200 px-7">
+    <div class="mb-4 flex shrink-0 items-center gap-7 border-b border-slate-200 px-7">
       <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
         Overview
       </button>
@@ -581,7 +665,8 @@
       </button>
     </div>
 
-    <div x-show="activeLeagueTab === 'players'" class="px-6 pb-6">
+    <div class="min-h-0 flex-1 overflow-hidden">
+    <div x-show="activeLeagueTab === 'players'" class="h-full overflow-y-auto px-6 pb-6">
     <div x-show="playersPayloadLoading" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div class="animate-pulse space-y-4">
         <div class="flex items-center justify-between gap-4">
@@ -681,7 +766,7 @@
               </div>
             </div>
 
-            <div class="h-[calc(100vh-19rem)] min-h-[18rem] overflow-y-auto divide-y divide-slate-200">
+            <div class="divide-y divide-slate-200">
 	              <template x-for="(p, playerIndex) in filteredPlayers" :key="p.id">
 	                <div>
 	                  <div
@@ -781,7 +866,7 @@
           <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-4 py-3">
             <div class="min-w-0">
               <h3 class="text-sm font-semibold text-slate-950">Cap</h3>
-              <p class="mt-1 truncate text-xs text-slate-500" x-text="capTeam ? `${capTeam.name} contract outlook` : 'No fantasy team is linked for this league.'"></p>
+              <p class="mt-1 truncate text-xs text-slate-500" x-text="capTeam ? `${capTeam.name} ${customCap ? 'Fantrax salary outlook' : 'contract outlook'}` : 'No fantasy team is linked for this league.'"></p>
             </div>
             <div x-show="capTeam" class="text-right text-xs text-slate-500">
               <span class="font-semibold text-slate-700" x-text="capPlayers.length"></span>
@@ -797,11 +882,11 @@
             <div class="px-4 py-8 text-sm text-slate-500">No roster players are available for your fantasy team.</div>
           </template>
 
-          <template x-if="capTeam && capPlayers.length > 0 && capSeasonColumns.length === 0">
-            <div class="px-4 py-8 text-sm text-slate-500">No contract data is available for your roster yet.</div>
+          <template x-if="capTeam && capPlayers.length > 0 && (capSeasonColumns.length === 0 || (customCap && !hasCustomCapSalaryData))">
+            <div class="px-4 py-8 text-sm text-slate-500" x-text="customCap ? 'No Fantrax salary data is available for your roster yet.' : 'No contract data is available for your roster yet.'"></div>
           </template>
 
-          <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto">
+          <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto">
             <table class="min-w-full divide-y divide-slate-200 text-sm">
               <thead class="sticky top-0 z-20 bg-slate-50">
                 <tr>
@@ -873,7 +958,7 @@
               </tbody>
               <tfoot class="border-t border-slate-200 bg-slate-50">
                 <tr>
-                  <th scope="row" colspan="2" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600">Total cap hit</th>
+                  <th scope="row" colspan="2" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
                   <template x-for="column in capSeasonColumns" :key="`total-${column.key}`">
                     <td class="px-1 py-1.5 text-right text-xs font-semibold text-slate-900" x-text="capMoney(capTotals[column.key])"></td>
                   </template>
@@ -897,6 +982,7 @@
         'leagueStatsFallbackSlug' => $leagueStatsFallbackSlug,
         'leagueStatsFallbackName' => $leagueStatsFallbackName,
       ])
+    </div>
     </div>
 
     @if ($canManageLeague)
@@ -999,6 +1085,33 @@
             <div class="mt-1 text-xs text-slate-500">Stats use your saved DynastyIQ perspectives with Fantrax roster ownership layered on.</div>
           </div>
           <div class="space-y-3 p-4">
+            <div class="flex items-center justify-between gap-4 rounded-md border border-slate-200 p-3">
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-slate-950">Custom cap</div>
+                <div class="mt-1 text-xs text-slate-500">Use Fantrax roster salaries in the Cap tab.</div>
+                <div class="mt-2 min-h-4 text-xs">
+                  <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+                  <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="group relative inline-flex shrink-0 items-center rounded-full transition-colors duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-wait disabled:opacity-60"
+                :class="customCap ? 'bg-indigo-600' : 'bg-slate-200'"
+                style="height: 14px; width: 28px;"
+                :aria-pressed="customCap ? 'true' : 'false'"
+                aria-label="Toggle custom cap"
+                :disabled="savingCapSettings"
+                @click.stop.prevent="toggleCustomCap()"
+              >
+                <span
+                  class="inline-block rounded-full bg-white shadow-sm transition-transform duration-200 ease-out motion-reduce:transition-none"
+                  style="height: 10px; width: 10px;"
+                  :style="`height: 10px; width: 10px; transform: translateX(${customCap ? '16px' : '2px'});`"
+                  aria-hidden="true"
+                ></span>
+              </button>
+            </div>
             <div class="rounded-md bg-slate-50 px-3 py-3 text-sm text-slate-600">
               Fantasy managers, team avatars, roster order, and selected-team filtering come from the synced Fantrax league roster.
             </div>

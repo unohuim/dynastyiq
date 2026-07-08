@@ -2002,7 +2002,7 @@ Migrations remain the **sole source of truth**.
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
 | logo_url | string | Yes | Provider league logo URL when exposed |
-| settings | json | Yes | Provider league settings payload |
+| settings | json | Yes | Provider league settings payload, including `custom_cap` when league Cap views should use provider custom salaries |
 | scoring_settings | json | Yes | Provider scoring categories and modifiers |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -2089,6 +2089,7 @@ Migrations remain the **sole source of truth**.
 | slot | string | Yes | Roster slot |
 | status | enum | Yes | `active`, `bench`, `ir`, `na`, `taxi` |
 | eligibility | json | Yes | Position/slot eligibility |
+| metadata | json | Yes | Provider roster metadata such as Fantrax custom salary and contract labels |
 | starts_at | timestamp | No | Roster period start |
 | ends_at | timestamp | Yes | Roster period end; null means current |
 | created_at | timestamp | Yes | Laravel timestamp |

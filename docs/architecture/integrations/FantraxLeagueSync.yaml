@@ -42,6 +42,8 @@ rules:
   - The commissioner-facing Fantrax web logo sync UI entry point is hibernated until a per-commissioner collection approach replaces the shared server browser profile model.
   - Completed authenticated Fantrax web logo syncs may broadcast a user-scoped logo update event so league list UI can update without a page refresh.
   - Roster sync must persist provider roster slot, membership status, and eligibility metadata when Fantrax exposes those values.
+  - Roster sync may persist provider-specific roster metadata, including Fantrax salary and contract labels, on platform_roster_memberships.metadata when it powers league UI features.
+  - PlatformLeague.settings.custom_cap defaults to false and, when true, league Cap views must use persisted Fantrax roster salaries instead of CapWages cap hits.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.
   - Fantrax roster item status is authoritative for roster grouping; ACTIVE maps to active, RESERVE maps to reserve/bench, and MINORS maps to minor.
   - Linking a Fantrax provider identity to a canonical player must update the staged Fantrax player row and queue roster syncs instead of directly guessing roster memberships.

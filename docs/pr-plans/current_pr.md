@@ -117,6 +117,7 @@ On desktop only, restructure the league detail body so:
 - The Live, Available, My Picks, and Watchlist draft tabs must share the same measured panel height so switching tabs does not resize the page.
 - The Live drafted-player list must own vertical scrolling internally, with round controls remaining visible above the list.
 - Draft pick positioning in the Live tab must scroll the internal drafted-player list directly, such as with `scrollTop`; it must not use `scrollIntoView()` in a way that moves the whole page and hides the league header.
+- The `/leagues` Cap tab may use Fantrax custom roster salaries instead of CapWages cap hits when `platform_leagues.settings.custom_cap` is enabled through the league settings drawer.
 
 The Drafting window should behave like the existing page sections where practical, but new and materially touched UI must follow `docs/UI_DESIGN.md` and `docs/UI_MOTION.md`.
 
@@ -191,7 +192,8 @@ If Fantrax does not expose a draft date in `draft_results` or `league_info`, kee
 - Mobile drafting window.
 - Live polling, WebSockets, or auto-refresh.
 - Persisting draft results to first-party tables unless needed for deterministic tests or rate-limit avoidance and explicitly approved.
-- Changing Fantrax roster sync behavior.
+- Changing Fantrax roster sync behavior, except for persisting provider salary metadata required by the approved custom Cap view.
+- Changing Fantrax custom salary values outside the provider-sourced roster sync.
 - Replacing current Teams data source.
 - Refactoring the broader community league page.
 - Removing legacy inline scripts from the page unless required by this change.

@@ -128,9 +128,11 @@ final class LeagueController extends Controller
             'availableStatFields' => $this->availableStatFieldsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
+            'capSettingsUpdateUrl' => $activeLeague ? route('leagues.cap-settings.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
+            'customCap' => $activeLeague ? $this->customCapEnabled($activeLeague) : false,
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
             'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
@@ -163,9 +165,11 @@ final class LeagueController extends Controller
             'availableStatFields' => $this->availableStatFieldsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
+            'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
+            'customCap' => $this->customCapEnabled($league),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
@@ -197,6 +201,7 @@ final class LeagueController extends Controller
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
+            'customCap' => $this->customCapEnabled($league),
         ]);
     }
 
@@ -249,6 +254,47 @@ final class LeagueController extends Controller
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+        ]);
+    }
+
+    /**
+     * Persist cap display options for the selected league.
+     */
+    public function updateCapSettings(Request $request, string $leagueId): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before updating league settings.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        abort_unless($this->canManageLeague($league, $user), 403);
+
+        $validated = $request->validate([
+            'custom_cap' => ['required', 'boolean'],
+        ]);
+        $settings = array_replace(
+            ['custom_cap' => false],
+            is_array($league->settings) ? $league->settings : [],
+        );
+        $settings['custom_cap'] = (bool) $validated['custom_cap'];
+
+        $league->forceFill([
+            'settings' => $settings,
+        ])->save();
+
+        return response()->json([
+            'message' => $settings['custom_cap']
+                ? 'Custom Fantrax cap enabled.'
+                : 'Custom Fantrax cap disabled.',
+            'customCap' => $settings['custom_cap'],
         ]);
     }
 
@@ -791,9 +837,11 @@ final class LeagueController extends Controller
             'availableStatFields' => $this->availableStatFieldsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
+            'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $activeLeague->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
             'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
+            'customCap' => $this->customCapEnabled($activeLeague),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
             'canManageLeague' => $this->canManageLeague($activeLeague, $user),
@@ -851,6 +899,14 @@ final class LeagueController extends Controller
         }
 
         return false;
+    }
+
+    /**
+     * Determine whether this league should use provider custom salaries in Cap views.
+     */
+    private function customCapEnabled($league): bool
+    {
+        return (bool) data_get($league, 'settings.custom_cap', false);
     }
 
     private function leagueDisplayLogoUrl($league, $user): ?string
@@ -1004,6 +1060,8 @@ final class LeagueController extends Controller
                             $slot = (string) ($p->pivot->slot ?? '');
                             $rosterStatus = (string) ($p->pivot->status ?? '');
                             $eligibility = self::normalizeEligibility($p->pivot->eligibility);
+                            $membershipMetadata = self::normalizeMembershipMetadata($p->pivot->metadata ?? null);
+                            $fantraxSalary = self::fantraxSalaryPayload($membershipMetadata);
                             $platformEligibility = self::platformEligibility(
                                 (string) $league->platform,
                                 (string) ($p->pivot->platform_player_id ?? ''),
@@ -1054,6 +1112,8 @@ final class LeagueController extends Controller
                                     'taxi' => 50,
                                     default => 90,
                                 },
+                                'fantasy_salary' => $fantraxSalary,
+                                'fantasy_contract' => $membershipMetadata['fantrax_contract'] ?? null,
                                 'contract' => self::playerContractPayload($p),
                             ];
                         })
@@ -1310,6 +1370,51 @@ final class LeagueController extends Controller
             'last_year' => $lastSeason['label'] ?? '',
             'last_season_key' => $lastSeason['season_key'] ?? null,
             'seasons' => $seasons->all(),
+        ];
+    }
+
+    /**
+     * Normalize provider roster membership metadata from the pivot payload.
+     *
+     * @return array<string,mixed>
+     */
+    private static function normalizeMembershipMetadata(mixed $metadata): array
+    {
+        if (is_array($metadata)) {
+            return $metadata;
+        }
+
+        if (is_string($metadata) && trim($metadata) !== '') {
+            $decoded = json_decode($metadata, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+
+    /**
+     * Build Fantrax custom salary display payload from membership metadata.
+     *
+     * @param array<string,mixed> $metadata
+     *
+     * @return array{raw:int,cap_hit:int,label:string}|null
+     */
+    private static function fantraxSalaryPayload(array $metadata): ?array
+    {
+        $salary = $metadata['fantrax_salary'] ?? null;
+
+        if (! is_numeric($salary)) {
+            return null;
+        }
+
+        $raw = (int) $salary;
+        $capHit = $raw * 1000;
+
+        return [
+            'raw' => $raw,
+            'cap_hit' => $capHit,
+            'label' => self::compactMoneyLabel($capHit),
         ];
     }
 
