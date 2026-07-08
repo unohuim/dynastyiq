@@ -35,6 +35,7 @@
       teamLogoSyncUrl: @js($teamLogoSyncUrl ?? ''),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       playersPayloadUrl: @js($playersPayloadUrl ?? ''),
+      playersFreeAgentsPayloadUrl: @js($playersFreeAgentsPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
       customCap: @js((bool) ($customCap ?? false)),
@@ -45,6 +46,10 @@
       playersPayloadLoaded: false,
       playersPayloadLoading: false,
       playersPayloadError: '',
+      freeAgents: [],
+      freeAgentsPayloadLoaded: false,
+      freeAgentsPayloadLoading: false,
+      freeAgentsPayloadError: '',
       capTeamId: '',
       capTeamLoading: false,
       capTeamError: '',
@@ -184,14 +189,17 @@
           }
 
           this.teams = payload.teams ?? [];
-          this.searchPlayers = payload.searchPlayers ?? [];
+          this.searchPlayers = [];
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
+          this.playersFreeAgentsPayloadUrl = payload.playersFreeAgentsPayloadUrl ?? this.playersFreeAgentsPayloadUrl;
+          this.applyDeferredTeams();
           this.resetSelectedTeamIndex();
           this.ensureCapTeamSelection();
           this.playersPayloadLoaded = true;
+          this.$nextTick(() => this.loadFreeAgentsPayload());
 
           return true;
         } catch (error) {
@@ -200,6 +208,94 @@
           return false;
         } finally {
           this.playersPayloadLoading = false;
+        }
+      },
+      realTeams(){
+        return (this.teams || []).filter(team => !['__all_players__', '__free_agents__'].includes(String(team?.id || '')));
+      },
+      rosteredPlayers(){
+        return this.realTeams()
+          .flatMap(team => Array.isArray(team?.players) ? team.players : []);
+      },
+      combinedPlayers(){
+        const players = [...this.rosteredPlayers(), ...(this.freeAgents || [])];
+        const byId = new Map();
+
+        players.forEach(player => {
+          if (!player?.id || byId.has(player.id)) return;
+          byId.set(player.id, player);
+        });
+
+        return Array.from(byId.values())
+          .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+      },
+      applyDeferredTeams(){
+        const selectedId = String(this.current?.id || '');
+        const allPlayers = this.combinedPlayers();
+        const freeAgents = this.freeAgents || [];
+        const realTeams = this.realTeams();
+
+        this.teams = [
+          {
+            id: '__all_players__',
+            name: 'All Players',
+            owner_avatar_url: null,
+            owned_by_me: false,
+            owner_user_ids: [],
+            players: allPlayers,
+          },
+          ...realTeams,
+          {
+            id: '__free_agents__',
+            name: 'Free Agents',
+            owner_avatar_url: null,
+            owned_by_me: false,
+            owner_user_ids: [],
+            players: freeAgents,
+          },
+        ];
+
+        if (selectedId) {
+          const nextIndex = this.teams.findIndex(team => String(team?.id || '') === selectedId);
+          if (nextIndex !== -1) this.i = nextIndex;
+        }
+
+        if (!this.freeAgentsPayloadLoaded) {
+          this.searchPlayers = allPlayers;
+        }
+      },
+      async loadFreeAgentsPayload(force = false){
+        if (!force && this.freeAgentsPayloadLoaded) return true;
+        if (this.freeAgentsPayloadLoading || !this.playersFreeAgentsPayloadUrl) return false;
+
+        this.freeAgentsPayloadLoading = true;
+        this.freeAgentsPayloadError = '';
+
+        try {
+          const response = await fetch(this.playersFreeAgentsPayloadUrl, {
+            headers: {
+              'Accept': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+            },
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not load free agents.');
+          }
+
+          this.freeAgents = Array.isArray(payload.freeAgents) ? payload.freeAgents : [];
+          this.searchPlayers = Array.isArray(payload.searchPlayers) ? payload.searchPlayers : this.combinedPlayers();
+          this.freeAgentsPayloadLoaded = true;
+          this.applyDeferredTeams();
+
+          return true;
+        } catch (error) {
+          this.freeAgentsPayloadError = error?.message || 'Could not load free agents.';
+
+          return false;
+        } finally {
+          this.freeAgentsPayloadLoading = false;
         }
       },
       eligibilityLabel(player){
@@ -772,10 +868,23 @@
                 id="league-player-search"
                 type="search"
                 x-model.debounce.100ms="playerSearch"
+                @focus="loadFreeAgentsPayload()"
+                @input.debounce.200ms="loadFreeAgentsPayload()"
                 class="block w-full rounded-md bg-white py-2 pl-3 pr-3 text-sm text-slate-900 outline outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600"
                 placeholder="Search all players..."
                 autocomplete="off"
               />
+              <div x-show="freeAgentsPayloadLoading" class="mt-1 text-xs text-slate-500">Loading free agents...</div>
+              <div x-show="freeAgentsPayloadError" class="mt-1 flex items-center gap-2 text-xs text-red-600">
+                <span x-text="freeAgentsPayloadError"></span>
+                <button
+                  type="button"
+                  class="font-semibold text-red-700 underline-offset-2 hover:underline"
+                  @click="loadFreeAgentsPayload(true)"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
 
             {{-- Combobox --}}

@@ -131,6 +131,7 @@ final class LeagueController extends Controller
             'capSettingsUpdateUrl' => $activeLeague ? route('leagues.cap-settings.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
+            'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
             'customCap' => $activeLeague ? $this->customCapEnabled($activeLeague) : false,
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
@@ -168,6 +169,7 @@ final class LeagueController extends Controller
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
+            'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
             'customCap' => $this->customCapEnabled($league),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
@@ -196,12 +198,36 @@ final class LeagueController extends Controller
             ->firstOrFail();
 
         return response()->json([
-            'teams' => $this->teamsPayload($league),
-            'searchPlayers' => $this->searchPlayersPayload(),
+            'teams' => $this->teamsPayload($league, false),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => $this->customCapEnabled($league),
+        ]);
+    }
+
+    /**
+     * Return deferred free-agent and search player data for the selected league.
+     */
+    public function playersFreeAgentsPayload(Request $request, string $leagueId): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider to view league players.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        return response()->json([
+            'freeAgents' => $this->freeAgentsPayload($league),
+            'searchPlayers' => $this->searchPlayersPayload(),
         ]);
     }
 
@@ -840,6 +866,7 @@ final class LeagueController extends Controller
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $activeLeague->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
             'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
+            'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $activeLeague->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
             'customCap' => $this->customCapEnabled($activeLeague),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
@@ -984,7 +1011,7 @@ final class LeagueController extends Controller
     /**
      * Build the team, avatar, ownership, and roster payload for a league.
      */
-    private function teamsPayload($league): array
+    private function teamsPayload($league, bool $includeFreeAgents = true): array
     {
         $authId = auth()->id();
         $slotOrder = $league->rosterSlots()
@@ -1130,6 +1157,10 @@ final class LeagueController extends Controller
             })
             ->values()
             ->all();
+
+        if (! $includeFreeAgents) {
+            return $teamRows;
+        }
 
         $freeAgents = $this->freeAgentsPayload($league);
         $allPlayers = collect($teamRows)
@@ -1796,6 +1827,7 @@ final class LeagueController extends Controller
             'drafting' => $this->draftingPayload($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
+            'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
         ])->render();

@@ -198,6 +198,7 @@ const renderLeagueOwnerStatsDesktop = (
     desktopState.set(container, state);
 
     const isYahooLeague = settings?.leaguePlatform === "yahoo";
+    const isGoalieFilterActive = settings?.goalieFilterActive === true;
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
     const useRosterSlotColumn = () => isYahooLeague && hasSelectedFantasyTeam();
@@ -516,6 +517,8 @@ const renderLeagueOwnerStatsDesktop = (
 
         const filtered = rows.filter((row) => {
             const isRosterOnly = row?.league_roster_only === true;
+            const isRosterPlaceholder = row?.league_roster_placeholder === true;
+            const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === "1";
             const name = String(row?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
             const hitTeam = !teamQ || String(row?.team ?? "").toUpperCase() === teamQ;
@@ -525,7 +528,11 @@ const renderLeagueOwnerStatsDesktop = (
                 : (!fantasyTeamQ || rowFantasyTeam.toUpperCase() === fantasyTeamQ);
             const hitLeague = !leagueQ || String(row?.league ?? "").toUpperCase() === leagueQ;
 
-            return (!isRosterOnly || hasSelectedFantasyTeam()) && hitName && hitTeam && hitFantasyTeam && hitLeague;
+            const canShowRosterOnly = !isRosterOnly
+                || hasSelectedFantasyTeam()
+                || (isGoalieFilterActive && isGoalie && !isRosterPlaceholder);
+
+            return canShowRosterOnly && hitName && hitTeam && hitFantasyTeam && hitLeague;
         });
 
         return hasSelectedFantasyTeam() && settings.leagueUserSortActive !== true

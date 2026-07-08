@@ -115,6 +115,7 @@ class StatsController extends BaseController
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
             'draft_context' => 'nullable|boolean',
+            'column_group'  => 'nullable|in:goalie',
         ]);
 
         $user = $request->user();
@@ -134,6 +135,7 @@ class StatsController extends BaseController
         $slice = (string) $request->input('slice', 'total');
         $gameType = (int) $request->input('game_type', 2);
         $period = (string) $request->input('period', 'season');
+        $requestedColumnGroup = (string) $request->query('column_group', '');
         $leaguePerspectiveSlug = $this->leagueScoringPerspectiveSlug($league);
         $fantraxPerspectiveSlug = $this->fantraxLeaguePerspectiveSlug($league);
         $defaultPerspectiveSlug = $this->defaultLeagueStatsPerspectiveSlug($user, $league);
@@ -169,6 +171,9 @@ class StatsController extends BaseController
                 $settings = is_array($basePerspective->settings)
                     ? $basePerspective->settings
                     : (json_decode($basePerspective->settings ?? '[]', true) ?: []);
+            }
+            if ($requestedColumnGroup === 'goalie') {
+                $settings = $this->withFantraxGoalieSettings($settings, $league);
             }
 
             $perspective = (object) [
@@ -215,14 +220,26 @@ class StatsController extends BaseController
             );
         }
 
-        $payload = $this->filterPayloadToPlatformPlayerUniverse($payload, $league);
-        $payload = $this->withLeagueOwnership($payload, $league, $user?->id);
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['ownerColumn'] = true;
         $payload['settings']['leaguePlatform'] = (string) ($league->platform ?? '');
+        if ($isFantraxLeaguePerspective) {
+            $payload = $this->withFantraxGoalieColumnGroup($payload, $league);
+        }
+        $payload = $this->filterPayloadToPlatformPlayerUniverse($payload, $league);
+        $payload = $this->withLeagueOwnership($payload, $league, $user?->id);
         $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
         $payload['perspectives'] = $this->leagueStatsPerspectives($user, $league);
         $payload['selectedPerspective'] = $perspective->slug ?? $perspective->name ?? $defaultPerspectiveSlug;
+
+        if ($isLeagueScoringPerspective || $isFantraxLeaguePerspective) {
+            $payload['meta'] = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
+            $payload['meta']['positionButtons'] = ['F', 'C', 'LW', 'RW', 'D', 'G'];
+            if ($requestedColumnGroup === 'goalie') {
+                $payload['meta']['pos'] = ['G'];
+                $payload['meta']['pos_type'] = ['G'];
+            }
+        }
 
         return response()->json($payload);
     }
@@ -501,7 +518,7 @@ class StatsController extends BaseController
             ->values()
             ->all();
 
-        if ((string) ($league->platform ?? '') === 'yahoo') {
+        if (in_array((string) ($league->platform ?? ''), ['fantrax', 'yahoo'], true)) {
             $missingRows = collect($ownership['roster_rows'])
                 ->reject(static function (array $row) use ($seenPlayerIds, $seenNhlIds): bool {
                     $playerId = (string) ($row['player_id'] ?? '');
@@ -512,11 +529,266 @@ class StatsController extends BaseController
                 })
                 ->values()
                 ->all();
+            $missingRows = $this->hydrateRosterOnlyRowsFromSeasonStats($missingRows, $payload);
 
             $payload['data'] = array_values(array_merge($payload['data'], $missingRows));
         }
 
         return $payload;
+    }
+
+    /**
+     * Fill appended roster-only rows from the same NHL season stat source as the table payload.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @param array<string,mixed> $payload
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function hydrateRosterOnlyRowsFromSeasonStats(array $rows, array $payload): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $season = (string) data_get($payload, 'meta.season', '');
+        $gameType = (int) data_get($payload, 'meta.game_type', 2);
+
+        if ($season === '') {
+            return $rows;
+        }
+
+        $nhlPlayerIds = collect($rows)
+            ->pluck('nhl_player_id')
+            ->filter()
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($nhlPlayerIds->isEmpty()) {
+            return $rows;
+        }
+
+        $headingKeys = collect($payload['headings'] ?? [])
+            ->filter(static fn (mixed $heading): bool => is_array($heading))
+            ->pluck('key');
+        $goalieColumnKeys = collect(data_get($payload, 'settings.columnGroups.goalie', []))
+            ->filter(static fn (mixed $heading): bool => is_array($heading))
+            ->pluck('key');
+        $statKeys = $headingKeys
+            ->merge($goalieColumnKeys)
+            ->map(static fn (mixed $key): string => (string) $key)
+            ->reject(static fn (string $key): bool => in_array($key, [
+                '',
+                '__rk',
+                '__owner',
+                'name',
+                'player',
+                'age',
+                'team',
+                'league',
+                'pos',
+                'pos_type',
+                'contract_value',
+                'contract_value_num',
+                'contract_last_year',
+                'contract_last_year_num',
+                'avatar_url',
+                'head_shot_url',
+                'id',
+                'nhl_player_id',
+            ], true))
+            ->unique()
+            ->values();
+
+        $statsByPlayerId = NhlSeasonStat::query()
+            ->where('season_id', $season)
+            ->where('game_type', $gameType)
+            ->whereIn('nhl_player_id', $nhlPlayerIds->all())
+            ->get()
+            ->keyBy(static fn (NhlSeasonStat $stat): int => (int) $stat->nhl_player_id);
+
+        return collect($rows)
+            ->map(function (array $row) use ($statsByPlayerId, $statKeys): array {
+                $stat = $statsByPlayerId->get((int) ($row['nhl_player_id'] ?? 0));
+
+                if (! $stat instanceof NhlSeasonStat) {
+                    return $row;
+                }
+
+                foreach ($statKeys as $key) {
+                    $value = $stat->{$key} ?? null;
+
+                    if ($value !== null) {
+                        $row[$key] = is_numeric($value) ? (float) $value : $value;
+                    }
+                }
+
+                if (isset($row['gp']) && is_float($row['gp']) && fmod($row['gp'], 1.0) === 0.0) {
+                    $row['gp'] = (int) $row['gp'];
+                }
+
+                return $row;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Replace active Fantrax stat columns with goalie categories for a goalie-mode payload.
+     *
+     * @param array<string,mixed> $settings
+     *
+     * @return array<string,mixed>
+     */
+    private function withFantraxGoalieSettings(array $settings, PlatformLeague $league): array
+    {
+        $goalieColumns = $this->fantraxGoalieScoringColumns($league);
+
+        if ($goalieColumns === []) {
+            $goalieColumns = $this->defaultGoalieScoringColumns();
+        }
+
+        $settings['columns'] = $goalieColumns;
+        $settings['sort'] = [
+            'sortKey' => $this->goalieSortKey($goalieColumns),
+            'sortDirection' => 'desc',
+        ];
+        $settings['filters'] = is_array($settings['filters'] ?? null) ? $settings['filters'] : [];
+        $settings['filters']['pos_type'] = [
+            'operator' => '=',
+            'value' => ['G'],
+        ];
+        $settings['ui'] = is_array($settings['ui'] ?? null) ? $settings['ui'] : [];
+        $settings['ui']['positionButtons'] = ['F', 'C', 'LW', 'RW', 'D', 'G'];
+
+        return $settings;
+    }
+
+    /**
+     * Add auto-mapped Fantrax goalie categories as a column group without requiring full category mapping.
+     *
+     * @param array<string,mixed> $payload
+     *
+     * @return array<string,mixed>
+     */
+    private function withFantraxGoalieColumnGroup(array $payload, PlatformLeague $league): array
+    {
+        $goalieColumns = $this->fantraxGoalieScoringColumns($league);
+
+        if ($goalieColumns === []) {
+            return $payload;
+        }
+
+        $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
+        $payload['settings']['columnGroups'] = is_array($payload['settings']['columnGroups'] ?? null)
+            ? $payload['settings']['columnGroups']
+            : [];
+        $payload['settings']['columnGroups']['skater'] = $this->skaterColumnsFromPayload($payload);
+        $payload['settings']['columnGroups']['goalie'] = $goalieColumns;
+        $payload['settings']['columnGroupSort'] = is_array($payload['settings']['columnGroupSort'] ?? null)
+            ? $payload['settings']['columnGroupSort']
+            : [];
+        $payload['settings']['columnGroupSort']['goalie'] = [
+            'sortKey' => $this->goalieSortKey($goalieColumns),
+            'sortDirection' => 'desc',
+        ];
+        $payload['settings']['activeColumnGroup'] ??= 'skater';
+
+        return $payload;
+    }
+
+    /**
+     * @return array<int,array{key:string,label:string,type:string}>
+     */
+    private function fantraxGoalieScoringColumns(PlatformLeague $league): array
+    {
+        $goalieKeys = $this->goalieScoringStatKeys();
+        $seen = [];
+
+        return collect(data_get($league, 'scoring_settings.categories', []))
+            ->filter(static fn (mixed $category): bool => is_array($category))
+            ->map(function (array $category) use ($goalieKeys, &$seen): ?array {
+                $manualStatKey = trim((string) ($category['stat_key'] ?? ''));
+                $autoStatKey = trim((string) ($category['auto_stat_key'] ?? ''));
+                $statKey = $manualStatKey !== '' ? $manualStatKey : $autoStatKey;
+
+                if ($statKey === '' || ! in_array($statKey, $goalieKeys, true) || isset($seen[$statKey])) {
+                    return null;
+                }
+
+                $seen[$statKey] = true;
+                $label = trim((string) (
+                    $category['short']
+                    ?? $category['label']
+                    ?? $category['name']
+                    ?? strtoupper($statKey)
+                ));
+
+                return [
+                    'key' => $statKey,
+                    'label' => $label !== '' ? $label : strtoupper($statKey),
+                    'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,array{key:string,label:string,type:string}>
+     */
+    private function defaultGoalieScoringColumns(): array
+    {
+        return [
+            ['key' => 'wins', 'label' => 'W', 'type' => 'int'],
+            ['key' => 'sv', 'label' => 'SV', 'type' => 'int'],
+            ['key' => 'sv_pct', 'label' => 'SV%', 'type' => 'float'],
+            ['key' => 'gaa', 'label' => 'GAA', 'type' => 'float'],
+            ['key' => 'so', 'label' => 'SO', 'type' => 'int'],
+        ];
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function skaterColumnsFromPayload(array $payload): array
+    {
+        $identityKeys = [
+            'name',
+            'player',
+            'team',
+            'league',
+            'pos',
+            'pos_type',
+            'age',
+            'contract_value',
+            'contract_value_num',
+            'contract_last_year',
+            'contract_last_year_num',
+            'avatar_url',
+            'head_shot_url',
+            'id',
+            'nhl_player_id',
+            'gp',
+        ];
+
+        return collect($payload['headings'] ?? [])
+            ->filter(static fn (mixed $heading): bool => is_array($heading))
+            ->reject(static fn (array $heading): bool => in_array((string) ($heading['key'] ?? ''), $identityKeys, true))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $columns
+     */
+    private function goalieSortKey(array $columns): string
+    {
+        return collect(['wins', 'sv', 'sv_pct', 'gaa'])
+            ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
+            ?? (string) ($columns[0]['key'] ?? 'gp');
     }
 
     /**
@@ -647,8 +919,9 @@ class StatsController extends BaseController
             'age' => $this->playerAge($player),
             'team' => $player->team_abbrev,
             'league' => null,
-            'pos' => $player->position,
-            'pos_type' => $player->pos_type,
+            'pos' => $player->is_goalie ? 'G' : $player->position,
+            'pos_type' => $player->is_goalie ? 'G' : $player->pos_type,
+            'is_goalie' => (bool) $player->is_goalie,
             'contract_value' => null,
             'contract_value_num' => null,
             'contract_last_year' => null,
@@ -683,6 +956,7 @@ class StatsController extends BaseController
             'league' => null,
             'pos' => null,
             'pos_type' => null,
+            'is_goalie' => false,
             'contract_value' => null,
             'contract_value_num' => null,
             'contract_last_year' => null,
@@ -1467,8 +1741,9 @@ class StatsController extends BaseController
                 'age'                    => $this->playerAge($player),
                 'team'                   => $player?->team_abbrev ?? $entry->team_abbrev ?? ($entry->nhl_team_abbrev ?? null),
                 'league'                 => $mode === 'prospects' ? ($entry->league_abbrev ?? null) : null,
-                'pos'                    => $player?->position,
-                'pos_type'               => $player?->pos_type,
+                'pos'                    => (bool) ($player?->is_goalie ?? false) ? 'G' : $player?->position,
+                'pos_type'               => (bool) ($player?->is_goalie ?? false) ? 'G' : $player?->pos_type,
+                'is_goalie'              => (bool) ($player?->is_goalie ?? false),
                 'contract_value'         => $contractAav,
                 'contract_value_num'     => round($contractAavM, 1),
                 'contract_last_year'     => $contractLastLbl,

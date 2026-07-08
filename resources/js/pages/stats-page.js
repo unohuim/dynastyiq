@@ -106,7 +106,7 @@ export class StatsPageShell {
       slice: settings.slice || 'total',
       seasonId: String(meta.season ?? ''),
       gameType: String(meta.game_type ?? '2'),
-      positionButtons: Array.isArray(meta.positionButtons) ? meta.positionButtons.map(String) : [],
+      positionButtons: this.positionButtonsFromPayload(meta, settings),
       selectedPos: [],
       selectedPosTypes: [],
       selectedLeagues: [],
@@ -266,6 +266,9 @@ export class StatsPageShell {
 
     params.set('game_type', this.state.gameType);
     params.set('availability', '0');
+    if (this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G')) {
+      params.set('column_group', 'goalie');
+    }
 
     this.state.selectedLeagues.forEach((value) => params.append('league[]', value));
     Object.entries(this.state.numericFilters || {}).forEach(([key, value]) => {
@@ -326,17 +329,22 @@ export class StatsPageShell {
   syncStateFromPayload() {
     const meta = this.payload.meta || {};
     const settings = this.payload.settings || {};
+    const preserveGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
 
     if (meta.season != null) this.state.seasonId = String(meta.season);
     if (meta.game_type != null) this.state.gameType = String(meta.game_type);
-    if (Array.isArray(meta.positionButtons)) {
-      this.state.positionButtons = meta.positionButtons.map(String);
+    if (Array.isArray(meta.positionButtons) || Array.isArray(settings?.ui?.positionButtons)) {
+      this.state.positionButtons = this.positionButtonsFromPayload(meta, settings);
     }
     if (Array.isArray(meta.pos)) {
       this.state.selectedPos = meta.pos.map(String);
     }
     if (Array.isArray(meta.pos_type)) {
       this.state.selectedPosTypes = meta.pos_type.map(String);
+    }
+    if (preserveGoalieMode) {
+      this.state.selectedPosTypes = ['G'];
+      this.state.selectedPos = ['G'];
     }
     if (Array.isArray(meta.appliedFilters?.league)) {
       this.state.selectedLeagues = meta.appliedFilters.league.map(String);
@@ -358,6 +366,14 @@ export class StatsPageShell {
 
   filterSchema() {
     return Array.isArray(this.payload.meta?.filterSchema) ? this.payload.meta.filterSchema : [];
+  }
+
+  positionButtonsFromPayload(meta = {}, settings = {}) {
+    const buttons = Array.isArray(meta.positionButtons)
+      ? meta.positionButtons
+      : (Array.isArray(settings?.ui?.positionButtons) ? settings.ui.positionButtons : []);
+
+    return buttons.map(String);
   }
 
   numericFilterSpecs() {
@@ -487,7 +503,11 @@ export class StatsPageShell {
     }
 
     this.renderControls();
-    this.renderContent();
+    if (this.config.syncUrl === false && this.apiUrl) {
+      this.fetchPayload();
+    } else {
+      this.renderContent();
+    }
   }
 
   isPositionActive(value) {
@@ -508,8 +528,11 @@ export class StatsPageShell {
     return this.payload.data.filter((row) => {
       const rowType = normalizePositionValue(row?.pos_type ?? row?.type);
       const rowPosition = normalizePositionValue(row?.pos ?? row?.position ?? rowType);
+      const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === '1';
 
-      return selectedTypes.has(rowType) || selectedPositions.has(rowPosition);
+      return selectedTypes.has(rowType)
+        || selectedPositions.has(rowPosition)
+        || (isGoalie && (selectedTypes.has('G') || selectedPositions.has('G')));
     });
   }
 
@@ -755,6 +778,7 @@ export class StatsPageShell {
     const row = createElement('div', 'flex flex-wrap justify-between items-center gap-3 p-3');
 
     row.appendChild(this.renderSelect(this.perspectiveOptions(), this.state.perspective, (value) => this.setPerspective(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
+
     if (this.supportsDateRange()) {
       row.appendChild(this.renderSegmented([
         { label: 'Season', value: 'season' },
@@ -859,7 +883,11 @@ export class StatsPageShell {
       return;
     }
 
-    renderStatsDesktop(this.contentEl, sorted, activeHeadings, this.settings, this.onSortChange);
+    renderStatsDesktop(this.contentEl, sorted, activeHeadings, {
+      ...this.settings,
+      activeRenderedColumnGroup: this.activeColumnGroup(),
+      goalieFilterActive: this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G'),
+    }, this.onSortChange);
   }
 
   renderMobileSkeleton() {
