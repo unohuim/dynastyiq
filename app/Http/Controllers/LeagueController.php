@@ -952,7 +952,15 @@ final class LeagueController extends Controller
                         'players.head_shot_url',
                         'players.is_goalie',
                         'players.status'
-                    )->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at']);
+                    )
+                        ->with([
+                            'contracts' => static function ($query): void {
+                                $query->with(['seasons' => static function ($query): void {
+                                    $query->orderBy('season_key');
+                                }]);
+                            },
+                        ])
+                        ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at']);
                 },
                 'users' => static function ($q): void {
                     $q->wherePivot('is_active', true)
@@ -1046,6 +1054,7 @@ final class LeagueController extends Controller
                                     'taxi' => 50,
                                     default => 90,
                                 },
+                                'contract' => self::playerContractPayload($p),
                             ];
                         })
                         ->sortBy(static fn (array $player): string => sprintf(
@@ -1246,6 +1255,74 @@ final class LeagueController extends Controller
             ->sortBy(static fn (array $round): int => $round['round'] ?? PHP_INT_MAX)
             ->values()
             ->all();
+    }
+
+    /**
+     * Build a display-oriented contract payload for a roster player.
+     *
+     * @return array<string,mixed>|null
+     */
+    private static function playerContractPayload(Player $player): ?array
+    {
+        $contract = $player->contracts
+            ->sortByDesc(static function ($contract): int {
+                return (int) ($contract->seasons->max('season_key') ?? 0);
+            })
+            ->first();
+
+        if (! $contract) {
+            return null;
+        }
+
+        $seasons = $contract->seasons
+            ->sortBy('season_key')
+            ->map(static function ($season): array {
+                $aav = is_numeric($season->aav) ? (int) $season->aav : null;
+                $capHit = is_numeric($season->cap_hit) ? (int) $season->cap_hit : null;
+
+                return [
+                    'season_key' => $season->season_key !== null ? (int) $season->season_key : null,
+                    'label' => (string) ($season->label ?? ''),
+                    'aav' => $aav,
+                    'aav_label' => self::compactMoneyLabel($aav),
+                    'cap_hit' => $capHit,
+                    'cap_hit_label' => self::compactMoneyLabel($capHit),
+                ];
+            })
+            ->values();
+
+        if ($seasons->isEmpty()) {
+            return null;
+        }
+
+        $currentSeason = $seasons->first(static fn (array $season): bool => ($season['aav'] ?? 0) > 0)
+            ?? $seasons->first();
+        $lastSeason = $seasons->last();
+
+        return [
+            'type' => (string) $contract->contract_type,
+            'length' => (string) ($contract->contract_length ?? ''),
+            'value' => $contract->contract_value !== null ? (int) $contract->contract_value : null,
+            'value_label' => self::compactMoneyLabel($contract->contract_value !== null ? (int) $contract->contract_value : null),
+            'expiry_status' => (string) ($contract->expiry_status ?? ''),
+            'current_aav' => $currentSeason['aav'] ?? null,
+            'current_aav_label' => $currentSeason['aav_label'] ?? '',
+            'last_year' => $lastSeason['label'] ?? '',
+            'last_season_key' => $lastSeason['season_key'] ?? null,
+            'seasons' => $seasons->all(),
+        ];
+    }
+
+    /**
+     * Format contract money in compact cap-table style.
+     */
+    private static function compactMoneyLabel(?int $value): string
+    {
+        if ($value === null || $value <= 0) {
+            return '-';
+        }
+
+        return '$' . number_format($value / 1_000_000, 2) . 'M';
     }
 
     /**

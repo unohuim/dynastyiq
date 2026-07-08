@@ -38,8 +38,9 @@ rules:
   - Fantrax team logo URLs must not be derived from provider team IDs because Fantrax web logo paths use a logo id that can differ from the team id.
   - Queued Fantrax league refreshes must preserve existing platform_teams.logo_url values when provider refresh payloads omit logo fields.
   - Authenticated Fantrax web logo sync must be skipped unless a configured persistent browser profile directory is ready.
-  - Authenticated Fantrax web logo sync must be league-scoped, commissioner-triggered from league options, and persist only explicit provider logo URLs.
-  - Completed authenticated Fantrax web logo syncs must broadcast a user-scoped logo update event so league list UI can update without a page refresh.
+  - Authenticated Fantrax web logo sync backend code must remain league-scoped and persist only explicit provider logo URLs.
+  - The commissioner-facing Fantrax web logo sync UI entry point is hibernated until a per-commissioner collection approach replaces the shared server browser profile model.
+  - Completed authenticated Fantrax web logo syncs may broadcast a user-scoped logo update event so league list UI can update without a page refresh.
   - Roster sync must persist provider roster slot, membership status, and eligibility metadata when Fantrax exposes those values.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.
   - Fantrax roster item status is authoritative for roster grouping; ACTIVE maps to active, RESERVE maps to reserve/bench, and MINORS maps to minor.

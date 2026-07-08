@@ -310,14 +310,13 @@ written under `docs/inspection` as you browse, using the current league and page
 `league_uf1sdl47mo6nzpr6_home_reload_1.txt` or
 `league_uf1sdl47mo6nzpr6_standings.txt`.
 
-The community league options drawer and the `/leagues/{id}` options drawer can
-trigger a league-scoped Fantrax team logo sync for commissioner-managed leagues.
-The sync uses the configured profile directory only; it does not store Fantrax
-credentials or prove that the profile is currently authenticated.
-When visible Chromium is used and Fantrax requires login, the logo sync waits for
-the commissioner to authenticate, captures the logo payload after the Fantrax
-league page loads, and then closes Chromium automatically. The login wait is
-bounded so the browser does not stay open indefinitely.
+The league-scoped Fantrax team logo sync backend remains available for inspection
+and future reuse, but the commissioner-facing league options UI entry point is
+hibernated. The shared server Chromium profile model does not scale across
+commissioners because the configured profile must be authenticated as a Fantrax
+account that can access the target league. Future commissioner-facing Fantrax logo
+collection should use a per-commissioner approach instead of depending on one
+shared production browser profile.
 
 Pass a URL only when a specific starting page is needed:
 

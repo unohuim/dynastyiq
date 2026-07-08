@@ -1315,8 +1315,8 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 **Purpose:**
 Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
 Provider league and team logo URLs may be stored on the platform-neutral league and team rows when Fantrax exposes them. Fantrax team logos must come from explicit provider payload fields, not derived team-id paths.
-Authenticated browser logo extraction is league-scoped, commissioner-triggered from league options, and persists only explicit provider logo URLs when the browser profile is ready.
-Completed browser logo extraction broadcasts a user-scoped logo update event so the league list can update without a page refresh.
+Authenticated browser logo extraction backend code is league-scoped and persists only explicit provider logo URLs when the browser profile is ready, but the commissioner-facing UI entry point is hibernated until a per-commissioner collection approach replaces the shared server browser profile model.
+Completed browser logo extraction may broadcast a user-scoped logo update event so the league list can update without a page refresh.
 
 **When to Use:**
 Syncing Fantrax leagues, updating rosters, resolving Fantrax player identity, or rendering league availability.

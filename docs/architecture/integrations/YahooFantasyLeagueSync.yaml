@@ -33,7 +33,7 @@ rules:
   - Stale Yahoo league_user_teams assignments for the synced user must be deactivated when absent from the latest owned-team payload.
   - Yahoo league sync must feed FantasyProviderLeagueAccess instead of adding Yahoo-specific Leagues route behavior.
   - User-triggered Yahoo league refresh may be exposed from the Leagues UI and must use the stored connected Yahoo OAuth grant instead of forcing OAuth.
-  - User-triggered Yahoo team logo sync must reuse the shared Leagues team-logo sync routes and must use Yahoo OAuth/XML rather than a browser inspection flow.
+  - Yahoo team logo sync must use Yahoo OAuth/XML rather than a browser inspection flow when a user-facing trigger is active.
   - Yahoo-specific XML parsing must remain inside Yahoo integration services.
 public_interface:
   - SyncYahooTeamRosterJob
