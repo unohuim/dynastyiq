@@ -675,30 +675,6 @@
             </div>
 
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-                @if (! empty($vm['team_logo_sync']['can_sync']))
-                    <div class="mb-4 rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 shadow-sm">
-                        <div class="flex items-center justify-between gap-4">
-                            <div class="min-w-0">
-                                <h4 class="text-sm font-semibold text-slate-950">Sync Team Logos</h4>
-                                <p class="mt-1 text-xs leading-5 text-slate-600">Pull the latest team logos for this league.</p>
-                            </div>
-                            <button
-                                type="button"
-                                x-on:click="syncTeamLogos()"
-                                x-bind:disabled="teamLogosSyncing"
-                                class="inline-flex shrink-0 items-center justify-center rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-blue-400"
-                            >
-                                <span x-show="!teamLogosSyncing">Sync</span>
-                                <span x-show="teamLogosSyncing">Syncing...</span>
-                            </button>
-                        </div>
-                        <div class="mt-2 min-h-4 text-[11px]">
-                            <span x-show="teamLogosMessage" x-text="teamLogosMessage" class="text-emerald-700"></span>
-                            <span x-show="teamLogosError" x-text="teamLogosError" class="text-rose-700"></span>
-                        </div>
-                    </div>
-                @endif
-
                 <div class="mb-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
                     <label for="league-options-name" class="text-xs font-semibold uppercase tracking-wide text-slate-500">League name</label>
                     <input
