@@ -313,6 +313,30 @@
 
         return '';
       },
+      capExpiryBadge(player, key){
+        const status = String(player?.contract?.expiry_status || '').trim().toUpperCase();
+
+        if (!['RFA', 'UFA'].includes(status)) return null;
+
+        const columnKey = Number(key || 0);
+        const lastSeasonKey = Number(player?.contract?.last_season_key || 0);
+
+        if (!columnKey || !lastSeasonKey || columnKey <= lastSeasonKey) return null;
+
+        const futureColumns = this.capSeasonColumns
+          .map(column => Number(column.key || 0))
+          .filter(seasonKey => seasonKey > lastSeasonKey)
+          .sort((a, b) => a - b);
+
+        if (futureColumns[0] !== columnKey) return null;
+
+        return {
+          label: status,
+          className: status === 'RFA'
+            ? 'bg-blue-50 text-blue-700 ring-blue-200'
+            : 'bg-red-50 text-red-700 ring-red-200',
+        };
+      },
       setCapSort(key){
         if (this.capSortKey === key) {
           this.capSortDirection = this.capSortDirection === 'desc' ? 'asc' : 'desc';
@@ -792,7 +816,7 @@
                     </button>
                   </th>
                   <template x-for="column in capSeasonColumns" :key="column.key">
-                    <th scope="col" class="w-20 px-1.5 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    <th scope="col" class="w-16 px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                       <button type="button" class="inline-flex items-center justify-end gap-1 hover:text-slate-800" @click="setCapSort(`season:${column.key}`)">
                         <span x-text="column.label"></span>
                         <span class="text-slate-400" x-text="capSortIndicator(`season:${column.key}`)"></span>
@@ -822,15 +846,26 @@
                           <div class="truncate text-xs font-medium text-slate-900" x-text="row.player.name"></div>
                           <div class="text-[11px] text-slate-500">
                             <span x-text="row.player.team_abbrev || '-'"></span>
-                            <span x-show="row.player.contract?.expiry_status"> &bull; <span x-text="row.player.contract?.expiry_status"></span></span>
                           </div>
                         </div>
                       </div>
                     </td>
                     <td x-show="row.type === 'player'" class="px-1.5 py-1.5 text-xs font-medium text-slate-700" x-text="capPositionKey(row.player)"></td>
                     <template x-for="column in capSeasonColumns" :key="`${row.id}-${column.key}`">
-                      <td x-show="row.type === 'player'" class="px-1.5 py-1.5 text-right">
-                        <div class="text-xs font-semibold text-slate-900" x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label || '-'"></div>
+                      <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right">
+                        <template x-if="capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-'">
+                          <div class="text-xs font-semibold text-slate-900" x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label"></div>
+                        </template>
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capExpiryBadge(row.player, column.key)">
+                          <span
+                            class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1"
+                            :class="capExpiryBadge(row.player, column.key).className"
+                            x-text="capExpiryBadge(row.player, column.key).label"
+                          ></span>
+                        </template>
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && !capExpiryBadge(row.player, column.key)">
+                          <div class="text-xs font-semibold text-slate-400">-</div>
+                        </template>
                       </td>
                     </template>
                   </tr>
@@ -840,7 +875,7 @@
                 <tr>
                   <th scope="row" colspan="2" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600">Total cap hit</th>
                   <template x-for="column in capSeasonColumns" :key="`total-${column.key}`">
-                    <td class="px-1.5 py-1.5 text-right text-xs font-semibold text-slate-900" x-text="capMoney(capTotals[column.key])"></td>
+                    <td class="px-1 py-1.5 text-right text-xs font-semibold text-slate-900" x-text="capMoney(capTotals[column.key])"></td>
                   </template>
                 </tr>
               </tfoot>
