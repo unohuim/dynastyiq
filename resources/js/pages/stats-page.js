@@ -112,11 +112,12 @@ export class StatsPageShell {
       selectedLeagues: [],
       numericFilters: {},
       dirtyNumericFilters: {},
-      loading: false,
+      loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
       isMobile: this.isMobile(),
     };
+    this.requestSeq = 0;
 
     this.settings = {
       ...settings,
@@ -291,9 +292,12 @@ export class StatsPageShell {
     window.history.replaceState(null, '', `/stats?${params.toString()}`);
   }
 
-  async fetchPayload() {
-    if (!this.apiUrl || this.state.loading) return;
+  async fetchPayload(options = {}) {
+    const force = options?.force === true;
+    if (!this.apiUrl || (this.state.loading && !force)) return;
 
+    const requestId = this.requestSeq + 1;
+    this.requestSeq = requestId;
     this.state.loading = true;
     this.state.error = '';
     this.render();
@@ -310,7 +314,10 @@ export class StatsPageShell {
         throw new Error(`Stats request failed (${response.status})`);
       }
 
-      this.payload = normalizePayload(await response.json());
+      const payload = normalizePayload(await response.json());
+      if (requestId !== this.requestSeq) return;
+
+      this.payload = payload;
       this.connectedLeagues = Array.isArray(this.payload.connectedLeagues)
         ? this.payload.connectedLeagues
         : this.connectedLeagues;
@@ -318,9 +325,11 @@ export class StatsPageShell {
       this.syncStateFromPayload();
       this.updateUrl(this.buildParams());
     } catch (error) {
+      if (requestId !== this.requestSeq) return;
       console.error('[stats-page] fetch failed', error);
       this.state.error = error?.message || 'Unable to load stats.';
     } finally {
+      if (requestId !== this.requestSeq) return;
       this.state.loading = false;
       this.render();
     }
@@ -537,6 +546,12 @@ export class StatsPageShell {
   }
 
   render() {
+    if (this.state.loading && this.payload.data.length === 0) {
+      this.controlsEl.innerHTML = '';
+      this.renderContent();
+      return;
+    }
+
     this.renderControls();
     this.renderContent();
   }

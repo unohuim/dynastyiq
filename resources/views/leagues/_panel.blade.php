@@ -128,11 +128,18 @@
       async openLeagueTab(tab){
         this.activeLeagueTab = tab;
 
-        if (tab === 'players' || tab === 'cap') {
-          await this.loadPlayersPayload();
-          if (tab === 'players') {
+        if (tab === 'players') {
+          if (this.canShowLeagueStats) {
             this.$nextTick(() => this.loadLeagueStats());
+            return;
           }
+
+          await this.loadPlayersPayload();
+          return;
+        }
+
+        if (tab === 'cap') {
+          await this.loadPlayersPayload(false, false);
         }
       },
       resetSelectedTeamIndex(){
@@ -168,7 +175,7 @@
 
         this.capTeamId = this.defaultCapTeamId() || selectableIds[0] || '';
       },
-      async loadPlayersPayload(force = false){
+      async loadPlayersPayload(force = false, hydrateFreeAgents = true){
         if (!force && this.playersPayloadLoaded) return true;
         if (this.playersPayloadLoading || !this.playersPayloadUrl) return false;
 
@@ -199,7 +206,9 @@
           this.resetSelectedTeamIndex();
           this.ensureCapTeamSelection();
           this.playersPayloadLoaded = true;
-          this.$nextTick(() => this.loadFreeAgentsPayload());
+          if (hydrateFreeAgents) {
+            this.$nextTick(() => this.loadFreeAgentsPayload());
+          }
 
           return true;
         } catch (error) {
@@ -345,7 +354,7 @@
         this.capTeamLoading = true;
         this.capTeamError = '';
 
-        const loaded = await this.loadPlayersPayload(true);
+        const loaded = await this.loadPlayersPayload(true, false);
 
         if (!loaded) {
           event.target.value = previousTeamId;
@@ -712,34 +721,30 @@
         this.leagueStatsLoading = true;
         this.leagueStatsError = '';
 
+        const container = this.$refs.leagueStats;
+        if (!container) {
+          this.leagueStatsLoading = false;
+          return;
+        }
+
         try {
-          const response = await fetch(this.leagueStatsPayloadUrl, {
-            headers: { Accept: 'application/json' },
-          });
-          const payload = await response.json().catch(() => ({}));
-
-          if (!response.ok) {
-            throw new Error(payload.message || 'Could not load league stats.');
-          }
-
-          const container = this.$refs.leagueStats;
-          if (!container) return;
-
           delete container.dataset.statsMounted;
           this.leagueStatsShell = mount(container, {
-            initialPayload: payload,
+            initialPayload: {},
+            initialLoading: true,
             apiUrl: this.leagueStatsPayloadUrl,
-            connectedLeagues: payload.connectedLeagues ?? [],
-            perspectives: payload.perspectives ?? [
+            perspectives: [
               {
                 slug: @js($leagueStatsFallbackSlug),
                 name: @js($leagueStatsFallbackName),
               },
             ],
-            selectedPerspective: payload.selectedPerspective ?? @js($leagueStatsFallbackSlug),
+            selectedPerspective: @js($leagueStatsFallbackSlug),
             mobileBreakpoint: @js(config('viewports.mobile', 640)),
             syncUrl: false,
           });
+
+          await this.leagueStatsShell?.fetchPayload?.({ force: true });
         } catch (error) {
           this.leagueStatsError = error?.message || 'Could not load league stats.';
         } finally {
@@ -841,7 +846,7 @@
 
     <div class="min-h-0 flex-1 overflow-hidden">
     <div x-show="activeLeagueTab === 'players'" class="h-full overflow-y-auto px-6 pb-6">
-    <div x-show="playersPayloadLoading" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div x-show="!canShowLeagueStats && playersPayloadLoading" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div class="animate-pulse space-y-4">
         <div class="flex items-center justify-between gap-4">
           <div class="h-9 w-64 rounded-md bg-slate-200"></div>
@@ -856,9 +861,8 @@
         </div>
       </div>
     </div>
-    <div x-show="playersPayloadError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="playersPayloadError"></div>
-    <div x-show="playersPayloadLoaded">
-    <div x-show="!canShowLeagueStats">
+    <div x-show="!canShowLeagueStats && playersPayloadError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="playersPayloadError"></div>
+    <div x-show="!canShowLeagueStats && playersPayloadLoaded">
       <x-card-section title="Players" class="border-0">
         <div class="space-y-5">
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-center">
@@ -1022,16 +1026,9 @@
       </x-card-section>
     </div>
 
-    <div x-show="canShowLeagueStats" class="mt-6 rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-        <div>
-          <div class="text-sm font-semibold text-slate-950">Players</div>
-          <div class="mt-1 text-xs text-slate-500">League context with fantasy ownership</div>
-        </div>
-        <div x-show="leagueStatsLoading" class="text-xs text-slate-500">Loading...</div>
-      </div>
-      <div x-show="leagueStatsError" class="border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueStatsError"></div>
-      <div x-ref="leagueStats" class="min-h-[24rem] py-3"></div>
+    <div x-show="canShowLeagueStats" class="mt-6">
+      <div x-show="leagueStatsError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueStatsError"></div>
+      <div x-ref="leagueStats" class="min-h-[24rem]"></div>
     </div>
     </div>
     </div>

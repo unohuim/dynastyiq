@@ -191,7 +191,6 @@ const renderLeagueOwnerStatsDesktop = (
     const prev = desktopState.get(container) || {};
     const state = {
         nameFilter: typeof prev.nameFilter === "string" ? prev.nameFilter : "",
-        teamFilter: typeof prev.teamFilter === "string" ? prev.teamFilter : "",
         fantasyTeamFilter: typeof prev.fantasyTeamFilter === "string" ? prev.fantasyTeamFilter : "",
         leagueFilter: typeof prev.leagueFilter === "string" ? prev.leagueFilter : "",
     };
@@ -206,13 +205,6 @@ const renderLeagueOwnerStatsDesktop = (
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
 
-    const teams = Array.from(
-        new Set(
-            (Array.isArray(data) ? data : [])
-                .map((p) => (p?.team ?? "").toString().trim())
-                .filter(Boolean)
-        )
-    ).sort((a, b) => a.localeCompare(b));
     const leagues = Array.from(
         new Set(
             (Array.isArray(data) ? data : [])
@@ -255,23 +247,6 @@ const renderLeagueOwnerStatsDesktop = (
         "focus:outline-none focus:ring-2 focus:ring-indigo-500";
     controls.appendChild(nameInput);
 
-    const teamSelect = document.createElement("select");
-    teamSelect.className =
-        "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
-        "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
-    const optAll = document.createElement("option");
-    optAll.value = "";
-    optAll.textContent = "All Teams";
-    teamSelect.appendChild(optAll);
-    teams.forEach((team) => {
-        const opt = document.createElement("option");
-        opt.value = team;
-        opt.textContent = team;
-        teamSelect.appendChild(opt);
-    });
-    teamSelect.value = state.teamFilter;
-    controls.appendChild(teamSelect);
-
     const fantasyTeamPicker = document.createElement("div");
     fantasyTeamPicker.className = "relative w-56";
     const fantasyTeamButton = document.createElement("button");
@@ -292,7 +267,7 @@ const renderLeagueOwnerStatsDesktop = (
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = isFreeAgentFantasyFilter()
             ? "Free Agents"
-            : (selected?.name || "All Players");
+            : (selected?.name || "All Teams");
         fantasyTeamButton.appendChild(label);
     };
     const fantasyTeamMenu = document.createElement("div");
@@ -326,7 +301,7 @@ const renderLeagueOwnerStatsDesktop = (
         });
         fantasyTeamMenu.appendChild(option);
     };
-    addFantasyTeamOption({ name: "", value: "", label: "All Players", avatarUrl: "" });
+    addFantasyTeamOption({ name: "", value: "", label: "All Teams", avatarUrl: "" });
     addFantasyTeamOption({ name: "Free Agents", value: "__free_agents", label: "Free Agents", avatarUrl: "" });
     fantasyTeams.forEach(addFantasyTeamOption);
     fantasyTeamButton.addEventListener("click", () => {
@@ -511,7 +486,6 @@ const renderLeagueOwnerStatsDesktop = (
 
     const applyFilters = (rows) => {
         const nameQ = state.nameFilter.trim().toLowerCase();
-        const teamQ = state.teamFilter.trim().toUpperCase();
         const fantasyTeamQ = state.fantasyTeamFilter.trim().toUpperCase();
         const leagueQ = state.leagueFilter.trim().toUpperCase();
 
@@ -521,7 +495,6 @@ const renderLeagueOwnerStatsDesktop = (
             const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === "1";
             const name = String(row?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
-            const hitTeam = !teamQ || String(row?.team ?? "").toUpperCase() === teamQ;
             const rowFantasyTeam = String(row?.fantasy_team_name ?? "").trim();
             const hitFantasyTeam = isFreeAgentFantasyFilter()
                 ? rowFantasyTeam === ""
@@ -532,7 +505,7 @@ const renderLeagueOwnerStatsDesktop = (
                 || hasSelectedFantasyTeam()
                 || (isGoalieFilterActive && isGoalie && !isRosterPlaceholder);
 
-            return canShowRosterOnly && hitName && hitTeam && hitFantasyTeam && hitLeague;
+            return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague;
         });
 
         return hasSelectedFantasyTeam() && settings.leagueUserSortActive !== true
@@ -666,11 +639,6 @@ const renderLeagueOwnerStatsDesktop = (
 
     nameInput.addEventListener("input", () => {
         state.nameFilter = nameInput.value || "";
-        desktopState.set(container, state);
-        renderRows();
-    });
-    teamSelect.addEventListener("change", () => {
-        state.teamFilter = teamSelect.value || "";
         desktopState.set(container, state);
         renderRows();
     });
