@@ -365,8 +365,6 @@
                 });
             }
 
-            this.loadPlayerPerspectiveStats();
-
             if (window.ResizeObserver) {
                 this.draftPanelResizeObserver = new ResizeObserver(() => this.updateDraftLivePanelHeight());
                 this.draftPanelResizeObserver.observe(this.$el);

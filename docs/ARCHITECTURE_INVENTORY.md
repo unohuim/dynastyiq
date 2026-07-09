@@ -219,6 +219,69 @@ SyncFantraxDraftStateJob::dispatch($platformLeague->id);
 
 ---
 
+### Stats Payload Pipeline
+
+**Name:** Stats Payload Pipeline
+**Type:** Backend Read Model Pattern
+**Location:**
+- `app/Support/Stats/StatsQueryContext.php`
+- `app/Support/Stats/StatsFilterSet.php`
+- `app/Support/Stats/SeasonStatsPayloadRequest.php`
+- `app/Support/Stats/RangeStatsPayloadRequest.php`
+- `app/Support/Stats/StatsQueryFilterApplier.php`
+- `app/Support/Stats/StatsFilterSchemaProvider.php`
+- `app/Support/Stats/StatsDerivedFilterApplier.php`
+- `app/Support/Stats/StatsPayloadAssembler.php`
+- `app/Support/Stats/StatsPayloadBuilder.php`
+- `app/Support/Stats/LeagueStatsOwnershipHydrator.php`
+- `app/Support/Stats/LeagueStatsPerspectiveFactory.php`
+- `app/Support/Stats/LeagueStatsPlayerUniverseFilter.php`
+- `app/Http/Controllers/StatsController.php`
+- `resources/js/pages/stats-payload-client.js`
+- `resources/js/pages/stats-filter-state.js`
+- `resources/js/pages/stats-schema-adapter.js`
+- `resources/js/pages/stats-column-group-adapter.js`
+- `resources/js/pages/stats-page.js`
+
+**Purpose:**
+Build stats payloads through explicit request context, parsed filters, schema metadata, row assembly, and frontend payload consumption boundaries.
+
+**When to Use:**
+League stats payloads, perspective-driven player stats payloads, prospects and draft-player stats payloads, and stats query/schema/row assembly refactors.
+
+**When Not to Use:**
+NHL import aggregation pipelines, Discord bot runtime, or one-off admin reports that do not expose the stats payload contract.
+
+**Public Interface:**
+- `StatsQueryContext`
+- `StatsFilterSet`
+- `SeasonStatsPayloadRequest`
+- `RangeStatsPayloadRequest`
+- `StatsQueryFilterApplier`
+- `StatsFilterSchemaProvider`
+- `StatsDerivedFilterApplier`
+- `StatsPayloadAssembler`
+- `StatsPayloadBuilder`
+- `LeagueStatsOwnershipHydrator`
+- `LeagueStatsPerspectiveFactory`
+- `LeagueStatsPlayerUniverseFilter`
+- `StatsController::leaguePayload()`
+- `StatsPayloadClient`
+- `StatsFilterState`
+- `StatsSchemaAdapter`
+- `StatsColumnGroupAdapter`
+- Stats payload JSON contract
+- `window.DIQ.mountStatsPage`
+
+**Example Usage:**
+```php
+$context = StatsQueryContext::fromRequest($request, $league, null, $defaultPerspectiveSlug);
+$filterSet = StatsFilterSet::fromRequest($request);
+$payload = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);
+```
+
+---
+
 ## Authorization & Identity
 
 ### Role and Organization Authorization

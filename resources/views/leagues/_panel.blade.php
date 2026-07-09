@@ -712,17 +712,35 @@
         }
       },
       async loadLeagueStats(force = false){
-        if (!this.canShowLeagueStats || !this.leagueStatsPayloadUrl || this.leagueStatsLoading) return;
-        if (this.leagueStatsShell && !force) return;
+        if (!this.canShowLeagueStats) {
+          console.warn('[DIQ] League stats skipped: canShowLeagueStats=false');
+          return;
+        }
+        if (!this.leagueStatsPayloadUrl) {
+          console.warn('[DIQ] League stats skipped: leagueStatsPayloadUrl missing');
+          return;
+        }
+        if (this.leagueStatsLoading) {
+          console.warn('[DIQ] League stats skipped: already loading');
+          return;
+        }
+        if (this.leagueStatsShell && !force) {
+          console.warn('[DIQ] League stats skipped: shell already mounted');
+          return;
+        }
 
         const mount = window.DIQ?.mountStatsPage;
-        if (typeof mount !== 'function') return;
+        if (typeof mount !== 'function') {
+          console.warn('[DIQ] League stats skipped: window.DIQ.mountStatsPage missing');
+          return;
+        }
 
         this.leagueStatsLoading = true;
         this.leagueStatsError = '';
 
         const container = this.$refs.leagueStats;
         if (!container) {
+          console.warn('[DIQ] League stats skipped: leagueStats ref missing');
           this.leagueStatsLoading = false;
           return;
         }
@@ -1029,7 +1047,6 @@
     <div x-show="canShowLeagueStats" class="mt-6">
       <div x-show="leagueStatsError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueStatsError"></div>
       <div x-ref="leagueStats" class="min-h-[24rem]"></div>
-    </div>
     </div>
     </div>
 

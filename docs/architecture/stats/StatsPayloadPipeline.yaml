@@ -1,0 +1,67 @@
+name: Stats Payload Pipeline
+type: Backend Read Model Pattern
+location:
+  - app/Support/Stats/StatsQueryContext.php
+  - app/Support/Stats/StatsFilterSet.php
+  - app/Support/Stats/SeasonStatsPayloadRequest.php
+  - app/Support/Stats/RangeStatsPayloadRequest.php
+  - app/Support/Stats/StatsQueryFilterApplier.php
+  - app/Support/Stats/StatsFilterSchemaProvider.php
+  - app/Support/Stats/StatsDerivedFilterApplier.php
+  - app/Support/Stats/StatsPayloadAssembler.php
+  - app/Support/Stats/StatsPayloadBuilder.php
+  - app/Support/Stats/LeagueStatsOwnershipHydrator.php
+  - app/Support/Stats/LeagueStatsPerspectiveFactory.php
+  - app/Support/Stats/LeagueStatsPlayerUniverseFilter.php
+  - app/Http/Controllers/StatsController.php
+  - resources/js/pages/stats-payload-client.js
+  - resources/js/pages/stats-filter-state.js
+  - resources/js/pages/stats-schema-adapter.js
+  - resources/js/pages/stats-column-group-adapter.js
+  - resources/js/pages/stats-page.js
+purpose: Build stats payloads through explicit request context, parsed filters, schema metadata, row assembly, and frontend payload consumption boundaries.
+when_to_use:
+  - League stats payloads.
+  - Perspective-driven player stats payloads.
+  - Prospects and draft-player stats payloads.
+  - Refactoring stats query, schema, or row assembly behavior into reusable services.
+when_not_to_use:
+  - NHL import aggregation pipelines.
+  - Discord bot runtime.
+  - One-off admin reports that do not expose the stats payload contract.
+rules:
+  - Stats payload responses must preserve headings, data, settings, and meta keys unless a breaking contract change is explicitly approved.
+  - HTTP request parsing must be normalized before query filtering or schema generation.
+  - Query-backed filters and post-assembly derived filters must remain distinct.
+  - The backend owns hockey, fantasy, scoring, and stats semantics.
+  - Frontend stats modules may render schema and manage UI state but must not become the source of truth for stats semantics.
+  - Schema caching must be keyed by the request context that can affect available filters, bounds, or columns.
+  - League ownership hydration must remain a payload decoration step after platform player-universe filtering.
+  - League ownership maps may use five-minute cache keys scoped by league, user, and platform while row decoration remains request-payload specific.
+  - Synthetic league scoring perspectives and Fantrax goalie column groups must be built through a dedicated backend factory rather than page JavaScript.
+  - Platform player-universe filtering must remain a dedicated backend payload filter before ownership hydration.
+  - StatsPayloadClient may translate active goalie filter state into column_group=goalie until the backend exposes an explicit active column-group request contract.
+public_interface:
+  - StatsQueryContext
+  - StatsFilterSet
+  - SeasonStatsPayloadRequest
+  - RangeStatsPayloadRequest
+  - StatsQueryFilterApplier
+  - StatsFilterSchemaProvider
+  - StatsDerivedFilterApplier
+  - StatsPayloadAssembler
+  - StatsPayloadBuilder
+  - LeagueStatsOwnershipHydrator
+  - LeagueStatsPerspectiveFactory
+  - LeagueStatsPlayerUniverseFilter
+  - StatsController::leaguePayload()
+  - StatsPayloadClient
+  - StatsFilterState
+  - StatsSchemaAdapter
+  - StatsColumnGroupAdapter
+  - stats payload JSON contract
+  - window.DIQ.mountStatsPage
+example_usage: |
+  $context = StatsQueryContext::fromRequest($request, $league, null, $defaultPerspectiveSlug);
+  $filterSet = StatsFilterSet::fromRequest($request);
+  $payload = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);

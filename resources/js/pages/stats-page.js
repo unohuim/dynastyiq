@@ -4,6 +4,10 @@ import { registerToastStack } from '../components/toast-stack.js';
 import { sortData } from '../components/StatsPage/stats-utils.js';
 import { renderStatsDesktop } from '../components/StatsPage/stats-desktop.js';
 import { StatsMobile } from '../components/StatsPage/stats-mobile.js';
+import { StatsColumnGroupAdapter } from './stats-column-group-adapter.js';
+import { StatsFilterState } from './stats-filter-state.js';
+import { StatsPayloadClient, normalizeStatsPayload, statsIdentityKeys } from './stats-payload-client.js';
+import { StatsSchemaAdapter } from './stats-schema-adapter.js';
 
 const Alpine = window.Alpine ?? AlpineImport;
 
@@ -20,60 +24,7 @@ if (!window.__alpineStarted) {
   window.__alpineStarted = true;
 }
 
-const IDENTITY_KEYS = new Set([
-  'name',
-  'player',
-  'team',
-  'league',
-  'pos',
-  'pos_type',
-  'age',
-  'contract_value',
-  'contract_value_num',
-  'contract_last_year',
-  'contract_last_year_num',
-  'avatar_url',
-  'head_shot_url',
-  'id',
-  'nhl_player_id',
-  'gp',
-]);
-
-const normalizePayload = (payload = {}) => {
-  const headings = Array.isArray(payload.headings) ? payload.headings : [];
-  const data = Array.isArray(payload.data) ? payload.data : [];
-  const statKeys = headings
-    .map((heading) => heading?.key)
-    .filter((key) => key && !IDENTITY_KEYS.has(String(key)));
-
-  return {
-    ...payload,
-    headings,
-    data: data.map((row) => {
-      if (row?.stats && typeof row.stats === 'object') return row;
-
-      const stats = {};
-      statKeys.forEach((key) => {
-        if (row?.[key] !== undefined) stats[key] = row[key];
-      });
-
-      return { ...row, stats };
-    }),
-    settings: payload.settings || {},
-    meta: payload.meta || {},
-  };
-};
-
-const isTypeButton = (value) => ['F', 'D', 'G'].includes(String(value));
-
-const normalizePositionValue = (value) => {
-  const normalized = String(value ?? '').trim().toUpperCase();
-
-  if (normalized === 'LW') return 'L';
-  if (normalized === 'RW') return 'R';
-
-  return normalized;
-};
+const IDENTITY_KEYS = statsIdentityKeys;
 
 const createElement = (tag, className = '', text = '') => {
   const node = document.createElement(tag);
@@ -89,7 +40,10 @@ export class StatsPageShell {
     this.config = config || {};
     this.apiUrl = this.config.apiUrl;
     this.mobileBreakpoint = Number(this.config.mobileBreakpoint ?? this.config.nonMobileBreakpoint ?? 640);
-    this.payload = normalizePayload(this.config.initialPayload || {});
+    this.payload = normalizeStatsPayload(this.config.initialPayload || {});
+    this.schemaAdapter = new StatsSchemaAdapter(this.payload);
+    this.columnGroupAdapter = new StatsColumnGroupAdapter(IDENTITY_KEYS);
+    this.payloadClient = new StatsPayloadClient({ apiUrl: this.apiUrl });
     this.perspectives = Array.isArray(this.config.perspectives) ? this.config.perspectives : [];
     this.connectedLeagues = Array.isArray(this.config.connectedLeagues) ? this.config.connectedLeagues : [];
     this.defaultPerspective = this.perspectives.find((perspective) => perspective?.slug === 'skaters')?.slug
@@ -117,7 +71,7 @@ export class StatsPageShell {
       isFilterDrawerOpen: false,
       isMobile: this.isMobile(),
     };
-    this.requestSeq = 0;
+    this.filterState = new StatsFilterState(this.state);
 
     this.settings = {
       ...settings,
@@ -154,29 +108,23 @@ export class StatsPageShell {
   }
 
   availableSeasons() {
-    return Array.isArray(this.payload.meta?.availableSeasons)
-      ? this.payload.meta.availableSeasons.map(String)
-      : [];
+    return this.schemaAdapter.availableSeasons();
   }
 
   availableGameTypes() {
-    return Array.isArray(this.payload.meta?.availableGameTypes)
-      ? this.payload.meta.availableGameTypes.map(String)
-      : ['2'];
+    return this.schemaAdapter.availableGameTypes();
   }
 
   availableLeagues() {
-    return Array.isArray(this.payload.meta?.availableLeagues)
-      ? this.payload.meta.availableLeagues.map(String).filter(Boolean)
-      : [];
+    return this.schemaAdapter.availableLeagues();
   }
 
   canSlice() {
-    return Boolean(this.payload.meta?.canSlice ?? true);
+    return this.schemaAdapter.canSlice();
   }
 
   supportsDateRange() {
-    return Boolean(this.payload.meta?.supportsDateRange ?? true);
+    return this.schemaAdapter.supportsDateRange();
   }
 
   perspectiveOptions() {
@@ -187,103 +135,44 @@ export class StatsPageShell {
   }
 
   hasColumnGroups() {
-    return this.settings.columnGroups
-      && typeof this.settings.columnGroups === 'object'
-      && !Array.isArray(this.settings.columnGroups);
+    return this.columnGroupAdapter.hasColumnGroups(this.settings);
   }
 
   activeColumnGroup() {
-    if (!this.hasColumnGroups()) {
-      return null;
-    }
-
-    return this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G')
-      ? 'goalie'
-      : (this.settings.activeColumnGroup || 'skater');
+    return this.columnGroupAdapter.activeColumnGroup(this.settings, this.state);
   }
 
   activeHeadings() {
-    if (!this.hasColumnGroups()) {
-      return this.payload.headings;
-    }
-
-    const group = this.activeColumnGroup();
-    const groupColumns = Array.isArray(this.settings.columnGroups?.[group])
-      ? this.settings.columnGroups[group]
-      : [];
-
-    const identityHeadings = this.payload.headings.filter((heading) => {
-      const key = String(heading?.key ?? '');
-      return IDENTITY_KEYS.has(key);
-    });
-    const seen = new Set();
-
-    return [...identityHeadings, ...groupColumns]
-      .filter((heading) => {
-        const key = String(heading?.key ?? '');
-        if (!key || seen.has(key)) return false;
-
-        seen.add(key);
-        return true;
-      });
+    return this.columnGroupAdapter.activeHeadings(this.payload, this.settings, this.state);
   }
 
   syncColumnGroupSort() {
-    if (!this.hasColumnGroups()) {
-      return;
-    }
-
-    const activeKeys = new Set(this.activeHeadings().map((heading) => String(heading?.key ?? '')).filter(Boolean));
-
-    if (activeKeys.has(String(this.settings.sortKey ?? ''))) {
-      return;
-    }
-
-    const group = this.activeColumnGroup();
-    const groupSort = this.settings.columnGroupSort?.[group] || {};
-    const fallbackKey = groupSort.sortKey
-      || this.settings.columnGroups?.[group]?.[0]?.key
-      || this.activeHeadings().find((heading) => !IDENTITY_KEYS.has(String(heading?.key ?? '')))?.key
-      || this.activeHeadings()[0]?.key
-      || null;
-
-    this.settings.sortKey = fallbackKey;
-    this.settings.sortDirection = groupSort.sortDirection || this.settings.defaultSortDirection || 'desc';
-    this.settings.displayKey = fallbackKey;
+    this.columnGroupAdapter.syncSort(this.settings, this.payload, this.state);
   }
 
   buildParams() {
-    const params = new URLSearchParams();
-    const period = this.supportsDateRange() ? this.state.period : 'season';
-
-    params.set('perspective', this.state.perspective);
-    params.set('resource', 'players');
-    params.set('period', period);
-    params.set('slice', this.canSlice() ? this.state.slice : 'total');
-
-    if (period === 'season' && this.state.seasonId) {
-      params.set('season_id', this.state.seasonId);
-    }
-
-    params.set('game_type', this.state.gameType);
-    params.set('availability', '0');
-    if (this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G')) {
-      params.set('column_group', 'goalie');
-    }
-
-    this.state.selectedLeagues.forEach((value) => params.append('league[]', value));
-    Object.entries(this.state.numericFilters || {}).forEach(([key, value]) => {
-      if (!this.state.dirtyNumericFilters?.[key]) return;
-
-      if (value?.min !== undefined && value.min !== null && value.min !== '') {
-        params.set(`${key}_min`, String(value.min));
-      }
-      if (value?.max !== undefined && value.max !== null && value.max !== '') {
-        params.set(`${key}_max`, String(value.max));
-      }
+    return this.payloadClient.buildParams(this.state, {
+      canSlice: this.canSlice(),
+      supportsDateRange: this.supportsDateRange(),
     });
+  }
 
-    return params;
+  cacheKeyFromParams(params) {
+    return this.payloadClient.cacheKeyFromParams(params);
+  }
+
+  cachePayload(params, payload) {
+    this.payloadClient.cachePayload(params, payload);
+  }
+
+  applyPayload(payload) {
+    this.payload = payload;
+    this.schemaAdapter = new StatsSchemaAdapter(this.payload);
+    this.connectedLeagues = Array.isArray(this.payload.connectedLeagues)
+      ? this.payload.connectedLeagues
+      : this.connectedLeagues;
+
+    this.syncStateFromPayload();
   }
 
   updateUrl(params) {
@@ -296,40 +185,33 @@ export class StatsPageShell {
     const force = options?.force === true;
     if (!this.apiUrl || (this.state.loading && !force)) return;
 
-    const requestId = this.requestSeq + 1;
-    this.requestSeq = requestId;
+    const params = this.buildParams();
+    if (!force && this.payloadClient.hasCachedPayload(params)) {
+      this.applyPayload(this.payloadClient.cachedPayload(params));
+      this.updateUrl(this.buildParams());
+      this.render();
+      return;
+    }
+
     this.state.loading = true;
     this.state.error = '';
     this.render();
 
-    const params = this.buildParams();
     this.updateUrl(params);
 
+    let result = null;
     try {
-      const response = await fetch(`${this.apiUrl}?${params.toString()}`, {
-        headers: { Accept: 'application/json' },
-      });
+      result = await this.payloadClient.fetchPayload(params, { force });
+      if (result.stale) return;
 
-      if (!response.ok) {
-        throw new Error(`Stats request failed (${response.status})`);
-      }
-
-      const payload = normalizePayload(await response.json());
-      if (requestId !== this.requestSeq) return;
-
-      this.payload = payload;
-      this.connectedLeagues = Array.isArray(this.payload.connectedLeagues)
-        ? this.payload.connectedLeagues
-        : this.connectedLeagues;
-
-      this.syncStateFromPayload();
+      this.applyPayload(result.payload);
+      this.cachePayload(this.buildParams(), result.payload);
       this.updateUrl(this.buildParams());
     } catch (error) {
-      if (requestId !== this.requestSeq) return;
       console.error('[stats-page] fetch failed', error);
       this.state.error = error?.message || 'Unable to load stats.';
     } finally {
-      if (requestId !== this.requestSeq) return;
+      if (result?.stale) return;
       this.state.loading = false;
       this.render();
     }
@@ -374,66 +256,27 @@ export class StatsPageShell {
   }
 
   filterSchema() {
-    return Array.isArray(this.payload.meta?.filterSchema) ? this.payload.meta.filterSchema : [];
+    return this.schemaAdapter.filterSchema();
   }
 
   positionButtonsFromPayload(meta = {}, settings = {}) {
-    const buttons = Array.isArray(meta.positionButtons)
-      ? meta.positionButtons
-      : (Array.isArray(settings?.ui?.positionButtons) ? settings.ui.positionButtons : []);
-
-    return buttons.map(String);
+    return new StatsSchemaAdapter({ meta }).positionButtonsFromPayload(settings);
   }
 
   numericFilterSpecs() {
-    return this.filterSchema().filter((spec) => {
-      const type = String(spec?.type || '').toLowerCase();
-      return ['number', 'int', 'float'].includes(type) && spec?.bounds && spec?.key;
-    });
+    return this.schemaAdapter.numericFilterSpecs();
   }
 
   syncNumericFiltersFromPayload(force = false) {
-    const applied = this.payload.meta?.appliedFilters || {};
-    const next = { ...(force ? {} : this.state.numericFilters) };
-
-    this.numericFilterSpecs().forEach((spec) => {
-      const key = String(spec.key);
-      const bounds = spec.bounds || {};
-      const appliedValue = applied[key] && typeof applied[key] === 'object' ? applied[key] : {};
-      const current = force ? {} : (next[key] || {});
-
-      next[key] = {
-        min: current.min ?? appliedValue.min ?? bounds.min ?? 0,
-        max: current.max ?? appliedValue.max ?? bounds.max ?? 0,
-      };
-    });
-
-    this.state.numericFilters = next;
-
-    if (force) {
-      this.state.dirtyNumericFilters = {};
-    }
+    this.filterState.syncNumericFiltersFromPayload(this.payload, this.schemaAdapter, force);
   }
 
   setNumericFilterBound(key, bound, value) {
-    const current = this.state.numericFilters[key] || {};
-    const next = Number(value);
-    const min = bound === 'min' ? next : Number(current.min ?? next);
-    const max = bound === 'max' ? next : Number(current.max ?? next);
-
-    this.state.numericFilters[key] = {
-      min: Math.min(min, max),
-      max: Math.max(min, max),
-    };
-    this.state.dirtyNumericFilters[key] = true;
+    this.filterState.setNumericFilterBound(key, bound, value);
   }
 
   resetFilters() {
-    this.state.selectedPos = [];
-    this.state.selectedPosTypes = [];
-    this.state.selectedLeagues = [];
-    this.state.dirtyNumericFilters = {};
-    this.syncNumericFiltersFromPayload(true);
+    this.filterState.reset(this.payload, this.schemaAdapter);
     this.fetchPayload();
   }
 
@@ -486,33 +329,12 @@ export class StatsPageShell {
   }
 
   togglePosition(value) {
-    const normalized = String(value);
-
-    if (isTypeButton(normalized)) {
-      const current = new Set(this.state.selectedPosTypes);
-      if (current.has(normalized)) current.delete(normalized);
-      else current.add(normalized);
-
-      if (normalized === 'G' && current.has('G')) {
-        this.state.selectedPosTypes = ['G'];
-        this.state.selectedPos = ['G'];
-      } else {
-        current.delete('G');
-        this.state.selectedPosTypes = [...current];
-        this.state.selectedPos = this.state.selectedPos.filter((item) => item !== 'G');
-        if (current.has('D')) this.state.selectedPos = [];
-      }
-    } else {
-      const current = new Set(this.state.selectedPos);
-      if (current.has(normalized)) current.delete(normalized);
-      else current.add(normalized);
-
-      this.state.selectedPos = [...current].filter((item) => item !== 'G');
-      this.state.selectedPosTypes = this.state.selectedPosTypes.filter((item) => item !== 'G' && item !== 'D');
-    }
-
+    const wasGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
+    this.filterState.togglePosition(value);
+    const isGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
     this.renderControls();
-    if (this.config.syncUrl === false && this.apiUrl) {
+
+    if (this.config.syncUrl === false && this.apiUrl && wasGoalieMode !== isGoalieMode) {
       this.fetchPayload();
     } else {
       this.renderContent();
@@ -520,29 +342,11 @@ export class StatsPageShell {
   }
 
   isPositionActive(value) {
-    const normalized = String(value);
-    return isTypeButton(normalized)
-      ? this.state.selectedPosTypes.includes(normalized)
-      : this.state.selectedPos.includes(normalized);
+    return this.filterState.isPositionActive(value);
   }
 
   locallyFilteredRows() {
-    const selectedTypes = new Set(this.state.selectedPosTypes.map(normalizePositionValue));
-    const selectedPositions = new Set(this.state.selectedPos.map(normalizePositionValue));
-
-    if (selectedTypes.size === 0 && selectedPositions.size === 0) {
-      return this.payload.data;
-    }
-
-    return this.payload.data.filter((row) => {
-      const rowType = normalizePositionValue(row?.pos_type ?? row?.type);
-      const rowPosition = normalizePositionValue(row?.pos ?? row?.position ?? rowType);
-      const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === '1';
-
-      return selectedTypes.has(rowType)
-        || selectedPositions.has(rowPosition)
-        || (isGoalie && (selectedTypes.has('G') || selectedPositions.has('G')));
-    });
+    return this.filterState.filterRows(this.payload.data);
   }
 
   render() {

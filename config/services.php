@@ -50,6 +50,10 @@ return [
         'guild_id'  => env('DIQ_GUILD_ID'),
     ],
 
+    'stats_timing' => [
+        'log' => env('LOG_STATS_TIMING', false),
+    ],
+
     'patreon' => [
         'client_id'     => env('PATREON_CLIENT_ID'),
         'client_secret' => env('PATREON_CLIENT_SECRET'),

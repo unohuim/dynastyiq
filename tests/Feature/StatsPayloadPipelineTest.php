@@ -1,0 +1,719 @@
+<?php
+
+declare(strict_types=1);
+
+use App\Models\IntegrationSecret;
+use App\Models\NhlSeasonStat;
+use App\Models\Perspective;
+use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
+use App\Models\Player;
+use App\Models\User;
+use App\Support\Stats\LeagueStatsOwnershipHydrator;
+use App\Support\Stats\LeagueStatsPerspectiveFactory;
+use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
+use App\Support\Stats\SeasonStatsPayloadRequest;
+use App\Support\Stats\StatsDerivedFilterApplier;
+use App\Support\Stats\StatsFilterSet;
+use App\Support\Stats\StatsPayloadAssembler;
+use App\Support\Stats\StatsPayloadBuilder;
+use App\Support\Stats\StatsQueryContext;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+
+uses(RefreshDatabase::class);
+
+beforeEach(function (): void {
+    Carbon::setTestNow('2026-07-09 12:00:00');
+    Cache::flush();
+
+    $this->statsRequest = function (array $query = [], ?User $user = null): Request {
+        $request = Request::create('/stats/payload', 'GET', $query);
+        $request->setUserResolver(static fn (): ?User => $user);
+
+        return $request;
+    };
+
+    $this->statsPlayer = function (array $overrides = []): Player {
+        $player = new Player(array_merge([
+            'id' => $overrides['id'] ?? 1,
+            'nhl_id' => $overrides['nhl_id'] ?? 1001,
+            'first_name' => $overrides['first_name'] ?? 'Test',
+            'last_name' => $overrides['last_name'] ?? 'Player',
+            'full_name' => $overrides['full_name'] ?? 'Test Player',
+            'dob' => $overrides['dob'] ?? '2000-01-01',
+            'position' => $overrides['position'] ?? 'C',
+            'pos_type' => $overrides['pos_type'] ?? 'F',
+            'team_abbrev' => $overrides['team_abbrev'] ?? 'TOR',
+            'is_goalie' => $overrides['is_goalie'] ?? false,
+            'head_shot_url' => $overrides['head_shot_url'] ?? 'https://example.test/player.png',
+        ], $overrides));
+        $player->setRelation('contracts', collect());
+
+        return $player;
+    };
+
+    $this->statsRow = function (Player $player, array $overrides = []): object {
+        return (object) array_merge([
+            'player' => $player,
+            'player_id' => $player->id,
+            'nhl_player_id' => $player->nhl_id,
+            'league_abbrev' => 'OHL',
+            'team_abbrev' => 'TOR',
+            'gp' => 10,
+            'g' => 3,
+            'a' => 4,
+            'pts' => 7,
+            'toi' => 600,
+        ], $overrides);
+    };
+
+    $this->createRosterFixture = function (array $overrides = []): array {
+        $user = User::factory()->create();
+        $league = PlatformLeague::create([
+            'platform' => $overrides['platform'] ?? 'fantrax',
+            'platform_league_id' => $overrides['platform_league_id'] ?? 'league-1',
+            'name' => $overrides['league_name'] ?? 'League One',
+            'sport' => 'hockey',
+        ]);
+        $team = PlatformTeam::create([
+            'platform_league_id' => $league->id,
+            'platform_team_id' => $overrides['platform_team_id'] ?? 'team-1',
+            'name' => $overrides['team_name'] ?? 'Team One',
+        ]);
+        $player = Player::create([
+            'nhl_id' => $overrides['nhl_id'] ?? 9001,
+            'first_name' => 'Roster',
+            'last_name' => 'Player',
+            'full_name' => 'Roster Player',
+            'dob' => '2001-01-01',
+            'position' => $overrides['position'] ?? 'C',
+            'pos_type' => $overrides['pos_type'] ?? 'F',
+            'team_abbrev' => 'TOR',
+            'is_goalie' => $overrides['is_goalie'] ?? false,
+            'head_shot_url' => 'https://example.test/roster.png',
+        ]);
+
+        $user->platformLeagues()->attach($league->id, [
+            'team_id' => $team->id,
+            'is_active' => true,
+            'extras' => json_encode(['provider' => $league->platform], JSON_THROW_ON_ERROR),
+            'synced_at' => now(),
+        ]);
+        $team->roster()->attach($player->id, [
+            'platform' => $league->platform,
+            'platform_player_id' => 'platform-player-1',
+            'slot' => $overrides['slot'] ?? 'C',
+            'status' => $overrides['status'] ?? 'active',
+            'eligibility' => json_encode($overrides['eligibility'] ?? ['C'], JSON_THROW_ON_ERROR),
+            'starts_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$user, $league, $team, $player];
+    };
+
+    $this->createConnectedLeagueFixture = function (array $overrides = []): array {
+        [$user, $league, $team, $player] = ($this->createRosterFixture)($overrides);
+
+        IntegrationSecret::create([
+            'user_id' => $user->id,
+            'provider' => 'fantrax',
+            'secret' => 'connected-secret',
+            'status' => 'connected',
+        ]);
+
+        $perspective = Perspective::create([
+            'name' => $overrides['perspective_name'] ?? 'Skaters',
+            'slug' => $overrides['perspective_slug'] ?? 'skaters',
+            'author_id' => $user->id,
+            'visibility' => 'private',
+            'sport' => 'hockey',
+            'is_slicable' => true,
+            'settings' => [
+                'columns' => [
+                    ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+                    ['key' => 'a', 'label' => 'A', 'type' => 'int'],
+                ],
+                'sort' => ['sortKey' => 'g', 'sortDirection' => 'desc'],
+                'filters' => [],
+            ],
+        ]);
+
+        return [$user, $league, $team, $player, $perspective];
+    };
+});
+
+afterEach(function (): void {
+    Carbon::setTestNow();
+    Cache::flush();
+});
+
+it('creates an empty filter set without a request', function (): void {
+    $filters = StatsFilterSet::fromRequest(null);
+
+    expect($filters->positions)->toBe([])
+        ->and($filters->positionTypes)->toBe([])
+        ->and($filters->teams)->toBe([])
+        ->and($filters->leagues)->toBe([])
+        ->and($filters->numericRanges)->toBe([]);
+});
+
+it('normalizes position filter arrays by trimming blanks', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'pos' => [' C ', '', 'LW'],
+        'pos_type' => [' F ', 'D'],
+    ]));
+
+    expect($filters->positions)->toBe(['C', 'LW'])
+        ->and($filters->positionTypes)->toBe(['F', 'D']);
+});
+
+it('normalizes scalar filter query values into lists', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'team' => 'TOR',
+        'league' => 'OHL',
+    ]));
+
+    expect($filters->teams)->toBe(['TOR'])
+        ->and($filters->leagues)->toBe(['OHL']);
+});
+
+it('parses numeric min and max query ranges as floats', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'gp_min' => '10',
+        'gp_max' => '82',
+        'contract_value_num_min' => '1.5',
+    ]));
+
+    expect($filters->numericRanges['gp'])->toBe(['min' => 10.0, 'max' => 82.0])
+        ->and($filters->numericRanges['contract_value_num'])->toBe(['min' => 1.5, 'max' => null]);
+});
+
+it('keeps non numeric range bounds as null', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'gp_min' => 'bad',
+    ]));
+
+    expect($filters->numericRanges['gp'])->toBe(['min' => null, 'max' => null]);
+});
+
+it('returns position echo payloads for applied metadata', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'pos' => ['C'],
+        'pos_type' => ['F'],
+    ]));
+
+    expect($filters->positionEcho())->toBe([
+        'pos' => ['C'],
+        'pos_type' => ['F'],
+    ]);
+});
+
+it('creates query context defaults from a request', function (): void {
+    $user = User::factory()->create();
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([], $user), null, null, 'skaters');
+
+    expect($context->user?->id)->toBe($user->id)
+        ->and($context->requestedPerspective)->toBe('skaters')
+        ->and($context->slice)->toBe('total')
+        ->and($context->gameType)->toBe(2)
+        ->and($context->period)->toBe('season')
+        ->and($context->resource)->toBe('players');
+});
+
+it('sanitizes invalid slice and game type values in query context', function (): void {
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([
+        'slice' => 'bad',
+        'game_type' => 9,
+    ]));
+
+    expect($context->slice)->toBe('total')
+        ->and($context->gameType)->toBe(2);
+});
+
+it('prefers season_id over season in query context', function (): void {
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([
+        'season' => '20242025',
+        'season_id' => '20252026',
+    ]));
+
+    expect($context->season)->toBe('20252026');
+});
+
+it('normalizes blank column group to null in query context', function (): void {
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([
+        'column_group' => ' ',
+    ]));
+
+    expect($context->columnGroup)->toBeNull();
+});
+
+it('keeps goalie column group and draft context in query context', function (): void {
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([
+        'column_group' => 'goalie',
+        'draft_context' => '1',
+    ]));
+
+    expect($context->columnGroup)->toBe('goalie')
+        ->and($context->draftContext)->toBeTrue();
+});
+
+it('returns a cloned query context with a resolved perspective', function (): void {
+    $context = StatsQueryContext::fromRequest(($this->statsRequest)([
+        'perspective' => 'fantrax-league-7',
+    ]));
+    $perspective = (object) ['slug' => 'fantrax-league-7'];
+
+    $next = $context->withPerspective($perspective);
+
+    expect($next)->not->toBe($context)
+        ->and($next->perspective)->toBe($perspective)
+        ->and($next->requestedPerspective)->toBe('fantrax-league-7');
+});
+
+it('builds virtual schema for derived filters from assembled rows', function (): void {
+    [, , $schema] = app(StatsDerivedFilterApplier::class)->apply(null, collect([
+        ['gp' => 10, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+        ['gp' => 20, 'contract_value_num' => 5.0, 'contract_last_year_num' => 2030],
+    ]));
+
+    expect(collect($schema)->pluck('key')->all())->toBe(['gp', 'contract_value_num', 'contract_last_year_num']);
+});
+
+it('returns no applied derived filters without a request', function (): void {
+    [, $applied] = app(StatsDerivedFilterApplier::class)->apply(null, collect([
+        ['gp' => 10, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+    ]));
+
+    expect($applied)->toBe(['filters' => []]);
+});
+
+it('filters derived rows by games played range', function (): void {
+    [$rows, $applied] = app(StatsDerivedFilterApplier::class)->apply(($this->statsRequest)([
+        'gp_min' => 15,
+    ]), collect([
+        ['name' => 'Low', 'gp' => 10, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+        ['name' => 'High', 'gp' => 20, 'contract_value_num' => 5.0, 'contract_last_year_num' => 2030],
+    ]));
+
+    expect($rows->pluck('name')->all())->toBe(['High'])
+        ->and($applied['filters']['gp'])->toBe(['min' => 15, 'max' => null]);
+});
+
+it('filters derived rows by contract value range', function (): void {
+    [$rows] = app(StatsDerivedFilterApplier::class)->apply(($this->statsRequest)([
+        'contract_value_num_max' => 3,
+    ]), collect([
+        ['name' => 'Cheap', 'gp' => 10, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+        ['name' => 'Costly', 'gp' => 20, 'contract_value_num' => 5.0, 'contract_last_year_num' => 2030],
+    ]));
+
+    expect($rows->pluck('name')->all())->toBe(['Cheap']);
+});
+
+it('filters derived rows by contract last year range', function (): void {
+    [$rows] = app(StatsDerivedFilterApplier::class)->apply(($this->statsRequest)([
+        'contract_last_year_num_min' => 2029,
+    ]), collect([
+        ['name' => 'Soon', 'gp' => 10, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+        ['name' => 'Later', 'gp' => 20, 'contract_value_num' => 5.0, 'contract_last_year_num' => 2030],
+    ]));
+
+    expect($rows->pluck('name')->all())->toBe(['Later']);
+});
+
+it('echoes multiple applied derived filter ranges', function (): void {
+    [, $applied] = app(StatsDerivedFilterApplier::class)->apply(($this->statsRequest)([
+        'gp_max' => 40,
+        'contract_value_num_min' => 1.5,
+        'contract_last_year_num_max' => 2030,
+    ]), collect([
+        ['name' => 'One', 'gp' => 20, 'contract_value_num' => 2.5, 'contract_last_year_num' => 2028],
+    ]));
+
+    expect($applied['filters'])->toHaveKeys(['gp', 'contract_value_num', 'contract_last_year_num']);
+});
+
+it('keeps prospect rows split by league outside draft context', function (): void {
+    $player = ($this->statsPlayer)(['id' => 10, 'nhl_id' => 1010]);
+    $rows = app(StatsPayloadAssembler::class)->assembleRowsFromCollection(collect([
+        ($this->statsRow)($player, ['league_abbrev' => 'OHL', 'gp' => 10, 'g' => 4]),
+        ($this->statsRow)($player, ['league_abbrev' => 'AHL', 'gp' => 8, 'g' => 2]),
+    ]), [['key' => 'g', 'label' => 'G']], 'total', true, 'prospects');
+
+    expect($rows)->toHaveCount(2)
+        ->and($rows->pluck('league')->sort()->values()->all())->toBe(['AHL', 'OHL']);
+});
+
+it('groups draft context prospect rows by player and keeps the highest games played row', function (): void {
+    $player = ($this->statsPlayer)(['id' => 11, 'nhl_id' => 1011]);
+    $rows = app(StatsPayloadAssembler::class)->assembleRowsFromCollection(collect([
+        ($this->statsRow)($player, ['league_abbrev' => 'OHL', 'gp' => 10, 'g' => 4]),
+        ($this->statsRow)($player, ['league_abbrev' => 'AHL', 'gp' => 20, 'g' => 9]),
+    ]), [['key' => 'g', 'label' => 'G']], 'total', true, 'prospects', ['draft_context' => true]);
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows->first()['gp'])->toBe(20)
+        ->and($rows->first()['g'])->toBe(9);
+});
+
+it('decorates existing payload rows with fantasy ownership metadata', function (): void {
+    [$user, $league, , $player] = ($this->createRosterFixture)();
+    $payload = [
+        'headings' => [],
+        'data' => [[
+            'name' => 'Roster Player',
+            'player_id' => $player->id,
+            'nhl_player_id' => $player->nhl_id,
+        ]],
+        'meta' => ['season' => '20252026', 'game_type' => 2],
+        'settings' => [],
+    ];
+
+    $hydrated = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user->id);
+
+    expect($hydrated['data'][0]['fantasy_team_name'])->toBe('Team One')
+        ->and($hydrated['data'][0]['fantasy_team_is_user_team'])->toBeTrue()
+        ->and($hydrated['data'][0]['roster_slot'])->toBe('C');
+});
+
+it('appends roster only rows missing from the payload', function (): void {
+    [$user, $league, , $player] = ($this->createRosterFixture)();
+    NhlSeasonStat::create([
+        'season_id' => '20252026',
+        'nhl_player_id' => $player->nhl_id,
+        'nhl_team_id' => 1,
+        'game_type' => 2,
+        'gp' => 12,
+        'g' => 5,
+    ]);
+    $payload = [
+        'headings' => [['key' => 'gp'], ['key' => 'g']],
+        'data' => [],
+        'meta' => ['season' => '20252026', 'game_type' => 2],
+        'settings' => [],
+    ];
+
+    $hydrated = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user->id);
+
+    expect($hydrated['data'])->toHaveCount(1)
+        ->and($hydrated['data'][0]['league_roster_only'])->toBeTrue()
+        ->and($hydrated['data'][0]['gp'])->toBe(12)
+        ->and($hydrated['data'][0]['g'])->toBe(5.0);
+});
+
+it('reuses cached ownership maps within the ownership cache window', function (): void {
+    [$user, $league, $team, $player] = ($this->createRosterFixture)();
+    $payload = [
+        'headings' => [],
+        'data' => [['player_id' => $player->id, 'nhl_player_id' => $player->nhl_id]],
+        'meta' => [],
+        'settings' => [],
+    ];
+    $hydrator = app(LeagueStatsOwnershipHydrator::class);
+
+    $first = $hydrator->hydrate($payload, $league, $user->id);
+    $team->update(['name' => 'Changed Team']);
+    $second = $hydrator->hydrate($payload, $league->fresh(), $user->id);
+
+    expect($first['data'][0]['fantasy_team_name'])->toBe('Team One')
+        ->and($second['data'][0]['fantasy_team_name'])->toBe('Team One');
+});
+
+it('records ownership sub timings when timing output is requested', function (): void {
+    [$user, $league, , $player] = ($this->createRosterFixture)();
+    $timings = [];
+    $payload = [
+        'headings' => [],
+        'data' => [['player_id' => $player->id, 'nhl_player_id' => $player->nhl_id]],
+        'meta' => [],
+        'settings' => [],
+    ];
+
+    app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user->id, $timings);
+
+    expect($timings)->toHaveKeys(['ownership_map_ms', 'ownership_decorate_ms', 'ownership_missing_rows_ms']);
+});
+
+it('keeps non platform league payload rows unchanged when filtering player universe', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'espn',
+        'platform_league_id' => 'espn-1',
+        'name' => 'ESPN League',
+        'sport' => 'hockey',
+    ]);
+    $payload = ['data' => [['player_id' => 123]]];
+
+    $filtered = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);
+
+    expect($filtered)->toBe($payload);
+});
+
+it('filters fantrax league payload rows to provider and roster player universe', function (): void {
+    [, $league, $team, $rosteredPlayer] = ($this->createRosterFixture)();
+    $providerPlayer = Player::create([
+        'nhl_id' => 9002,
+        'first_name' => 'Provider',
+        'last_name' => 'Player',
+        'full_name' => 'Provider Player',
+        'dob' => '2001-01-01',
+        'position' => 'LW',
+        'pos_type' => 'F',
+        'team_abbrev' => 'TOR',
+        'is_goalie' => false,
+    ]);
+    $unknownPlayer = Player::create([
+        'nhl_id' => 9003,
+        'first_name' => 'Unknown',
+        'last_name' => 'Player',
+        'full_name' => 'Unknown Player',
+        'dob' => '2001-01-01',
+        'position' => 'RW',
+        'pos_type' => 'F',
+        'team_abbrev' => 'TOR',
+        'is_goalie' => false,
+    ]);
+    DB::table('fantrax_players')->insert([
+        'player_id' => $providerPlayer->id,
+        'fantrax_id' => 'fantrax-provider',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $payload = [
+        'data' => [
+            ['player_id' => $providerPlayer->id],
+            ['id' => $rosteredPlayer->id],
+            ['player_id' => $unknownPlayer->id],
+        ],
+    ];
+
+    $filtered = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);
+
+    expect($filtered['data'])->toHaveCount(2)
+        ->and(collect($filtered['data'])->pluck('player_id')->filter()->values()->all())->toBe([$providerPlayer->id]);
+});
+
+it('empties fantrax league payload rows when no provider or roster universe exists', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'empty-league',
+        'name' => 'Empty League',
+        'sport' => 'hockey',
+    ]);
+
+    $filtered = app(LeagueStatsPlayerUniverseFilter::class)->filter([
+        'data' => [['player_id' => 999]],
+    ], $league);
+
+    expect($filtered['data'])->toBe([]);
+});
+
+it('builds fantrax synthetic perspective metadata for league pages', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'league-meta',
+        'name' => 'League Meta',
+        'sport' => 'hockey',
+    ]);
+    $factory = app(LeagueStatsPerspectiveFactory::class);
+
+    expect($factory->leagueScoringPerspectiveSlug($league))->toBeNull()
+        ->and($factory->fantraxLeaguePerspectiveSlug($league))->toBe('fantrax-league-' . $league->id);
+});
+
+it('builds yahoo scoring settings only when every scoring category is mapped', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'yahoo',
+        'platform_league_id' => 'yahoo-mapped',
+        'name' => 'Yahoo Mapped',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                ['id' => '1', 'short' => 'G', 'stat_key' => 'g'],
+                ['id' => '2', 'short' => 'SV%', 'stat_key' => 'sv_pct'],
+            ],
+        ],
+    ]);
+
+    $settings = app(LeagueStatsPerspectiveFactory::class)->leagueScoringPerspectiveSettings($league);
+
+    expect($settings['columns'])->toHaveCount(2)
+        ->and($settings['columnGroups']['skater'][0]['key'])->toBe('g')
+        ->and($settings['columnGroups']['goalie'][0]['key'])->toBe('sv_pct');
+});
+
+it('refuses league scoring settings when a scoring category is unmapped', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'yahoo',
+        'platform_league_id' => 'yahoo-unmapped',
+        'name' => 'Yahoo Unmapped',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                ['id' => '1', 'short' => 'G', 'stat_key' => 'g'],
+                ['id' => '2', 'short' => 'Mystery', 'stat_key' => ''],
+            ],
+        ],
+    ]);
+
+    expect(app(LeagueStatsPerspectiveFactory::class)->leagueScoringPerspectiveSettings($league))->toBeNull();
+});
+
+it('applies fantrax goalie settings with goalie filters and goalie columns', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-goalie',
+        'name' => 'Fantrax Goalie',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                ['short' => 'W', 'auto_stat_key' => 'wins'],
+                ['short' => 'SV%', 'auto_stat_key' => 'sv_pct'],
+            ],
+        ],
+    ]);
+
+    $settings = app(LeagueStatsPerspectiveFactory::class)->withFantraxGoalieSettings([
+        'columns' => [['key' => 'g', 'label' => 'G']],
+        'filters' => [],
+    ], $league);
+
+    expect(collect($settings['columns'])->pluck('key')->all())->toBe(['wins', 'sv_pct'])
+        ->and($settings['filters']['pos_type']['value'])->toBe(['G'])
+        ->and($settings['sort']['sortKey'])->toBe('wins');
+});
+
+it('adds fantrax goalie column group to payload settings', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-column-group',
+        'name' => 'Fantrax Column Group',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                ['short' => 'W', 'auto_stat_key' => 'wins'],
+            ],
+        ],
+    ]);
+    $payload = [
+        'headings' => [
+            ['key' => 'name', 'label' => 'Player'],
+            ['key' => 'g', 'label' => 'G'],
+        ],
+        'settings' => [],
+    ];
+
+    $next = app(LeagueStatsPerspectiveFactory::class)->withFantraxGoalieColumnGroup($payload, $league);
+
+    expect($next['settings']['columnGroups']['skater'][0]['key'])->toBe('g')
+        ->and($next['settings']['columnGroups']['goalie'][0]['key'])->toBe('wins');
+});
+
+it('returns league stats payload for a connected active league member', function (): void {
+    [$user, $league, , $player] = ($this->createConnectedLeagueFixture)();
+    app()->instance(StatsPayloadBuilder::class, new class ($player) {
+        public function __construct(private readonly Player $player)
+        {
+        }
+
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [[
+                    'player_id' => $this->player->id,
+                    'nhl_player_id' => $this->player->nhl_id,
+                    'g' => 7,
+                ]],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, ['fake_ms' => 0.0]];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', $league->id));
+
+    $response->assertOk()
+        ->assertJsonPath('selectedPerspective', 'fantrax-league-' . $league->id)
+        ->assertJsonPath('settings.ownerColumn', true)
+        ->assertJsonPath('settings.leaguePlatform', 'fantrax')
+        ->assertJsonCount(1, 'data');
+});
+
+it('blocks league stats payload for users without a connected fantasy provider', function (): void {
+    [$user, $league] = ($this->createRosterFixture)();
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', $league->id));
+
+    $response->assertStatus(409)
+        ->assertJsonPath('message', 'Connect a fantasy provider before loading league stats.');
+});
+
+it('returns not found when connected users request an inactive league assignment', function (): void {
+    [$user, $league] = ($this->createConnectedLeagueFixture)();
+    $user->platformLeagues()->updateExistingPivot($league->id, ['is_active' => false]);
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', $league->id));
+
+    $response->assertNotFound();
+});
+
+it('validates unsupported league stats column group values', function (): void {
+    [$user, $league] = ($this->createConnectedLeagueFixture)();
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'column_group' => 'skater',
+    ]));
+
+    $response->assertStatus(422);
+});
+
+it('passes goalie column group requests through fantrax league payload settings', function (): void {
+    [$user, $league, , $player] = ($this->createConnectedLeagueFixture)();
+    $league->update([
+        'scoring_settings' => [
+            'categories' => [
+                ['short' => 'W', 'auto_stat_key' => 'wins'],
+            ],
+        ],
+    ]);
+    app()->instance(StatsPayloadBuilder::class, new class ($player) {
+        public function __construct(private readonly Player $player)
+        {
+        }
+
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            return [[
+                'headings' => [['key' => 'wins', 'label' => 'W']],
+                'data' => [[
+                    'player_id' => $this->player->id,
+                    'nhl_player_id' => $this->player->nhl_id,
+                    'wins' => 5,
+                ]],
+                'settings' => [
+                    'columns' => $request->settings['columns'],
+                    'filters' => $request->settings['filters'],
+                ],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'column_group' => 'goalie',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('meta.pos', ['G'])
+        ->assertJsonPath('meta.pos_type', ['G'])
+        ->assertJsonPath('settings.filters.pos_type.value', ['G'])
+        ->assertJsonPath('settings.columns.0.key', 'wins');
+});
