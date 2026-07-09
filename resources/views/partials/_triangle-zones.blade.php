@@ -1,6 +1,8 @@
 {{-- resources/views/partials/_triangle-zones.blade.php --}}
 @php
     // Inputs: $oz, $dz, $nz
+    $displayMode = $displayMode ?? 'counts';
+    $displayMode = in_array($displayMode, ['counts', 'share'], true) ? $displayMode : 'counts';
     $box = 180;
 
     $sum = (int)($dz + $oz + $nz);
@@ -34,6 +36,14 @@
     $Bx = $pct($B[0]); $By = $pct($B[1]);
     $Cx = $pct($C[0]); $Cy = $pct($C[1]);
     $Px = $pct($x);   $Py = $pct($y);
+    $rawSum = max(0, (int)($dz + $oz + $nz));
+    $zoneValue = static function (int $value) use ($rawSum, $displayMode): string {
+        if ($displayMode === 'share') {
+            return $rawSum > 0 ? round(($value / $rawSum) * 100) . '%' : '0%';
+        }
+
+        return (string) $value;
+    };
 @endphp
 
 <div class="flex justify-center">
@@ -60,11 +70,11 @@
 
         {{-- Corner badges: slightly larger & stronger --}}
         <div class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-700 text-gray-100 text-[12px] font-semibold px-3 py-1.5 shadow-sm"
-             style="left: {{ $Ax }}%; top: {{ $Ay }}%;">N</div>
+             style="left: {{ $Ax }}%; top: {{ $Ay }}%;">N {{ $zoneValue((int) $nz) }}</div>
         <div class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-700 text-gray-100 text-[12px] font-semibold px-3 py-1.5 shadow-sm"
-             style="left: {{ $Cx }}%; top: {{ $Cy }}%;">D</div>
+             style="left: {{ $Cx }}%; top: {{ $Cy }}%;">D {{ $zoneValue((int) $dz) }}</div>
         <div class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-700 text-gray-100 text-[12px] font-semibold px-3 py-1.5 shadow-sm"
-             style="left: {{ $Bx }}%; top: {{ $By }}%;">O</div>
+             style="left: {{ $Bx }}%; top: {{ $By }}%;">O {{ $zoneValue((int) $oz) }}</div>
 
         <div class="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
              style="left: {{ $Px }}%; top: {{ $Py }}%;">

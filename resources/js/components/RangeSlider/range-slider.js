@@ -226,11 +226,13 @@ export class RangeSlider {
             const pct = ((this.cfg.value - min) / range) * 100;
             this._els.fill.style.left = "0%";
             this._els.fill.style.width = `${pct}%`;
+            this._els.rangeTxt.textContent = this._formatValue(this.cfg.value);
         } else {
             const left = ((this.cfg.minValue - min) / range) * 100;
             const right = ((this.cfg.maxValue - min) / range) * 100;
             this._els.fill.style.left = `${left}%`;
             this._els.fill.style.width = `${Math.max(0, right - left)}%`;
+            this._els.rangeTxt.textContent = `${this._formatValue(this.cfg.minValue)} - ${this._formatValue(this.cfg.maxValue)}`;
         }
     }
 
@@ -266,6 +268,15 @@ export class RangeSlider {
         const s = step.toString();
         const decimals = s.includes(".") ? s.length - s.indexOf(".") - 1 : 0;
         return Number(snapped.toFixed(decimals));
+    }
+
+    _formatValue(value) {
+        const step = this.cfg.step.toString();
+        const decimals = step.includes(".")
+            ? step.length - step.indexOf(".") - 1
+            : 0;
+
+        return Number(value).toFixed(decimals);
     }
 
     _debounce(fn, wait) {

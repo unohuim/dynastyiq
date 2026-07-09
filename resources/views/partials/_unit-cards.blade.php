@@ -9,6 +9,8 @@
         $initial = $first !== '' ? mb_substr($first, 0, 1).'.' : '';
         return trim($initial.' '.$last);
     };
+    $displayMode = $displayMode ?? 'counts';
+    $displayMode = in_array($displayMode, ['counts', 'share'], true) ? $displayMode : 'counts';
 @endphp
 
 <div class="pt-4 grid gap-6 [grid-template-columns:repeat(auto-fill,minmax(320px,1fr))]">
@@ -177,12 +179,13 @@
                     'hitsF'=>$hitsF,'hitsA'=>$hitsA,
                     'blocksF'=>$blocksF,'blocksA'=>$blocksA,
                     'fow'=>$fow,'fol'=>$fol,
+                    'displayMode'=>$displayMode,
                 ])
             </div>
 
             {{-- Page 2 (Zones triangle) --}}
             <div x-show="activeSet===1" x-cloak class="min-h-[inherit] grid place-items-center">
-                @include('partials._triangle-zones', ['oz'=>$ozs,'dz'=>$dzs,'nz'=>$nzs])
+                @include('partials._triangle-zones', ['oz'=>$ozs,'dz'=>$dzs,'nz'=>$nzs,'displayMode'=>$displayMode])
             </div>
 
             {{-- Page 3 --}}
@@ -190,6 +193,7 @@
                 @include('partials._ring-set-page3', [
                     'pimF'=>$pimF,'pimA'=>$pimA,
                     'pensF'=>$pensF,'pensA'=>$pensA,
+                    'displayMode'=>$displayMode,
                 ])
             </div>
         </div>

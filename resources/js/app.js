@@ -7,6 +7,7 @@ import './components/StatsPage/stats-page.js';
 import './leagues-hub.js';
 import './community-hub.js';
 import './transactions.js';
+import './pages/stats-units.js';
 import './admin/player-triage.js';
 import './components/community-members-store';
 import { registerToastStack } from './components/toast-stack';

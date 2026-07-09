@@ -551,7 +551,7 @@
           label: status,
           className: status === 'RFA'
             ? 'bg-blue-50 text-blue-700 ring-blue-200'
-            : 'bg-red-50 text-red-700 ring-red-200',
+            : 'bg-green-50 text-green-700 ring-green-200',
         };
       },
       setCapSort(key){
@@ -1142,16 +1142,16 @@
                     <td
                       x-show="row.type === 'group'"
                       :colspan="4 + capSeasonColumns.length"
-                      class="bg-slate-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
+                      class="bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
                       x-text="row.label"
                     ></td>
-                    <td x-show="row.type === 'player'" class="sticky left-0 z-10 bg-white px-2 py-1.5">
+                    <td x-show="row.type === 'player'" class="sticky left-0 z-10 bg-white px-2 py-1">
                       <div class="flex min-w-56 items-center gap-2">
                         <template x-if="row.player.avatar_url">
-                          <img :src="row.player.avatar_url" alt="" class="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
+                          <img :src="row.player.avatar_url" alt="" class="h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
                         </template>
                         <template x-if="!row.player.avatar_url">
-                          <span class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="playerInitials(row.player)"></span>
+                          <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="playerInitials(row.player)"></span>
                         </template>
                         <div class="min-w-0">
                           <div class="truncate text-xs font-medium text-slate-900" x-text="row.player.name"></div>
@@ -1161,16 +1161,19 @@
                         </div>
                       </div>
                     </td>
-                    <td x-show="row.type === 'player'" class="px-1.5 py-1.5 pl-4 text-xs font-medium text-slate-700" x-text="capPositionLabel(row.player)"></td>
-                    <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right text-xs font-medium text-slate-700" x-text="row.player.age ?? '-'"></td>
+                    <td x-show="row.type === 'player'" class="px-1.5 py-1 pl-4 text-xs font-medium text-slate-700" x-text="capPositionLabel(row.player)"></td>
+                    <td x-show="row.type === 'player'" class="px-1 py-1 text-right text-xs font-medium text-slate-700" x-text="row.player.age ?? '-'"></td>
                     <template x-for="(column, index) in capSeasonColumns" :key="`${row.id}-${column.key}`">
-                      <td x-show="row.type === 'player'" class="px-1 py-1.5 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
+                      <td x-show="row.type === 'player'" class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
                         <template x-if="capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-'">
-                          <div class="text-xs font-semibold text-slate-900" x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label"></div>
+                          <span
+                            class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                            x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label"
+                          ></span>
                         </template>
                         <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capExpiryBadge(row.player, column.key)">
                           <span
-                            class="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1"
+                            class="inline-flex h-5 min-w-14 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1"
                             :class="capExpiryBadge(row.player, column.key).className"
                             x-text="capExpiryBadge(row.player, column.key).label"
                           ></span>
@@ -1180,7 +1183,7 @@
                         </template>
                       </td>
                     </template>
-                    <td x-show="row.type === 'player'" class="px-0 py-1.5" aria-hidden="true"></td>
+                    <td x-show="row.type === 'player'" class="px-0 py-1" aria-hidden="true"></td>
                   </tr>
                 </template>
                 <tr aria-hidden="true">
@@ -1189,11 +1192,16 @@
               </tbody>
               <tfoot class="border-t border-slate-200 bg-slate-50">
                 <tr>
-                  <th scope="row" colspan="3" class="px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
+                  <th scope="row" colspan="3" class="px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
                   <template x-for="(column, index) in capSeasonColumns" :key="`total-${column.key}`">
-                    <td class="px-1 py-1.5 text-right text-xs font-semibold text-slate-900" :class="index === 0 ? 'w-24 pl-8' : 'w-16'" x-text="capMoney(capTotals[column.key])"></td>
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                        x-text="capMoney(capTotals[column.key])"
+                      ></span>
+                    </td>
                   </template>
-                  <td class="px-0 py-1.5" aria-hidden="true"></td>
+                  <td class="px-0 py-1" aria-hidden="true"></td>
                 </tr>
               </tfoot>
             </table>

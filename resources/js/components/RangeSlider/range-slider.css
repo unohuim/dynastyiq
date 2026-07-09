@@ -83,8 +83,10 @@
     appearance: none;
     pointer-events: auto;
     /* re-enable for thumb */
+    cursor: pointer;
     width: var(--rs-thumb-size);
     height: var(--rs-thumb-size);
+    margin-top: calc((var(--rs-rail-height) - var(--rs-thumb-size)) / 2);
     border-radius: 50%;
     background: var(--rs-active);
     border: 2px solid white;
@@ -93,6 +95,7 @@
 
 .rs-input::-moz-range-thumb {
     pointer-events: auto;
+    cursor: pointer;
     width: var(--rs-thumb-size);
     height: var(--rs-thumb-size);
     border-radius: 50%;

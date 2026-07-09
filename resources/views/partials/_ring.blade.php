@@ -5,6 +5,8 @@
     $abbr    = (string)($chip['abbr'] ?? '');
     $split   = (string)($chip['split'] ?? '');
     $isZones = (bool)($chip['isZones'] ?? false);
+    $displayMode = $displayMode ?? 'counts';
+    $displayMode = in_array($displayMode, ['counts', 'share'], true) ? $displayMode : 'counts';
 
     $total = max(0, $for + $ag);
     $r = 36; $circ = 2 * M_PI * $r;
@@ -58,6 +60,7 @@
 
     $oColor = ($isZones && $arc !== '#22c55e') ? $arc : '#059669';
     $offset = $circ - ($circ * ($drawPct / 100));
+    $countText = $for . '/' . $ag;
 @endphp
 
 <div class="flex flex-col items-center">
@@ -79,9 +82,15 @@
             <div class="text-center leading-tight">
                 <div class="text-xs text-gray-600 font-semibold">{{ $abbr }}</div>
                 <div class="text-xl sm:text-2xl font-semibold tabular-nums text-gray-800">
-                    {{ $for }}<span class="text-gray-400">/</span>{{ $ag }}
+                    @if($displayMode === 'share')
+                        {{ $pctText }}
+                    @else
+                        {{ $for }}<span class="text-gray-400">/</span>{{ $ag }}
+                    @endif
                 </div>
-                <div class="text-[10px] text-gray-500 tabular-nums">{{ $pctText }}</div>
+                <div class="text-[10px] text-gray-500 tabular-nums">
+                    {{ $displayMode === 'share' ? $countText : $pctText }}
+                </div>
                 @if($split !== '')
                     <div class="text-[10px] text-gray-400">
                         @if($split === 'O/D')

@@ -9,6 +9,7 @@
             // ensure a visible red sliver when >0 but %≈0
             'minSweepDeg' => 10,
         ],
+        'displayMode' => $displayMode ?? 'counts',
     ])
     @include('partials._ring', [
         'chip' => [
@@ -18,5 +19,6 @@
             'reverse' => true,
             'minSweepDeg' => 10,
         ],
+        'displayMode' => $displayMode ?? 'counts',
     ])
 </div>
