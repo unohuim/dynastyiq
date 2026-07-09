@@ -109,6 +109,26 @@ class StatsUnitsController extends Controller
             $seasonId = $availableSeasons[0] ?? '';
         }
 
+        $teamOptions = DB::table('nhl_unit_game_strength_summaries as s')
+            ->join('nhl_units as u', 'u.id', '=', 's.unit_id')
+            ->leftJoin('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+            ->where('g.season_id', $seasonId)
+            ->where('g.game_type', $gameType)
+            ->whereIn('u.unit_type', $pos)
+            ->whereNotNull('s.team_abbrev')
+            ->distinct()
+            ->orderBy('s.team_abbrev')
+            ->pluck('s.team_abbrev')
+            ->map(static fn (mixed $team): string => strtoupper((string) $team))
+            ->filter()
+            ->values()
+            ->all();
+        $team = strtoupper((string) $request->get('team', ''));
+
+        if ($team !== '' && ! in_array($team, $teamOptions, true)) {
+            $team = '';
+        }
+
         $sumSelects = collect($this->totalFields)
             ->map(static fn (string $field): string => "SUM(s.{$field}) as {$field}")
             ->implode(', ');
@@ -123,8 +143,8 @@ class StatsUnitsController extends Controller
             ->where('g.season_id', $seasonId)
             ->where('g.game_type', $gameType)
             ->whereIn('u.unit_type', $pos)
-            ->when($request->filled('team'), function ($qq) use ($request) {
-                $qq->where('s.team_abbrev', strtoupper((string) $request->get('team')));
+            ->when($team !== '', function ($qq) use ($team) {
+                $qq->where('s.team_abbrev', $team);
             })
             ->groupBy('s.unit_id', 'u.unit_type', 'u.team_abbrev', 'g.season_id', 'g.game_type');
 
@@ -156,7 +176,8 @@ class StatsUnitsController extends Controller
             'sort'     => $sort,
             'dir'      => $dir,
             'perPage'  => $perPage,
-            'team'     => (string) $request->get('team', ''),
+            'team'     => $team,
+            'teamOptions' => $teamOptions,
             'pos'      => $pos,
             'availableSeasons' => $availableSeasons,
             'seasonId' => $seasonId,

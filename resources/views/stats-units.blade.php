@@ -128,6 +128,8 @@
             'maxValue' => $satfMax ?? $satfRangeMax,
         ];
         $posOptions  = ['F','D','PP','PK']; // include special teams
+        $teamOptions = collect($teamOptions ?? []);
+        $currentTeam = $team ?? request('team', '');
         $seasonOptions = collect($availableSeasons ?? []);
         $gameTypeOptions = [
             1 => 'Pre',
@@ -142,6 +144,7 @@
             pos:  @js($currentPos[0] ?? 'F'),
             sort: @js($currentSort),
             display: @js($currentDisplay),
+            team: @js($currentTeam),
             seasonId: @js($seasonId ?? ''),
             gameType: @js((string) ($gameType ?? 2)),
             filtersOpen:false,
@@ -188,6 +191,20 @@
                     <input type="hidden" name="sf_max" value="{{ $sfMax }}">
                     <input type="hidden" name="satf_min" value="{{ $satfMin }}">
                     <input type="hidden" name="satf_max" value="{{ $satfMax }}">
+
+                    <label class="sr-only" for="stats-units-team">Team</label>
+                    <select
+                        id="stats-units-team"
+                        name="team"
+                        x-model="team"
+                        @change="$refs.submit.click()"
+                        class="h-9 rounded-lg border border-gray-200 bg-white px-3 pr-8 text-sm font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                        <option value="">All teams</option>
+                        @foreach ($teamOptions as $teamOption)
+                            <option value="{{ $teamOption }}">{{ $teamOption }}</option>
+                        @endforeach
+                    </select>
 
                     <select
                         name="season_id"
