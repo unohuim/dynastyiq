@@ -56,7 +56,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'game-imports', 'triage', 'validations'];
+    const validInitialTabs = ['imports', 'platform-imports', 'game-imports', 'triage', 'validations'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';

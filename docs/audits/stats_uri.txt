@@ -1,0 +1,85 @@
+Stats URI Audit
+
+Findings
+
+High: /stats/units is not aligned with the JSON/event-driven model. It is a Blade-rendered GET form with hidden inputs and submit-triggered reloads in resources/views/stats-units.blade.php. The filter drawer UI is dynamic, but Apply submits the form, so the payload and cards are still server-page driven.
+
+High: /stats is already close to the desired model. It boots from an initial JSON payload and then fetches /api/stats for control changes through resources/views/stats/index.blade.php and resources/js/pages/stats-page.js. That should be the architecture to extend, not something to duplicate in /stats/units.
+
+High: the current stats payload client is hardcoded to resource=players in resources/js/pages/stats-payload-client.js. That blocks report type as a first-class concept. Units cannot cleanly live inside /stats until the client can ask for resource=units or, better, report=on_ice_units.
+
+Medium: /stats has a useful shell, but it mixes orchestration, controls, drawer rendering, slider rendering, and content routing in one class. This will get harder to manage once multiple report types are added.
+
+Medium: the unit cards are good as a visual/reporting format, but they are currently Blade partials with Alpine per-card state in resources/views/partials/_unit-cards.blade.php. To reuse them inside /stats, they should become a JavaScript renderer fed by a units payload.
+
+Recommendation
+
+Make line combos/on-ice units a Stats report type, not its own main nav link.
+
+Treat /stats as a Stats Workspace with a report switcher, not just a player stats page. The top-level nav remains Stats; inside it, the first control is Report, with options like:
+
+- Player Rankings
+- Fantasy Scoring
+- Roster / Ownership
+- On-Ice Units
+- Prospects
+- Future reports such as Trends, Teams, and Goalies
+
+For real estate, use this hierarchy:
+
+- Top control bar: Report, Season, Team/League, Game type
+- Secondary mode controls: Total / PGP / P60, Counts / Share, position/unit type
+- Filter icon opens drawer for advanced filters
+- Sort/display controls stay report-specific
+- Content area swaps renderer based on report type
+
+That keeps the page mentally stable. The user changes what report they are looking at first, then refines it.
+
+Target Shape
+
+The payload contract should become:
+
+{
+  "report": "players | on_ice_units",
+  "renderer": "table | player_cards | unit_cards",
+  "headings": [],
+  "data": [],
+  "settings": {
+    "sortable": [],
+    "defaultSort": "...",
+    "displayModes": [],
+    "controls": {}
+  },
+  "meta": {
+    "availableReports": [],
+    "availableSeasons": [],
+    "availableTeams": [],
+    "filterSchema": [],
+    "appliedFilters": {},
+    "total": 123
+  }
+}
+
+Then /stats has one shell and multiple renderers:
+
+- StatsShell
+- StatsControls
+- StatsFilterDrawer
+- StatsReportSwitcher
+- PlayerTableRenderer
+- PlayerMobileCardsRenderer
+- UnitCardsRenderer
+
+Migration Path
+
+1. Add report/resource state to StatsPageShell.
+2. Stop hardcoding resource=players; send resource or report.
+3. Add a JSON endpoint path for units, either through StatsController::payload() or a dedicated support builder reused by it.
+4. Convert the unit-card Blade partial into a JS UnitCardsRenderer.
+5. Move the /stats/units controls into schema-driven payload metadata.
+6. Remove Line Combos from primary nav once /stats?report=on_ice_units works.
+7. Keep /stats/units temporarily as a redirect or compatibility route.
+
+Product Call
+
+The unit cards are worth keeping. They are more of a report view than a standalone product area. The right mental model is: Stats is the destination; On-Ice Units is one reporting type inside it.

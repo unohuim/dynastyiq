@@ -29,6 +29,9 @@
       scoringAlignmentCategories: @js($scoringAlignmentCategories ?? []),
       manualMappings: @js($manualScoringMappings ?? []),
       availableStatFields: @js($availableStatFields ?? []),
+      scoringMappingOptions: @js($scoringMappingOptions ?? []),
+      scoringMappingQueries: {},
+      scoringMappingOpen: {},
       searchPlayers: @js($searchPlayers ?? []),
       scoringSettingsUpdateUrl: @js($scoringSettingsUpdateUrl ?? ''),
       capSettingsUpdateUrl: @js($capSettingsUpdateUrl ?? ''),
@@ -67,6 +70,113 @@
       leagueStatsLoading: false,
       leagueStatsError: '',
       leagueStatsShell: null,
+
+      scoringAlignmentStatusLabel(category){
+        const status = String(category?.alignment_status ?? '').replaceAll('_', ' ');
+
+        return status ? status : '';
+      },
+      scoringAlignmentStatusClass(category){
+        const status = category?.alignment_status;
+
+        if (status === 'unsupported') return 'bg-red-50 text-red-700';
+        if (status === 'planned_derivation') return 'bg-amber-50 text-amber-700';
+        if (status === 'ignored_deprecated') return 'bg-slate-100 text-slate-600';
+
+        return 'bg-emerald-50 text-emerald-700';
+      },
+      normalizeScoringMappingKey(value){
+        const key = String(value ?? '').trim();
+
+        if (!key || key.includes(':')) return key;
+
+        return `stat:${key}`;
+      },
+      categoryAutoMappingKey(category){
+        if (category?.auto_mapping_key) return category.auto_mapping_key;
+        if (category?.dictionary_provider_label) return `dictionary:fantrax:${category.dictionary_provider_label}`;
+        if (category?.auto_stat_key) return `stat:${category.auto_stat_key}`;
+
+        return '';
+      },
+      categorySelectedMappingKey(category){
+        const id = String(category?.id ?? '');
+        const manual = this.normalizeScoringMappingKey(this.manualMappings[id] ?? '');
+
+        return manual || this.categoryAutoMappingKey(category);
+      },
+      scoringMappingOptionByKey(key){
+        const normalized = this.normalizeScoringMappingKey(key);
+
+        return (this.scoringMappingOptions || []).find((option) => option.key === normalized) ?? null;
+      },
+      scoringMappingDisplay(category){
+        const option = this.scoringMappingOptionByKey(this.categorySelectedMappingKey(category));
+
+        if (!option) return 'No mapped option';
+
+        return option.type === 'dictionary' ? option.label : `${option.label} (${option.stat_key})`;
+      },
+      scoringMappingQuery(category){
+        const id = String(category?.id ?? '');
+
+        return this.scoringMappingQueries[id] ?? this.scoringMappingDisplay(category);
+      },
+      openScoringMappingCombobox(category){
+        const id = String(category?.id ?? '');
+        this.scoringMappingQueries[id] = this.scoringMappingDisplay(category);
+        this.scoringMappingOpen[id] = true;
+      },
+      closeScoringMappingCombobox(category){
+        const id = String(category?.id ?? '');
+        this.scoringMappingOpen[id] = false;
+        this.scoringMappingQueries[id] = this.scoringMappingDisplay(category);
+      },
+      scoringMappingFilteredOptions(category){
+        const id = String(category?.id ?? '');
+        const query = String(this.scoringMappingQueries[id] ?? '').toLowerCase().trim();
+        const options = this.scoringMappingOptions || [];
+
+        if (!query) return options.slice(0, 80);
+
+        return options.filter((option) => {
+          return [
+            option.label,
+            option.description,
+            option.formula,
+            option.stat_key,
+            option.alignment_status,
+            option.type,
+          ].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+        }).slice(0, 80);
+      },
+      selectScoringMappingOption(category, option){
+        const id = String(category?.id ?? '');
+        const autoKey = this.categoryAutoMappingKey(category);
+
+        if (option.key === autoKey) {
+          delete this.manualMappings[id];
+        } else {
+          this.manualMappings[id] = option.key;
+        }
+
+        this.scoringMappingQueries[id] = option.type === 'dictionary' ? option.label : `${option.label} (${option.stat_key})`;
+        this.scoringMappingOpen[id] = false;
+      },
+      clearScoringMappingOverride(category){
+        const id = String(category?.id ?? '');
+        delete this.manualMappings[id];
+        this.scoringMappingQueries[id] = this.scoringMappingDisplay(category);
+        this.scoringMappingOpen[id] = false;
+      },
+      scoringMappingOptionClass(option){
+        const status = option?.alignment_status;
+
+        if (status === 'unsupported') return 'text-red-700';
+        if (status === 'planned_derivation') return 'text-amber-700';
+
+        return 'text-slate-900';
+      },
 
       init(){
         window.addEventListener('diq:stats-page-ready', () => {
@@ -660,6 +770,9 @@
           this.scoringCategories = payload.scoringCategories ?? this.scoringCategories;
           this.scoringAlignmentCategories = payload.scoringAlignmentCategories ?? this.scoringAlignmentCategories;
           this.manualMappings = payload.manualScoringMappings ?? this.manualMappings;
+          this.scoringMappingOptions = payload.scoringMappingOptions ?? this.scoringMappingOptions;
+          this.scoringMappingQueries = {};
+          this.scoringMappingOpen = {};
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
@@ -1255,7 +1368,7 @@
           >
             <div>
               <div class="text-sm font-semibold text-slate-950">Scoring category alignment</div>
-              <div class="mt-1 text-xs text-slate-500">Map {{ ucfirst((string) $league->platform) }} categories to DynastyIQ stat fields.</div>
+              <div class="mt-1 text-xs text-slate-500">Map {{ ucfirst((string) $league->platform) }} categories to DynastyIQ scoring options.</div>
             </div>
             <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5 shrink-0 text-slate-400 transition" :class="scoringAlignmentOpen ? 'rotate-180' : ''" aria-hidden="true">
               <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
@@ -1273,27 +1386,98 @@
                         <span
                           x-show="category.mapping_source"
                           class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
-                          :class="category.mapping_source === 'manual' ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'"
+                          :class="category.mapping_source === 'manual' ? 'bg-indigo-50 text-indigo-700' : scoringAlignmentStatusClass(category)"
                           x-text="category.mapping_source"
                         ></span>
+                        <span
+                          x-show="category.alignment_status"
+                          class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
+                          :class="scoringAlignmentStatusClass(category)"
+                          x-text="scoringAlignmentStatusLabel(category)"
+                        ></span>
                       </div>
-                      <div class="mt-1 text-xs text-slate-500">
-                        <span x-show="category.value !== null && category.value !== undefined">Value <span x-text="category.value"></span></span>
-                        <span x-show="category.auto_stat_key">Auto <span class="font-mono" x-text="category.auto_stat_key"></span></span>
+                      <div class="mt-1 space-y-1 text-xs text-slate-500">
+                        <div>
+                          <span x-show="category.value !== null && category.value !== undefined">Value <span x-text="category.value"></span></span>
+                          <span x-show="category.auto_stat_key">Auto <span class="font-mono" x-text="category.auto_stat_key"></span></span>
+                        </div>
+                        <div x-show="category.dictionary_provider_label">
+                          DynastyIQ <span class="font-medium text-slate-700" x-text="category.dictionary_provider_label"></span>
+                        </div>
+                        <div x-show="category.formula">
+                          Formula <span class="font-mono text-slate-700" x-text="category.formula"></span>
+                        </div>
+                        <div x-show="category.support_message" class="text-amber-700" x-text="category.support_message"></div>
                       </div>
                     </div>
-                    <label class="block">
-                      <span class="sr-only">DynastyIQ stat field</span>
-                      <select
-                        x-model="manualMappings[String(category.id)]"
-                        class="block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                    <div class="relative" @click.outside="closeScoringMappingCombobox(category)">
+                      <label class="block">
+                        <span class="sr-only">DynastyIQ scoring option</span>
+                        <input
+                          type="text"
+                          class="block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                          :value="scoringMappingQuery(category)"
+                          @focus="openScoringMappingCombobox(category)"
+                          @input="
+                            scoringMappingQueries[String(category.id)] = $event.target.value;
+                            scoringMappingOpen[String(category.id)] = true;
+                          "
+                          @keydown.escape.prevent="closeScoringMappingCombobox(category)"
+                          @keydown.enter.prevent="
+                            const first = scoringMappingFilteredOptions(category)[0];
+                            if (first) selectScoringMappingOption(category, first);
+                          "
+                          placeholder="Search DynastyIQ scoring options"
+                          role="combobox"
+                          :aria-expanded="Boolean(scoringMappingOpen[String(category.id)]).toString()"
+                        >
+                      </label>
+                      <button
+                        type="button"
+                        class="absolute inset-y-0 right-0 flex items-center px-2 text-slate-400 hover:text-slate-600"
+                        @click="scoringMappingOpen[String(category.id)] ? closeScoringMappingCombobox(category) : openScoringMappingCombobox(category)"
+                        aria-label="Toggle scoring options"
                       >
-                        <option value="">Use auto / none</option>
-                        <template x-for="field in availableStatFields" :key="field.key">
-                          <option :value="field.key" x-text="`${field.label} (${field.key})`"></option>
+                        <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                          <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+                        </svg>
+                      </button>
+
+                      <div
+                        x-show="scoringMappingOpen[String(category.id)]"
+                        x-cloak
+                        class="absolute right-0 z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black/5"
+                      >
+                        <button
+                          type="button"
+                          class="block w-full px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
+                          @click="clearScoringMappingOverride(category)"
+                        >
+                          <span class="block font-medium" x-text="`Use recognized: ${scoringMappingDisplay(category)}`"></span>
+                          <span class="block truncate text-xs text-slate-500">Clear manual override</span>
+                        </button>
+                        <template x-for="option in scoringMappingFilteredOptions(category)" :key="option.key">
+                          <button
+                            type="button"
+                            class="block w-full px-3 py-2 text-left hover:bg-slate-50"
+                            :class="option.key === categorySelectedMappingKey(category) ? 'bg-indigo-50' : ''"
+                            @click="selectScoringMappingOption(category, option)"
+                          >
+                            <span class="flex items-center justify-between gap-3">
+                              <span class="truncate font-medium" :class="scoringMappingOptionClass(option)" x-text="option.label"></span>
+                              <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600" x-text="option.type"></span>
+                            </span>
+                            <span class="mt-0.5 block truncate text-xs text-slate-500" x-text="option.description || option.formula || option.stat_key || option.alignment_status"></span>
+                          </button>
                         </template>
-                      </select>
-                    </label>
+                        <div
+                          x-show="scoringMappingFilteredOptions(category).length === 0"
+                          class="px-3 py-3 text-sm text-slate-500"
+                        >
+                          No scoring options found.
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </template>
                 <div x-show="scoringAlignmentCategories.length === 0" class="rounded-md bg-slate-50 px-3 py-4 text-sm text-slate-500">

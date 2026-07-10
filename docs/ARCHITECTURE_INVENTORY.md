@@ -771,7 +771,7 @@ php artisan nhl:discover --date=2026-01-15
 - `app/Services/SumNhlSeasonStats.php`
 
 **Purpose:**
-Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available.
+Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie decisions preserve regulation, overtime, and shootout splits before season aggregation.
 
 **When to Use:**
 Implementing or changing a single NHL import stage.
@@ -1362,6 +1362,7 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 - `app/Services/FantraxLeagueService.php`
 - `app/Console/Commands/FantraxInspectLogosCommand.php`
 - `app/Services/SyncFantraxLeague.php`
+- `app/Services/FantraxScoringCategoryMapper.php`
 - `app/Services/FantraxLogoSyncService.php`
 - `app/Support/FantraxLogoBrowserProfile.php`
 - `app/Services/ImportFantraxLeagues.php`
@@ -1380,6 +1381,7 @@ Map Fantrax leagues, teams, rosters, and player identities into platform-neutral
 Provider league and team logo URLs may be stored on the platform-neutral league and team rows when Fantrax exposes them. Fantrax team logos must come from explicit provider payload fields, not derived team-id paths.
 Authenticated browser logo extraction backend code is league-scoped and persists only explicit provider logo URLs when the browser profile is ready, but the commissioner-facing UI entry point is hibernated until a per-commissioner collection approach replaces the shared server browser profile model.
 Completed browser logo extraction may broadcast a user-scoped logo update event so the league list can update without a page refresh.
+Fantrax league scoring categories are enriched from the platform category mapping dictionary during league sync, with manual mappings overriding dictionary auto mappings while preserving support metadata.
 
 **When to Use:**
 Syncing Fantrax leagues, updating rosters, resolving Fantrax player identity, or rendering league availability.
@@ -1392,6 +1394,7 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 - `SyncFantraxTeamJob`
 - `SyncFantraxRosterMembershipsForLinkedIdentity`
 - `FantraxLeagueService`
+- `FantraxScoringCategoryMapper`
 - `FantraxLogoSyncService`
 - `leagues.team-logos.sync`
 - `community.leagues.team-logos.sync`
@@ -1403,6 +1406,37 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 **Example Usage:**
 ```php
 dispatch(new SyncFantraxLeagueJob($platformLeague->id));
+```
+
+---
+
+### Platform Category Mapping Import
+
+**Name:** Platform Category Mapping Import
+**Type:** Admin Import Dictionary
+**Location:**
+- `app/Services/ImportPlatformCategoryMappings.php`
+- `app/Console/Commands/ImportFantraxCategoryDefinitionsCommand.php`
+- `app/Models/FantasyScoringCategoryMapping.php`
+- `database/migrations/2026_07_09_000000_create_fantasy_scoring_category_mappings_table.php`
+
+**Purpose:**
+Import provider scoring category definitions and DynastyIQ stat alignment metadata into a platform-neutral dictionary table.
+
+**When to Use:**
+Importing Fantrax category definition templates, preparing provider scoring settings for supportability checks, or adding category dictionaries for future fantasy platforms.
+
+**When Not to Use:**
+Syncing league rosters, importing player stats, or running NHL game and season stat pipelines.
+
+**Public Interface:**
+- `AdminImports::sources()`
+- `fantrax:import-category-definitions`
+- `ImportPlatformCategoryMappings::import()`
+
+**Example Usage:**
+```bash
+php artisan fantrax:import-category-definitions --path=docs/import-templates/fantrax_category_alignment.csv
 ```
 
 ---

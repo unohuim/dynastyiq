@@ -1,0 +1,28 @@
+name: Platform Category Mapping Import
+type: Admin Import Dictionary
+location:
+  - app/Services/ImportPlatformCategoryMappings.php
+  - app/Console/Commands/ImportFantraxCategoryDefinitionsCommand.php
+  - app/Models/FantasyScoringCategoryMapping.php
+  - database/migrations/2026_07_09_000000_create_fantasy_scoring_category_mappings_table.php
+purpose: Import provider scoring category definitions and DynastyIQ stat alignment metadata into a platform-neutral dictionary table.
+when_to_use:
+  - Importing Fantrax category definition templates.
+  - Preparing provider scoring settings for supportability checks.
+  - Adding category dictionaries for future fantasy platforms.
+when_not_to_use:
+  - Syncing league rosters.
+  - Importing player stats.
+  - Running NHL game or season stat pipelines.
+rules:
+  - Category dictionary imports must run through the admin import registry.
+  - The CSV template is an import source, not a runtime dependency.
+  - Platform and provider label form the provider-boundary unique key.
+  - Alignment status values must remain documented in docs/ENUMS.md.
+  - Unsupported category mappings must be preserved instead of dropped so league connection flows can warn users.
+public_interface:
+  - AdminImports::sources()
+  - fantrax:import-category-definitions
+  - ImportPlatformCategoryMappings::import()
+example_usage: |
+  php artisan fantrax:import-category-definitions --path=docs/import-templates/fantrax_category_alignment.csv

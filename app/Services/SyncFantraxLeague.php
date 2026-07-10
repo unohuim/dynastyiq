@@ -22,6 +22,7 @@ final class SyncFantraxLeague
 
     public function __construct(
         private readonly SyncFantraxDraftState $draftStateSync,
+        private readonly FantraxScoringCategoryMapper $scoringCategoryMapper,
     ) {
     }
 
@@ -463,7 +464,9 @@ final class SyncFantraxLeague
         $manualMappings = is_array($existingScoringSettings['manual_mappings'] ?? null)
             ? $existingScoringSettings['manual_mappings']
             : [];
-        $normalizedCategories = $this->fantraxScoringCategoryPayloads($leagueInfo);
+        $normalizedCategories = $this->scoringCategoryMapper->enrich(
+            $this->fantraxScoringCategoryPayloads($leagueInfo),
+        );
 
         if ($normalizedCategories === []) {
             $league->forceFill([
@@ -512,9 +515,10 @@ final class SyncFantraxLeague
             ?? data_get($payload, 'scoringCategories')
             ?? [];
         $rows = [];
+        $shortAliases = [];
 
         foreach ((array) $groups as $groupBlock) {
-            $groupCode = (string) (data_get($groupBlock, 'group.code') ?? 'UNKNOWN');
+            $groupCode = $this->scoringGroupCode((string) (data_get($groupBlock, 'group.code') ?? 'UNKNOWN'));
 
             foreach ((array) data_get($groupBlock, 'configs', []) as $config) {
                 $category = data_get($config, 'scoringCategory', []);
@@ -526,20 +530,28 @@ final class SyncFantraxLeague
 
                 $key = $groupCode . ':' . $code;
                 $points = $this->parseFantraxPoints(data_get($category, 'points'));
+                $shortName = (string) (data_get($category, 'shortName') ?? $code);
+                $autoStatKey = $this->autoStatKey($shortName, data_get($category, 'name'));
 
                 $rows[$key] ??= [
                     'id' => $key,
-                    'label' => (string) (data_get($category, 'name') ?: data_get($category, 'shortName') ?: $code),
+                    'label' => (string) (data_get($category, 'name') ?: $shortName ?: $code),
                     'name' => (string) (data_get($category, 'name') ?? ''),
-                    'short' => (string) (data_get($category, 'shortName') ?? $code),
+                    'short' => $shortName,
                     'value' => $points,
-                    'auto_stat_key' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')),
-                    'stat_key' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')),
-                    'is_mapped' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')) !== null,
-                    'mapping_source' => $this->autoStatKey(data_get($category, 'shortName'), data_get($category, 'name')) !== null ? 'auto' : null,
+                    'auto_stat_key' => $autoStatKey,
+                    'stat_key' => $autoStatKey,
+                    'is_mapped' => $autoStatKey !== null,
+                    'mapping_source' => $autoStatKey !== null ? 'auto' : null,
                     'position_values' => [],
                     'raw_payload' => $category,
                 ];
+
+                $alias = $this->scoringAliasKey($groupCode, $shortName);
+
+                if ($alias !== null) {
+                    $shortAliases[$alias] = $key;
+                }
 
                 $position = (string) (data_get($config, 'position.code') ?? 'DEFAULT');
                 $rows[$key]['position_values'][$position] = $points;
@@ -548,25 +560,64 @@ final class SyncFantraxLeague
 
         foreach ((array) $simple as $group => $categories) {
             foreach ((array) $categories as $short => $value) {
-                $key = (string) $group . ':' . (string) $short;
+                $groupCode = $this->scoringGroupCode((string) $group);
+                $shortCode = (string) $short;
+                $alias = $this->scoringAliasKey($groupCode, $shortCode);
+                $key = $alias !== null && isset($shortAliases[$alias])
+                    ? $shortAliases[$alias]
+                    : $groupCode . ':' . $shortCode;
+                $autoStatKey = $this->autoStatKey($shortCode, null);
 
                 $rows[$key] ??= [
                     'id' => $key,
-                    'label' => (string) $short,
+                    'label' => $shortCode,
                     'name' => '',
-                    'short' => (string) $short,
+                    'short' => $shortCode,
                     'value' => is_array($value) ? null : $this->parseFantraxPoints($value),
-                    'auto_stat_key' => $this->autoStatKey((string) $short, null),
-                    'stat_key' => $this->autoStatKey((string) $short, null),
-                    'is_mapped' => $this->autoStatKey((string) $short, null) !== null,
-                    'mapping_source' => $this->autoStatKey((string) $short, null) !== null ? 'auto' : null,
+                    'auto_stat_key' => $autoStatKey,
+                    'stat_key' => $autoStatKey,
+                    'is_mapped' => $autoStatKey !== null,
+                    'mapping_source' => $autoStatKey !== null ? 'auto' : null,
                     'position_values' => [],
                     'raw_payload' => $value,
                 ];
+
+                if (! is_array($value)) {
+                    $rows[$key]['value'] = $this->parseFantraxPoints($value);
+                }
             }
         }
 
         return array_values($rows);
+    }
+
+    /**
+     * Build a stable alias key for matching Fantrax rich scoring rows to short-code rows.
+     */
+    private function scoringAliasKey(string $groupCode, string $shortName): ?string
+    {
+        $groupCode = trim($groupCode);
+        $shortName = strtoupper(trim($shortName));
+
+        if ($groupCode === '' || $shortName === '') {
+            return null;
+        }
+
+        return $groupCode . ':' . $shortName;
+    }
+
+    /**
+     * Normalize Fantrax shorthand scoring group keys to their rich group codes.
+     */
+    private function scoringGroupCode(string $groupCode): string
+    {
+        $groupCode = strtoupper(trim($groupCode));
+
+        return match ($groupCode) {
+            'SKATING' => 'HOCKEY_SKATING',
+            'GOALIE' => 'HOCKEY_GOALIE',
+            default => $groupCode !== '' ? $groupCode : 'UNKNOWN',
+        };
     }
 
     /**
@@ -588,6 +639,11 @@ final class SyncFantraxLeague
                 $category['stat_key'] = $statKey;
                 $category['is_mapped'] = $statKey !== null && $statKey !== '';
                 $category['mapping_source'] = $manualStatKey ? 'manual' : ($category['mapping_source'] ?? null);
+
+                if ($manualStatKey) {
+                    $category['is_supported'] = true;
+                    $category['support_message'] = null;
+                }
 
                 return $category;
             })

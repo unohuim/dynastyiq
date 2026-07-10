@@ -16,17 +16,19 @@ class AdminImports
     public function sources()
     {
         return collect([
-            ['key' => 'nhl', 'label' => 'NHL Players', 'command' => 'nhl:import', 'options' => ['--players' => true]],
+            ['key' => 'nhl', 'label' => 'NHL Players', 'group' => 'player', 'command' => 'nhl:import', 'options' => ['--players' => true]],
             [
                 'key' => 'nhl-resolve-players',
                 'label' => 'Resolve NHL Players',
+                'group' => 'player',
                 'command' => 'nhl:resolve',
                 'options' => ['--players' => true, '--inline' => true],
             ],
-            ['key' => 'fantrax', 'label' => 'Fantrax Players', 'command' => 'fx:import', 'options' => ['--players' => true]],
+            ['key' => 'fantrax', 'label' => 'Fantrax Players', 'group' => 'player', 'command' => 'fx:import', 'options' => ['--players' => true]],
             [
                 'key' => 'yahoo',
                 'label' => 'Yahoo Players',
+                'group' => 'player',
                 'run_route' => 'admin.yahoo.players.import',
                 'options' => [
                     'all_players' => true,
@@ -34,7 +36,14 @@ class AdminImports
                 ],
                 'can_retry' => false,
             ],
-            ['key' => 'contracts', 'label' => 'Contracts', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
+            ['key' => 'contracts', 'label' => 'Contracts', 'group' => 'player', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
+            [
+                'key' => 'fantrax-category-definitions',
+                'label' => 'Fantrax Categories Definitions',
+                'group' => 'platform',
+                'command' => 'fantrax:import-category-definitions',
+                'options' => ['--path' => 'docs/import-templates/fantrax_category_alignment.csv'],
+            ],
         ]);
     }
 

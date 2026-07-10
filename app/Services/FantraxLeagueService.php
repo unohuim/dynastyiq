@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use App\Events\FantraxLeagueCreated;
 use App\Events\FantraxLeagueUpdated;
+use App\Jobs\SyncFantraxLeagueJob;
 
 class FantraxLeagueService
 {
@@ -124,6 +125,8 @@ class FantraxLeagueService
                         $keys + $pivot + ['sort_order' => $nextSortOrder, 'created_at' => $now]
                     );
                 }
+
+                SyncFantraxLeagueJob::dispatch((int) $platformLeague->id, (int) $user->id);
             }
         }
 

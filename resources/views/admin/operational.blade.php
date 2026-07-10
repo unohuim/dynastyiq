@@ -1,3 +1,8 @@
+@php
+    $playerImports = collect($imports)->where('group', 'player')->values();
+    $platformImports = collect($imports)->where('group', 'platform')->values();
+@endphp
+
 <div class="py-6">
     <div
         class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"
@@ -38,6 +43,14 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    @click="setTab('platform-imports')"
+                    :class="activeTab === 'platform-imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Platform Imports
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
                     @click="setTab('validations')"
                     :class="activeTab === 'validations' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -57,7 +70,71 @@
         <div class="py-4">
             <div x-show="activeTab === 'imports'" x-cloak>
                 <div class="divide-y divide-gray-200 border-y border-gray-200 bg-white">
-                    @foreach($imports as $import)
+                    @foreach($playerImports as $import)
+                        <div class="px-4 py-4">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div class="min-w-0">
+                                    <div class="text-sm font-semibold text-gray-900">{{ $import['label'] }}</div>
+                                    <div class="mt-1 text-sm text-gray-600">
+                                        Last run:
+                                        <span x-text="formatLastRun('{{ $import['key'] }}')"></span>
+                                    </div>
+                                </div>
+                                <x-primary-button
+                                    type="button"
+                                    x-on:click="startImport('{{ $import['key'] }}')"
+                                    x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
+                                >
+                                    Run Now
+                                </x-primary-button>
+                            </div>
+
+                            <div
+                                class="mt-4 space-y-2"
+                                x-show="shouldShowImportProgress('{{ $import['key'] }}')"
+                                x-cloak
+                            >
+                                <div class="flex items-center justify-between gap-3 text-xs text-gray-600">
+                                    <span x-text="importProgressText('{{ $import['key'] }}')"></span>
+                                    <span x-text="`${importProgressPercentage('{{ $import['key'] }}')}%`"></span>
+                                </div>
+                                <div class="h-2 overflow-hidden rounded-full bg-gray-200">
+                                    <div
+                                        class="h-full rounded-full bg-indigo-600 transition-all duration-300"
+                                        x-bind:style="`width: ${importProgressPercentage('{{ $import['key'] }}')}%`"
+                                    ></div>
+                                </div>
+                                <div class="text-xs text-gray-500" x-text="importProgressDetailText('{{ $import['key'] }}')"></div>
+                            </div>
+
+                            <div class="mt-4 space-y-2">
+                                <button
+                                    type="button"
+                                    class="text-sm font-semibold text-indigo-600 hover:text-indigo-700"
+                                    x-on:click="toggleStream('{{ $import['key'] }}')"
+                                >
+                                    <span x-text="streams['{{ $import['key'] }}']?.open ? 'Hide Output' : 'Show Output'"></span>
+                                </button>
+                                <div
+                                    class="h-40 overflow-y-auto bg-gray-950 p-3 font-mono text-xs text-green-200"
+                                    x-show="streams['{{ $import['key'] }}']?.open"
+                                >
+                                    <template x-if="(streams['{{ $import['key'] }}']?.messages?.length ?? 0) === 0">
+                                        <div class="text-gray-400">Awaiting output...</div>
+                                    </template>
+                                    <template x-for="(entry, idx) in streams['{{ $import['key'] }}']?.messages" :key="idx">
+                                        <div class="whitespace-pre-wrap" x-text="entry.message"></div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'platform-imports'" x-cloak>
+                <div class="divide-y divide-gray-200 border-y border-gray-200 bg-white">
+                    @foreach($platformImports as $import)
                         <div class="px-4 py-4">
                             <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                 <div class="min-w-0">

@@ -11,6 +11,7 @@ use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
+use App\Models\FantasyScoringCategoryMapping;
 use App\Models\IntegrationSecret;
 use App\Models\PlatformTeam;
 use App\Models\Player;
@@ -29,6 +30,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -61,6 +63,9 @@ final class LeagueController extends Controller
         ['key' => 'wins', 'label' => 'Wins'],
         ['key' => 'losses', 'label' => 'Losses'],
         ['key' => 'ot_losses', 'label' => 'Overtime Losses'],
+        ['key' => 'overtime_wins', 'label' => 'Overtime Wins'],
+        ['key' => 'shootout_wins', 'label' => 'Shootout Wins'],
+        ['key' => 'shootout_losses', 'label' => 'Shootout Losses'],
         ['key' => 'sv', 'label' => 'Saves'],
         ['key' => 'sa', 'label' => 'Shots Against'],
         ['key' => 'ga', 'label' => 'Goals Against'],
@@ -126,6 +131,7 @@ final class LeagueController extends Controller
             'scoringAlignmentCategories' => $activeLeague ? $this->scoringAlignmentCategoriesPayload($activeLeague) : [],
             'manualScoringMappings' => $activeLeague ? $this->manualScoringMappingsPayload($activeLeague) : [],
             'availableStatFields' => $this->availableStatFieldsPayload(),
+            'scoringMappingOptions' => $this->scoringMappingOptionsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
             'capSettingsUpdateUrl' => $activeLeague ? route('leagues.cap-settings.update', $activeLeague->id) : '',
@@ -164,6 +170,7 @@ final class LeagueController extends Controller
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
             'availableStatFields' => $this->availableStatFieldsPayload(),
+            'scoringMappingOptions' => $this->scoringMappingOptionsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $league->id),
@@ -248,13 +255,17 @@ final class LeagueController extends Controller
         $league = $leagueAccess->activeLeaguesForUser($user)
             ->where('platform_leagues.id', $leagueId)
             ->firstOrFail();
-        $statKeys = collect($this->availableStatFieldsPayload())->pluck('key')->all();
+        $mappingOptions = $this->scoringMappingOptionsPayload();
+        $mappingOptionKeys = collect($mappingOptions)->pluck('key')->all();
+        $legacyStatKeys = collect($this->availableStatFieldsPayload())->pluck('key')->all();
         $validated = $request->validate([
             'mappings' => ['nullable', 'array'],
-            'mappings.*' => ['nullable', 'string', Rule::in($statKeys)],
+            'mappings.*' => ['nullable', 'string', Rule::in(array_merge($mappingOptionKeys, $legacyStatKeys))],
         ]);
         $manualMappings = collect($validated['mappings'] ?? [])
-            ->mapWithKeys(static fn (mixed $value, mixed $key): array => [(string) $key => (string) $value])
+            ->mapWithKeys(fn (mixed $value, mixed $key): array => [
+                (string) $key => $this->normalizeScoringMappingKey((string) $value),
+            ])
             ->filter(static fn (string $value): bool => $value !== '')
             ->all();
         $scoringSettings = is_array($league->scoring_settings) ? $league->scoring_settings : [];
@@ -277,6 +288,7 @@ final class LeagueController extends Controller
             'scoringCategories' => $this->scoringCategoriesPayload($league),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
+            'scoringMappingOptions' => $this->scoringMappingOptionsPayload(),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
@@ -861,6 +873,7 @@ final class LeagueController extends Controller
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($activeLeague),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($activeLeague),
             'availableStatFields' => $this->availableStatFieldsPayload(),
+            'scoringMappingOptions' => $this->scoringMappingOptionsPayload(),
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $activeLeague->id),
@@ -2344,6 +2357,12 @@ final class LeagueController extends Controller
                     'stat_key' => $category['stat_key'] ?? null,
                     'is_mapped' => filled($category['stat_key'] ?? null),
                     'mapping_source' => $category['mapping_source'] ?? null,
+                    'dictionary_provider_label' => $category['dictionary_provider_label'] ?? null,
+                    'alignment_status' => $category['alignment_status'] ?? null,
+                    'formula' => $category['formula'] ?? null,
+                    'required_schema_columns' => $category['required_schema_columns'] ?? [],
+                    'is_supported' => $category['is_supported'] ?? filled($category['stat_key'] ?? null),
+                    'support_message' => $category['support_message'] ?? null,
                 ];
             })
             ->filter()
@@ -2365,7 +2384,7 @@ final class LeagueController extends Controller
 
         return collect(array_is_list($settings) ? $settings : array_values($settings))
             ->filter(static fn (mixed $category): bool => is_array($category))
-            ->map(static function (array $category): array {
+            ->map(function (array $category): array {
                 return [
                     'id' => (string) ($category['id'] ?? $category['label'] ?? $category['name'] ?? ''),
                     'label' => (string) ($category['label'] ?? $category['short'] ?? $category['name'] ?? ''),
@@ -2373,9 +2392,17 @@ final class LeagueController extends Controller
                     'short' => (string) ($category['short'] ?? ''),
                     'value' => $category['points'] ?? $category['value'] ?? null,
                     'auto_stat_key' => $category['auto_stat_key'] ?? null,
+                    'auto_mapping_key' => $category['auto_mapping_key'] ?? $this->autoMappingKey($category),
+                    'selected_mapping_key' => $category['selected_mapping_key'] ?? null,
                     'stat_key' => $category['stat_key'] ?? null,
                     'is_mapped' => filled($category['stat_key'] ?? null),
                     'mapping_source' => $category['mapping_source'] ?? null,
+                    'dictionary_provider_label' => $category['dictionary_provider_label'] ?? null,
+                    'alignment_status' => $category['alignment_status'] ?? null,
+                    'formula' => $category['formula'] ?? null,
+                    'required_schema_columns' => $category['required_schema_columns'] ?? [],
+                    'is_supported' => $category['is_supported'] ?? filled($category['stat_key'] ?? null),
+                    'support_message' => $category['support_message'] ?? null,
                 ];
             })
             ->filter(static fn (array $category): bool => $category['id'] !== '' && $category['label'] !== '')
@@ -2413,6 +2440,65 @@ final class LeagueController extends Controller
     }
 
     /**
+     * Build stat and dictionary scoring options exposed to the scoring alignment combobox.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function scoringMappingOptionsPayload(): array
+    {
+        $statOptions = collect($this->availableStatFieldsPayload())
+            ->map(static fn (array $field): array => [
+                'key' => 'stat:' . $field['key'],
+                'type' => 'stat',
+                'label' => $field['label'],
+                'description' => $field['key'],
+                'stat_key' => $field['key'],
+                'formula' => $field['key'],
+                'alignment_status' => 'direct',
+                'required_schema_columns' => [$field['key']],
+                'is_supported' => true,
+                'support_message' => null,
+            ]);
+
+        if (! Schema::hasTable('fantasy_scoring_category_mappings')) {
+            return $statOptions->values()->all();
+        }
+
+        $dictionaryOptions = FantasyScoringCategoryMapping::query()
+            ->where('platform', 'fantrax')
+            ->orderBy('provider_label')
+            ->get()
+            ->map(static function (FantasyScoringCategoryMapping $mapping): array {
+                $columns = is_array($mapping->required_schema_columns)
+                    ? array_values($mapping->required_schema_columns)
+                    : [];
+
+                return [
+                    'key' => 'dictionary:fantrax:' . $mapping->provider_label,
+                    'type' => 'dictionary',
+                    'platform' => 'fantrax',
+                    'label' => $mapping->provider_label,
+                    'description' => $mapping->formula ?: implode(', ', $columns),
+                    'stat_key' => $mapping->alignment_status === 'direct' ? ($columns[0] ?? null) : null,
+                    'formula' => $mapping->formula,
+                    'alignment_status' => $mapping->alignment_status,
+                    'required_schema_columns' => $columns,
+                    'is_supported' => in_array($mapping->alignment_status, ['direct', 'formula', 'ignored_deprecated'], true),
+                    'support_message' => match ($mapping->alignment_status) {
+                        'unsupported' => $mapping->unavailable_reason ?: 'This category is not currently supported.',
+                        'planned_derivation' => 'This category needs a derived DynastyIQ stat before it is fully supported.',
+                        default => null,
+                    },
+                ];
+            });
+
+        return $statOptions
+            ->concat($dictionaryOptions)
+            ->values()
+            ->all();
+    }
+
+    /**
      * Apply saved manual mappings to category rows without removing auto matches.
      *
      * @param array<int,array<string,mixed>> $categories
@@ -2422,16 +2508,34 @@ final class LeagueController extends Controller
      */
     private function applyManualScoringMappingsToCategories(array $categories, array $manualMappings): array
     {
-        return collect($categories)
-            ->map(static function (array $category) use ($manualMappings): array {
-                $statId = (string) ($category['id'] ?? '');
-                $manualStatKey = $manualMappings[$statId] ?? null;
-                $autoStatKey = $category['auto_stat_key'] ?? null;
-                $statKey = $manualStatKey ?: $autoStatKey;
+        $options = collect($this->scoringMappingOptionsPayload())->keyBy('key');
 
-                $category['stat_key'] = $statKey;
-                $category['is_mapped'] = $statKey !== null && $statKey !== '';
-                $category['mapping_source'] = $manualStatKey ? 'manual' : ($autoStatKey ? 'auto' : null);
+        return collect($categories)
+            ->map(function (array $category) use ($manualMappings, $options): array {
+                $statId = (string) ($category['id'] ?? '');
+                $manualMappingKey = $manualMappings[$statId] ?? null;
+                $autoMappingKey = $category['auto_mapping_key'] ?? $this->autoMappingKey($category);
+                $selectedMappingKey = $manualMappingKey ?: $autoMappingKey;
+                $option = $selectedMappingKey ? $options->get($selectedMappingKey) : null;
+
+                $category['auto_mapping_key'] = $autoMappingKey;
+                $category['selected_mapping_key'] = $manualMappingKey ?: null;
+
+                if (is_array($option)) {
+                    $category['stat_key'] = $option['stat_key'] ?? null;
+                    $category['is_mapped'] = filled($category['stat_key']) || ($option['type'] ?? null) === 'dictionary';
+                    $category['mapping_source'] = $manualMappingKey
+                        ? 'manual'
+                        : (($option['type'] ?? null) === 'dictionary' ? 'dictionary' : 'auto');
+                    $category['dictionary_provider_label'] = ($option['type'] ?? null) === 'dictionary'
+                        ? ($option['label'] ?? null)
+                        : ($category['dictionary_provider_label'] ?? null);
+                    $category['alignment_status'] = $option['alignment_status'] ?? $category['alignment_status'] ?? null;
+                    $category['formula'] = $option['formula'] ?? $category['formula'] ?? null;
+                    $category['required_schema_columns'] = $option['required_schema_columns'] ?? $category['required_schema_columns'] ?? [];
+                    $category['is_supported'] = (bool) ($option['is_supported'] ?? false);
+                    $category['support_message'] = $option['support_message'] ?? null;
+                }
 
                 return $category;
             })
@@ -2452,7 +2556,40 @@ final class LeagueController extends Controller
 
         return collect(array_is_list($categories) ? $categories : array_values($categories))
             ->filter(static fn (mixed $category): bool => is_array($category))
-            ->every(static fn (array $category): bool => filled($category['stat_key'] ?? null));
+            ->every(static fn (array $category): bool => (bool) ($category['is_supported'] ?? false)
+                || filled($category['stat_key'] ?? null));
+    }
+
+    /**
+     * Normalize old raw stat keys into the newer scoring mapping key format.
+     */
+    private function normalizeScoringMappingKey(string $value): string
+    {
+        $value = trim($value);
+
+        if ($value === '' || str_contains($value, ':')) {
+            return $value;
+        }
+
+        return 'stat:' . $value;
+    }
+
+    /**
+     * Infer the automatic scoring mapping key for an imported league category.
+     *
+     * @param array<string,mixed> $category
+     */
+    private function autoMappingKey(array $category): ?string
+    {
+        if (! empty($category['dictionary_provider_label'])) {
+            return 'dictionary:fantrax:' . $category['dictionary_provider_label'];
+        }
+
+        if (! empty($category['auto_stat_key'])) {
+            return 'stat:' . $category['auto_stat_key'];
+        }
+
+        return null;
     }
 
     /**

@@ -234,15 +234,21 @@ Do not introduce new enum values without updating this document.
 **Allowed values:**
 
 - `W`
+- `OTW`
+- `SOW`
 - `L`
 - `OTL`
+- `SOL`
 - `ND`
 
 **Semantic meaning:**
 
-- `W`: Goalie credited with the win by DynastyIQ native goalie summary logic.
+- `W`: Goalie credited with a regulation win by DynastyIQ native goalie summary logic.
+- `OTW`: Goalie credited with an overtime win by DynastyIQ native goalie summary logic.
+- `SOW`: Goalie credited with a shootout win by DynastyIQ native goalie summary logic.
 - `L`: Goalie credited with a regulation loss by DynastyIQ native goalie summary logic.
-- `OTL`: Goalie credited with an overtime or shootout loss by DynastyIQ native goalie summary logic.
+- `OTL`: Goalie credited with an overtime loss by DynastyIQ native goalie summary logic.
+- `SOL`: Goalie credited with a shootout loss by DynastyIQ native goalie summary logic.
 - `ND`: Goalie appeared without receiving the game decision.
 
 **Notes:**
@@ -480,6 +486,7 @@ Do not introduce new enum values without updating this document.
 - `nhl`
 - `nhl-resolve-players`
 - `fantrax`
+- `fantrax-category-definitions`
 - `yahoo`
 - `contracts`
 
@@ -488,6 +495,7 @@ Do not introduce new enum values without updating this document.
 - `nhl`: NHL player discovery import.
 - `nhl-resolve-players`: NHL identity reconciliation for existing canonical players with no NHL id.
 - `fantrax`: Fantrax player import.
+- `fantrax-category-definitions`: Fantrax scoring category definition and DynastyIQ stat alignment dictionary import.
 - `yahoo`: Yahoo fantasy hockey player import.
 - `contracts`: CapWages contract import.
 
@@ -495,6 +503,76 @@ Do not introduce new enum values without updating this document.
 
 - The column is not database constrained.
 - Add admin import registry keys here before using new `import_runs.source` values.
+
+---
+
+### Fantasy Scoring Category Alignment Status
+
+**Name:** Fantasy scoring category alignment status
+**Storage location(s):** `fantasy_scoring_category_mappings.alignment_status`
+**Allowed values:**
+
+- `direct`
+- `formula`
+- `planned_derivation`
+- `unsupported`
+- `ignored_deprecated`
+
+**Semantic meaning:**
+
+- `direct`: Provider category maps to one stored DynastyIQ stat key.
+- `formula`: Provider category can be computed from stored DynastyIQ stat keys.
+- `planned_derivation`: Provider category has source data available, but a durable derived stat or alias is not implemented yet.
+- `unsupported`: Provider category cannot currently be matched or computed.
+- `ignored_deprecated`: Provider category is intentionally ignored because it is obsolete or not useful for supported workflows.
+
+**Notes:**
+
+- Unsupported and planned-derivation categories should be visible when a connected league uses them.
+
+---
+
+### Fantasy Scoring Category Mapping Source
+
+**Name:** Fantasy scoring category mapping source
+**Storage location(s):** `platform_leagues.scoring_settings.categories[].mapping_source`
+**Allowed values:**
+
+- `auto`
+- `dictionary`
+- `manual`
+
+**Semantic meaning:**
+
+- `auto`: The league category was mapped by a small provider-specific fallback matcher.
+- `dictionary`: The league category was mapped from `fantasy_scoring_category_mappings`.
+- `manual`: A user/admin manual league mapping overrides automatic mapping.
+
+**Notes:**
+
+- Manual mappings override dictionary and auto mappings, but dictionary support metadata may remain on the category row for warnings.
+
+---
+
+### Fantasy Scoring Manual Mapping Key
+
+**Name:** Fantasy scoring manual mapping key
+**Storage location(s):** `platform_leagues.scoring_settings.manual_mappings`
+**Allowed value prefixes:**
+
+- `stat:`
+- `dictionary:`
+- `custom:`
+
+**Semantic meaning:**
+
+- `stat:`: Maps a provider category to a native DynastyIQ stat field, such as `stat:g`.
+- `dictionary:`: Maps a provider category to an imported platform category formula, such as `dictionary:fantrax:Big Points 3`.
+- `custom:`: Reserved for future custom user-defined formula mappings.
+
+**Notes:**
+
+- Older raw stat-key values are normalized to `stat:<key>` when scoring alignment is saved.
 
 ---
 

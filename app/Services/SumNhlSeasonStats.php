@@ -75,9 +75,12 @@ class SumNhlSeasonStats
                 SUM(gs.ga)  as ga,      SUM(gs.evga) as evga,     SUM(gs.ppga) as ppga,     SUM(gs.pkga) as pkga,
                 SUM(gs.shosv) as shosv, SUM(gs.so) as so,
 
-                SUM(CASE WHEN gs.goalie_decision = \'W\' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN gs.goalie_decision IN (\'W\', \'OTW\', \'SOW\') THEN 1 ELSE 0 END) as wins,
                 SUM(CASE WHEN gs.goalie_decision = \'L\' THEN 1 ELSE 0 END) as losses,
                 SUM(CASE WHEN gs.goalie_decision = \'OTL\' THEN 1 ELSE 0 END) as ot_losses,
+                SUM(CASE WHEN gs.goalie_decision = \'OTW\' THEN 1 ELSE 0 END) as overtime_wins,
+                SUM(CASE WHEN gs.goalie_decision = \'SOW\' THEN 1 ELSE 0 END) as shootout_wins,
+                SUM(CASE WHEN gs.goalie_decision = \'SOL\' THEN 1 ELSE 0 END) as shootout_losses,
                 SUM(CASE WHEN gs.goalie_started THEN 1 ELSE 0 END) as starts,
                 SUM(CASE WHEN gs.goalie_decision IS NOT NULL AND gs.toi > 0 AND NOT gs.goalie_started THEN 1 ELSE 0 END) as relief_appearances,
                 SUM(CASE WHEN gs.quality_start THEN 1 ELSE 0 END) as quality_starts,
@@ -134,6 +137,9 @@ class SumNhlSeasonStats
             $ga=(int)$r->ga; $evga=(int)$r->evga; $ppga=(int)$r->ppga; $pkga=(int)$r->pkga;
             $shosv=(int)$r->shosv; $so=(int)$r->so;
             $wins=(int)$r->wins; $losses=(int)$r->losses; $ot_losses=(int)$r->ot_losses;
+            $overtime_wins = (int) $r->overtime_wins;
+            $shootout_wins = (int) $r->shootout_wins;
+            $shootout_losses = (int) $r->shootout_losses;
             $starts=(int)$r->starts; $relief_appearances=(int)$r->relief_appearances;
             $quality_starts=(int)$r->quality_starts; $really_bad_starts=(int)$r->really_bad_starts;
 
@@ -220,6 +226,9 @@ class SumNhlSeasonStats
                 'ga'=>$ga,'evga'=>$evga,'ppga'=>$ppga,'pkga'=>$pkga,
                 'shosv'=>$shosv,'so'=>$so,
                 'wins'=>$wins,'losses'=>$losses,'ot_losses'=>$ot_losses,
+                'overtime_wins' => $overtime_wins,
+                'shootout_wins' => $shootout_wins,
+                'shootout_losses' => $shootout_losses,
                 'starts'=>$starts,'relief_appearances'=>$relief_appearances,
                 'quality_starts'=>$quality_starts,'really_bad_starts'=>$really_bad_starts,
                 'quality_start_percentage'=>$quality_start_percentage,

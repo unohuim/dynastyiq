@@ -33,14 +33,13 @@ class DashboardController extends Controller
             return [
                 'key' => $source['key'],
                 'label' => $source['label'],
+                'group' => $source['group'] ?? 'player',
                 'last_run' => ($lastRun?->finished_at ?? $lastRun?->started_at)?->toIso8601String(),
                 'status' => $lastRun?->status,
                 'started_at' => $lastRun?->started_at?->toIso8601String(),
                 'finished_at' => $lastRun?->finished_at?->toIso8601String(),
                 'duration_seconds' => $lastRun?->duration_seconds,
-                'run_url' => isset($source['run_route'])
-                    ? route($source['run_route'])
-                    : route('admin.imports.run', ['key' => $source['key']]),
+                'run_url' => $this->importRunUrl($source),
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
             ];
@@ -105,6 +104,22 @@ class DashboardController extends Controller
                 'has_more' => ($offset + $perPage) < $total,
             ],
         ]);
+    }
+
+    /**
+     * @param array<string, mixed> $source
+     */
+    private function importRunUrl(array $source): ?string
+    {
+        if (isset($source['run_route'])) {
+            return route($source['run_route']);
+        }
+
+        if (isset($source['command'])) {
+            return route('admin.imports.run', ['key' => $source['key']]);
+        }
+
+        return null;
     }
 
     /**

@@ -35,6 +35,7 @@ class ImportsController extends Controller
             return [
                 'key' => $source['key'],
                 'label' => $source['label'],
+                'group' => $source['group'] ?? 'player',
                 'batch' => $batch ? Bus::findBatch($batch->id) : null,
                 'last_run' => $lastRun?->finished_at ?? $lastRun?->started_at ?? $batch->created_at ?? null,
                 'duration' => $lastRun?->duration_seconds !== null
@@ -43,9 +44,7 @@ class ImportsController extends Controller
                 'status' => $lastRun?->status,
                 'progress' => $lastRun ? $this->importRunPayload($lastRun)['progress'] : null,
                 'counts' => $batch?->total_jobs ? "{$batch->total_jobs} jobs" : null,
-                'run_url' => isset($source['run_route'])
-                    ? route($source['run_route'])
-                    : route('admin.imports.run', ['key' => $source['key']]),
+                'run_url' => $this->importRunUrl($source),
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'can_rerun_failed' => (bool) ($source['can_retry'] ?? true),
             ];
@@ -100,6 +99,22 @@ class ImportsController extends Controller
         }
 
         return Redirect::to(URL::route('admin.imports', ['batch_id' => $batch->id]));
+    }
+
+    /**
+     * @param array<string,mixed> $source
+     */
+    private function importRunUrl(array $source): ?string
+    {
+        if (isset($source['run_route'])) {
+            return route($source['run_route']);
+        }
+
+        if (isset($source['command'])) {
+            return route('admin.imports.run', ['key' => $source['key']]);
+        }
+
+        return null;
     }
 
     /**

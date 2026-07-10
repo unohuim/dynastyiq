@@ -48,12 +48,16 @@
                             </div>
 
                             <div class="flex flex-wrap gap-2 lg:justify-end">
-                                <form method="POST" action="{{ $import['run_url'] }}">
-                                    @csrf
-                                    <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
-                                </form>
+                                @if(!empty($import['run_url']))
+                                    <form method="POST" action="{{ $import['run_url'] }}">
+                                        @csrf
+                                        <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
+                                    </form>
+                                @else
+                                    <x-secondary-button type="button" disabled>Coming Soon</x-secondary-button>
+                                @endif
 
-                                @if($import['can_rerun_failed'])
+                                @if($import['can_rerun_failed'] && !empty($import['run_url']))
                                     <form method="POST" action="{{ route('admin.imports.retry', ['key' => $import['key']]) }}">
                                         @csrf
                                         <x-secondary-button type="submit" data-admin-import-button>Retry failed</x-secondary-button>

@@ -285,24 +285,41 @@ class ImportNhlBoxscore
 
         $winningTeamId = $homeScore > $awayScore ? $homeTeamId : $awayTeamId;
 
+        $finalPeriodType = $this->finalPeriodType($response);
+
         if ($teamId === $winningTeamId) {
-            return 'W';
+            return match ($finalPeriodType) {
+                'OT' => 'OTW',
+                'SO' => 'SOW',
+                default => 'W',
+            };
         }
 
-        return $this->endedAfterRegulation($response) ? 'OTL' : 'L';
+        return match ($finalPeriodType) {
+            'OT' => 'OTL',
+            'SO' => 'SOL',
+            default => 'L',
+        };
     }
 
     /**
      * @param array<string,mixed> $response
      */
-    private function endedAfterRegulation(array $response): bool
+    private function finalPeriodType(array $response): string
     {
         $periodType = strtoupper((string) ($response['periodDescriptor']['periodType'] ?? ''));
         $outcome = is_array($response['gameOutcome'] ?? null) ? $response['gameOutcome'] : [];
         $outcomePeriodType = strtoupper((string) ($outcome['lastPeriodType'] ?? $outcome['periodType'] ?? ''));
 
-        return in_array($periodType, ['OT', 'SO'], true)
-            || in_array($outcomePeriodType, ['OT', 'SO'], true);
+        if (in_array($outcomePeriodType, ['OT', 'SO'], true)) {
+            return $outcomePeriodType;
+        }
+
+        if (in_array($periodType, ['OT', 'SO'], true)) {
+            return $periodType;
+        }
+
+        return 'REG';
     }
 
     private function isShutout(array $goalies): bool

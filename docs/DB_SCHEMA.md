@@ -36,6 +36,7 @@ Migrations remain the **sole source of truth**.
 - fantrax_draft_picks
 - fantrax_draft_states
 - fantrax_players
+- fantasy_scoring_category_mappings
 - import_runs
 - integration_secrets
 - job_batches
@@ -417,6 +418,35 @@ Migrations remain the **sole source of truth**.
 - Unique: `player_id`
 - Unique: `fantrax_id`
 - Implicit (FK index): `player_id`
+
+---
+
+## fantasy_scoring_category_mappings
+
+**Organization-owned:** No
+**Purpose:** Platform-neutral scoring category dictionary rows that map provider category labels to DynastyIQ stat columns, formulas, or supportability statuses.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform | string(32) | No | Fantasy platform, e.g. `fantrax` |
+| provider_label | string | No | Provider-facing category label |
+| definition | text | Yes | Provider category definition |
+| alignment_status | string(32) | No | Mapping support status |
+| formula | text | Yes | DynastyIQ formula or stat key expression |
+| required_schema_columns | json | Yes | DynastyIQ schema/stat columns needed for the mapping |
+| unavailable_reason | text | Yes | Reason the category cannot currently be supported |
+| notes | text | Yes | Import or product notes |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform, provider_label)` (`uq_fantasy_category_mapping_provider_label`)
+- Index: `(platform, alignment_status)` (`ix_fantasy_category_mapping_status`)
 
 ---
 
@@ -1416,6 +1446,22 @@ Migrations remain the **sole source of truth**.
 | pkga | unsignedSmallInteger | No | Penalty-kill goals against; default `0` |
 | shosv | unsignedSmallInteger | No | Shootout saves; default `0` |
 | so | unsignedSmallInteger | No | Shutouts; default `0` |
+| wins | unsignedSmallInteger | No | Total goalie wins; default `0` |
+| losses | unsignedSmallInteger | No | Regulation goalie losses; default `0` |
+| ot_losses | unsignedSmallInteger | No | Overtime goalie losses; default `0` |
+| overtime_wins | unsignedSmallInteger | No | Overtime goalie wins; default `0` |
+| shootout_wins | unsignedSmallInteger | No | Shootout goalie wins; default `0` |
+| shootout_losses | unsignedSmallInteger | No | Shootout goalie losses; default `0` |
+| starts | unsignedSmallInteger | No | Goalie starts; default `0` |
+| relief_appearances | unsignedSmallInteger | No | Goalie relief appearances; default `0` |
+| quality_starts | unsignedSmallInteger | No | Quality starts; default `0` |
+| really_bad_starts | unsignedSmallInteger | No | Really bad starts; default `0` |
+| quality_start_percentage | decimal(6,3) | No | Quality-start percentage; default `0` |
+| sv_pct | decimal(6,3) | No | Save percentage; default `0` |
+| gaa | decimal(6,3) | No | Goals-against average; default `0` |
+| ev_sv_pct | decimal(6,3) | No | Even-strength save percentage; default `0` |
+| pp_sv_pct | decimal(6,3) | No | Power-play save percentage; default `0` |
+| pk_sv_pct | decimal(6,3) | No | Penalty-kill save percentage; default `0` |
 | sog_p | decimal(6,3) | No | Shot percentage metric; default `0` |
 | ppsog_p | decimal(6,3) | No | Power-play shot percentage metric; default `0` |
 | evsog_p | decimal(6,3) | No | Even-strength shot percentage metric; default `0` |
