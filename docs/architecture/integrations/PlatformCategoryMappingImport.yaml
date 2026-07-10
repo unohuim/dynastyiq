@@ -3,8 +3,11 @@ type: Admin Import Dictionary
 location:
   - app/Services/ImportPlatformCategoryMappings.php
   - app/Console/Commands/ImportFantraxCategoryDefinitionsCommand.php
+  - app/Console/Commands/BackfillPlatformLeagueScoringCategoriesCommand.php
   - app/Models/FantasyScoringCategoryMapping.php
+  - app/Models/PlatformLeagueScoringCategory.php
   - database/migrations/2026_07_09_000000_create_fantasy_scoring_category_mappings_table.php
+  - database/migrations/2026_07_10_000000_create_platform_league_scoring_categories_table.php
 purpose: Import provider scoring category definitions and DynastyIQ stat alignment metadata into a platform-neutral dictionary table.
 when_to_use:
   - Importing Fantrax category definition templates.
@@ -20,9 +23,11 @@ rules:
   - Platform and provider label form the provider-boundary unique key.
   - Alignment status values must remain documented in docs/ENUMS.md.
   - Unsupported category mappings must be preserved instead of dropped so league connection flows can warn users.
+  - Existing platform_leagues.scoring_settings category JSON may be backfilled into platform_league_scoring_categories before JSON fallback is retired.
 public_interface:
   - AdminImports::sources()
   - fantrax:import-category-definitions
+  - platform-leagues:backfill-scoring-categories
   - ImportPlatformCategoryMappings::import()
 example_usage: |
   php artisan fantrax:import-category-definitions --path=docs/import-templates/fantrax_category_alignment.csv

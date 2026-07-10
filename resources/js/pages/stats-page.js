@@ -72,6 +72,8 @@ export class StatsPageShell {
       isMobile: this.isMobile(),
     };
     this.filterState = new StatsFilterState(this.state);
+    this.pendingLocalPositionFilters = null;
+    this.cachedSkaterHeadings = null;
 
     this.settings = {
       ...settings,
@@ -143,6 +145,19 @@ export class StatsPageShell {
   }
 
   activeHeadings() {
+    const activeGroup = this.activeColumnGroup();
+    const hasSkaterFilter = [...this.state.selectedPosTypes, ...this.state.selectedPos]
+      .some((value) => String(value) !== 'G');
+
+    if (
+      activeGroup === 'skater'
+      && hasSkaterFilter
+      && Array.isArray(this.cachedSkaterHeadings)
+      && this.cachedSkaterHeadings.length > 0
+    ) {
+      return this.cachedSkaterHeadings;
+    }
+
     return this.columnGroupAdapter.activeHeadings(this.payload, this.settings, this.state);
   }
 
@@ -173,6 +188,7 @@ export class StatsPageShell {
       : this.connectedLeagues;
 
     this.syncStateFromPayload();
+    this.rememberSkaterHeadings();
   }
 
   updateUrl(params) {
@@ -220,7 +236,9 @@ export class StatsPageShell {
   syncStateFromPayload() {
     const meta = this.payload.meta || {};
     const settings = this.payload.settings || {};
-    const preserveGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
+    const pendingLocalPositionFilters = this.pendingLocalPositionFilters;
+    const preserveGoalieMode = !pendingLocalPositionFilters
+      && (this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G'));
 
     if (meta.season != null) this.state.seasonId = String(meta.season);
     if (meta.game_type != null) this.state.gameType = String(meta.game_type);
@@ -233,7 +251,11 @@ export class StatsPageShell {
     if (Array.isArray(meta.pos_type)) {
       this.state.selectedPosTypes = meta.pos_type.map(String);
     }
-    if (preserveGoalieMode) {
+    if (pendingLocalPositionFilters) {
+      this.state.selectedPos = pendingLocalPositionFilters.selectedPos;
+      this.state.selectedPosTypes = pendingLocalPositionFilters.selectedPosTypes;
+      this.pendingLocalPositionFilters = null;
+    } else if (preserveGoalieMode) {
       this.state.selectedPosTypes = ['G'];
       this.state.selectedPos = ['G'];
     }
@@ -330,11 +352,22 @@ export class StatsPageShell {
 
   togglePosition(value) {
     const wasGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
+    if (!wasGoalieMode) {
+      this.rememberSkaterHeadings();
+    }
+
     this.filterState.togglePosition(value);
     const isGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
     this.renderControls();
 
     if (this.config.syncUrl === false && this.apiUrl && wasGoalieMode !== isGoalieMode) {
+      if (wasGoalieMode && !isGoalieMode) {
+        this.pendingLocalPositionFilters = {
+          selectedPos: [...this.state.selectedPos],
+          selectedPosTypes: [...this.state.selectedPosTypes],
+        };
+      }
+
       this.fetchPayload();
     } else {
       this.renderContent();
@@ -707,6 +740,23 @@ export class StatsPageShell {
       activeRenderedColumnGroup: this.activeColumnGroup(),
       goalieFilterActive: this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G'),
     }, this.onSortChange);
+  }
+
+  rememberSkaterHeadings() {
+    if (!this.hasColumnGroups()) {
+      this.cachedSkaterHeadings = Array.isArray(this.payload.headings) ? [...this.payload.headings] : null;
+      return;
+    }
+
+    const skaterHeadings = this.columnGroupAdapter.activeHeadings(this.payload, this.settings, {
+      ...this.state,
+      selectedPos: [],
+      selectedPosTypes: [],
+    });
+
+    if (Array.isArray(skaterHeadings) && skaterHeadings.length > 0) {
+      this.cachedSkaterHeadings = [...skaterHeadings];
+    }
   }
 
   renderMobileSkeleton() {

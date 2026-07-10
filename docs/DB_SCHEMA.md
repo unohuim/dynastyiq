@@ -2048,7 +2048,7 @@ Migrations remain the **sole source of truth**.
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
 | logo_url | string | Yes | Provider league logo URL when exposed |
-| settings | json | Yes | Provider league settings payload, including `custom_cap` when league Cap views should use provider custom salaries |
+| settings | json | Yes | Provider league settings payload, including `custom_cap` and league-scoped Fantrax contract code definitions for custom salary leagues |
 | scoring_settings | json | Yes | Provider scoring categories and modifiers |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -2087,6 +2087,57 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `(platform_league_id, slot)` (`uq_platform_league_roster_slot`)
 - Index: `(platform_league_id, sort_order)` (`idx_platform_league_roster_order`)
+- Implicit (FK index): `platform_league_id`
+
+---
+
+## platform_league_scoring_categories
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** First-class provider scoring category rows for external fantasy platform leagues, including dictionary alignment, manual mapping, supportability, and raw provider audit context.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| platform | string(32) | No | Fantasy platform, e.g. `fantrax` or `yahoo` |
+| provider_identity_key | string | No | Stable normalized provider category identity within the league |
+| provider_category_id | string | Yes | Provider category id when available |
+| provider_group | string | Yes | Provider category group |
+| provider_code | string | Yes | Provider category code |
+| provider_short_label | string | Yes | Provider short label |
+| provider_label | string | Yes | Provider display label |
+| normalized_group | string | Yes | Normalized group used for comparison |
+| normalized_short_label | string | Yes | Normalized short label |
+| normalized_label | string | Yes | Normalized display label |
+| value | decimal(10,4) | Yes | Scoring value or points modifier |
+| position_values | json | Yes | Per-position scoring values when provider exposes them |
+| dictionary_mapping_id | bigint | Yes | FK -> fantasy_scoring_category_mappings.id (SET NULL) |
+| auto_mapping_key | string | Yes | Auto-selected `stat:` or `dictionary:` mapping key |
+| manual_mapping_key | string | Yes | User/admin-selected mapping key |
+| selected_mapping_key | string | Yes | Selected manual mapping key for UI compatibility |
+| stat_key | string | Yes | Resolved DynastyIQ stat key when direct |
+| auto_stat_key | string | Yes | Auto-resolved stat key before manual override |
+| mapping_source | string(32) | Yes | `auto`, `dictionary`, or `manual` |
+| alignment_status | string(32) | Yes | Dictionary support status |
+| formula | text | Yes | Formula or direct stat expression |
+| required_schema_columns | json | Yes | DynastyIQ schema/stat columns needed for the mapping |
+| is_supported | boolean | No | Whether the category can be supported by current DynastyIQ data |
+| support_message | text | Yes | User-facing support warning |
+| raw_payload | json | Yes | Raw provider category payload |
+| sort_order | unsignedInteger | No | Provider/UI display order |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, provider_identity_key)` (`uq_platform_league_scoring_category_identity`)
+- Index: `(platform, normalized_group)` (`ix_platform_league_scoring_category_group`)
+- Index: `(platform_league_id, sort_order)` (`ix_platform_league_scoring_category_order`)
+- Index: `dictionary_mapping_id` (`ix_platform_league_scoring_category_dictionary`)
 - Implicit (FK index): `platform_league_id`
 
 ---

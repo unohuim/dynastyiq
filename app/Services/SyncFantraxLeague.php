@@ -23,6 +23,7 @@ final class SyncFantraxLeague
     public function __construct(
         private readonly SyncFantraxDraftState $draftStateSync,
         private readonly FantraxScoringCategoryMapper $scoringCategoryMapper,
+        private readonly PlatformLeagueScoringCategoryService $scoringCategoryService,
     ) {
     }
 
@@ -482,6 +483,13 @@ final class SyncFantraxLeague
             $normalizedCategories,
             $manualMappings,
         );
+        $rawScoringPayload = [
+            'scoringSystem' => $leagueInfo['scoringSystem'] ?? null,
+            'scoringCategorySettings' => $leagueInfo['scoringCategorySettings'] ?? null,
+            'scoringCategories' => $leagueInfo['scoringCategories'] ?? null,
+        ];
+
+        $this->scoringCategoryService->sync($league, $categories, $manualMappings);
 
         $league->forceFill([
             'settings' => array_merge($existingSettings, [
@@ -490,11 +498,7 @@ final class SyncFantraxLeague
             'scoring_settings' => [
                 'categories' => $categories,
                 'manual_mappings' => $manualMappings,
-                'raw_payload' => [
-                    'scoringSystem' => $leagueInfo['scoringSystem'] ?? null,
-                    'scoringCategorySettings' => $leagueInfo['scoringCategorySettings'] ?? null,
-                    'scoringCategories' => $leagueInfo['scoringCategories'] ?? null,
-                ],
+                'raw_payload' => $rawScoringPayload,
             ],
         ])->save();
     }

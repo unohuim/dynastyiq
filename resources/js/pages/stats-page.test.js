@@ -352,6 +352,106 @@ describe('stats page prospect controls', () => {
     expect(shell.buildParams().getAll('pos_type[]')).toEqual([]);
   });
 
+  it('applies a center filter while leaving goalie mode', async () => {
+    const shell = await createShell({
+      meta: { positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] },
+      config: { syncUrl: false },
+    });
+    shell.payloadClient.fetchPayload = vi.fn().mockResolvedValue({
+      stale: false,
+      payload: payload({ positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] }),
+    });
+
+    shell.togglePosition('G');
+    await Promise.resolve();
+    await Promise.resolve();
+    shell.togglePosition('C');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(shell.state.selectedPos).toEqual(['C']);
+    expect(shell.state.selectedPosTypes).toEqual([]);
+    expect(shell.payloadClient.fetchPayload).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses cached skater headings immediately when leaving goalie mode', async () => {
+    const shell = await createShell({
+      meta: { positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] },
+      settings: {
+        activeColumnGroup: 'skater',
+        columnGroups: {
+          skater: [{ key: 'g', label: 'G' }, { key: 'a', label: 'A' }],
+          goalie: [{ key: 'sv', label: 'SV' }, { key: 'gaa', label: 'GAA' }],
+        },
+      },
+      config: { syncUrl: false },
+    });
+
+    shell.rememberSkaterHeadings();
+    shell.state.selectedPosTypes = ['G'];
+    shell.state.selectedPos = ['G'];
+    shell.settings.activeColumnGroup = 'goalie';
+    shell.payload.headings = [
+      { key: 'name', label: 'Player' },
+      { key: 'team', label: 'Team' },
+      { key: 'pos_type', label: 'Type' },
+      { key: 'sv', label: 'SV' },
+      { key: 'gaa', label: 'GAA' },
+    ];
+    shell.payloadClient.fetchPayload = vi.fn().mockResolvedValue({
+      stale: false,
+      payload: payload({ positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] }),
+    });
+
+    shell.togglePosition('C');
+
+    expect(shell.activeHeadings().map((heading) => heading.key)).toEqual(['name', 'team', 'league', 'pos_type', 'gp', 'g', 'a']);
+  });
+
+  it('applies a forward type filter while leaving goalie mode', async () => {
+    const shell = await createShell({
+      meta: { positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] },
+      config: { syncUrl: false },
+    });
+    shell.payloadClient.fetchPayload = vi.fn().mockResolvedValue({
+      stale: false,
+      payload: payload({ positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] }),
+    });
+
+    shell.togglePosition('G');
+    await Promise.resolve();
+    await Promise.resolve();
+    shell.togglePosition('F');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(shell.state.selectedPos).toEqual([]);
+    expect(shell.state.selectedPosTypes).toEqual(['F']);
+    expect(shell.payloadClient.fetchPayload).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies a defense type filter while leaving goalie mode', async () => {
+    const shell = await createShell({
+      meta: { positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] },
+      config: { syncUrl: false },
+    });
+    shell.payloadClient.fetchPayload = vi.fn().mockResolvedValue({
+      stale: false,
+      payload: payload({ positionButtons: ['F', 'C', 'LW', 'RW', 'D', 'G'] }),
+    });
+
+    shell.togglePosition('G');
+    await Promise.resolve();
+    await Promise.resolve();
+    shell.togglePosition('D');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(shell.state.selectedPos).toEqual([]);
+    expect(shell.state.selectedPosTypes).toEqual(['D']);
+    expect(shell.payloadClient.fetchPayload).toHaveBeenCalledTimes(2);
+  });
+
   it('filters the already-loaded rows by selected position buttons', async () => {
     const shell = await createShell();
     shell.fetchPayload = vi.fn();

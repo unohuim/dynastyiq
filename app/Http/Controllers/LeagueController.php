@@ -21,6 +21,7 @@ use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
 use App\Services\FantraxLogoSyncService;
+use App\Services\PlatformLeagueScoringCategoryService;
 use App\Services\SyncFantraxDraftState;
 use App\Services\YahooFantasyLeagueService;
 use Illuminate\Contracts\View\View;
@@ -140,6 +141,8 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
             'customCap' => $activeLeague ? $this->customCapEnabled($activeLeague) : false,
+            'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload($activeLeague) : [],
+            'fantraxContractCodeDefinitions' => $activeLeague ? $this->fantraxContractCodeDefinitions($activeLeague) : [],
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
             'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
@@ -179,6 +182,8 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
             'customCap' => $this->customCapEnabled($league),
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
@@ -211,6 +216,8 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => $this->customCapEnabled($league),
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
         ]);
     }
 
@@ -269,13 +276,21 @@ final class LeagueController extends Controller
             ->filter(static fn (string $value): bool => $value !== '')
             ->all();
         $scoringSettings = is_array($league->scoring_settings) ? $league->scoring_settings : [];
-        $categories = $this->applyManualScoringMappingsToCategories(
-            is_array($scoringSettings['categories'] ?? null) ? $scoringSettings['categories'] : [],
+        $scoringCategoryService = app(PlatformLeagueScoringCategoryService::class);
+        $updatedRows = $scoringCategoryService->updateManualMappings(
+            $league,
             $manualMappings,
+            collect($mappingOptions)->keyBy('key')->all(),
         );
 
         $scoringSettings['manual_mappings'] = $manualMappings;
-        $scoringSettings['categories'] = $categories;
+
+        if (! $updatedRows) {
+            $scoringSettings['categories'] = $this->applyManualScoringMappingsToCategories(
+                is_array($scoringSettings['categories'] ?? null) ? $scoringSettings['categories'] : [],
+                $manualMappings,
+            );
+        }
 
         $league->forceFill([
             'scoring_settings' => $scoringSettings,
@@ -317,6 +332,10 @@ final class LeagueController extends Controller
 
         $validated = $request->validate([
             'custom_cap' => ['required', 'boolean'],
+            'contract_code_definitions' => ['nullable', 'array'],
+            'contract_code_definitions.*.label' => ['nullable', 'string', 'max:80'],
+            'contract_code_definitions.*.type' => ['nullable', 'string', 'max:80'],
+            'contract_code_definitions.*.suffix_years_remaining' => ['nullable', 'boolean'],
         ]);
         $settings = array_replace(
             ['custom_cap' => false],
@@ -324,15 +343,24 @@ final class LeagueController extends Controller
         );
         $settings['custom_cap'] = (bool) $validated['custom_cap'];
 
+        if (array_key_exists('contract_code_definitions', $validated)) {
+            $settings['fantrax_contract_code_definitions'] = $this->normalizeFantraxContractCodeDefinitions(
+                $validated['contract_code_definitions'] ?? [],
+            );
+        }
+
         $league->forceFill([
             'settings' => $settings,
         ])->save();
+        $league->refresh();
 
         return response()->json([
             'message' => $settings['custom_cap']
                 ? 'Custom Fantrax cap enabled.'
                 : 'Custom Fantrax cap disabled.',
             'customCap' => $settings['custom_cap'],
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
         ]);
     }
 
@@ -882,6 +910,8 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $activeLeague->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
             'customCap' => $this->customCapEnabled($activeLeague),
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload($activeLeague),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($activeLeague),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
             'canManageLeague' => $this->canManageLeague($activeLeague, $user),
@@ -947,6 +977,136 @@ final class LeagueController extends Controller
     private function customCapEnabled($league): bool
     {
         return (bool) data_get($league, 'settings.custom_cap', false);
+    }
+
+    /**
+     * Return saved Fantrax contract-code prefix meanings for this league.
+     *
+     * @return array<string,array{label:string,type:string,suffix_years_remaining:bool}>
+     */
+    private function fantraxContractCodeDefinitions($league): array
+    {
+        if (! $league) {
+            return [];
+        }
+
+        return $this->normalizeFantraxContractCodeDefinitions(
+            data_get($league, 'settings.fantrax_contract_code_definitions', []),
+        );
+    }
+
+    /**
+     * Normalize user-defined Fantrax contract-code meanings keyed by prefix.
+     *
+     * @param array<mixed,mixed> $definitions
+     * @return array<string,array{label:string,type:string,suffix_years_remaining:bool}>
+     */
+    private function normalizeFantraxContractCodeDefinitions(array $definitions): array
+    {
+        $normalized = [];
+
+        foreach ($definitions as $prefix => $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $prefix = strtoupper(preg_replace('/[^A-Z]/i', '', (string) $prefix) ?? '');
+
+            if ($prefix === '') {
+                continue;
+            }
+
+            $label = trim((string) ($definition['label'] ?? ''));
+            $type = trim((string) ($definition['type'] ?? ''));
+
+            if ($label === '' && $type === '') {
+                continue;
+            }
+
+            if ($type === '') {
+                $type = Str::snake($label);
+            }
+
+            $type = Str::snake($type);
+
+            $normalized[$prefix] = [
+                'label' => $label !== '' ? $label : Str::headline(strtolower($type)),
+                'type' => $type,
+                'suffix_years_remaining' => (bool) ($definition['suffix_years_remaining'] ?? true),
+            ];
+        }
+
+        ksort($normalized);
+
+        return $normalized;
+    }
+
+    /**
+     * Return detected Fantrax contract-code prefixes from current roster metadata.
+     *
+     * @return array<int,array{prefix:string,count:int,examples:string,codes:array<int,array{code:string,count:int,years_remaining:int|null}>,definition:array<string,mixed>|null}>
+     */
+    private function fantraxContractCodesPayload($league): array
+    {
+        if (! $league || (string) ($league->platform ?? '') !== 'fantrax') {
+            return [];
+        }
+
+        $definitions = $this->fantraxContractCodeDefinitions($league);
+        $codes = DB::table('platform_roster_memberships as prm')
+            ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+            ->where('pt.platform_league_id', (int) $league->id)
+            ->whereNull('prm.ends_at')
+            ->pluck('prm.metadata')
+            ->map(static function (mixed $metadata): ?string {
+                if (is_string($metadata)) {
+                    $decoded = json_decode($metadata, true);
+                    $metadata = json_last_error() === JSON_ERROR_NONE ? $decoded : [];
+                }
+
+                $name = is_array($metadata) ? data_get($metadata, 'fantrax_contract.name') : null;
+
+                return is_string($name) && trim($name) !== '' ? strtoupper(trim($name)) : null;
+            })
+            ->filter()
+            ->countBy()
+            ->map(static function (int $count, string $code): array {
+                $prefix = $code;
+                $yearsRemaining = null;
+
+                if (preg_match('/^([A-Z]+)(\d+)$/', $code, $matches)) {
+                    $prefix = $matches[1];
+                    $yearsRemaining = (int) $matches[2];
+                }
+
+                return [
+                    'code' => $code,
+                    'prefix' => $prefix,
+                    'count' => $count,
+                    'years_remaining' => $yearsRemaining,
+                ];
+            })
+            ->values()
+            ->groupBy('prefix')
+            ->map(function (Collection $rows, string $prefix) use ($definitions): array {
+                $codeRows = $rows
+                    ->sortBy('code')
+                    ->values()
+                    ->all();
+
+                return [
+                    'prefix' => $prefix,
+                    'count' => (int) $rows->sum('count'),
+                    'examples' => collect($codeRows)->pluck('code')->take(4)->implode(', '),
+                    'codes' => $codeRows,
+                    'definition' => $definitions[$prefix] ?? null,
+                ];
+            })
+            ->sortBy('prefix')
+            ->values()
+            ->all();
+
+        return $codes;
     }
 
     private function leagueDisplayLogoUrl($league, $user): ?string
@@ -1027,7 +1187,9 @@ final class LeagueController extends Controller
     private function teamsPayload($league, bool $includeFreeAgents = true): array
     {
         $authId = auth()->id();
-        $slotOrder = $league->rosterSlots()
+        $rosterSlots = $league->rosterSlots()
+            ->get(['slot', 'count', 'sort_order']);
+        $slotOrder = $rosterSlots
             ->pluck('sort_order', 'slot')
             ->map(static fn ($value): int => (int) $value)
             ->all();
@@ -1056,7 +1218,7 @@ final class LeagueController extends Controller
                                 }]);
                             },
                         ])
-                        ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'starts_at', 'ends_at']);
+                        ->withPivot(['platform', 'platform_player_id', 'slot', 'status', 'eligibility', 'metadata', 'starts_at', 'ends_at']);
                 },
                 'users' => static function ($q): void {
                     $q->wherePivot('is_active', true)
@@ -1070,9 +1232,10 @@ final class LeagueController extends Controller
         $fantraxEligibility = $league->platform === 'fantrax'
             ? self::fantraxEligibilityByPlatformPlayerId($teams->pluck('roster')->flatten())
             : [];
+        $fantraxContractDefinitions = $this->fantraxContractCodeDefinitions($league);
 
         $teamRows = $teams
-            ->map(static function ($t) use ($authId, $slotOrder, $fantraxEligibility, $league): array {
+            ->map(static function ($t) use ($authId, $slotOrder, $rosterSlots, $fantraxEligibility, $fantraxContractDefinitions, $league): array {
                 // default avatar per TEAM name
                 $defaultAvatar = config('ui.default_team_avatar')
                     ?: 'https://ui-avatars.com/api/?name=' . urlencode($t->name) . '&background=E5E7EB&color=111827&size=64';
@@ -1089,83 +1252,115 @@ final class LeagueController extends Controller
                 $ownerIds = $t->users->pluck('id')->map(static fn ($v) => (int) $v)->values()->all();
                 $ownedByMe = $authId ? in_array((int) $authId, $ownerIds, true) : false;
 
+                $players = $t->roster
+                    ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $fantraxContractDefinitions, $league, $t, $ownerAvatar): array {
+                        $slot = (string) ($p->pivot->slot ?? '');
+                        $rosterStatus = (string) ($p->pivot->status ?? '');
+                        $eligibility = self::normalizeEligibility($p->pivot->eligibility);
+                        $membershipMetadata = self::normalizeMembershipMetadata($p->pivot->metadata ?? null);
+                        $fantraxSalary = self::fantraxSalaryPayload($membershipMetadata);
+                        $fantraxContract = self::fantraxContractPayload($membershipMetadata, $fantraxContractDefinitions);
+                        $platformEligibility = self::platformEligibility(
+                            (string) $league->platform,
+                            (string) ($p->pivot->platform_player_id ?? ''),
+                            $eligibility,
+                            $fantraxEligibility,
+                        );
+                        $displaySlot = self::displayRosterSlot(
+                            $slot,
+                            $rosterStatus,
+                            $platformEligibility,
+                            (string) ($p->position ?? ''),
+                        );
+                        $rosterGroup = self::isMinorRosterRow($slot, $rosterStatus)
+                            ? 'minor'
+                            : 'active';
+                        $rosterSortOrder = $rosterGroup === 'minor'
+                            ? self::minorRosterPositionSortOrder($platformEligibility)
+                            : ($slotOrder[$slot] ?? self::fallbackRosterSlotOrder($displaySlot));
+
+                        return [
+                            'id'            => (int) $p->id,
+                            'first_name'    => (string) ($p->first_name ?? ''),
+                            'last_name'     => (string) ($p->last_name ?? ''),
+                            'name'          => (string) ($p->full_name ?? trim(($p->first_name ?? '') . ' ' . ($p->last_name ?? ''))),
+                            'position'      => (string) ($p->position ?? ''),
+                            'age'           => $p->age(),
+                            'pos_type'      => (string) ($p->pos_type ?? ''),
+                            'team_abbrev'   => (string) ($p->team_abbrev ?? ''),
+                            'avatar_url'    => (string) ($p->head_shot_url ?? ''),
+                            'is_goalie'     => (bool) $p->is_goalie,
+                            'status'        => (string) $p->status,
+                            'fantasy_team_id' => (string) $t->platform_team_id,
+                            'fantasy_team_name' => (string) $t->name,
+                            'fantasy_team_avatar_url' => $ownerAvatar,
+                            'roster_slot'   => $displaySlot,
+                            'roster_status' => $rosterStatus,
+                            'roster_group'  => $rosterGroup,
+                            'eligibility'   => $platformEligibility,
+                            'starts_at'     => (string) $p->pivot->starts_at,
+                            'ends_at'       => (string) $p->pivot->ends_at,
+                            'roster_sort_order' => $rosterSortOrder,
+                            'roster_group_sort_order' => $rosterGroup === 'minor' ? 1 : 0,
+                            'roster_status_sort_order' => match ($rosterStatus) {
+                                'active' => 10,
+                                'bench' => 20,
+                                'ir' => 30,
+                                'na' => 40,
+                                'taxi' => 50,
+                                default => 90,
+                            },
+                            'fantasy_salary' => $fantraxSalary,
+                            'fantasy_contract' => $membershipMetadata['fantrax_contract'] ?? null,
+                            'fantasy_contract_code' => $fantraxContract,
+                            'contract' => self::playerContractPayload($p),
+                        ];
+                    });
+                $slotCounts = $players
+                    ->where('roster_group', 'active')
+                    ->countBy('roster_slot');
+                $placeholders = $rosterSlots
+                    ->map(static function ($slotSetting) use ($slotCounts): array {
+                        $slot = strtoupper(trim((string) $slotSetting->slot));
+
+                        if (self::normalizedFallbackSlot($slot) === 'MIN') {
+                            return [];
+                        }
+
+                        $missingCount = max(0, (int) $slotSetting->count - (int) ($slotCounts[$slot] ?? 0));
+
+                        if ($missingCount === 0) {
+                            return [];
+                        }
+
+                        return collect(range(1, $missingCount))
+                            ->map(static fn (int $index): array => self::emptyRosterSlotPlayerPayload(
+                                $slot,
+                                (int) $slotSetting->sort_order,
+                                $index,
+                            ))
+                            ->all();
+                    })
+                    ->flatten(1);
+                $players = $players
+                    ->concat($placeholders)
+                    ->sortBy(static fn (array $player): string => sprintf(
+                        '%03d-%03d-%03d-%s',
+                        $player['roster_group_sort_order'],
+                        $player['roster_sort_order'],
+                        $player['roster_status_sort_order'],
+                        $player['name'],
+                    ))
+                    ->values()
+                    ->all();
+
                 return [
                     'id'                => (string) $t->platform_team_id,
                     'name'              => (string) $t->name,
                     'owner_avatar_url'  => $ownerAvatar,
                     'owned_by_me'       => $ownedByMe,
                     'owner_user_ids'    => $ownerIds,
-                    'players'           => $t->roster
-                        ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $league, $t, $ownerAvatar): array {
-                            $slot = (string) ($p->pivot->slot ?? '');
-                            $rosterStatus = (string) ($p->pivot->status ?? '');
-                            $eligibility = self::normalizeEligibility($p->pivot->eligibility);
-                            $membershipMetadata = self::normalizeMembershipMetadata($p->pivot->metadata ?? null);
-                            $fantraxSalary = self::fantraxSalaryPayload($membershipMetadata);
-                            $platformEligibility = self::platformEligibility(
-                                (string) $league->platform,
-                                (string) ($p->pivot->platform_player_id ?? ''),
-                                $eligibility,
-                                $fantraxEligibility,
-                            );
-                            $displaySlot = self::displayRosterSlot(
-                                $slot,
-                                $rosterStatus,
-                                $platformEligibility,
-                                (string) ($p->position ?? ''),
-                            );
-                            $rosterGroup = self::isMinorRosterRow($displaySlot, $rosterStatus)
-                                ? 'minor'
-                                : 'active';
-                            $rosterSortOrder = $rosterGroup === 'minor'
-                                ? self::minorRosterPositionSortOrder($platformEligibility)
-                                : ($slotOrder[$slot] ?? self::fallbackRosterSlotOrder($displaySlot));
-
-                            return [
-                                'id'            => (int) $p->id,
-                                'first_name'    => (string) ($p->first_name ?? ''),
-                                'last_name'     => (string) ($p->last_name ?? ''),
-                                'name'          => (string) ($p->full_name ?? trim(($p->first_name ?? '') . ' ' . ($p->last_name ?? ''))),
-                                'position'      => (string) ($p->position ?? ''),
-                                'age'           => $p->age(),
-                                'pos_type'      => (string) ($p->pos_type ?? ''),
-                                'team_abbrev'   => (string) ($p->team_abbrev ?? ''),
-                                'avatar_url'    => (string) ($p->head_shot_url ?? ''),
-                                'is_goalie'     => (bool) $p->is_goalie,
-                                'status'        => (string) $p->status,
-                                'fantasy_team_id' => (string) $t->platform_team_id,
-                                'fantasy_team_name' => (string) $t->name,
-                                'fantasy_team_avatar_url' => $ownerAvatar,
-                                'roster_slot'   => $displaySlot,
-                                'roster_status' => $rosterStatus,
-                                'roster_group'  => $rosterGroup,
-                                'eligibility'   => $platformEligibility,
-                                'starts_at'     => (string) $p->pivot->starts_at,
-                                'ends_at'       => (string) $p->pivot->ends_at,
-                                'roster_sort_order' => $rosterSortOrder,
-                                'roster_group_sort_order' => $rosterGroup === 'minor' ? 1 : 0,
-                                'roster_status_sort_order' => match ($rosterStatus) {
-                                    'active' => 10,
-                                    'bench' => 20,
-                                    'ir' => 30,
-                                    'na' => 40,
-                                    'taxi' => 50,
-                                    default => 90,
-                                },
-                                'fantasy_salary' => $fantraxSalary,
-                                'fantasy_contract' => $membershipMetadata['fantrax_contract'] ?? null,
-                                'contract' => self::playerContractPayload($p),
-                            ];
-                        })
-                        ->sortBy(static fn (array $player): string => sprintf(
-                            '%03d-%03d-%03d-%s',
-                            $player['roster_group_sort_order'],
-                            $player['roster_sort_order'],
-                            $player['roster_status_sort_order'],
-                            $player['name'],
-                        ))
-                        ->values()
-                        ->all(),
+                    'players'           => $players,
                 ];
             })
             ->values()
@@ -1179,6 +1374,7 @@ final class LeagueController extends Controller
         $allPlayers = collect($teamRows)
             ->pluck('players')
             ->flatten(1)
+            ->reject(static fn (array $player): bool => (bool) ($player['league_roster_placeholder'] ?? false))
             ->concat($freeAgents)
             ->unique(static fn (array $player): int => (int) $player['id'])
             ->sortBy(static fn (array $player): string => (string) $player['name'])
@@ -1459,6 +1655,96 @@ final class LeagueController extends Controller
             'raw' => $raw,
             'cap_hit' => $capHit,
             'label' => self::compactMoneyLabel($capHit),
+        ];
+    }
+
+    /**
+     * Build normalized Fantrax contract-code display payload from membership metadata.
+     *
+     * @param array<string,mixed> $metadata
+     * @param array<string,array<string,mixed>> $definitions
+     *
+     * @return array{code:string,prefix:string,years_remaining:int|null,label:string|null,type:string|null,suffix_years_remaining:bool}|null
+     */
+    private static function fantraxContractPayload(array $metadata, array $definitions): ?array
+    {
+        $code = data_get($metadata, 'fantrax_contract.name');
+
+        if (! is_string($code) || trim($code) === '') {
+            return null;
+        }
+
+        $code = strtoupper(trim($code));
+        $prefix = $code;
+        $yearsRemaining = null;
+
+        if (preg_match('/^([A-Z]+)(\d+)$/', $code, $matches)) {
+            $prefix = $matches[1];
+            $yearsRemaining = (int) $matches[2];
+        }
+
+        $definition = $definitions[$prefix] ?? null;
+
+        return [
+            'code' => $code,
+            'prefix' => $prefix,
+            'years_remaining' => $yearsRemaining,
+            'label' => $definition['label'] ?? null,
+            'type' => $definition['type'] ?? null,
+            'suffix_years_remaining' => (bool) ($definition['suffix_years_remaining'] ?? false),
+        ];
+    }
+
+    /**
+     * Build an empty roster-slot placeholder row for roster-shaped league views.
+     *
+     * @return array<string,mixed>
+     */
+    private static function emptyRosterSlotPlayerPayload(string $slot, int $sortOrder, int $index): array
+    {
+        $slot = strtoupper(trim($slot));
+        $status = match ($slot) {
+            'BN' => 'bench',
+            'IR', 'IR+' => 'ir',
+            'NA' => 'na',
+            default => 'active',
+        };
+
+        return [
+            'id' => sprintf('__empty_%s_%d', $slot, $index),
+            'first_name' => '',
+            'last_name' => '',
+            'name' => 'Open slot',
+            'position' => '',
+            'age' => null,
+            'pos_type' => '',
+            'team_abbrev' => '',
+            'avatar_url' => '',
+            'is_goalie' => false,
+            'status' => '',
+            'fantasy_team_id' => '',
+            'fantasy_team_name' => '',
+            'fantasy_team_avatar_url' => '',
+            'roster_slot' => $slot,
+            'roster_status' => $status,
+            'roster_group' => 'active',
+            'eligibility' => [],
+            'starts_at' => '',
+            'ends_at' => '',
+            'roster_sort_order' => $sortOrder,
+            'roster_group_sort_order' => 0,
+            'roster_status_sort_order' => match ($status) {
+                'active' => 10,
+                'bench' => 20,
+                'ir' => 30,
+                'na' => 40,
+                default => 90,
+            },
+            'fantasy_salary' => null,
+            'fantasy_contract' => null,
+            'fantasy_contract_code' => null,
+            'contract' => null,
+            'league_roster_placeholder' => true,
         ];
     }
 
@@ -2315,17 +2601,7 @@ final class LeagueController extends Controller
      */
     private function scoringCategoriesPayload($league): array
     {
-        $settings = data_get($league, 'scoring_settings.categories')
-            ?? data_get($league, 'scoring_settings')
-            ?? data_get($league, 'settings.scoring_categories')
-            ?? data_get($league, 'extras.scoring_categories')
-            ?? [];
-
-        if (! is_array($settings)) {
-            return [];
-        }
-
-        $categories = array_is_list($settings) ? $settings : array_values($settings);
+        $categories = app(PlatformLeagueScoringCategoryService::class)->payloadRows($league);
 
         return collect($categories)
             ->map(static function (mixed $category): ?array {
@@ -2376,13 +2652,9 @@ final class LeagueController extends Controller
      */
     private function scoringAlignmentCategoriesPayload($league): array
     {
-        $settings = data_get($league, 'scoring_settings.categories') ?? [];
+        $settings = app(PlatformLeagueScoringCategoryService::class)->payloadRows($league);
 
-        if (! is_array($settings)) {
-            return [];
-        }
-
-        return collect(array_is_list($settings) ? $settings : array_values($settings))
+        return collect($settings)
             ->filter(static fn (mixed $category): bool => is_array($category))
             ->map(function (array $category): array {
                 return [
@@ -2417,16 +2689,7 @@ final class LeagueController extends Controller
      */
     private function manualScoringMappingsPayload($league): array
     {
-        $mappings = data_get($league, 'scoring_settings.manual_mappings', []);
-
-        if (! is_array($mappings)) {
-            return [];
-        }
-
-        return collect($mappings)
-            ->mapWithKeys(static fn (mixed $value, mixed $key): array => [(string) $key => (string) $value])
-            ->filter(static fn (string $value): bool => $value !== '')
-            ->all();
+        return app(PlatformLeagueScoringCategoryService::class)->manualMappings($league);
     }
 
     /**
@@ -2548,13 +2811,13 @@ final class LeagueController extends Controller
      */
     private function isScoringFullyMapped($league): bool
     {
-        $categories = data_get($league, 'scoring_settings.categories', []);
+        $categories = app(PlatformLeagueScoringCategoryService::class)->payloadRows($league);
 
-        if (! is_array($categories) || $categories === []) {
+        if ($categories === []) {
             return false;
         }
 
-        return collect(array_is_list($categories) ? $categories : array_values($categories))
+        return collect($categories)
             ->filter(static fn (mixed $category): bool => is_array($category))
             ->every(static fn (array $category): bool => (bool) ($category['is_supported'] ?? false)
                 || filled($category['stat_key'] ?? null));
@@ -2793,6 +3056,14 @@ final class LeagueController extends Controller
         array $eligibility,
         string $position,
     ): string {
+        if (self::isMinorRosterRow($slot, $status)) {
+            return collect($eligibility)
+                ->map(static fn (mixed $value): string => self::normalizedMinorPosition((string) $value))
+                ->first(static fn (string $value): bool => in_array($value, ['C', 'LW', 'RW', 'D', 'G'], true))
+                ?: self::normalizedMinorPosition($position)
+                ?: 'MIN';
+        }
+
         if ($slot !== '') {
             return $slot;
         }

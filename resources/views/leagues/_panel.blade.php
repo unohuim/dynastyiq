@@ -42,6 +42,8 @@
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
       customCap: @js((bool) ($customCap ?? false)),
+      fantraxContractCodes: @js($fantraxContractCodes ?? []),
+      fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
       activeLeagueTab: 'draft',
       playerSearch: '',
       capSortKey: '',
@@ -229,6 +231,18 @@
           && this.current?.id !== '__all_players__'
           && this.current?.id !== '__free_agents__';
       },
+      rosterRowClass(player){
+        if (!this.shouldShowRosterSections()) return '';
+
+        const slot = String(player?.roster_slot || '').trim().toUpperCase();
+        const status = String(player?.roster_status || '').trim().toLowerCase();
+
+        if (player?.roster_group === 'minor') return 'bg-blue-50';
+        if (status === 'ir' || ['IR', 'IR+'].includes(slot)) return 'bg-red-100';
+        if (['bench', 'reserve'].includes(status) || ['BN', 'BEN', 'BENCH', 'RES', 'RESERVE'].includes(slot)) return 'bg-yellow-100';
+
+        return '';
+      },
       select(idx){
         this.i = idx;
         this.teamQuery = this.teams[idx]?.name ?? '';
@@ -310,6 +324,8 @@
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
           this.customCap = Boolean(payload.customCap ?? this.customCap);
+          this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
+          this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
           this.playersFreeAgentsPayloadUrl = payload.playersFreeAgentsPayloadUrl ?? this.playersFreeAgentsPayloadUrl;
           this.applyDeferredTeams();
@@ -431,6 +447,23 @@
 
         return positions.length ? positions.join('/') : (player?.position || '');
       },
+      contractTypeCode(player){
+        const contract = player?.fantasy_contract_code || null;
+
+        return String(contract?.code || contract?.prefix || '').trim().toUpperCase();
+      },
+      contractTypeTitle(player){
+        const contract = player?.fantasy_contract_code || null;
+        const code = String(contract?.code || '').trim().toUpperCase();
+        const label = String(contract?.label || '').trim();
+
+        return [code, label].filter(Boolean).join(' - ');
+      },
+      rosterPlaceholderLabel(player){
+        const slot = String(player?.roster_slot || '').trim();
+
+        return slot ? `Open ${slot}` : 'Open slot';
+      },
       playerInitials(player){
         const name = player?.name || [player?.first_name, player?.last_name].filter(Boolean).join(' ') || '';
         return name
@@ -482,11 +515,20 @@
         const currentSeasonKey = this.currentCapSeasonKey();
 
         if (this.customCap) {
-          return [{
-            key: String(currentSeasonKey),
-            label: this.capSeasonLabel(currentSeasonKey),
-            sort: currentSeasonKey,
-          }];
+          const maxYearsRemaining = Math.max(1, ...(this.capTeam?.players || [])
+            .map(player => Number(player?.fantasy_contract_code?.years_remaining || 0))
+            .filter(value => Number.isFinite(value) && value > 0));
+
+          return Array.from({ length: maxYearsRemaining }, (_, index) => {
+            const startYear = Math.floor(currentSeasonKey / 10000) + index;
+            const seasonKey = (startYear * 10000) + startYear + 1;
+
+            return {
+              key: String(seasonKey),
+              label: this.capSeasonLabel(seasonKey),
+              sort: seasonKey,
+            };
+          });
         }
 
         (this.capTeam?.players || []).forEach(player => {
@@ -612,18 +654,30 @@
         if (this.customCap) {
           const currentSeasonKey = String(this.currentCapSeasonKey());
           const salary = player?.fantasy_salary || null;
+          const yearsRemaining = Number(player?.fantasy_contract_code?.years_remaining || 0);
+          const seasonOffset = this.capCustomSeasonOffset(key);
+          const coveredYears = Number.isFinite(yearsRemaining) && yearsRemaining > 0 ? yearsRemaining : 1;
 
-          if (String(key) !== currentSeasonKey || !salary?.cap_hit) return null;
+          // Fantrax custom salaries repeat through the parsed remaining contract term.
+          if (seasonOffset < 0 || seasonOffset >= coveredYears || !salary?.cap_hit) return null;
 
           return {
-            season_key: Number(currentSeasonKey),
-            label: this.capSeasonLabel(currentSeasonKey),
+            season_key: Number(key || currentSeasonKey),
+            label: this.capSeasonLabel(key || currentSeasonKey),
             cap_hit: Number(salary.cap_hit || 0),
             cap_hit_label: salary.label || this.capMoney(salary.cap_hit),
           };
         }
 
         return (player?.contract?.seasons || []).find(season => String(season?.season_key ?? season?.label ?? '') === String(key)) || null;
+      },
+      capCustomSeasonOffset(key){
+        const currentSeasonKey = Number(this.currentCapSeasonKey());
+        const seasonKey = Number(key || 0);
+
+        if (!Number.isFinite(currentSeasonKey) || !Number.isFinite(seasonKey) || seasonKey <= 0) return -1;
+
+        return Math.floor(seasonKey / 10000) - Math.floor(currentSeasonKey / 10000);
       },
       capSortValue(player, key, positionOrder){
         if (key === 'player') return String(player?.name || '').toLowerCase();
@@ -681,6 +735,7 @@
       currentCapSeasonKey(){
         const now = new Date();
         const year = now.getFullYear();
+        // Fantrax custom salary seasons turn over on July 1.
         const startsThisYear = now.getMonth() >= 6;
         const startYear = startsThisYear ? year : year - 1;
 
@@ -735,10 +790,86 @@
           }
 
           this.customCap = Boolean(payload.customCap ?? next);
+          this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
+          this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.capSettingsMessage = payload.message || 'Cap settings saved.';
+          this.playersPayloadLoaded = false;
+          await this.loadPlayersPayload(true, false);
+          this.$nextTick(() => this.loadLeagueStats(true));
         } catch (error) {
           this.customCap = previous;
           this.capSettingsError = error?.message || 'Could not save cap settings.';
+        } finally {
+          this.savingCapSettings = false;
+        }
+      },
+      contractCodeDefinition(prefix){
+        const key = String(prefix || '').toUpperCase();
+
+        if (!this.fantraxContractCodeDefinitions[key]) {
+          this.fantraxContractCodeDefinitions[key] = {
+            label: '',
+            type: '',
+            suffix_years_remaining: true,
+          };
+        }
+
+        return this.fantraxContractCodeDefinitions[key];
+      },
+      contractCodeTypeValue(prefix){
+        return this.contractCodeDefinition(prefix).type || '';
+      },
+      contractCodeLabelValue(prefix){
+        return this.contractCodeDefinition(prefix).label || '';
+      },
+      contractCodeSuffixValue(prefix){
+        return Boolean(this.contractCodeDefinition(prefix).suffix_years_remaining ?? true);
+      },
+      setContractCodeDefinition(prefix, field, value){
+        const key = String(prefix || '').toUpperCase();
+        const definition = this.contractCodeDefinition(key);
+        definition[field] = value;
+        this.fantraxContractCodeDefinitions = {
+          ...this.fantraxContractCodeDefinitions,
+          [key]: definition,
+        };
+      },
+      async saveContractCodeDefinitions(){
+        if (!this.capSettingsUpdateUrl || this.savingCapSettings) return;
+
+        this.savingCapSettings = true;
+        this.capSettingsMessage = '';
+        this.capSettingsError = '';
+
+        try {
+          const response = await fetch(this.capSettingsUpdateUrl, {
+            method: 'PUT',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+            body: JSON.stringify({
+              custom_cap: this.customCap,
+              contract_code_definitions: this.fantraxContractCodeDefinitions,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not save contract codes.');
+          }
+
+          this.customCap = Boolean(payload.customCap ?? this.customCap);
+          this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
+          this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
+          this.capSettingsMessage = 'Contract codes saved.';
+          this.playersPayloadLoaded = false;
+          await this.loadPlayersPayload(true, false);
+          this.$nextTick(() => this.loadLeagueStats(true));
+        } catch (error) {
+          this.capSettingsError = error?.message || 'Could not save contract codes.';
         } finally {
           this.savingCapSettings = false;
         }
@@ -1093,16 +1224,28 @@
 	                <div>
 	                  <div
 	                    x-show="shouldShowRosterSections() && p.roster_group === 'minor' && (filteredPlayers?.[playerIndex - 1]?.roster_group !== 'minor')"
-	                    class="bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500"
+	                    class="bg-blue-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-blue-700"
 	                  >
 	                    Minor League
 	                  </div>
-	                  <div class="flex items-center gap-2 px-3 py-1.5">
+	                  <div class="flex items-center gap-2 px-3 py-1.5" :class="rosterRowClass(p)">
                     <span
                       class="inline-flex h-6 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600"
                       x-text="p.roster_slot || '-'"
                     ></span>
-                    <template x-if="p.avatar_url">
+                    <span
+                      x-show="contractTypeCode(p)"
+                      class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                      :title="contractTypeTitle(p)"
+                      x-text="contractTypeCode(p)"
+                    ></span>
+                    <template x-if="p.league_roster_placeholder">
+                      <span
+                        class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-50 text-[10px] font-semibold text-slate-400 ring-1 ring-slate-200"
+                        aria-hidden="true"
+                      >-</span>
+                    </template>
+                    <template x-if="p.avatar_url && !p.league_roster_placeholder">
                       <img
                         :src="p.avatar_url"
                         alt=""
@@ -1110,16 +1253,18 @@
                         loading="lazy"
                       >
                     </template>
-                    <template x-if="!p.avatar_url">
+                    <template x-if="!p.avatar_url && !p.league_roster_placeholder">
                       <span
                         class="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200"
                         x-text="playerInitials(p)"
                       ></span>
                     </template>
 	                    <div class="min-w-0">
-	                      <div class="truncate text-sm font-medium text-slate-900"
-	                           x-text="p.name || [p.first_name, p.last_name].filter(Boolean).join(' ')"></div>
-	                      <div class="text-[11px] text-slate-500">
+	                      <div
+                          class="truncate text-sm font-medium"
+                          :class="p.league_roster_placeholder ? 'text-slate-400' : 'text-slate-900'"
+	                           x-text="p.league_roster_placeholder ? rosterPlaceholderLabel(p) : (p.name || [p.first_name, p.last_name].filter(Boolean).join(' '))"></div>
+	                      <div x-show="!p.league_roster_placeholder" class="text-[11px] text-slate-500">
                         <span x-text="eligibilityLabel(p)"></span>
                         <span x-show="p.team_abbrev"> &bull; <span x-text="p.team_abbrev"></span></span>
 	                        <span x-show="p.age !== undefined && p.age !== null"> &bull; Age <span x-text="p.age"></span></span>
@@ -1238,8 +1383,9 @@
                       Age <span class="text-slate-400" x-text="capSortIndicator('age')"></span>
                     </button>
                   </th>
+                  <th x-show="customCap" scope="col" class="w-10 py-1.5 pl-3 pr-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">Type</th>
                   <template x-for="(column, index) in capSeasonColumns" :key="column.key">
-                    <th scope="col" class="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
+                    <th scope="col" class="px-1 py-1.5 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
                       <button type="button" class="inline-flex items-center justify-end gap-1 hover:text-slate-800" @click="setCapSort(`season:${column.key}`)">
                         <span x-text="column.label"></span>
                         <span class="text-slate-400" x-text="capSortIndicator(`season:${column.key}`)"></span>
@@ -1254,7 +1400,7 @@
                   <tr>
                     <td
                       x-show="row.type === 'group'"
-                      :colspan="4 + capSeasonColumns.length"
+                      :colspan="4 + capSeasonColumns.length + (customCap ? 1 : 0)"
                       class="bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
                       x-text="row.label"
                     ></td>
@@ -1276,8 +1422,16 @@
                     </td>
                     <td x-show="row.type === 'player'" class="px-1.5 py-1 pl-4 text-xs font-medium text-slate-700" x-text="capPositionLabel(row.player)"></td>
                     <td x-show="row.type === 'player'" class="px-1 py-1 text-right text-xs font-medium text-slate-700" x-text="row.player.age ?? '-'"></td>
+                    <td x-show="customCap && row.type === 'player'" class="py-1 pl-3 pr-1 text-left">
+                      <span
+                        x-show="contractTypeCode(row.player)"
+                        class="inline-flex h-5 min-w-5 items-center justify-center rounded bg-slate-100 px-1 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                        :title="contractTypeTitle(row.player)"
+                        x-text="contractTypeCode(row.player)"
+                      ></span>
+                    </td>
                     <template x-for="(column, index) in capSeasonColumns" :key="`${row.id}-${column.key}`">
-                      <td x-show="row.type === 'player'" class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
+                      <td x-show="row.type === 'player'" class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
                         <template x-if="capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-'">
                           <span
                             class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
@@ -1300,14 +1454,14 @@
                   </tr>
                 </template>
                 <tr aria-hidden="true">
-                  <td :colspan="4 + capSeasonColumns.length" class="h-12 border-0 p-0"></td>
+                  <td :colspan="4 + capSeasonColumns.length + (customCap ? 1 : 0)" class="h-12 border-0 p-0"></td>
                 </tr>
               </tbody>
               <tfoot class="border-t border-slate-200 bg-slate-50">
                 <tr>
-                  <th scope="row" colspan="3" class="px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
+                  <th scope="row" :colspan="3 + (customCap ? 1 : 0)" class="px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
                   <template x-for="(column, index) in capSeasonColumns" :key="`total-${column.key}`">
-                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-8' : 'w-16'">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
                       <span
                         class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
                         x-text="capMoney(capTotals[column.key])"
@@ -1535,6 +1689,67 @@
                   aria-hidden="true"
                 ></span>
               </button>
+            </div>
+            <div x-show="fantraxContractCodes.length > 0" class="rounded-md border border-slate-200">
+              <div class="border-b border-slate-200 px-3 py-3">
+                <div class="text-sm font-semibold text-slate-950">Custom contract codes</div>
+                <div class="mt-1 text-xs text-slate-500">Define detected Fantrax contract prefixes for custom salary leagues.</div>
+              </div>
+              <div class="divide-y divide-slate-200">
+                <template x-for="codeGroup in fantraxContractCodes" :key="codeGroup.prefix">
+                  <div class="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.5fr)] sm:items-center">
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="rounded bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-800" x-text="codeGroup.prefix"></span>
+                        <span class="text-xs text-slate-500" x-text="`${codeGroup.count} players`"></span>
+                      </div>
+                      <div class="mt-1 truncate text-xs text-slate-500" x-text="`Detected ${codeGroup.examples}`"></div>
+                    </div>
+                    <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center">
+                      <label class="block">
+                        <span class="sr-only">Contract label</span>
+                        <input
+                          type="text"
+                          class="block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                          :value="contractCodeLabelValue(codeGroup.prefix)"
+                          @input="setContractCodeDefinition(codeGroup.prefix, 'label', $event.target.value)"
+                          placeholder="Entry Level"
+                        >
+                      </label>
+                      <label class="block">
+                        <span class="sr-only">Contract type key</span>
+                        <input
+                          type="text"
+                          class="block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                          :value="contractCodeTypeValue(codeGroup.prefix)"
+                          @input="setContractCodeDefinition(codeGroup.prefix, 'type', $event.target.value)"
+                          placeholder="entry_level"
+                        >
+                      </label>
+                      <label class="inline-flex items-center justify-end gap-2 text-xs font-medium text-slate-600">
+                        <input
+                          type="checkbox"
+                          class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600"
+                          :checked="contractCodeSuffixValue(codeGroup.prefix)"
+                          @change="setContractCodeDefinition(codeGroup.prefix, 'suffix_years_remaining', $event.target.checked)"
+                        >
+                        <span>Years</span>
+                      </label>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div class="flex items-center justify-end border-t border-slate-200 px-3 py-3">
+                <button
+                  type="button"
+                  class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="savingCapSettings"
+                  @click="saveContractCodeDefinitions()"
+                >
+                  <span x-show="!savingCapSettings">Save contract codes</span>
+                  <span x-show="savingCapSettings">Saving...</span>
+                </button>
+              </div>
             </div>
             <div class="rounded-md bg-slate-50 px-3 py-3 text-sm text-slate-600">
               Fantasy managers, team avatars, roster order, and selected-team filtering come from the synced Fantrax league roster.

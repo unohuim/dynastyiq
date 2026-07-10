@@ -309,6 +309,15 @@ describe('stats page payload modules', () => {
     expect(adapter.activeColumnGroup(settings, state({ selectedPosTypes: ['G'] }))).toBe('goalie');
   });
 
+  it('forces skater column group from selected skater filters', () => {
+    const adapter = new StatsColumnGroupAdapter(statsIdentityKeys);
+    const settings = { columnGroups: { skater: [], goalie: [] }, activeColumnGroup: 'goalie' };
+
+    expect(adapter.activeColumnGroup(settings, state({ selectedPos: ['C'] }))).toBe('skater');
+    expect(adapter.activeColumnGroup(settings, state({ selectedPosTypes: ['F'] }))).toBe('skater');
+    expect(adapter.activeColumnGroup(settings, state({ selectedPosTypes: ['D'] }))).toBe('skater');
+  });
+
   it('combines identity headings with active group headings without duplicates', () => {
     const adapter = new StatsColumnGroupAdapter(statsIdentityKeys);
     const result = adapter.activeHeadings(payload(), {

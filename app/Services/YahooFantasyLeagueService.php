@@ -174,13 +174,16 @@ class YahooFantasyLeagueService
             $this->scoringCategoryPayloads($settingsXml),
             $manualMappings,
         );
+        $rawPayload = $this->settingsRawPayload($settingsXml);
+
+        app(PlatformLeagueScoringCategoryService::class)->sync($platformLeague, $categories, $manualMappings);
 
         $platformLeague->forceFill([
             'settings' => $this->leagueSettingsPayload($settingsXml),
             'scoring_settings' => [
                 'categories' => $categories,
                 'manual_mappings' => $manualMappings,
-                'raw_payload' => $this->settingsRawPayload($settingsXml),
+                'raw_payload' => $rawPayload,
             ],
             'updated_at' => $now,
         ])->save();

@@ -23,6 +23,7 @@ purpose: Build stats payloads through explicit request context, parsed filters, 
 when_to_use:
   - League stats payloads.
   - Perspective-driven player stats payloads.
+  - JSON-fed stats report views, including stats unit reports.
   - Prospects and draft-player stats payloads.
   - Refactoring stats query, schema, or row assembly behavior into reusable services.
 when_not_to_use:
@@ -40,6 +41,7 @@ rules:
   - League ownership maps may use five-minute cache keys scoped by league, user, and platform while row decoration remains request-payload specific.
   - Synthetic league scoring perspectives and Fantrax goalie column groups must be built through a dedicated backend factory rather than page JavaScript.
   - Platform player-universe filtering must remain a dedicated backend payload filter before ownership hydration.
+  - Stats report UIs should consume server JSON payloads and apply sort, display-mode, and filter interactions without full page refreshes.
   - StatsPayloadClient may translate active goalie filter state into column_group=goalie until the backend exposes an explicit active column-group request contract.
 public_interface:
   - StatsQueryContext

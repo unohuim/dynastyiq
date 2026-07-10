@@ -6,6 +6,7 @@ namespace App\Support\Stats;
 
 use App\Models\Perspective;
 use App\Models\PlatformLeague;
+use App\Services\PlatformLeagueScoringCategoryService;
 
 /**
  * Builds synthetic league stats perspectives and provider scoring settings.
@@ -101,9 +102,9 @@ final class LeagueStatsPerspectiveFactory
      */
     public function leagueScoringPerspectiveSettings(PlatformLeague $league): ?array
     {
-        $categories = data_get($league, 'scoring_settings.categories', []);
+        $categories = app(PlatformLeagueScoringCategoryService::class)->payloadRows($league);
 
-        if (! is_array($categories) || $categories === []) {
+        if ($categories === []) {
             return null;
         }
 
@@ -126,16 +127,16 @@ final class LeagueStatsPerspectiveFactory
             return null;
         }
 
-        if ($categoryRows->contains(static fn (array $category): bool => trim((string) ($category['stat_key'] ?? '')) === '')) {
-            return null;
-        }
-
         $columns = $categoryRows
             ->filter(static fn (mixed $category): bool => is_array($category))
+            ->filter(static fn (array $category): bool => (bool) ($category['is_supported'] ?? false)
+                || trim((string) ($category['stat_key'] ?? '')) !== '')
             ->map(static function (array $category): ?array {
                 $statKey = trim((string) ($category['stat_key'] ?? ''));
+                $formula = trim((string) ($category['formula'] ?? ''));
+                $derivedKey = trim((string) ($category['id'] ?? ''));
 
-                if ($statKey === '') {
+                if ($statKey === '' && $formula === '') {
                     return null;
                 }
 
@@ -147,9 +148,15 @@ final class LeagueStatsPerspectiveFactory
                 ));
 
                 return [
-                    'key' => $statKey,
+                    'key' => $statKey !== '' ? $statKey : $derivedKey,
                     'label' => $label !== '' ? $label : strtoupper($statKey),
                     'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
+                    'formula' => $formula !== '' && $statKey === '' ? $formula : null,
+                    'required_schema_columns' => is_array($category['required_schema_columns'] ?? null)
+                        ? array_values($category['required_schema_columns'])
+                        : [],
+                    'provider_group' => $category['provider_group'] ?? null,
+                    'normalized_group' => $category['normalized_group'] ?? $category['group'] ?? null,
                 ];
             })
             ->filter()
@@ -161,13 +168,12 @@ final class LeagueStatsPerspectiveFactory
             return null;
         }
 
-        $goalieKeys = $this->goalieScoringStatKeys();
         $goalieColumns = collect($columns)
-            ->filter(static fn (array $column): bool => in_array($column['key'], $goalieKeys, true))
+            ->filter(fn (array $column): bool => $this->columnIsGoalie($column))
             ->values()
             ->all();
         $skaterColumns = collect($columns)
-            ->reject(static fn (array $column): bool => in_array($column['key'], $goalieKeys, true))
+            ->reject(fn (array $column): bool => $this->columnIsGoalie($column))
             ->values()
             ->all();
 
@@ -218,6 +224,9 @@ final class LeagueStatsPerspectiveFactory
     public function withFantraxGoalieSettings(array $settings, PlatformLeague $league): array
     {
         $goalieColumns = $this->fantraxGoalieScoringColumns($league);
+        $skaterColumns = is_array(data_get($settings, 'columnGroups.skater'))
+            ? data_get($settings, 'columnGroups.skater')
+            : ($settings['columns'] ?? []);
 
         if ($goalieColumns === []) {
             $goalieColumns = $this->defaultGoalieScoringColumns();
@@ -228,6 +237,15 @@ final class LeagueStatsPerspectiveFactory
             'sortKey' => $this->goalieSortKey($goalieColumns),
             'sortDirection' => 'desc',
         ];
+        $settings['columnGroups'] = is_array($settings['columnGroups'] ?? null) ? $settings['columnGroups'] : [];
+        $settings['columnGroups']['skater'] = is_array($skaterColumns) ? array_values($skaterColumns) : [];
+        $settings['columnGroups']['goalie'] = $goalieColumns;
+        $settings['columnGroupSort'] = is_array($settings['columnGroupSort'] ?? null) ? $settings['columnGroupSort'] : [];
+        $settings['columnGroupSort']['goalie'] = [
+            'sortKey' => $this->goalieSortKey($goalieColumns),
+            'sortDirection' => 'desc',
+        ];
+        $settings['activeColumnGroup'] = 'goalie';
         $settings['filters'] = is_array($settings['filters'] ?? null) ? $settings['filters'] : [];
         $settings['filters']['pos_type'] = [
             'operator' => '=',
@@ -279,29 +297,40 @@ final class LeagueStatsPerspectiveFactory
         $goalieKeys = $this->goalieScoringStatKeys();
         $seen = [];
 
-        return collect(data_get($league, 'scoring_settings.categories', []))
+        return collect(app(PlatformLeagueScoringCategoryService::class)->payloadRows($league))
             ->filter(static fn (mixed $category): bool => is_array($category))
             ->map(function (array $category) use ($goalieKeys, &$seen): ?array {
                 $manualStatKey = trim((string) ($category['stat_key'] ?? ''));
                 $autoStatKey = trim((string) ($category['auto_stat_key'] ?? ''));
                 $statKey = $manualStatKey !== '' ? $manualStatKey : $autoStatKey;
+                $formula = trim((string) ($category['formula'] ?? ''));
+                $derivedKey = trim((string) ($category['id'] ?? ''));
+                $columnKey = $statKey !== '' ? $statKey : $derivedKey;
 
-                if ($statKey === '' || ! in_array($statKey, $goalieKeys, true) || isset($seen[$statKey])) {
+                if (
+                    $columnKey === ''
+                    || ! $this->categoryIsGoalie($category, $goalieKeys)
+                    || isset($seen[$columnKey])
+                ) {
                     return null;
                 }
 
-                $seen[$statKey] = true;
+                $seen[$columnKey] = true;
                 $label = trim((string) (
                     $category['short']
                     ?? $category['label']
                     ?? $category['name']
-                    ?? strtoupper($statKey)
+                    ?? strtoupper($columnKey)
                 ));
 
                 return [
-                    'key' => $statKey,
-                    'label' => $label !== '' ? $label : strtoupper($statKey),
+                    'key' => $columnKey,
+                    'label' => $label !== '' ? $label : strtoupper($columnKey),
                     'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
+                    'formula' => $formula !== '' && $statKey === '' ? $formula : null,
+                    'required_schema_columns' => is_array($category['required_schema_columns'] ?? null)
+                        ? array_values($category['required_schema_columns'])
+                        : [],
                 ];
             })
             ->filter()
@@ -368,6 +397,55 @@ final class LeagueStatsPerspectiveFactory
     }
 
     /**
+     * @param array<string,mixed> $column
+     */
+    private function columnIsGoalie(array $column): bool
+    {
+        return $this->categoryIsGoalie($column, $this->goalieScoringStatKeys());
+    }
+
+    /**
+     * @param array<string,mixed> $category
+     * @param array<int,string> $goalieKeys
+     */
+    private function categoryIsGoalie(array $category, array $goalieKeys): bool
+    {
+        $group = strtoupper(trim((string) (
+            $category['normalized_group']
+            ?? $category['group']
+            ?? $category['provider_group']
+            ?? ''
+        )));
+        $id = strtoupper(trim((string) ($category['id'] ?? '')));
+        $key = strtoupper(trim((string) ($category['key'] ?? '')));
+
+        if (
+            $group === 'HOCKEY_GOALIE'
+            || $group === 'GOALIE'
+            || str_starts_with($id, 'HOCKEY_GOALIE:')
+            || str_starts_with($key, 'HOCKEY_GOALIE:')
+        ) {
+            return true;
+        }
+
+        $requiredColumns = is_array($category['required_schema_columns'] ?? null)
+            ? $category['required_schema_columns']
+            : [];
+        $keys = collect([
+            $requiredColumns === [] ? ($category['key'] ?? null) : null,
+            $category['stat_key'] ?? null,
+            $category['auto_stat_key'] ?? null,
+            ...$requiredColumns,
+        ])
+            ->map(static fn (mixed $key): string => trim((string) $key))
+            ->filter()
+            ->values();
+
+        return $keys->isNotEmpty()
+            && $keys->every(static fn (string $key): bool => in_array($key, $goalieKeys, true));
+    }
+
+    /**
      * @param array<string,mixed> $payload
      * @return array<int,array<string,mixed>>
      */
@@ -395,6 +473,7 @@ final class LeagueStatsPerspectiveFactory
         return collect($payload['headings'] ?? [])
             ->filter(static fn (mixed $heading): bool => is_array($heading))
             ->reject(static fn (array $heading): bool => in_array((string) ($heading['key'] ?? ''), $identityKeys, true))
+            ->reject(fn (array $heading): bool => $this->columnIsGoalie($heading))
             ->values()
             ->all();
     }

@@ -1,364 +1,209 @@
 ---
-pr_id: 12
-pr_name: pr12
+pr_id: 13
+pr_name: pr13
 status: Active
-created: 2026-07-09
-last_updated: 2026-07-09
+created: 2026-07-10
+last_updated: 2026-07-10
 ---
 
-# Stats Payload, Filter Schema, And JS Stats Abstractions
+# Platform League Scoring Categories As First-Class Records
 
 ## Source
 
-League Players tab performance and architecture review on 2026-07-09.
+Fantrax scoring-category alignment work exposed that provider scoring categories are currently persisted inside `platform_leagues.scoring_settings.categories` JSON. Fantrax can send both rich category rows and shorthand scoring rows for the same category, such as `Big Points 3` and `BP3`, which makes deduplication and manual alignment fragile when category identity is only embedded in a JSON array.
 
-During the league Players tab work, timing instrumentation showed that the original Fantrax league skater payload took roughly 1.6 seconds locally, with most of the cost inside row assembly. A contract-loading N+1 inside `assembleRowsFromCollection()` was removed, reducing the same payload to roughly 475ms locally. After that fix, the largest remaining costs were distributed across schema/filter preparation, stats query execution, row assembly, and league ownership hydration.
-
-The follow-up review identified that the current stats payload path works, but responsibilities are concentrated inside `StatsController` and `StatsPageShell`.
+The category dictionary import now recognizes many provider-specific Fantrax labels and formulas, and League Options needs to show exactly which provider categories are supported, unsupported, or manually mapped.
 
 ## Objective
 
-Introduce clear, reusable boundaries for stats payload construction, filter parsing, filter schema generation, derived filtering, row assembly, and `js-stats` request handling while preserving the existing stats payload contract.
+Move platform league scoring categories from opaque league JSON into queryable child records, with deterministic provider identity, deduplication, dictionary alignment, manual mapping persistence, and stale-row cleanup during sync.
 
-The goal is to make the stats system faster to optimize, easier to test, and safer to reuse across:
+The resulting source of truth should be:
 
-- Main stats pages.
-- League Players tabs.
-- Fantrax league scoring views.
-- Goalie column-group views.
-- Draft player pools.
-- Prospects views.
-- Future team or unit stats views.
+- `platform_league_scoring_categories` for normalized category rows.
+- `fantasy_scoring_category_mappings` for provider dictionary definitions.
+- Raw provider scoring payload retained only for audit/debug context.
 
 ## Current DynastyIQ Context
 
-The current stats endpoint and league stats payload logic live primarily in:
+Current league scoring state is stored under:
+
+- `platform_leagues.scoring_settings.categories`
+- `platform_leagues.scoring_settings.manual_mappings`
+- `platform_leagues.scoring_settings.raw_payload`
+
+Current code paths include:
 
-- `app/Http/Controllers/StatsController.php`
-- `resources/js/pages/stats-page.js`
-- `resources/js/components/StatsPage/*`
+- `app/Services/SyncFantraxLeague.php`
+- `app/Services/FantraxScoringCategoryMapper.php`
+- `app/Services/YahooFantasyLeagueService.php`
+- `app/Http/Controllers/LeagueController.php`
+- `app/Support/Stats/LeagueStatsPerspectiveFactory.php`
+- `resources/views/leagues/_panel.blade.php`
 
-Current server payload shape includes:
+Current dictionary source:
 
-- `headings`
-- `data`
-- `settings`
-- `meta.filterSchema`
-- `meta.appliedFilters`
-- `meta.positionButtons`
-- `meta.availableSeasons`
-- `meta.availableGameTypes`
-- `connectedLeagues`
-- `perspectives`
-- `selectedPerspective`
+- `app/Models/FantasyScoringCategoryMapping.php`
+- `docs/import-templates/fantrax_category_alignment.csv`
 
-This contract should remain stable during the migration unless a later PR explicitly approves a breaking change.
+## Problems To Solve
 
-## Findings
+- Duplicate provider categories can persist inside league JSON arrays.
+- JSON arrays cannot enforce uniqueness for category identity.
+- League Options cannot query category rows directly.
+- Unsupported provider categories cannot be audited across all connected leagues with SQL.
+- Manual mappings are keyed to JSON row IDs instead of durable category records.
+- Provider sync replaces a JSON blob, but cannot upsert/delete individual scoring categories deterministically.
 
-The current `buildSchemaAndApplyFilters()` method does several jobs at once:
+## Proposed Schema
 
-- Joins the stats query to players as `pf`.
-- Applies availability and locked perspective filters.
-- Builds UI schema for age, team, position, league, stat columns, and GP.
-- Calculates bounds/options by cloning the query.
-- Applies request filters back onto the same base query.
+Add `platform_league_scoring_categories`.
 
-The current `applyPostFilters()` method correctly handles derived filters after row assembly, such as:
+Candidate columns:
 
-- `gp`
-- `contract_value_num`
-- `contract_last_year_num`
+- `id`
+- `platform_league_id`
+- `platform`
+- `provider_category_id`
+- `provider_group`
+- `provider_code`
+- `provider_short_label`
+- `provider_label`
+- `normalized_group`
+- `normalized_short_label`
+- `normalized_label`
+- `value`
+- `position_values`
+- `dictionary_mapping_id`
+- `auto_mapping_key`
+- `manual_mapping_key`
+- `stat_key`
+- `alignment_status`
+- `formula`
+- `required_schema_columns`
+- `is_supported`
+- `support_message`
+- `raw_payload`
+- `sort_order`
+- `created_at`
+- `updated_at`
 
-The current `StatsPageShell` does several jobs at once:
+Relationships:
 
-- UI state.
-- Rendering coordination.
-- Request parameter construction.
-- Payload fetching.
-- Payload caching.
-- Response normalization.
-- Filter state.
-- Position and goalie-mode behavior.
+- `PlatformLeague` has many `PlatformLeagueScoringCategory`.
+- `PlatformLeagueScoringCategory` belongs to `PlatformLeague`.
+- `PlatformLeagueScoringCategory` optionally belongs to `FantasyScoringCategoryMapping`.
 
-## Design Direction
+## Identity And Dedupe Rules
 
-Do not create a broad stats framework. Create small, named abstractions around existing domain responsibilities.
+Provider category sync must normalize group names before identity comparison:
 
-The server remains the source of truth for hockey, fantasy, scoring, and stats semantics. The frontend should render the server contract and manage UI state, not own domain rules.
+- `SKATING` maps to `HOCKEY_SKATING`.
+- `GOALIE` maps to `HOCKEY_GOALIE`.
 
-## Proposed PHP Abstractions
+Provider category sync must prefer rich category labels over shorthand aliases:
 
-### StatsQueryContext
+- `Big Points 3` over `BP3`
+- `Net Faceoffs Won` over `NFOW`
+- `Old School Grit 3` over `OSG3`
+- `Special Teams Points 2` over `STP2`
+- `Goalie Points 4` over `GPT4`
 
-Value object describing the stats request context.
+Recommended uniqueness:
 
-Candidate fields:
+- Unique category identity per league using normalized provider identity.
+- A second uniqueness guard for provider category IDs when present.
 
-- User.
-- Platform league, when present.
-- Perspective slug/name/id.
-- Season.
-- Game type.
-- Period.
-- Slice.
-- Column group.
-- Platform.
-- Draft context.
-- Resource type.
+## Sync Behavior
 
-This replaces loose request arrays and repeated scalar passing through the payload pipeline.
+Fantrax sync should:
 
-### StatsFilterSet
+1. Fetch league info.
+2. Normalize rich scoring rows and shorthand scoring rows into a single category collection.
+3. Enrich each category from `fantasy_scoring_category_mappings`.
+4. Preserve existing manual mapping keys by stable category identity.
+5. Upsert normalized category rows.
+6. Delete category rows for the league that are no longer present in the provider payload.
+7. Store raw provider scoring payload for audit/debug context only.
 
-Parsed representation of requested filters.
+The sync should not depend on JSON category rows as the source of truth after migration.
 
-Candidate responsibilities:
+Yahoo sync should follow the same platform-neutral row model, even if its provider payload is simpler.
 
-- Parse HTTP query parameters once.
-- Normalize position and position-type selections.
-- Hold team, league, numeric, and derived filter ranges.
-- Distinguish DB-backed filters from post-assembly filters.
+## Manual Mapping Behavior
 
-### StatsQueryFilterApplier
+Manual scoring alignment should persist on category rows:
 
-Applies DB-backed filters to the base query.
+- `manual_mapping_key`
 
-Candidate responsibilities:
+Manual mappings may target:
 
-- Availability.
-- Locked perspective filters.
-- Position and position type.
-- Team.
-- League.
-- Age via DOB.
-- Physical numeric min/max filters.
+- `stat:<key>`
+- `dictionary:<platform>:<provider_label>`
+- `custom:<future_formula_id>`
 
-It should not build UI schema.
+Legacy JSON manual mappings should be backfilled onto matching category rows.
 
-### StatsFilterSchemaProvider
+## Read Path
 
-Builds UI filter schema.
+League Options should read scoring alignment categories from `platform_league_scoring_categories`.
 
-Candidate responsibilities:
+Affected paths:
 
-- Return available filter definitions.
-- Return enum options.
-- Return numeric bounds.
-- Make bounds/options cacheable by context.
+- `LeagueController::scoringCategoriesPayload()`
+- `LeagueController::scoringAlignmentCategoriesPayload()`
+- `LeagueController::updateScoringSettings()`
+- `LeagueStatsPerspectiveFactory`
 
-Candidate cache key:
+Temporary fallback to `platform_leagues.scoring_settings.categories` is allowed only for leagues that have not been backfilled yet.
 
-`platform:league_id:perspective_slug:season_id:game_type:column_group:period:slice`
+## Backfill
 
-This should support league stats and prospects without forcing a second implementation path.
+Create a backfill path that reads existing JSON category rows and inserts normalized category records.
 
-### StatsDerivedFilterApplier
+Backfill must dedupe existing duplicate rows, preferring richer/dictionary-recognized rows over shorthand rows.
 
-Applies filters that cannot be pushed into the base SQL query before row assembly.
+Backfill should preserve:
 
-Initial derived filters:
+- provider label
+- provider short label
+- value
+- position values
+- dictionary metadata
+- support status
+- manual mappings
+- raw payload
 
-- Contract AAV.
-- Contract end year.
-- Other fantasy/provider values that only exist after row formatting.
+## Documentation Updates
 
-### StatsPayloadAssembler
+Update:
 
-Turns loaded stats records into payload rows.
+- `docs/architecture/integrations/FantraxLeagueSync.yaml`
+- `docs/architecture/integrations/PlatformCategoryMappingImport.yaml`
+- `docs/DB_SCHEMA.md`
+- `docs/ENUMS.md`
+- `docs/ARCHITECTURE_INVENTORY.md`
 
-Candidate responsibilities:
+Enum storage references should move from JSON category paths to table columns where applicable.
 
-- Player identity fields.
-- Contract fields.
-- TOI normalization.
-- Native fantasy aliases.
-- Goalie stats aliases.
-- On-ice aliases.
-- Prospects row grouping.
+## Testing Scope
 
-This should own behavior currently centered around `assembleRowsFromCollection()`, `withNativeFantasyAliases()`, official boxscore TOI helpers, and on-ice append helpers.
+Add focused Pest coverage for:
 
-### StatsPayloadBuilder
+- Fantrax rich and shorthand rows dedupe into one persisted category.
+- Manual mappings survive a provider sync.
+- Stale category rows are deleted during sync.
+- Dictionary alignment metadata is persisted on category rows.
+- Unsupported category metadata is preserved for League Options warnings.
+- League Options payload reads from category rows.
+- JSON fallback works only for leagues without persisted category rows.
 
-Coordinates context, filters, schema, query execution, row assembly, post filters, sorting, metadata, and final payload shape.
-
-The controller should validate and authorize, then delegate to this builder.
-
-## Proposed JS Abstractions
-
-### StatsPayloadClient
-
-Owns network and cache behavior.
-
-Candidate responsibilities:
-
-- Request param building from a stable state object.
-- Cache key normalization.
-- Fetch.
-- Stale response protection.
-- Response normalization.
-- Resolved-season cache aliases.
-- Optional debug/timing header capture.
-
-### StatsFilterState
-
-Owns client-side filter UI state.
-
-Candidate responsibilities:
-
-- Selected positions.
-- Selected position types.
-- Selected leagues.
-- Numeric filter values.
-- Dirty numeric filter tracking.
-- Reset/apply behavior.
-
-### StatsSchemaAdapter
-
-Owns interpretation of `meta.filterSchema`.
-
-Candidate responsibilities:
-
-- Numeric filter specs.
-- Default bounds.
-- Control visibility.
-- Schema-to-UI mapping.
-
-### StatsPageShell
-
-Keep or rename as a coordinator that wires the payload client, filter state, schema adapter, desktop renderer, and mobile renderer.
-
-It should not own hockey-specific request semantics directly.
-
-## JS Stats Boundary Direction
-
-The `js-stats` component should maintain:
-
-- Table and card rendering.
-- Sort state and local sort interactions.
-- Responsive desktop/mobile rendering.
-- Drawer/open/close UI state.
-- Loading/error/empty states.
-- Consumption of the existing payload contract.
-
-The `js-stats` component should shed:
-
-- Direct business assumptions about what request params mean.
-- Fetch/cache internals inside the rendering class.
-- URL/query parameter construction inside rendering logic.
-- Response normalization rules that are better owned by a client/adaptor layer.
-- Domain-specific goalie/skater behavior where the server schema can express the correct behavior.
-
-## Migration Plan
-
-1. Add `StatsQueryContext` and `StatsFilterSet`.
-   - No behavior change.
-   - Keep `StatsController` as the caller.
-
-2. Extract DB-backed query filtering.
-   - Move query mutation from `buildSchemaAndApplyFilters()` into `StatsQueryFilterApplier`.
-   - Preserve existing request and payload behavior.
-
-3. Extract schema generation.
-   - Move filter schema, bounds, and enum option generation into `StatsFilterSchemaProvider`.
-   - Keep payload shape unchanged.
-
-4. Extract derived filtering.
-   - Move `applyPostFilters()` behavior into `StatsDerivedFilterApplier`.
-   - Keep derived filters post-assembly until there is a better persisted/queryable representation.
-
-5. Extract row assembly.
-   - Move row assembly, TOI helpers, aliases, and on-ice append behavior into `StatsPayloadAssembler`.
-   - Preserve current player identity, contract, goalie, skater, and prospects behavior.
-
-6. Add `StatsPayloadBuilder`.
-   - Coordinate the extracted services.
-   - Slim `StatsController::leaguePayload()` and related payload methods.
-
-7. Add schema caching.
-   - Cache stable schema/bounds/options by context.
-   - Invalidate or bypass when context changes.
-
-8. Extract `StatsPayloadClient` in JS.
-   - Move fetch, cache, stale response protection, and request key normalization out of `StatsPageShell`.
-
-9. Extract `StatsFilterState` and `StatsSchemaAdapter`.
-   - Keep existing desktop/mobile renderers.
-   - Avoid UI regressions.
-
-## Performance Direction
-
-Do not optimize blindly. Keep lightweight timing hooks while migrating, then remove temporary logs once the path is stable.
-
-Expected wins:
-
-- Schema metadata can be cached instead of recalculated on every tab action.
-- Bounds/options can be calculated in fewer queries.
-- Request/cache behavior becomes easier to reason about.
-- Row assembly remains isolated for further optimization.
-
-## Implementation Progress
-
-Implemented in this PR slice:
-
-- Added `StatsQueryContext` and `StatsFilterSet`.
-- Extracted DB-backed query filtering to `StatsQueryFilterApplier`.
-- Extracted schema generation and physical numeric key detection to `StatsFilterSchemaProvider`.
-- Added short-lived schema caching keyed by the prepared base query and requested columns.
-- Extracted derived filtering to `StatsDerivedFilterApplier`.
-- Extracted row assembly, native aliases, TOI helpers, and on-ice aliasing to `StatsPayloadAssembler`.
-- Added `StatsPayloadBuilder` as the controller-facing coordinator for the extracted PHP services.
-- Moved season stats payload construction into `StatsPayloadBuilder` behind `SeasonStatsPayloadRequest`.
-- Moved date-range stats payload construction into `StatsPayloadBuilder` behind `RangeStatsPayloadRequest`.
-- Replaced temporary league stats payload timing logs with `LOG_STATS_TIMING`, default off.
-- Added explicit schema cache context from builder paths while keeping SQL/bindings in the cache key.
-- Extracted league ownership decoration and roster-only row hydration into `LeagueStatsOwnershipHydrator`.
-- Added five-minute league ownership map caching scoped by league, user, and platform.
-- Added optional ownership sub-timings under `ownership_timings` when `LOG_STATS_TIMING` is enabled.
-- Extracted synthetic Yahoo/Fantrax league perspective construction and Fantrax goalie column-group settings into `LeagueStatsPerspectiveFactory`.
-- Extracted platform player-universe filtering into `LeagueStatsPlayerUniverseFilter` before league ownership hydration.
-- Extracted JS fetch/cache/stale-response handling to `StatsPayloadClient`.
-- Extracted JS client filter state to `StatsFilterState`.
-- Extracted JS payload schema interpretation to `StatsSchemaAdapter`.
-- Extracted JS column-group and active-heading behavior to `StatsColumnGroupAdapter`.
-- Documented that `StatsPayloadClient` owns goalie `column_group=goalie` request translation until the backend exposes a separate active column-group request contract.
-
-Human verification still needed:
-
-- Run the PHP and JavaScript test suites after review, per repository execution policy.
-
-## Testing Expectations
-
-The implementation PR should be test-driven and follow `docs/testing/testing-standards.yaml`.
-
-Expected PHP coverage:
-
-- Context parsing preserves current request behavior.
-- Position and position-type filters match current results.
-- Goalie column-group requests preserve goalie rows and headings.
-- League scoring perspectives preserve skater and goalie column groups.
-- Prospects and prospects-goalie perspectives preserve current row sets.
-- Derived filters apply after row assembly and return expected `appliedFilters`.
-- Contract fields are assembled without N+1 relation queries where testable.
-- Schema provider returns stable bounds/options for a fixed context.
-- Cached schema does not change response semantics.
-
-Expected JS coverage:
-
-- Payload client caches resolved-season aliases.
-- Stale fetch responses do not replace newer state.
-- Filter state sends only dirty numeric filters.
-- Goalie toggle behavior preserves existing visible results.
-- StatsPageShell still renders existing payloads.
+No tests, migrations, imports, queue jobs, sync jobs, or seeders should be run by Codex unless explicitly instructed.
 
 ## Out Of Scope
 
-- Changing the public stats payload contract.
-- Rewriting the visual design of stats tables.
-- Replacing the desktop or mobile renderer.
-- Adding new stat categories.
-- Changing Fantrax scoring mappings.
-- Changing player identity resolution.
-- Adding external advanced stats providers.
-- Running CI, tests, imports, migrations, seeders, queues, schedulers, bots, or operational commands.
+- Reworking the stats payload architecture.
+- Replacing `fantasy_scoring_category_mappings`.
+- Building custom formula authoring UI.
+- Removing `platform_leagues.scoring_settings` entirely in the first pass.
+- Running production backfills or provider syncs.

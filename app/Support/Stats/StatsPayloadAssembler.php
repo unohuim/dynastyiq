@@ -96,7 +96,7 @@ final class StatsPayloadAssembler
 
             foreach ($columns as $column) {
                 $key = $column['key'] ?? null;
-                if (! $key || $key === 'gp' || $key === 'toi' || $key === 'toi_seconds') {
+                if (! $key || ! empty($column['formula']) || $key === 'gp' || $key === 'toi' || $key === 'toi_seconds') {
                     continue;
                 }
 
@@ -115,7 +115,11 @@ final class StatsPayloadAssembler
                 }
             }
 
-            $rows->push($this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason));
+            $row = $this->withFormulaDependencyValues($row, $columns, $entry, $playerStats, $isSeason);
+            $row = $this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason);
+            $row = $this->withFormulaColumns($row, $columns);
+
+            $rows->push($row);
         }
 
         return $rows;
@@ -176,6 +180,105 @@ final class StatsPayloadAssembler
         }
 
         return 0;
+    }
+
+    /**
+     * Add safe arithmetic formula columns from already assembled row values.
+     *
+     * @param array<string,mixed> $row
+     * @param array<int,array<string,mixed>> $columns
+     * @return array<string,mixed>
+     */
+    private function withFormulaColumns(array $row, array $columns): array
+    {
+        foreach ($columns as $column) {
+            $key = trim((string) ($column['key'] ?? ''));
+            $formula = trim((string) ($column['formula'] ?? ''));
+
+            if ($key === '' || $formula === '') {
+                continue;
+            }
+
+            $row[$key] = $this->evaluateFormula($formula, $row);
+        }
+
+        return $row;
+    }
+
+    /**
+     * Add non-visible formula dependency values from the stats source.
+     *
+     * @param array<string,mixed> $row
+     * @param array<int,array<string,mixed>> $columns
+     * @param Collection<int,object> $playerStats
+     * @return array<string,mixed>
+     */
+    private function withFormulaDependencyValues(
+        array $row,
+        array $columns,
+        object $entry,
+        Collection $playerStats,
+        bool $isSeason,
+    ): array {
+        $dependencies = collect($columns)
+            ->filter(static fn (array $column): bool => filled($column['formula'] ?? null))
+            ->flatMap(static fn (array $column): array => is_array($column['required_schema_columns'] ?? null)
+                ? $column['required_schema_columns']
+                : [])
+            ->map(static fn (mixed $key): string => trim((string) $key))
+            ->filter(static fn (string $key): bool => $key !== '')
+            ->unique()
+            ->values();
+
+        foreach ($dependencies as $key) {
+            if (array_key_exists($key, $row)) {
+                continue;
+            }
+
+            $total = $isSeason
+                ? (float) ($entry->{$key} ?? 0)
+                : (float) $playerStats->sum($key);
+            $row[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
+        }
+
+        return $row;
+    }
+
+    /**
+     * Evaluate formulas containing stat keys, numbers, parentheses, and + - * /.
+     *
+     * @param array<string,mixed> $row
+     */
+    private function evaluateFormula(string $formula, array $row): float|int
+    {
+        $expression = preg_replace_callback(
+            '/\b[a-z][a-z0-9_]*\b/i',
+            static function (array $matches) use ($row): string {
+                $key = strtolower($matches[0]);
+                $value = $row[$key] ?? 0;
+
+                return is_numeric($value) ? (string) ((float) $value) : '0';
+            },
+            strtolower($formula),
+        ) ?? '0';
+
+        if (preg_match('/[^0-9+\-*\/().\s]/', $expression) === 1) {
+            return 0;
+        }
+
+        try {
+            $value = eval('return ' . $expression . ';');
+        } catch (\Throwable) {
+            return 0;
+        }
+
+        if (! is_numeric($value) || ! is_finite((float) $value)) {
+            return 0;
+        }
+
+        $number = round((float) $value, 4);
+
+        return fmod($number, 1.0) === 0.0 ? (int) $number : $number;
     }
 
     /**

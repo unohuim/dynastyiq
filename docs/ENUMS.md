@@ -487,6 +487,7 @@ Do not introduce new enum values without updating this document.
 - `nhl-resolve-players`
 - `fantrax`
 - `fantrax-category-definitions`
+- `fantrax-league-category-backfill`
 - `yahoo`
 - `contracts`
 
@@ -496,6 +497,7 @@ Do not introduce new enum values without updating this document.
 - `nhl-resolve-players`: NHL identity reconciliation for existing canonical players with no NHL id.
 - `fantrax`: Fantrax player import.
 - `fantrax-category-definitions`: Fantrax scoring category definition and DynastyIQ stat alignment dictionary import.
+- `fantrax-league-category-backfill`: Fantrax league scoring category row backfill from legacy league scoring JSON.
 - `yahoo`: Yahoo fantasy hockey player import.
 - `contracts`: CapWages contract import.
 
@@ -535,7 +537,7 @@ Do not introduce new enum values without updating this document.
 ### Fantasy Scoring Category Mapping Source
 
 **Name:** Fantasy scoring category mapping source
-**Storage location(s):** `platform_leagues.scoring_settings.categories[].mapping_source`
+**Storage location(s):** `platform_league_scoring_categories.mapping_source`, legacy fallback `platform_leagues.scoring_settings.categories[].mapping_source`
 **Allowed values:**
 
 - `auto`
@@ -557,7 +559,7 @@ Do not introduce new enum values without updating this document.
 ### Fantasy Scoring Manual Mapping Key
 
 **Name:** Fantasy scoring manual mapping key
-**Storage location(s):** `platform_leagues.scoring_settings.manual_mappings`
+**Storage location(s):** `platform_league_scoring_categories.manual_mapping_key`, legacy fallback `platform_leagues.scoring_settings.manual_mappings`
 **Allowed value prefixes:**
 
 - `stat:`

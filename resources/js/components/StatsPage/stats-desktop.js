@@ -142,6 +142,21 @@ const sortByRosterOrder = (rows) => [...rows].sort((a, b) => {
     return String(a?.name ?? "").localeCompare(String(b?.name ?? ""));
 });
 
+const rosterRowClass = (row, allowRosterColors = false) => {
+    if (!allowRosterColors) return "hover:bg-gray-50";
+
+    const slot = String(row?.roster_slot ?? "").trim().toUpperCase();
+    const status = String(row?.roster_status ?? "").trim().toLowerCase();
+
+    if (row?.roster_group === "minor") return "bg-blue-50 hover:bg-blue-100";
+    if (status === "ir" || ["IR", "IR+"].includes(slot)) return "bg-red-100 hover:bg-red-100";
+    if (["bench", "reserve"].includes(status) || ["BN", "BEN", "BENCH", "RES", "RESERVE"].includes(slot)) {
+        return "bg-yellow-100 hover:bg-yellow-100";
+    }
+
+    return "hover:bg-gray-50";
+};
+
 // Persist filters per-container across re-renders
 const desktopState = new WeakMap();
 
@@ -172,7 +187,7 @@ const headingWidth = (key, settings = {}) => {
     const normalized = String(key ?? "").toLowerCase();
 
     if (normalized === "__rk") return "44px";
-    if (settings?.leaguePlatform === "yahoo" && ["type", "pos_type"].includes(normalized)) return "52px";
+    if (["fantrax", "yahoo"].includes(settings?.leaguePlatform) && ["type", "pos_type"].includes(normalized)) return "52px";
     if (["type", "pos_type"].includes(normalized)) return "36px";
     if (normalized === "team") return "76px";
     if (normalized === "league") return "72px";
@@ -196,11 +211,11 @@ const renderLeagueOwnerStatsDesktop = (
     };
     desktopState.set(container, state);
 
-    const isYahooLeague = settings?.leaguePlatform === "yahoo";
+    const isRosterSlotLeague = ["fantrax", "yahoo"].includes(settings?.leaguePlatform);
     const isGoalieFilterActive = settings?.goalieFilterActive === true;
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
-    const useRosterSlotColumn = () => isYahooLeague && hasSelectedFantasyTeam();
+    const useRosterSlotColumn = () => isRosterSlotLeague && hasSelectedFantasyTeam();
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
@@ -553,7 +568,9 @@ const renderLeagueOwnerStatsDesktop = (
             cell.textContent = val ?? "";
         } else if (/^(player|name)$/i.test(String(key))) {
             if (row?.league_roster_placeholder === true) {
-                cell.className = "flex min-w-0 items-center justify-start";
+                const slot = String(row?.roster_slot ?? "").trim();
+                cell.className = "flex min-w-0 items-center justify-start text-xs font-medium text-gray-400";
+                cell.textContent = slot ? `Open ${slot}` : "Open slot";
 
                 return cell;
             }
@@ -594,21 +611,50 @@ const renderLeagueOwnerStatsDesktop = (
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
 
-        applyFilters(data).forEach((row, idx) => {
+        const appendGroupSeparator = (label) => {
             const leftRow = document.createElement("div");
-            leftRow.className = "grid h-12 border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
+            leftRow.className = "grid h-8 border-t bg-blue-100 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-blue-700";
+            leftRow.style.gridTemplateColumns = leftGridCols;
+            const leftLabel = document.createElement("div");
+            leftLabel.style.gridColumn = "1 / -1";
+            leftLabel.textContent = label;
+            leftRow.appendChild(leftLabel);
+            leftBody.appendChild(leftRow);
+
+            const statsRow = document.createElement("div");
+            statsRow.className = "grid h-8 border-t bg-blue-100 px-4 py-1.5";
+            statsRow.style.gridTemplateColumns = statGridCols;
+            statsBody.appendChild(statsRow);
+
+            const ownerRow = document.createElement("div");
+            ownerRow.className = "h-8 border-t bg-blue-100 px-4 py-1.5";
+            ownerBody.appendChild(ownerRow);
+        };
+
+        const rows = applyFilters(data);
+        rows.forEach((row, idx) => {
+            if (
+                hasSelectedFantasyTeam()
+                && row?.roster_group === "minor"
+                && rows?.[idx - 1]?.roster_group !== "minor"
+            ) {
+                appendGroupSeparator("Minor League");
+            }
+
+            const leftRow = document.createElement("div");
+            leftRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
             leftRow.style.gridTemplateColumns = leftGridCols;
             left.forEach((heading, i) => leftRow.appendChild(renderLeftCell(row, heading, idx, i)));
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = "grid h-12 border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
+            statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
             statsRow.style.gridTemplateColumns = statGridCols;
             stats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
-            ownerRow.className = "flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 hover:bg-gray-50 transition-colors";
+            ownerRow.className = `flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
             const ownerName = String(row?.fantasy_team_name ?? "").trim();
             const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
 

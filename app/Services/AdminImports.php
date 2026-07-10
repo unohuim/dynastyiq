@@ -44,6 +44,13 @@ class AdminImports
                 'command' => 'fantrax:import-category-definitions',
                 'options' => ['--path' => 'docs/import-templates/fantrax_category_alignment.csv'],
             ],
+            [
+                'key' => 'fantrax-league-category-backfill',
+                'label' => 'Backfill Fantrax League Categories',
+                'group' => 'platform',
+                'command' => 'platform-leagues:backfill-scoring-categories',
+                'options' => ['--platform' => 'fantrax'],
+            ],
         ]);
     }
 

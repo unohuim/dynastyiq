@@ -4,6 +4,7 @@ location:
   - app/Services/FantraxLeagueService.php
   - app/Services/SyncFantraxLeague.php
   - app/Services/FantraxScoringCategoryMapper.php
+  - app/Services/PlatformLeagueScoringCategoryService.php
   - app/Services/FantraxLogoSyncService.php
   - app/Support/FantraxLogoBrowserProfile.php
   - app/Services/ImportFantraxLeagues.php
@@ -18,6 +19,7 @@ location:
   - app/Jobs/SyncFantraxTeamJob.php
   - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
   - app/Models/PlatformLeague.php
+  - app/Models/PlatformLeagueScoringCategory.php
   - app/Models/PlatformTeam.php
   - app/Models/PlatformRosterMembership.php
   - app/Models/PlatformPlayerId.php
@@ -45,8 +47,14 @@ rules:
   - Roster sync must persist provider roster slot, membership status, and eligibility metadata when Fantrax exposes those values.
   - Roster sync may persist provider-specific roster metadata, including Fantrax salary and contract labels, on platform_roster_memberships.metadata when it powers league UI features.
   - Fantrax league scoring categories must be enriched from the platform category mapping dictionary during league sync when dictionary rows exist.
+  - Provider scoring categories that power league UI must be persisted to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
+  - Provider scoring category sync must normalize shorthand group names before identity comparison, including SKATING to HOCKEY_SKATING and GOALIE to HOCKEY_GOALIE.
+  - Provider scoring category sync must upsert current categories and delete stale categories that are no longer present in the provider payload.
   - Manual league scoring mappings may target native stat fields or imported dictionary formulas and must override dictionary auto mappings while preserving support metadata for warnings.
+  - Scheduled league refresh should use the same league sync path as the user-triggered top-level Leagues refresh action and should run on a four-hour cadence.
   - PlatformLeague.settings.custom_cap defaults to false and, when true, league Cap views must use persisted Fantrax roster salaries instead of CapWages cap hits.
+  - Fantrax custom salary seasons turn over on July 1; before July 1, the current season starts in the previous calendar year, and on or after July 1, the current season starts in the current calendar year.
+  - PlatformLeague.settings.fantrax_contract_code_definitions may store commissioner-defined meanings for detected Fantrax contract code prefixes, while raw provider contract labels remain preserved on roster membership metadata.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.
   - Fantrax roster item status is authoritative for roster grouping; ACTIVE maps to active, RESERVE maps to reserve/bench, and MINORS maps to minor.
   - Linking a Fantrax provider identity to a canonical player must update the staged Fantrax player row and queue roster syncs instead of directly guessing roster memberships.
@@ -66,10 +74,12 @@ public_interface:
   - SyncFantraxRosterMembershipsForLinkedIdentity
   - FantraxLeagueService
   - FantraxScoringCategoryMapper
+  - PlatformLeagueScoringCategoryService
   - FantraxLogoSyncService
   - fantrax:inspect-logos
   - FantraxLogoBrowserProfile
   - PlatformLeague
+  - PlatformLeagueScoringCategory
   - PlatformTeam
   - PlatformRosterMembership
   - PlatformPlayerId

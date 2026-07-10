@@ -76,6 +76,15 @@ class PlatformLeague extends Model
             ->orderBy('sort_order');
     }
 
+    /**
+     * First-class provider scoring categories for this platform league.
+     */
+    public function scoringCategories(): HasMany
+    {
+        return $this->hasMany(PlatformLeagueScoringCategory::class, 'platform_league_id')
+            ->orderBy('sort_order');
+    }
+
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(

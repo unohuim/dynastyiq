@@ -52,7 +52,7 @@ final class StatsFilterSchemaProvider
 
         foreach ($columns as $column) {
             $key = $column['key'] ?? null;
-            if (! $key || in_array($key, ['name', 'age', 'team', 'contract_value', 'gp'], true)) {
+            if (! $key || ! empty($column['formula']) || in_array($key, ['name', 'age', 'team', 'contract_value', 'gp'], true)) {
                 continue;
             }
 

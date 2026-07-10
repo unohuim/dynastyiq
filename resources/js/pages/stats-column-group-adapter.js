@@ -14,9 +14,20 @@ export class StatsColumnGroupAdapter {
       return null;
     }
 
-    return state.selectedPosTypes.includes('G') || state.selectedPos.includes('G')
-      ? 'goalie'
-      : (settings.activeColumnGroup || 'skater');
+    const selectedPosTypes = Array.isArray(state.selectedPosTypes) ? state.selectedPosTypes : [];
+    const selectedPos = Array.isArray(state.selectedPos) ? state.selectedPos : [];
+    const hasGoalieFilter = selectedPosTypes.includes('G') || selectedPos.includes('G');
+    const hasSkaterFilter = [...selectedPosTypes, ...selectedPos].some((value) => String(value) !== 'G');
+
+    if (hasGoalieFilter) {
+      return 'goalie';
+    }
+
+    if (hasSkaterFilter) {
+      return 'skater';
+    }
+
+    return settings.activeColumnGroup || 'skater';
   }
 
   activeHeadings(payload, settings, state) {

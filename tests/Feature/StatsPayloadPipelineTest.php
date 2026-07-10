@@ -547,6 +547,34 @@ it('builds yahoo scoring settings only when every scoring category is mapped', f
         ->and($settings['columnGroups']['goalie'][0]['key'])->toBe('sv_pct');
 });
 
+it('builds league scoring settings for supported formula categories', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-formula',
+        'name' => 'Fantrax Formula',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                [
+                    'id' => 'HOCKEY_SKATING:OSG3',
+                    'short' => 'OSG3',
+                    'label' => 'Old School Grit 3',
+                    'formula' => '(5 * f) + h + b - pim',
+                    'required_schema_columns' => ['f', 'h', 'b', 'pim'],
+                    'is_supported' => true,
+                    'alignment_status' => 'formula',
+                ],
+            ],
+        ],
+    ]);
+
+    $settings = app(LeagueStatsPerspectiveFactory::class)->leagueScoringPerspectiveSettings($league);
+
+    expect($settings)->not->toBeNull()
+        ->and($settings['columns'][0]['key'])->toBe('HOCKEY_SKATING:OSG3')
+        ->and($settings['columns'][0]['formula'])->toBe('(5 * f) + h + b - pim');
+});
+
 it('refuses league scoring settings when a scoring category is unmapped', function (): void {
     $league = PlatformLeague::create([
         'platform' => 'yahoo',
@@ -562,6 +590,69 @@ it('refuses league scoring settings when a scoring category is unmapped', functi
     ]);
 
     expect(app(LeagueStatsPerspectiveFactory::class)->leagueScoringPerspectiveSettings($league))->toBeNull();
+});
+
+it('keeps supported fantrax scoring headers when other categories are unsupported', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-mixed',
+        'name' => 'Fantrax Mixed',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                [
+                    'id' => 'HOCKEY_SKATING:G',
+                    'short' => 'G',
+                    'label' => 'Goals',
+                    'stat_key' => 'g',
+                    'is_supported' => true,
+                    'alignment_status' => 'direct',
+                ],
+                [
+                    'id' => 'HOCKEY_SKATING:OSG3',
+                    'short' => 'OSG3',
+                    'label' => 'Old School Grit 3',
+                    'formula' => '(5 * f) + h + b - pim',
+                    'required_schema_columns' => ['f', 'h', 'b', 'pim'],
+                    'is_supported' => true,
+                    'alignment_status' => 'formula',
+                ],
+                [
+                    'id' => 'HOCKEY_SKATING:STAR',
+                    'short' => 'Star',
+                    'label' => 'Stars',
+                    'is_supported' => false,
+                    'alignment_status' => 'ignored_deprecated',
+                ],
+            ],
+        ],
+    ]);
+
+    $settings = app(LeagueStatsPerspectiveFactory::class)->leagueScoringPerspectiveSettings($league);
+
+    expect(collect($settings['columns'])->pluck('key')->all())->toBe(['g', 'HOCKEY_SKATING:OSG3']);
+});
+
+it('computes formula columns from assembled row stats', function (): void {
+    $player = ($this->statsPlayer)(['id' => 90, 'nhl_id' => 9090]);
+    $rows = app(StatsPayloadAssembler::class)->assembleRowsFromCollection(collect([
+        ($this->statsRow)($player, [
+            'gp' => 10,
+            'f' => 1,
+            'h' => 10,
+            'b' => 5,
+            'pim' => 4,
+        ]),
+    ]), [
+        [
+            'key' => 'HOCKEY_SKATING:OSG3',
+            'label' => 'OSG3',
+            'formula' => '(5 * f) + h + b - pim',
+            'required_schema_columns' => ['f', 'h', 'b', 'pim'],
+        ],
+    ], 'total', true, 'season');
+
+    expect($rows->first()['HOCKEY_SKATING:OSG3'])->toBe(16);
 });
 
 it('applies fantrax goalie settings with goalie filters and goalie columns', function (): void {
@@ -597,6 +688,15 @@ it('adds fantrax goalie column group to payload settings', function (): void {
         'scoring_settings' => [
             'categories' => [
                 ['short' => 'W', 'auto_stat_key' => 'wins'],
+                [
+                    'id' => 'HOCKEY_GOALIE:GPT4',
+                    'short' => 'GPT4',
+                    'label' => 'Goalie Points 4',
+                    'formula' => '(2 * wins) + ot_losses + shootout_losses + (2 * so)',
+                    'required_schema_columns' => ['wins', 'ot_losses', 'shootout_losses', 'so'],
+                    'is_supported' => true,
+                    'alignment_status' => 'formula',
+                ],
             ],
         ],
     ]);
@@ -604,14 +704,17 @@ it('adds fantrax goalie column group to payload settings', function (): void {
         'headings' => [
             ['key' => 'name', 'label' => 'Player'],
             ['key' => 'g', 'label' => 'G'],
+            ['key' => 'sv', 'label' => 'SV'],
+            ['key' => 'HOCKEY_GOALIE:GPT4', 'label' => 'GPT4', 'normalized_group' => 'HOCKEY_GOALIE'],
         ],
         'settings' => [],
     ];
 
     $next = app(LeagueStatsPerspectiveFactory::class)->withFantraxGoalieColumnGroup($payload, $league);
 
-    expect($next['settings']['columnGroups']['skater'][0]['key'])->toBe('g')
-        ->and($next['settings']['columnGroups']['goalie'][0]['key'])->toBe('wins');
+    expect(collect($next['settings']['columnGroups']['skater'])->pluck('key')->all())->toBe(['g'])
+        ->and(collect($next['settings']['columnGroups']['goalie'])->pluck('key')->all())
+        ->toBe(['wins', 'HOCKEY_GOALIE:GPT4']);
 });
 
 it('returns league stats payload for a connected active league member', function (): void {

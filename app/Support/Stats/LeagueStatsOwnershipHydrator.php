@@ -41,9 +41,14 @@ final class LeagueStatsOwnershipHydrator
         $ownershipByNhlId = $ownership['by_nhl_id'];
         $seenPlayerIds = [];
         $seenNhlIds = [];
+        $usesCustomCap = (bool) data_get($league, 'settings.custom_cap', false);
+
+        if ($usesCustomCap) {
+            $payload = $this->applyCustomCapHeadingLabels($payload);
+        }
 
         $payload['data'] = collect($payload['data'] ?? [])
-            ->map(static function (mixed $row) use ($ownershipByPlayerId, $ownershipByNhlId, &$seenPlayerIds, &$seenNhlIds): mixed {
+            ->map(function (mixed $row) use ($ownershipByPlayerId, $ownershipByNhlId, &$seenPlayerIds, &$seenNhlIds): mixed {
                 if (! is_array($row)) {
                     return $row;
                 }
@@ -64,7 +69,7 @@ final class LeagueStatsOwnershipHydrator
                     : null;
                 $rowOwnership ??= $nhlPlayerId !== '' ? ($ownershipByNhlId[$nhlPlayerId] ?? null) : null;
 
-                return array_merge($row, [
+                $row = array_merge($row, [
                     'fantasy_team_id' => $rowOwnership['fantasy_team_id'] ?? null,
                     'fantasy_team_name' => $rowOwnership['fantasy_team_name'] ?? null,
                     'fantasy_team_avatar_url' => $rowOwnership['fantasy_team_avatar_url'] ?? null,
@@ -76,6 +81,8 @@ final class LeagueStatsOwnershipHydrator
                     'roster_group_sort_order' => $rowOwnership['roster_group_sort_order'] ?? null,
                     'roster_status_sort_order' => $rowOwnership['roster_status_sort_order'] ?? null,
                 ]);
+
+                return $this->applyCustomCapContractFields($row, $rowOwnership);
             })
             ->values()
             ->all();
@@ -93,6 +100,10 @@ final class LeagueStatsOwnershipHydrator
                 ->values()
                 ->all();
             $missingRows = $this->hydrateRosterOnlyRowsFromSeasonStats($missingRows, $payload);
+            $missingRows = collect($missingRows)
+                ->map(fn (array $row): array => $this->applyCustomCapContractFields($row, $row))
+                ->values()
+                ->all();
 
             $payload['data'] = array_values(array_merge($payload['data'], $missingRows));
         }
@@ -109,7 +120,8 @@ final class LeagueStatsOwnershipHydrator
     private function leagueOwnership(PlatformLeague $league, ?int $userId = null): array
     {
         $platform = (string) ($league->platform ?? '');
-        $cacheKey = sprintf('stats_ownership:%s:%s:%s', $league->id, $userId ?? 'guest', $platform);
+        $settingsHash = md5((string) json_encode($league->settings ?? []));
+        $cacheKey = sprintf('stats_ownership:%s:%s:%s:%s', $league->id, $userId ?? 'guest', $platform, $settingsHash);
 
         return Cache::remember(
             $cacheKey,
@@ -123,7 +135,13 @@ final class LeagueStatsOwnershipHydrator
      */
     private function buildLeagueOwnership(PlatformLeague $league, ?int $userId = null): array
     {
-        $usesProviderSlotOrder = (string) ($league->platform ?? '') === 'yahoo';
+        $platform = (string) ($league->platform ?? '');
+        $usesProviderSlotOrder = $platform === 'yahoo';
+        $fillsConfiguredSlots = in_array($platform, ['fantrax', 'yahoo'], true);
+        $usesCustomCap = (bool) data_get($league, 'settings.custom_cap', false);
+        $fantraxContractDefinitions = $this->normalizeFantraxContractCodeDefinitions(
+            data_get($league, 'settings.fantrax_contract_code_definitions', []),
+        );
         $rosterSlots = $league->rosterSlots()
             ->get(['slot', 'count', 'sort_order']);
         $slotOrder = $rosterSlots
@@ -174,10 +192,14 @@ final class LeagueStatsOwnershipHydrator
                 $slotKey = strtoupper(trim($slot));
                 $rosterStatus = (string) ($player->pivot->status ?? '');
                 $eligibility = $this->normalizeRosterEligibility($player->pivot->eligibility ?? null);
+                $membershipMetadata = $this->normalizeRosterMetadata($player->pivot->metadata ?? null);
+                $customCapPayload = $usesCustomCap
+                    ? $this->fantraxCustomCapPayload($membershipMetadata, $fantraxContractDefinitions)
+                    : [];
                 $displaySlot = $usesProviderSlotOrder
                     ? ($slotKey !== '' ? $slotKey : (strtolower(trim($rosterStatus)) === 'na' ? 'NA' : ''))
                     : $this->displayRosterSlot($slot, $rosterStatus, $eligibility, (string) ($player->position ?? ''));
-                $rosterGroup = $this->isMinorRosterRow($displaySlot, $rosterStatus) ? 'minor' : 'active';
+                $rosterGroup = $this->isMinorRosterRow($slot, $rosterStatus) ? 'minor' : 'active';
                 $rosterSortOrder = $usesProviderSlotOrder
                     ? ($slotOrder[$slot] ?? $slotOrder[$slotKey] ?? $slotOrder[$displaySlot] ?? $this->fallbackRosterSlotOrder($displaySlot))
                     : ($rosterGroup === 'minor'
@@ -197,7 +219,7 @@ final class LeagueStatsOwnershipHydrator
                         'taxi' => 50,
                         default => 90,
                     },
-                ]);
+                ], $customCapPayload);
                 $teamSlotCounts[$displaySlot] = ($teamSlotCounts[$displaySlot] ?? 0) + 1;
 
                 $byPlayerId[(string) $player->id] = $rosterPayload;
@@ -209,9 +231,13 @@ final class LeagueStatsOwnershipHydrator
                 $rosterRows[] = array_merge($this->rosterOnlyStatsRow($player), $rosterPayload);
             }
 
-            if ($usesProviderSlotOrder) {
+            if ($fillsConfiguredSlots) {
                 foreach ($rosterSlots as $slotSetting) {
                     $slot = strtoupper(trim((string) $slotSetting->slot));
+                    if ($this->normalizedFallbackSlot($slot) === 'MIN') {
+                        continue;
+                    }
+
                     $missingCount = max(0, (int) $slotSetting->count - (int) ($teamSlotCounts[$slot] ?? 0));
 
                     for ($i = 0; $i < $missingCount; $i++) {
@@ -405,6 +431,190 @@ final class LeagueStatsOwnershipHydrator
     }
 
     /**
+     * Apply custom Fantrax salary and contract-code fields to the stats contract columns.
+     *
+     * @param array<string,mixed> $row
+     * @param array<string,mixed>|null $ownership
+     * @return array<string,mixed>
+     */
+    private function applyCustomCapContractFields(array $row, ?array $ownership): array
+    {
+        if (! $ownership || ! isset($ownership['fantrax_salary_cap_hit'])) {
+            return $row;
+        }
+
+        $capHit = (int) $ownership['fantrax_salary_cap_hit'];
+
+        if ($capHit > 0) {
+            $row['contract_value'] = '$' . number_format($capHit / 1_000_000, 2) . 'm';
+            $row['contract_value_num'] = round($capHit / 1_000_000, 2);
+        }
+
+        $yearsRemaining = $ownership['fantrax_contract_years_remaining'] ?? null;
+        $suffixMeansYears = (bool) ($ownership['fantrax_contract_suffix_years_remaining'] ?? false);
+        $contractCode = trim((string) ($ownership['fantrax_contract_code'] ?? ''));
+
+        if (! $suffixMeansYears || ! is_numeric($yearsRemaining) || (int) $yearsRemaining <= 0) {
+            if ($contractCode !== '') {
+                $row['contract_last_year'] = $contractCode;
+            }
+
+            return $row;
+        }
+
+        $seasonStartYear = $this->currentFantraxCustomCapSeasonStartYear();
+
+        $finalStartYear = $seasonStartYear + (int) $yearsRemaining - 1;
+        $finalEndYear = $finalStartYear + 1;
+
+        $row['contract_last_year'] = $contractCode !== ''
+            ? $contractCode
+            : sprintf('%d-%02d', $finalStartYear, $finalEndYear % 100);
+        $row['contract_last_year_num'] = $finalEndYear;
+
+        return $row;
+    }
+
+    /**
+     * Relabel custom-cap contract columns without changing their existing keys.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function applyCustomCapHeadingLabels(array $payload): array
+    {
+        $payload['headings'] = collect($payload['headings'] ?? [])
+            ->map(static function (mixed $heading): mixed {
+                if (! is_array($heading) || ($heading['key'] ?? null) !== 'contract_last_year') {
+                    return $heading;
+                }
+
+                $heading['label'] = 'Type';
+
+                return $heading;
+            })
+            ->values()
+            ->all();
+
+        return $payload;
+    }
+
+    /**
+     * Build normalized custom-cap payload from Fantrax roster metadata.
+     *
+     * @param array<string,mixed> $metadata
+     * @param array<string,array<string,mixed>> $definitions
+     * @return array<string,mixed>
+     */
+    private function fantraxCustomCapPayload(array $metadata, array $definitions): array
+    {
+        $payload = [];
+        $salary = $metadata['fantrax_salary'] ?? null;
+
+        if (is_numeric($salary)) {
+            $raw = (int) $salary;
+            $payload['fantrax_salary_raw'] = $raw;
+            $payload['fantrax_salary_cap_hit'] = $raw * 1000;
+        }
+
+        $code = data_get($metadata, 'fantrax_contract.name');
+
+        if (! is_string($code) || trim($code) === '') {
+            return $payload;
+        }
+
+        $code = strtoupper(trim($code));
+        $prefix = $code;
+        $yearsRemaining = null;
+
+        if (preg_match('/^([A-Z]+)(\d+)$/', $code, $matches)) {
+            $prefix = $matches[1];
+            $yearsRemaining = (int) $matches[2];
+        }
+
+        $definition = $definitions[$prefix] ?? null;
+
+        $payload['fantrax_contract_code'] = $code;
+        $payload['fantrax_contract_prefix'] = $prefix;
+        $payload['fantrax_contract_years_remaining'] = $yearsRemaining;
+        $payload['fantrax_contract_label'] = $definition['label'] ?? null;
+        $payload['fantrax_contract_type'] = $definition['type'] ?? null;
+        $payload['fantrax_contract_suffix_years_remaining'] = (bool) ($definition['suffix_years_remaining'] ?? false);
+
+        return $payload;
+    }
+
+    /**
+     * Normalize saved Fantrax contract-code definitions keyed by prefix.
+     *
+     * @param mixed $definitions
+     * @return array<string,array<string,mixed>>
+     */
+    private function normalizeFantraxContractCodeDefinitions(mixed $definitions): array
+    {
+        if (! is_array($definitions)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($definitions as $prefix => $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $prefix = strtoupper(preg_replace('/[^A-Z]/i', '', (string) $prefix) ?? '');
+            $label = trim((string) ($definition['label'] ?? ''));
+            $type = trim((string) ($definition['type'] ?? ''));
+
+            if ($prefix === '' || ($label === '' && $type === '')) {
+                continue;
+            }
+
+            $normalized[$prefix] = [
+                'label' => $label,
+                'type' => $type,
+                'suffix_years_remaining' => (bool) ($definition['suffix_years_remaining'] ?? true),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Decode stored roster membership metadata.
+     *
+     * @return array<string,mixed>
+     */
+    private function normalizeRosterMetadata(mixed $metadata): array
+    {
+        if (is_array($metadata)) {
+            return $metadata;
+        }
+
+        if (is_string($metadata) && trim($metadata) !== '') {
+            $decoded = json_decode($metadata, true);
+
+            return is_array($decoded) ? $decoded : [];
+        }
+
+        return [];
+    }
+
+    /**
+     * Return the current Fantrax custom-cap season start year.
+     *
+     * The custom salary season turns over on July 1, so June 30, 2026
+     * belongs to 2025-26 and July 1, 2026 belongs to 2026-27.
+     */
+    private function currentFantraxCustomCapSeasonStartYear(): int
+    {
+        $today = now();
+
+        return $today->month >= 7 ? $today->year : $today->year - 1;
+    }
+
+    /**
      * Normalize stored roster eligibility into a flat string list.
      *
      * @return array<int,string>
@@ -436,6 +646,14 @@ final class LeagueStatsOwnershipHydrator
     private function displayRosterSlot(string $slot, string $status, array $eligibility, string $position): string
     {
         $slot = strtoupper(trim($slot));
+
+        if ($this->isMinorRosterRow($slot, $status)) {
+            return collect($eligibility)
+                ->map(fn (string $value): string => $this->normalizedMinorPosition($value))
+                ->first(static fn (string $value): bool => in_array($value, ['C', 'LW', 'RW', 'D', 'G'], true))
+                ?: $this->normalizedMinorPosition($position)
+                ?: 'MIN';
+        }
 
         if ($slot !== '') {
             return match ($slot) {
