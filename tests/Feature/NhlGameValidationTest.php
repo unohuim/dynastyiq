@@ -966,10 +966,10 @@ it('returns goalie-only deltas for persisted and derived goalie fields', functio
     ($this->makePlayer)(8478402, ['position' => 'G']);
     ($this->insertBoxscore)(2026020001, 8478402, [
         'position' => 'G',
-        'goals' => 0,
-        'assists' => 0,
-        'points' => 0,
-        'sog' => 0,
+        'goals' => 1,
+        'assists' => 1,
+        'points' => 2,
+        'sog' => 1,
         'hits' => 0,
         'blocks' => 0,
         'power_play_goals' => 0,
@@ -1009,6 +1009,10 @@ it('returns goalie-only deltas for persisted and derived goalie fields', functio
 
     expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
         ->toContain(
+            'goals',
+            'assists',
+            'points',
+            'sog',
             'goals_against',
             'saves',
             'shots_against',

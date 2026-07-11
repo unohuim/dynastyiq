@@ -38,6 +38,10 @@ class CompareNhlPbPBoxscore
 
     /** @var array<string,string> */
     private const GOALIE_EXACT_FIELD_MAP = [
+        'goals' => 'g',
+        'assists' => 'a',
+        'points' => 'pts',
+        'sog' => 'sog',
         'penalty_minutes' => 'pim',
         'goals_against' => 'ga',
         'saves' => 'sv',

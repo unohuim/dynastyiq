@@ -77,6 +77,7 @@ export default function adminHub(options = {}) {
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
+        gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
         triageLoaded: false,
         triageLoading: false,
         triageError: '',
@@ -91,6 +92,7 @@ export default function adminHub(options = {}) {
             discovering: false,
             processing: false,
             syncingSeason: false,
+            emptyingGames: false,
             error: '',
             runs: [],
             seasons: [],
@@ -715,6 +717,28 @@ export default function adminHub(options = {}) {
                 this.gameImports.error = error.message ?? 'Unable to queue season sync';
             } finally {
                 this.gameImports.syncingSeason = false;
+            }
+        },
+
+        async submitGameImportEmptyGames() {
+            const confirmed = globalThis.confirm?.(
+                'Empty all NHL game imports, summaries, season stats, validations, and progress?'
+            ) ?? false;
+
+            if (!confirmed) {
+                return;
+            }
+
+            this.gameImports.emptyingGames = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(this.gameImportEmptyGamesUrl, {});
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue NHL game reset';
+            } finally {
+                this.gameImports.emptyingGames = false;
             }
         },
 

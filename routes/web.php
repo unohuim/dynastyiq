@@ -244,6 +244,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.process');
                 Route::post('/nhl-game-imports/season-sync', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'seasonSync'])
                     ->name('admin.nhl-game-imports.season-sync');
+                Route::post('/nhl-game-imports/empty-games', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'emptyGames'])
+                    ->name('admin.nhl-game-imports.empty-games');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])

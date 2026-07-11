@@ -20,7 +20,8 @@ class EmptyNhlCommand extends Command
      */
     protected $signature = 'nhl:empty
         {--players : Remove NHL player stats and external identities}
-        {--games : Remove NHL game-derived import data}';
+        {--games : Remove NHL game-derived import data}
+        {--import-run-id= : Import run id for admin tracking}';
 
     /**
      * @var string

@@ -786,6 +786,70 @@ describe('admin-hub import listeners', () => {
         expect(instance.shouldShowGameImportSeasonSync()).toBe(true);
     });
 
+    it('confirms and queues an NHL game import reset', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        globalThis.confirm = vi.fn(() => true);
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'NHL game import reset queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    runs: [
+                        {
+                            id: 32,
+                            action: 'empty-games',
+                            status: 'queued',
+                        },
+                    ],
+                }),
+            });
+
+        const instance = adminHub({
+            gameImportEmptyGamesUrl: '/admin/nhl-game-imports/empty-games',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+
+        await instance.submitGameImportEmptyGames();
+
+        expect(confirm).toHaveBeenCalledWith(
+            'Empty all NHL game imports, summaries, season stats, validations, and progress?'
+        );
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/empty-games', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({}),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.runs[0].id).toBe(32);
+        expect(instance.gameImports.emptyingGames).toBe(false);
+    });
+
+    it('does not queue an NHL game import reset when confirmation is cancelled', async () => {
+        const adminHub = await loadAdminHub();
+        globalThis.confirm = vi.fn(() => false);
+        global.fetch = vi.fn();
+
+        const instance = adminHub({
+            gameImportEmptyGamesUrl: '/admin/nhl-game-imports/empty-games',
+        });
+
+        await instance.submitGameImportEmptyGames();
+
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(fetch).not.toHaveBeenCalled();
+        expect(instance.gameImports.emptyingGames).toBe(false);
+    });
+
     it('formats and dismisses NHL season sync progress cards', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();

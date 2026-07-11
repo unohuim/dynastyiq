@@ -12,6 +12,7 @@ use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameSourceStatus;
 use App\Repositories\NhlImportProgressRepo;
+use App\Services\AdminImports;
 use App\Services\NhlGameImportRebuilder;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
@@ -259,6 +260,19 @@ class NhlGameImportController extends Controller
         return response()->json([
             'message' => 'Season sync queued.',
             'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue a destructive reset of NHL game-derived import data.
+     */
+    public function emptyGames(AdminImports $imports): JsonResponse
+    {
+        $batch = $imports->dispatch('nhl-empty-games');
+
+        return response()->json([
+            'message' => 'NHL game import reset queued.',
+            'batch_id' => $batch->id,
         ], 202);
     }
 

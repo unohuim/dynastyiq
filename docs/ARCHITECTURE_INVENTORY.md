@@ -804,7 +804,7 @@ php artisan nhl:discover --date=2026-01-15
 - `app/Services/SumNhlSeasonStats.php`
 
 **Purpose:**
-Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, and goalie decisions preserve regulation, overtime, and shootout splits before season aggregation.
+Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
 
 **When to Use:**
 Implementing or changing a single NHL import stage.
@@ -1965,10 +1965,10 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery, processing, and season stat rollup jobs from the admin control panel.
+Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel.
 
 **When to Use:**
-Admin-triggered NHL game discovery, discovery-row processing actions, season stat rollups, and recent orchestration progress display.
+Admin-triggered NHL game discovery, discovery-row processing actions, season stat rollups, queued nhl:empty --games resets, and recent orchestration progress display.
 
 **When Not to Use:**
 Synchronous web-request imports, NHL stage transformation ownership, or replacing `nhl_import_progress`.

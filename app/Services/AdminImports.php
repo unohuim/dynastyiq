@@ -51,6 +51,13 @@ class AdminImports
                 'command' => 'platform-leagues:backfill-scoring-categories',
                 'options' => ['--platform' => 'fantrax'],
             ],
+            [
+                'key' => 'nhl-empty-games',
+                'label' => 'Empty NHL Game Imports',
+                'group' => 'game',
+                'command' => 'nhl:empty',
+                'options' => ['--games' => true],
+            ],
         ]);
     }
 

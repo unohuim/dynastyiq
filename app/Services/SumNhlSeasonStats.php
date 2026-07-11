@@ -22,12 +22,13 @@ class SumNhlSeasonStats
         // Aggregate per player + game_type
         $rows = DB::table('nhl_game_summaries as gs')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 'gs.nhl_game_id')
+            ->join('players as p', 'p.nhl_id', '=', 'gs.nhl_player_id')
             ->where('g.season_id', $seasonId)
             ->selectRaw('
                 gs.nhl_player_id,
                 g.game_type as game_type,
                 MAX(gs.nhl_team_id) as nhl_team_id,
-                COUNT(DISTINCT gs.nhl_game_id) as gp,
+                COUNT(DISTINCT CASE WHEN p.is_goalie AND COALESCE(gs.toi, 0) <= 0 THEN NULL ELSE gs.nhl_game_id END) as gp,
 
                 SUM(gs.g) as g,         SUM(gs.evg) as evg,
                 SUM(gs.a) as a,         SUM(gs.eva) as eva,

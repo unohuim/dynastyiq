@@ -504,6 +504,7 @@ Do not introduce new enum values without updating this document.
 - `fantrax`
 - `fantrax-category-definitions`
 - `fantrax-league-category-backfill`
+- `nhl-empty-games`
 - `yahoo`
 - `contracts`
 
@@ -514,6 +515,7 @@ Do not introduce new enum values without updating this document.
 - `fantrax`: Fantrax player import.
 - `fantrax-category-definitions`: Fantrax scoring category definition and DynastyIQ stat alignment dictionary import.
 - `fantrax-league-category-backfill`: Fantrax league scoring category row backfill from legacy league scoring JSON.
+- `nhl-empty-games`: NHL game-derived import reset queued from the admin game import UI.
 - `yahoo`: Yahoo fantasy hockey player import.
 - `contracts`: CapWages contract import.
 

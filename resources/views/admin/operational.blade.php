@@ -20,6 +20,7 @@
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
+            gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
         })"
         x-init="init()"
         x-cloak
@@ -394,6 +395,14 @@
                             </p>
                         </div>
                         <div class="flex flex-wrap gap-2">
+                            <button
+                                type="button"
+                                class="inline-flex items-center justify-center rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 shadow-sm hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="submitGameImportEmptyGames()"
+                                :disabled="gameImports.emptyingGames"
+                            >
+                                <span x-text="gameImports.emptyingGames ? 'Queuing...' : 'Empty Games'"></span>
+                            </button>
                             <div
                                 class="relative inline-flex rounded-md shadow-sm"
                                 @click.outside="closeGameImportSeasonDropdown()"

@@ -3,6 +3,7 @@ type: Admin Queue Orchestration UI
 location:
   - app/Http/Controllers/Admin/NhlGameImportController.php
   - app/Console/Commands/NhlProcessCommand.php
+  - app/Console/Commands/EmptyNhlCommand.php
   - app/Jobs/SeasonSumJob.php
   - app/Models/NhlGameImportRun.php
   - app/Events/NhlGameImportStatusUpdated.php
@@ -14,6 +15,7 @@ when_to_use:
   - Adding admin UI controls for NHL game discovery date windows.
   - Adding admin UI controls for dispatching NHL game processing orchestrator jobs.
   - Adding admin UI controls for dispatching season-level NHL stat rollups.
+  - Adding admin UI controls for queueing NHL game-derived import data resets.
   - Showing recent admin-queued NHL game import runs and their pipeline progress.
 when_not_to_use:
   - Executing NHL import transformations synchronously during a web request.
@@ -31,6 +33,7 @@ rules:
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
   - Direct command processing for an explicit date may remain as an operator escape hatch without creating an admin run.
   - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.
+  - Game-data reset requests must queue nhl:empty --games through the admin import runner and must not run destructive deletion synchronously during the web request.
   - Reverb updates should be lightweight invalidation signals and the browser must reload status from the admin status endpoint.
   - Game import UI behavior must remain page-local in the adminHub module.
   - Admin NHL game import routes must remain protected by admin middleware.
@@ -39,6 +42,7 @@ public_interface:
   - admin.nhl-game-imports.discover
   - admin.nhl-game-imports.process
   - admin.nhl-game-imports.season-sync
+  - admin.nhl-game-imports.empty-games
   - NhlGameImportController
   - NhlGameImportRun
   - NhlGameImportStatusUpdated

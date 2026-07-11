@@ -619,6 +619,7 @@ it('returns no rows for a date range outside the game date', function (): void {
 
 it('rolls goalie fantasy fields into nhl season stats', function (): void {
     ($this->insertGame)();
+    ($this->insertGame)(2026020002);
     $goalie = ($this->makePlayer)(30, 'Goalie Player');
     $goalie->update([
         'position' => 'G',
@@ -647,6 +648,21 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
         'created_at' => now(),
         'updated_at' => now(),
     ]);
+    DB::table('nhl_game_summaries')->insert([
+        'nhl_game_id' => 2026020002,
+        'nhl_player_id' => 30,
+        'nhl_team_id' => 1,
+        'toi' => 0,
+        'sa' => 0,
+        'sv' => 0,
+        'ga' => 0,
+        'goalie_started' => false,
+        'goalie_decision' => null,
+        'quality_start' => false,
+        'really_bad_start' => false,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
 
     app(SumNhlSeasonStats::class)->sum('20262027');
 
@@ -657,6 +673,7 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
         ->first();
 
     expect((int) $row->wins)->toBe(1)
+        ->and((int) $row->gp)->toBe(1)
         ->and((int) $row->losses)->toBe(0)
         ->and((int) $row->ot_losses)->toBe(0)
         ->and((int) $row->starts)->toBe(1)
