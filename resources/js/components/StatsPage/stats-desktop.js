@@ -215,8 +215,11 @@ const renderLeagueOwnerStatsDesktop = (
     const isGoalieFilterActive = settings?.goalieFilterActive === true;
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
+    const hasRosterSlotRows = () => (Array.isArray(data) ? data : []).some((row) =>
+        row?.roster_slot != null || row?.roster_sort_order != null || row?.league_roster_placeholder === true
+    );
     const useRosterSlotColumn = () => isRosterSlotLeague && hasSelectedFantasyTeam();
-    const isRosterSlotSortActive = () => useRosterSlotColumn() && settings.leagueUserSortActive !== true;
+    const isRosterSlotSortActive = () => isRosterSlotLeague && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
     const rosterSlotHeadingKey = () => left.find((heading) =>
         ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
@@ -530,7 +533,7 @@ const renderLeagueOwnerStatsDesktop = (
             return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague;
         });
 
-        return hasSelectedFantasyTeam() && settings.leagueUserSortActive !== true
+        return isRosterSlotSortActive()
             ? sortByRosterOrder(filtered)
             : filtered;
     };
