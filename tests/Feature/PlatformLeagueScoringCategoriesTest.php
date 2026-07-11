@@ -6,6 +6,7 @@ use App\Models\FantasyScoringCategoryMapping;
 use App\Models\PlatformLeague;
 use App\Models\PlatformLeagueScoringCategory;
 use App\Services\PlatformLeagueScoringCategoryService;
+use App\Services\SyncFantraxLeague;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
@@ -286,6 +287,75 @@ it('persists position values for provider categories', function (): void {
     ]]);
 
     expect(PlatformLeagueScoringCategory::query()->first()?->position_values)->toBe(['F' => 1, 'D' => 2]);
+});
+
+it('normalizes Fantrax points league category config points as scoring weights', function (): void {
+    $sync = app(SyncFantraxLeague::class);
+    $method = new ReflectionMethod($sync, 'fantraxScoringCategoryPayloads');
+    $method->setAccessible(true);
+
+    $rows = $method->invoke($sync, [
+        'scoringSystem' => [
+            'scoringCategorySettings' => [
+                [
+                    'group' => ['code' => 'HOCKEY_SKATING'],
+                    'configs' => [
+                        [
+                            'position' => ['code' => 'DEFAULT'],
+                            'scoringCategory' => [
+                                'code' => 'INDIVIDUAL_GOALS',
+                                'name' => 'Goals',
+                                'shortName' => 'G',
+                            ],
+                            'points' => 5,
+                        ],
+                        [
+                            'position' => ['code' => 'DEFENSE'],
+                            'scoringCategory' => [
+                                'code' => 'INDIVIDUAL_GOALS',
+                                'name' => 'Goals',
+                                'shortName' => 'G',
+                            ],
+                            'points' => 5.5,
+                        ],
+                    ],
+                ],
+                [
+                    'group' => ['code' => 'HOCKEY_GOALIE'],
+                    'configs' => [
+                        [
+                            'position' => ['code' => 'DEFAULT'],
+                            'scoringCategory' => [
+                                'code' => 'INDIVIDUAL_GOALS_AGAINST',
+                                'name' => 'Goals Against',
+                                'shortName' => 'GA',
+                            ],
+                            'points' => -1,
+                        ],
+                        [
+                            'position' => ['code' => 'DEFAULT'],
+                            'scoringCategory' => [
+                                'code' => 'INDIVIDUAL_SAVES',
+                                'name' => 'Saves',
+                                'shortName' => 'SV',
+                            ],
+                            'points' => 0.3,
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ]);
+
+    $byId = collect($rows)->keyBy('id');
+
+    expect($byId['HOCKEY_SKATING:INDIVIDUAL_GOALS']['value'])->toBe(5.0)
+        ->and($byId['HOCKEY_SKATING:INDIVIDUAL_GOALS']['position_values'])->toBe([
+            'DEFAULT' => 5.0,
+            'DEFENSE' => 5.5,
+        ])
+        ->and($byId['HOCKEY_GOALIE:INDIVIDUAL_GOALS_AGAINST']['value'])->toBe(-1.0)
+        ->and($byId['HOCKEY_GOALIE:INDIVIDUAL_SAVES']['value'])->toBe(0.3);
 });
 
 it('orders payload rows by sort order', function (): void {

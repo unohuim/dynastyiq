@@ -617,6 +617,7 @@ final class SyncFantraxLeague
                 $key = $groupCode . ':' . $code;
                 $points = $this->parseFantraxPoints(
                     data_get($config, 'weight')
+                    ?? data_get($config, 'points')
                     ?? data_get($category, 'points')
                 );
                 $shortName = (string) (data_get($category, 'shortName') ?? $code);
