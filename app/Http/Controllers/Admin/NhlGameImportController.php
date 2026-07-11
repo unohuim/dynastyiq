@@ -153,14 +153,18 @@ class NhlGameImportController extends Controller
     /**
      * Queue NHL orchestrator jobs for a validated date selection.
      */
-    public function process(Request $request, NhlImportOrchestrator $orchestrator): JsonResponse
-    {
+    public function process(
+        Request $request,
+        NhlImportOrchestrator $orchestrator,
+        NhlImportProgressRepo $progress
+    ): JsonResponse {
         $input = $this->validatedInput($request);
         $discoveryRun = $this->discoveryRunFromInput($input);
         $range = $discoveryRun
             ? $this->rangeFromRun($discoveryRun)
             : $this->normalizeDateSelection($input, false);
         $dates = $this->dateStrings($range['start'], $range['end']);
+        $reprocessExisting = $request->boolean('reprocess_existing');
 
         $run = $discoveryRun;
 
@@ -179,9 +183,24 @@ class NhlGameImportController extends Controller
         }
 
         if ($discoveryRun) {
+            if ($reprocessExisting) {
+                $reprocessCount = $progress->rescheduleExistingRowsForRun(
+                    $discoveryRun->id,
+                    $range['start']->toDateString(),
+                    $range['end']->toDateString()
+                );
+
+                if ($reprocessCount === 0) {
+                    throw ValidationException::withMessages([
+                        'run_id' => 'No existing NHL import stages were found for this run range.',
+                    ]);
+                }
+            }
+
             $payload = $discoveryRun->payload ?? [];
             $payload['processing_started_at'] = now()->toIso8601String();
             $payload['processing_requested_by'] = $request->user()?->id;
+            $payload['reprocess_existing'] = $reprocessExisting;
 
             $discoveryRun->update([
                 'status' => NhlGameImportRun::STATUS_RUNNING,

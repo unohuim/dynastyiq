@@ -531,6 +531,28 @@ describe('admin-hub import listeners', () => {
         expect(instance.canProcessGameImportRun(run)).toBe(false);
     });
 
+    it('enables discovery row reprocessing when games exist with no scheduled stage rows', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            action: 'discover',
+            processing_started: false,
+            facts: {
+                discovered_game_count: 13,
+                scheduled_stage_rows: 0,
+            },
+        };
+
+        expect(instance.canReprocessGameImportRun(run)).toBe(true);
+
+        run.facts.scheduled_stage_rows = 8;
+        expect(instance.canReprocessGameImportRun(run)).toBe(false);
+
+        run.facts.scheduled_stage_rows = 0;
+        instance.gameImports.processing = true;
+        expect(instance.canReprocessGameImportRun(run)).toBe(false);
+    });
+
     it('formats discovery facts for pending and discovered ranges', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();
@@ -1041,6 +1063,47 @@ describe('admin-hub import listeners', () => {
             body: JSON.stringify({ run_id: 23, start: '2026-01-17', end: '2026-01-15' }),
         });
         expect(instance.gameImports.runs[0].id).toBe(23);
+    });
+
+    it('submits reprocess games using the selected discovery run range', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Processing queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 24, action: 'discover' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportProcessUrl: '/admin/nhl-game-imports/process',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        const run = {
+            id: 24,
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        await instance.processGameImports(run, { reprocessExisting: true });
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/process', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({
+                run_id: 24,
+                start: '2026-01-17',
+                end: '2026-01-15',
+                reprocess_existing: true,
+            }),
+        });
     });
 
     it('reruns a source gap and refreshes source gaps plus game imports', async () => {

@@ -671,14 +671,19 @@ export default function adminHub(options = {}) {
             }
         },
 
-        async processGameImports(run = null) {
+        async processGameImports(run = null, options = {}) {
             this.gameImports.processing = true;
             this.gameImports.error = '';
 
             try {
+                const payload = run ? this.gameImportRunPayload(run) : this.gameImportPayload();
+                if (options.reprocessExisting) {
+                    payload.reprocess_existing = true;
+                }
+
                 await this.sendGameImportRequest(
                     this.gameImportProcessUrl,
-                    run ? this.gameImportRunPayload(run) : this.gameImportPayload()
+                    payload
                 );
 
                 await this.loadGameImports();
@@ -1198,6 +1203,14 @@ export default function adminHub(options = {}) {
                 && !run.processing_started
                 && !this.gameImports.processing
                 && Number(run?.facts?.scheduled_stage_rows || 0) > 0;
+        },
+
+        canReprocessGameImportRun(run) {
+            return run?.action === 'discover'
+                && !run.processing_started
+                && !this.gameImports.processing
+                && Number(run?.facts?.discovered_game_count || 0) > 0
+                && Number(run?.facts?.scheduled_stage_rows || 0) === 0;
         },
 
         discoveryFactsText(run) {

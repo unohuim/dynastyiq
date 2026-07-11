@@ -733,6 +733,7 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 
 **Purpose:**
 Move NHL game imports through explicit progress stages while tracking status, dependencies, failures, and stale running jobs.
+Discovery runs may explicitly reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before normal slot-based processing resumes.
 
 **When to Use:**
 Scheduling or executing game-level NHL imports that must run in dependency order.

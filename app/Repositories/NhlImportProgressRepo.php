@@ -185,6 +185,35 @@ class NhlImportProgressRepo
         }
     }
 
+    /**
+     * Reattach existing progress rows in a date range to a run and queue them again.
+     *
+     * This supports intentional replay of already-discovered games without requiring
+     * discovery to create duplicate progress rows.
+     */
+    public function rescheduleExistingRowsForRun(int $runId, string $startDate, string $endDate): int
+    {
+        [$earliestDate, $latestDate] = $startDate <= $endDate
+            ? [$startDate, $endDate]
+            : [$endDate, $startDate];
+
+        $updated = DB::table('nhl_import_progress')
+            ->whereBetween('game_date', [$earliestDate, $latestDate])
+            ->update([
+                'run_id' => $runId,
+                'items_count' => 0,
+                'status' => 'scheduled',
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+
+        if ($updated > 0) {
+            broadcast(new NhlGameImportStatusUpdated('stage-rescheduled'));
+        }
+
+        return $updated;
+    }
+
     /** Mark failure (error) with message/code. */
     public function markError(int $gameId, string $type, string $message, $code = null): void
     {
