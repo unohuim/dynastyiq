@@ -193,6 +193,7 @@ class DashboardController extends Controller
 
         return $users
             ->map(fn (User $user): array => $this->userPayload($user, $lastActivityByUserId))
+            ->sortByDesc(static fn (array $user): int => (int) ($user['last_seen_timestamp'] ?? 0))
             ->values()
             ->all();
     }
@@ -347,6 +348,7 @@ class DashboardController extends Controller
             'email_verified' => $user->email_verified_at !== null,
             'presence' => $presence,
             'last_seen_at' => $lastSeenAt?->toIso8601String(),
+            'last_seen_timestamp' => $lastActivity,
             'created_at' => $user->created_at?->toIso8601String(),
         ];
     }

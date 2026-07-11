@@ -1775,10 +1775,16 @@ export default function adminHub(options = {}) {
             const date = this.parseDate(user?.last_seen_at);
 
             if (!date) {
-                return 'No active session';
+                return 'Last online never';
             }
 
-            return `Last seen ${this.formatSocialDate(date)}`;
+            return `Last online ${date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+            })}`;
         },
 
         formatLastRun(key) {
