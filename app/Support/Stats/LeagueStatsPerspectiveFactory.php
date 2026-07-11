@@ -201,6 +201,7 @@ final class LeagueStatsPerspectiveFactory
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
             $columns = $this->withFantasyPointColumns($columns);
         }
+        $allColumns = $columns;
 
         $skaterSortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'sog'])
             ->first(static fn (string $key): bool => collect($skaterColumns)->contains('key', $key))
@@ -208,18 +209,26 @@ final class LeagueStatsPerspectiveFactory
         $goalieSortKey = collect(['fantasy_pts', 'wins', 'sv', 'sv_pct', 'gaa'])
             ->first(static fn (string $key): bool => collect($goalieColumns)->contains('key', $key))
             ?? ($goalieColumns[0]['key'] ?? $skaterSortKey);
+        $allSortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'sog'])
+            ->first(static fn (string $key): bool => collect($allColumns)->contains('key', $key))
+            ?? ($allColumns[0]['key'] ?? $skaterSortKey);
 
         return [
-            'columns' => $skaterColumns,
+            'columns' => $allColumns,
             'sort' => [
-                'sortKey' => $skaterSortKey,
+                'sortKey' => $allSortKey,
                 'sortDirection' => 'desc',
             ],
             'columnGroups' => [
+                'all' => $allColumns,
                 'skater' => $skaterColumns,
                 'goalie' => $goalieColumns,
             ],
             'columnGroupSort' => [
+                'all' => [
+                    'sortKey' => $allSortKey,
+                    'sortDirection' => 'desc',
+                ],
                 'skater' => [
                     'sortKey' => $skaterSortKey,
                     'sortDirection' => 'desc',
@@ -229,7 +238,7 @@ final class LeagueStatsPerspectiveFactory
                     'sortDirection' => 'desc',
                 ],
             ],
-            'activeColumnGroup' => 'skater',
+            'activeColumnGroup' => 'all',
             'filters' => [],
             'fantasyScoring' => [
                 'type' => $this->scoringType($league),
@@ -341,7 +350,10 @@ final class LeagueStatsPerspectiveFactory
             return $payload;
         }
 
-        $activeGroup = $columnGroup === 'goalie' ? 'goalie' : 'skater';
+        $activeGroup = in_array($columnGroup, ['skater', 'goalie'], true) ? $columnGroup : 'all';
+        $allColumns = is_array(data_get($settings, 'columnGroups.all'))
+            ? data_get($settings, 'columnGroups.all')
+            : ($settings['columns'] ?? []);
         $skaterColumns = is_array(data_get($settings, 'columnGroups.skater'))
             ? data_get($settings, 'columnGroups.skater')
             : [];
@@ -349,17 +361,23 @@ final class LeagueStatsPerspectiveFactory
         if ($this->isPointsLeague($league)) {
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
-        $activeColumns = $activeGroup === 'goalie' ? $goalieColumns : $skaterColumns;
+        $activeColumns = match ($activeGroup) {
+            'goalie' => $goalieColumns,
+            'skater' => $skaterColumns,
+            default => $allColumns,
+        };
         $groupSort = is_array(data_get($settings, "columnGroupSort.{$activeGroup}"))
             ? data_get($settings, "columnGroupSort.{$activeGroup}")
             : [];
 
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['columnGroups'] = [
+            'all' => $allColumns,
             'skater' => $skaterColumns,
             'goalie' => $goalieColumns,
         ];
         $payload['settings']['columnGroupSort'] = [
+            'all' => data_get($settings, 'columnGroupSort.all'),
             'skater' => data_get($settings, 'columnGroupSort.skater'),
             'goalie' => data_get($settings, 'columnGroupSort.goalie'),
         ];

@@ -27,6 +27,10 @@ export class StatsColumnGroupAdapter {
       return 'skater';
     }
 
+    if (Array.isArray(settings.columnGroups?.all)) {
+      return 'all';
+    }
+
     return settings.activeColumnGroup || 'skater';
   }
 

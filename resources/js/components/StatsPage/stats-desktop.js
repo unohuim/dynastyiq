@@ -217,8 +217,11 @@ const renderLeagueOwnerStatsDesktop = (
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
     const useRosterSlotColumn = () => isRosterSlotLeague && hasSelectedFantasyTeam();
     const isRosterSlotSortActive = () => useRosterSlotColumn() && settings.leagueUserSortActive !== true;
-    const activeSortKey = () => (isRosterSlotSortActive() ? "pos_type" : settings.sortKey);
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
+    const rosterSlotHeadingKey = () => left.find((heading) =>
+        ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
+    )?.key ?? "pos_type";
+    const activeSortKey = () => (isRosterSlotSortActive() ? rosterSlotHeadingKey() : settings.sortKey);
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
 

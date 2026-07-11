@@ -236,7 +236,7 @@ final class StatsPayloadAssembler
         $missingWeights = 0;
 
         foreach ($columns as $column) {
-            if (! (bool) ($column['fantasy_scoring_category'] ?? false)) {
+            if (! $this->fantasyColumnAppliesToRow($column, $row)) {
                 continue;
             }
 
@@ -273,6 +273,69 @@ final class StatsPayloadAssembler
         $row['fantasy_pts_default_weight_categories'] = $missingWeights;
 
         return $row;
+    }
+
+    /**
+     * @param array<string,mixed> $column
+     * @param array<string,mixed> $row
+     */
+    private function fantasyColumnAppliesToRow(array $column, array $row): bool
+    {
+        if (! (bool) ($column['fantasy_scoring_category'] ?? false)) {
+            return false;
+        }
+
+        $rowIsGoalie = (bool) ($row['is_goalie'] ?? false)
+            || strtoupper(trim((string) ($row['pos'] ?? ''))) === 'G'
+            || strtoupper(trim((string) ($row['pos_type'] ?? ''))) === 'G';
+        $isGoalieColumn = $this->columnHasExplicitGoalieGroup($column);
+        $hasGoaliePositionValue = $this->columnHasPositionValue($column, ['G', 'GOALIE']);
+
+        if ($rowIsGoalie) {
+            return $isGoalieColumn || $hasGoaliePositionValue;
+        }
+
+        return ! $isGoalieColumn;
+    }
+
+    /**
+     * @param array<string,mixed> $column
+     * @param array<int,string> $positions
+     */
+    private function columnHasPositionValue(array $column, array $positions): bool
+    {
+        $positionValues = is_array($column['position_values'] ?? null)
+            ? $column['position_values']
+            : [];
+        $positions = collect($positions)
+            ->map(static fn (string $position): string => strtoupper(trim($position)))
+            ->all();
+
+        foreach (array_keys($positionValues) as $position) {
+            if (in_array(strtoupper(trim((string) $position)), $positions, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param array<string,mixed> $column
+     */
+    private function columnHasExplicitGoalieGroup(array $column): bool
+    {
+        $group = strtoupper(trim((string) (
+            $column['normalized_group']
+            ?? $column['group']
+            ?? $column['provider_group']
+            ?? ''
+        )));
+        $key = strtoupper(trim((string) ($column['key'] ?? '')));
+
+        return $group === 'HOCKEY_GOALIE'
+            || $group === 'GOALIE'
+            || str_starts_with($key, 'HOCKEY_GOALIE:');
     }
 
     /**
