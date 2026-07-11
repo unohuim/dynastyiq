@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Jobs\RefreshNhlGoalieDecisionJob;
 use App\Services\ImportNhlBoxscore;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +21,8 @@ class RefreshNhlGoalieDecisionsCommand extends Command
         {--season= : NHL season id like 20252026}
         {--game-id= : Single NHL game id}
         {--date-from= : Inclusive game date lower bound, YYYY-MM-DD}
-        {--date-to= : Inclusive game date upper bound, YYYY-MM-DD}';
+        {--date-to= : Inclusive game date upper bound, YYYY-MM-DD}
+        {--queue : Dispatch one queue job per game instead of refreshing inline}';
 
     /**
      * @var string
@@ -38,6 +40,16 @@ class RefreshNhlGoalieDecisionsCommand extends Command
             $this->error('No NHL games matched the provided options.');
 
             return self::FAILURE;
+        }
+
+        if ((bool) $this->option('queue')) {
+            foreach ($gameIds as $gameId) {
+                RefreshNhlGoalieDecisionJob::dispatch($gameId);
+            }
+
+            $this->info('Dispatched ' . count($gameIds) . ' goalie decision refresh job(s).');
+
+            return self::SUCCESS;
         }
 
         $updatedRows = 0;

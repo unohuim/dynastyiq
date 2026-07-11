@@ -3,6 +3,7 @@ type: Domain Import Services
 location:
   - app/Console/Commands/EmptyNhlCommand.php
   - app/Console/Commands/RefreshNhlGoalieDecisionsCommand.php
+  - app/Jobs/RefreshNhlGoalieDecisionJob.php
   - app/Services/ImportNHLPlayByPlay.php
   - app/Services/NhlPbpEventNormalizer.php
   - app/Services/NhlGameImportEligibility.php
@@ -59,7 +60,7 @@ rules:
   - Shift imports may use already-imported official boxscore shifts and time on ice to choose between provider shiftchart alternatives, including exact duplicate-row TOI credits that do not change shift count, but must not mutate raw provider event fields.
   - Goalie shift imports may use official goalie boxscore time on ice as a reconciliation target for dropping exact-duration malformed shiftchart artifacts because official goalie boxscore shift counts are zero; they must still store time on ice from the remaining normalized raw shift rows.
   - Goalie decision summaries must preserve regulation, overtime, and shootout win/loss splits at the game-summary level before season aggregation.
-  - Goalie decision backfills may refresh game-summary decisions from official boxscore goalie rows without rerunning play-by-play, shift, or unit stages.
+  - Goalie decision backfills may refresh game-summary decisions from official boxscore goalie rows without rerunning play-by-play, shift, or unit stages, and may dispatch one queue job per game for large windows.
   - Goalie season games played must count only game-summary rows with time on ice greater than zero so dressed-backup summary rows do not inflate goalie GP.
   - Shift imports may drop skater rows that create impossible team skater counts under play-by-play situation codes only when the same row also exactly reconciles that player's official boxscore shift count and time on ice.
   - Shift summary persistence may borrow a non-goalie official boxscore shift count when normalized shiftcharts are exactly one shift short, time on ice is within one second of official, and no raw shift row is available to add.
@@ -79,6 +80,7 @@ rules:
 public_interface:
   - EmptyNhlCommand
   - RefreshNhlGoalieDecisionsCommand
+  - RefreshNhlGoalieDecisionJob
   - ImportNHLPlayByPlay
   - NhlPbpEventNormalizer
   - NhlGameImportEligibility
