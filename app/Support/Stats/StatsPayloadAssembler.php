@@ -586,9 +586,34 @@ final class StatsPayloadAssembler
         ];
 
         return collect($columns)
-            ->pluck('key')
-            ->intersect($onIceKeys)
+            ->filter(fn (array $column): bool => $this->columnRequestsOnIceStats($column, $onIceKeys))
             ->isNotEmpty();
+    }
+
+    /**
+     * @param array<string,mixed> $column
+     * @param array<int,string> $onIceKeys
+     */
+    private function columnRequestsOnIceStats(array $column, array $onIceKeys): bool
+    {
+        $key = (string) ($column['key'] ?? '');
+
+        if (! in_array($key, $onIceKeys, true)) {
+            return false;
+        }
+
+        if (! (bool) ($column['fantasy_scoring_category'] ?? false)) {
+            return true;
+        }
+
+        $group = strtoupper((string) (
+            $column['normalized_group']
+            ?? $column['provider_group']
+            ?? $column['group']
+            ?? ''
+        ));
+
+        return ! str_contains($group, 'GOALIE');
     }
 
     /**

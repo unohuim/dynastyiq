@@ -784,6 +784,91 @@ it('exposes native advanced skater aliases and perspective position buttons in s
         ->and($row['ozs_pct'])->toBe(0.8);
 });
 
+it('keeps native goalie goals against when goalie scoring columns share on-ice keys', function (): void {
+    $this->actingAs(User::factory()->create());
+    ($this->insertGame)();
+    $goalie = ($this->makePlayer)(48, 'Native Goalie');
+    $goalie->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+        'is_goalie' => true,
+    ]);
+
+    DB::table('nhl_season_stats')->insert([
+        'season_id' => '20262027',
+        'nhl_player_id' => 48,
+        'nhl_team_id' => 1,
+        'gp' => 47,
+        'game_type' => 2,
+        'ga' => 160,
+        'sa' => 1285,
+        'sv' => 1125,
+        'toi' => 155541,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_player_game_strength_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'player_id' => $goalie->id,
+        'nhl_player_id' => 48,
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'strength' => 'EV',
+        'toi' => 1200,
+        'gf' => 2,
+        'ga' => 91,
+        'sf' => 10,
+        'sa' => 20,
+        'satf' => 12,
+        'sata' => 22,
+        'ff' => 11,
+        'fa' => 21,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Perspective::create([
+        'name' => 'Goalie Scoring Test',
+        'slug' => 'goalie-scoring-test',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => false,
+        'settings' => [
+            'columns' => [
+                [
+                    'key' => 'ga',
+                    'label' => 'GA',
+                    'type' => 'int',
+                    'fantasy_scoring_category' => true,
+                    'normalized_group' => 'HOCKEY_GOALIE',
+                    'is_supported' => true,
+                ],
+            ],
+            'filters' => [
+                'pos_type' => [
+                    'operator' => '=',
+                    'value' => ['G'],
+                    'locked' => true,
+                ],
+            ],
+        ],
+    ]);
+
+    $response = $this->getJson(route('stats.payload', [
+        'perspective' => 'goalie-scoring-test',
+        'season_id' => '20262027',
+        'game_type' => 2,
+    ]));
+
+    $response->assertOk();
+
+    $row = $response->json('data.0');
+
+    expect($row['gp'])->toBe(47)
+        ->and($row['ga'])->toBe(160);
+});
+
 it('defaults line combos to the latest season regular-season segment', function (): void {
     $this->actingAs(User::factory()->create());
     ($this->makePlayer)(41, 'Old Player');
