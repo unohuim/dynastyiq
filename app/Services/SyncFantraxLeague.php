@@ -395,15 +395,20 @@ final class SyncFantraxLeague
 
                     foreach ($toAdd as $pid) {
                         $fantraxId = $playerIdToFantrax[$pid] ?? null;
+                        $metadata = $fantraxId ? ($rosterMetadataByFantraxId[$fantraxId] ?? []) : [];
                         $insert[] = [
                             'platform_team_id'    => $platformTeamId,
                             'player_id'           => $pid,
                             'platform'            => 'fantrax',
                             'platform_player_id'  => $fantraxId,
+                            'slot' => $metadata['slot'] ?? null,
+                            'status' => $metadata['status'] ?? null,
+                            'eligibility' => $metadata['eligibility'] ?? null,
+                            'metadata' => $metadata['metadata'] ?? null,
                             'starts_at'           => $now,
                             'created_at'          => $now,
                             'updated_at'          => $now,
-                        ] + ($fantraxId ? ($rosterMetadataByFantraxId[$fantraxId] ?? []) : []);
+                        ];
                     }
                     DB::table('platform_roster_memberships')->insert($insert);
                 }
