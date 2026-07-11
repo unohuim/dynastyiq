@@ -803,7 +803,7 @@ php artisan nhl:discover --date=2026-01-15
 - `app/Services/SumNhlSeasonStats.php`
 
 **Purpose:**
-Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie decisions preserve regulation, overtime, and shootout splits before season aggregation.
+Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, and goalie decisions preserve regulation, overtime, and shootout splits before season aggregation.
 
 **When to Use:**
 Implementing or changing a single NHL import stage.

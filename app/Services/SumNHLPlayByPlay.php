@@ -284,6 +284,8 @@ class SumNHLPlayByPlay
                 $playerCount++;
             }
 
+            $this->reconcileGoalieBoxscoreTotals($nhlGameId);
+
             return $playerCount;
         } catch (\Throwable $e) {
             \Log::error("Summary failed for game {$nhlGameId}: {$e->getMessage()}");
@@ -442,6 +444,70 @@ class SumNHLPlayByPlay
             (string) $nhlGameId,
             (string) $playerId
         ));
+    }
+
+    /**
+     * Keep official goalie-facing boxscore totals as the summary source of truth.
+     *
+     * PBP goal events can omit goalieInNetId even when shot events include it. Without this reconciliation,
+     * saves can aggregate correctly while goals against are undercounted.
+     */
+    private function reconcileGoalieBoxscoreTotals(int $nhlGameId): void
+    {
+        NhlBoxscore::query()
+            ->where('nhl_game_id', $nhlGameId)
+            ->whereRaw('UPPER(position) = ?', ['G'])
+            ->get()
+            ->each(function (NhlBoxscore $boxscore) use ($nhlGameId): void {
+                if (empty($boxscore->nhl_player_id)) {
+                    return;
+                }
+
+                $toiSeconds = $this->boxscoreToiSeconds($boxscore);
+                $shotsAgainst = (int) $boxscore->shots_against;
+                $saves = (int) $boxscore->saves;
+                $goalsAgainst = (int) $boxscore->goals_against;
+
+                NhlGameSummary::updateOrCreate(
+                    [
+                        'nhl_game_id' => $nhlGameId,
+                        'nhl_player_id' => (string) $boxscore->nhl_player_id,
+                    ],
+                    [
+                        'nhl_team_id' => (int) $boxscore->nhl_team_id,
+                        'toi' => $toiSeconds,
+                        'sa' => $shotsAgainst,
+                        'sv' => $saves,
+                        'ga' => $goalsAgainst,
+                        'evsa' => (int) $boxscore->ev_shots_against,
+                        'evsv' => (int) $boxscore->ev_saves,
+                        'evga' => (int) $boxscore->ev_goals_against,
+                        'ppsa' => (int) $boxscore->pp_shots_against,
+                        'ppsv' => (int) $boxscore->pp_saves,
+                        'ppga' => (int) $boxscore->pp_goals_against,
+                        'pksa' => (int) $boxscore->pk_shots_against,
+                        'pksv' => (int) $boxscore->pk_saves,
+                        'pkga' => (int) $boxscore->pk_goals_against,
+                        'sv_pct' => $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : 0.0,
+                        'gaa' => $toiSeconds > 0 ? round(($goalsAgainst * 3600) / $toiSeconds, 3) : 0.0,
+                    ]
+                );
+            });
+    }
+
+    private function boxscoreToiSeconds(NhlBoxscore $boxscore): int
+    {
+        if (is_numeric($boxscore->toi_seconds) && (int) $boxscore->toi_seconds > 0) {
+            return (int) $boxscore->toi_seconds;
+        }
+
+        if (! is_string($boxscore->toi) || ! str_contains($boxscore->toi, ':')) {
+            return 0;
+        }
+
+        [$minutes, $seconds] = array_pad(explode(':', $boxscore->toi, 2), 2, '0');
+
+        return ((int) $minutes * 60) + (int) $seconds;
     }
 
 
