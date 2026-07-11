@@ -56,7 +56,7 @@ class RefreshNhlSpecialTeamsSplitsCommand extends Command
         $updatedRows = 0;
 
         foreach ($gameIds as $gameId) {
-            $updatedRows += $summary->summarize($gameId);
+            $updatedRows += $summary->summarize($gameId, reconcileGoalies: false);
             $processedGames++;
 
             if ($processedGames % 25 === 0 || $processedGames === count($gameIds)) {

@@ -18,7 +18,7 @@ class SumNHLPlayByPlay
     {
     }
 
-    public function summarize(int $nhlGameId): int
+    public function summarize(int $nhlGameId, bool $reconcileGoalies = true): int
     {
         try {
             $plays = PlayByPlay::where('nhl_game_id', $nhlGameId)->get();
@@ -285,7 +285,9 @@ class SumNHLPlayByPlay
                 $playerCount++;
             }
 
-            $this->reconcileGoalieBoxscoreTotals($nhlGameId);
+            if ($reconcileGoalies) {
+                $this->reconcileGoalieBoxscoreTotals($nhlGameId);
+            }
 
             return $playerCount;
         } catch (\Throwable $e) {

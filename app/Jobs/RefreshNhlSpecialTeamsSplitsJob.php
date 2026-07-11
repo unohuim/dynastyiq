@@ -64,6 +64,6 @@ class RefreshNhlSpecialTeamsSplitsJob implements ShouldQueue
 
     public function handle(SumNHLPlayByPlay $summary): void
     {
-        $summary->summarize($this->nhlGameId);
+        $summary->summarize($this->nhlGameId, reconcileGoalies: false);
     }
 }
