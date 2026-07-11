@@ -180,7 +180,7 @@ class SumNhlSeasonStats
 
             $fow_percentage = ($fow + $fol) > 0 ? round(($fow / ($fow + $fol)) * 100, 2) : 0.0;
             $sv_pct = $sa > 0 ? round($sv / $sa, 3) : 0.0;
-            $gaa = $toi > 0 ? round(($ga * 3600) / $toi, 3) : 0.0;
+            $gaa = $toi > 0 ? $this->decimal6Scale3(round(($ga * 3600) / $toi, 3)) : 0.0;
             $ev_sv_pct = $evsa > 0 ? round($evsv / $evsa, 3) : 0.0;
             $pp_sv_pct = $ppsa > 0 ? round($ppsv / $ppsa, 3) : 0.0;
             $pk_sv_pct = $pksa > 0 ? round($pksv / $pksa, 3) : 0.0;
@@ -299,16 +299,21 @@ class SumNhlSeasonStats
 
     private function pct(int|float $num, int|float $den): float
     {
-        return $den > 0 ? round(($num / $den) * 100, 3) : 0.0;
+        return $den > 0 ? $this->decimal6Scale3(round(($num / $den) * 100, 3)) : 0.0;
     }
 
     private function perGame(int|float $total, int $gp): float
     {
-        return $gp > 0 ? round($total / $gp, 3) : 0.0;
+        return $gp > 0 ? $this->decimal6Scale3(round($total / $gp, 3)) : 0.0;
     }
 
     private function per60(int|float $total, int $toiSeconds): float
     {
-        return $toiSeconds > 0 ? round(($total * 3600) / $toiSeconds, 3) : 0.0;
+        return $toiSeconds > 0 ? $this->decimal6Scale3(round(($total * 3600) / $toiSeconds, 3)) : 0.0;
+    }
+
+    private function decimal6Scale3(int|float $value): float
+    {
+        return max(-999.999, min(999.999, (float) $value));
     }
 }
