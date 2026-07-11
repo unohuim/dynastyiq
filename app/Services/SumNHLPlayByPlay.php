@@ -130,7 +130,7 @@ class SumNHLPlayByPlay
                 $pts   = $g + $a;
                 $evpts = $evg + $eva;
                 $ppp   = $ppg + $ppa;
-                $pkp   = $pkg + $ppa;
+                $pkp   = $pkg + $pka;
 
 
                 // Empty-net (ENS/ENG) using situationCode

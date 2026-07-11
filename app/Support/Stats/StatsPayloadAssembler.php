@@ -266,7 +266,7 @@ final class StatsPayloadAssembler
         $gamesPlayed = (int) ($row['gp'] ?? 0);
         $row['fantasy_pts'] = $this->roundFantasyPoints($total);
         $row['fantasy_pts_pg'] = $gamesPlayed > 0
-            ? $this->roundFantasyPoints($total / $gamesPlayed)
+            ? $this->roundFantasyPointsPerGame($total / $gamesPlayed)
             : 0.0;
         $row['fantasy_pts_complete'] = $unsupported === 0 && $missingWeights === 0;
         $row['fantasy_pts_unsupported_categories'] = $unsupported;
@@ -319,6 +319,11 @@ final class StatsPayloadAssembler
         $rounded = round($value, 3);
 
         return fmod($rounded, 1.0) === 0.0 ? (int) $rounded : $rounded;
+    }
+
+    private function roundFantasyPointsPerGame(float $value): float
+    {
+        return round($value, 2);
     }
 
     /**

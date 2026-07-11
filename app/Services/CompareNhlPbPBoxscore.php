@@ -32,6 +32,9 @@ class CompareNhlPbPBoxscore
         'hits' => 'h',
         'blocks' => 'b',
         'power_play_goals' => 'ppg',
+        'power_play_assists' => 'ppa',
+        'short_handed_goals' => 'pkg',
+        'short_handed_assists' => 'pka',
         'plus_minus' => 'plus_minus',
         'shifts' => 'shifts',
     ];
