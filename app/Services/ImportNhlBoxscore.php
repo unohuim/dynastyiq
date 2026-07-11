@@ -128,6 +128,40 @@ class ImportNhlBoxscore
         return $playerCount;
     }
 
+    /**
+     * Refresh only official goalie decisions from the NHL boxscore feed.
+     *
+     * @param int|string $nhlGameId
+     * @return int Number of game-summary goalie rows updated.
+     */
+    public function refreshGoalieDecisions(int|string $nhlGameId): int
+    {
+        $response = $this->getAPIData('nhl', 'boxscore', ['gameId' => $nhlGameId]);
+
+        if (empty($response['playerByGameStats'])) {
+            return 0;
+        }
+
+        $updated = 0;
+        $stats = $response['playerByGameStats'];
+
+        foreach (['awayTeam', 'homeTeam'] as $teamSide) {
+            if (empty($stats[$teamSide]['goalies'])) {
+                continue;
+            }
+
+            $teamId = (int) ($response[$teamSide]['id'] ?? 0);
+            $updated += $this->refreshGoalieDecisionsForTeam(
+                $nhlGameId,
+                $teamId,
+                $stats[$teamSide]['goalies'],
+                $response
+            );
+        }
+
+        return $updated;
+    }
+
 
 
     private function processShutout(int|string $gameId, array $goalies): void
@@ -230,9 +264,10 @@ class ImportNhlBoxscore
                 ? (bool) ($goalie['starter'] ?? false)
                 : (string) $goalieId === (string) $primaryGoalieId;
 
-            $decision = (string) $goalieId === (string) $primaryGoalieId
-                ? $this->goalieDecision($teamId, $response)
-                : 'ND';
+            $decision = $this->officialGoalieDecision($goalie)
+                ?? ((string) $goalieId === (string) $primaryGoalieId
+                    ? $this->goalieDecision($teamId, $response)
+                    : 'ND');
 
             NhlGameSummary::updateOrCreate(
                 [
@@ -269,6 +304,75 @@ class ImportNhlBoxscore
         }
 
         return $savePercentage >= 0.917 || ($shotsAgainst <= 20 && $savePercentage >= 0.885);
+    }
+
+    /**
+     * @param int|string $gameId
+     * @param array<int,array<string,mixed>> $goalies
+     * @param array<string,mixed> $response
+     */
+    private function refreshGoalieDecisionsForTeam(
+        int|string $gameId,
+        int $teamId,
+        array $goalies,
+        array $response
+    ): int {
+        if ($teamId === 0 || $goalies === []) {
+            return 0;
+        }
+
+        $activeGoalies = collect($goalies)
+            ->filter(fn (array $goalie): bool => !empty($goalie['playerId']) && $this->toiToSeconds($goalie['toi'] ?? '00:00') > 0)
+            ->values();
+
+        if ($activeGoalies->isEmpty()) {
+            return 0;
+        }
+
+        $hasStarterFlag = $activeGoalies->contains(fn (array $goalie): bool => array_key_exists('starter', $goalie));
+        $primaryGoalieId = $activeGoalies
+            ->sortByDesc(fn (array $goalie): int => $this->toiToSeconds($goalie['toi'] ?? '00:00'))
+            ->first()['playerId'] ?? null;
+        $updated = 0;
+
+        foreach ($activeGoalies as $goalie) {
+            $goalieId = $goalie['playerId'] ?? null;
+
+            if ($goalieId === null) {
+                continue;
+            }
+
+            $started = $hasStarterFlag
+                ? (bool) ($goalie['starter'] ?? false)
+                : (string) $goalieId === (string) $primaryGoalieId;
+            $decision = $this->officialGoalieDecision($goalie)
+                ?? ((string) $goalieId === (string) $primaryGoalieId
+                    ? $this->goalieDecision($teamId, $response)
+                    : 'ND');
+
+            $updated += NhlGameSummary::query()
+                ->where('nhl_game_id', (int) $gameId)
+                ->where('nhl_player_id', (string) $goalieId)
+                ->update([
+                    'nhl_team_id' => $teamId,
+                    'goalie_started' => $started,
+                    'goalie_decision' => $decision,
+                ]);
+        }
+
+        return $updated;
+    }
+
+    /**
+     * @param array<string,mixed> $goalie
+     */
+    private function officialGoalieDecision(array $goalie): ?string
+    {
+        $decision = strtoupper(trim((string) ($goalie['decision'] ?? '')));
+
+        return in_array($decision, ['W', 'L', 'OTW', 'OTL', 'SOW', 'SOL', 'ND'], true)
+            ? $decision
+            : null;
     }
 
     /**

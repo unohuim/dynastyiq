@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Models\Perspective;
 use App\Models\Player;
 use App\Models\User;
+use App\Services\ImportNhlBoxscore;
 use App\Services\NhlStrengthStatsQuery;
 use App\Services\ResolveNhlUnit;
 use App\Services\SumNhlGameUnits;
@@ -685,6 +686,63 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
         ->and((float) $row->pp_sv_pct)->toBe(0.8)
         ->and((float) $row->pk_sv_pct)->toBe(1.0)
         ->and((float) $row->quality_start_percentage)->toBe(1.0);
+});
+
+it('uses official boxscore goalie decisions before primary goalie fallback', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(31, 'Relief Winner')->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+    ]);
+    ($this->makePlayer)(32, 'Starter No Decision')->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+    ]);
+
+    $method = new ReflectionMethod(ImportNhlBoxscore::class, 'processGoalieFantasyStats');
+    $method->setAccessible(true);
+    $method->invoke(app(ImportNhlBoxscore::class), 2026020001, 1, [
+        [
+            'playerId' => 31,
+            'toi' => '20:00',
+            'shotsAgainst' => 10,
+            'saves' => 10,
+            'goalsAgainst' => 0,
+            'evenStrengthShotsAgainst' => '10/10',
+            'powerPlayShotsAgainst' => '0/0',
+            'shorthandedShotsAgainst' => '0/0',
+            'starter' => false,
+            'decision' => 'W',
+        ],
+        [
+            'playerId' => 32,
+            'toi' => '40:00',
+            'shotsAgainst' => 20,
+            'saves' => 18,
+            'goalsAgainst' => 2,
+            'evenStrengthShotsAgainst' => '18/20',
+            'powerPlayShotsAgainst' => '0/0',
+            'shorthandedShotsAgainst' => '0/0',
+            'starter' => true,
+            'decision' => 'ND',
+        ],
+    ], [
+        'homeTeam' => ['id' => 1, 'score' => 3],
+        'awayTeam' => ['id' => 2, 'score' => 2],
+        'periodDescriptor' => ['periodType' => 'REG'],
+    ]);
+
+    $reliefWinner = DB::table('nhl_game_summaries')
+        ->where('nhl_game_id', 2026020001)
+        ->where('nhl_player_id', 31)
+        ->first();
+    $starter = DB::table('nhl_game_summaries')
+        ->where('nhl_game_id', 2026020001)
+        ->where('nhl_player_id', 32)
+        ->first();
+
+    expect($reliefWinner?->goalie_decision)->toBe('W')
+        ->and($starter?->goalie_decision)->toBe('ND');
 });
 
 it('exposes native advanced skater aliases and perspective position buttons in stats payload', function (): void {
