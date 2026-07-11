@@ -5,6 +5,7 @@ location:
   - app/Services/SyncFantraxLeague.php
   - app/Services/FantraxScoringCategoryMapper.php
   - app/Services/PlatformLeagueScoringCategoryService.php
+  - app/Services/PlatformLeaguePlayerStatService.php
   - app/Services/FantraxLogoSyncService.php
   - app/Support/FantraxLogoBrowserProfile.php
   - app/Services/ImportFantraxLeagues.php
@@ -19,6 +20,7 @@ location:
   - app/Jobs/SyncFantraxTeamJob.php
   - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
   - app/Models/PlatformLeague.php
+  - app/Models/PlatformLeaguePlayerStat.php
   - app/Models/PlatformLeagueScoringCategory.php
   - app/Models/PlatformTeam.php
   - app/Models/PlatformRosterMembership.php
@@ -50,6 +52,11 @@ rules:
   - Provider scoring categories that power league UI must be persisted to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
   - Provider scoring category sync must normalize shorthand group names before identity comparison, including SKATING to HOCKEY_SKATING and GOALIE to HOCKEY_GOALIE.
   - Provider scoring category sync must upsert current categories and delete stale categories that are no longer present in the provider payload.
+  - Provider-earned fantasy player stats that power league fantasy results must persist to platform_league_player_stats and must not be inferred from DynastyIQ NHL source-of-truth season stats.
+  - NHL season stats may remain available for scouting or comparison views, but Fantrax league fantasy standings and earned player totals must use provider-earned stat rows when available.
+  - Fantrax public API does not currently expose individual fantasy stat totals; provider stat sync must remain dormant unless a verified provider payload is configured.
+  - Fantrax player stat sync must be non-blocking; roster, team, and scoring sync must continue when provider stat rows are unavailable.
+  - Fantrax league stats views may show provider scoring categories that DynastyIQ cannot locally derive only when provider-earned stat rows supply those category values.
   - Manual league scoring mappings may target native stat fields or imported dictionary formulas and must override dictionary auto mappings while preserving support metadata for warnings.
   - Scheduled league refresh should use the same league sync path as the user-triggered top-level Leagues refresh action and should run on a four-hour cadence.
   - PlatformLeague.settings.custom_cap defaults to false and, when true, league Cap views must use persisted Fantrax roster salaries instead of CapWages cap hits.
@@ -75,10 +82,12 @@ public_interface:
   - FantraxLeagueService
   - FantraxScoringCategoryMapper
   - PlatformLeagueScoringCategoryService
+  - PlatformLeaguePlayerStatService
   - FantraxLogoSyncService
   - fantrax:inspect-logos
   - FantraxLogoBrowserProfile
   - PlatformLeague
+  - PlatformLeaguePlayerStat
   - PlatformLeagueScoringCategory
   - PlatformTeam
   - PlatformRosterMembership

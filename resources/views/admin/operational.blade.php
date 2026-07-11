@@ -8,6 +8,7 @@
         class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8"
         x-data="adminHub({
             imports: @js($imports),
+            users: @js($users ?? []),
             hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
             triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1])),
@@ -23,7 +24,7 @@
         x-cloak
     >
         <div class="border-b border-gray-200">
-            <div class="flex items-center gap-6">
+            <div class="flex flex-wrap items-center gap-6">
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
@@ -47,6 +48,14 @@
                     :class="activeTab === 'platform-imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
                     Platform Imports
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    @click="setTab('users')"
+                    :class="activeTab === 'users' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Users
                 </button>
                 <button
                     type="button"
@@ -193,6 +202,88 @@
                             </div>
                         </div>
                     @endforeach
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'users'" x-cloak>
+                <div class="border-y border-gray-200 bg-white">
+                    <div class="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-900">Users</h3>
+                            <p class="mt-0.5 text-xs text-gray-500">DynastyIQ accounts with local session presence.</p>
+                        </div>
+                        <div class="text-xs text-gray-500">
+                            <span x-text="formatNumber(users.length)"></span>
+                            <span x-text="users.length === 1 ? 'user' : 'users'"></span>
+                        </div>
+                    </div>
+
+                    <div class="divide-y divide-gray-200">
+                        <template x-for="user in users" :key="user.id">
+                            <div class="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_10rem_9rem] sm:items-center">
+                                <div class="flex min-w-0 items-center gap-3">
+                                    <template x-if="user.avatar_url">
+                                        <img
+                                            :src="user.avatar_url"
+                                            alt=""
+                                            class="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-gray-200"
+                                            loading="lazy"
+                                        >
+                                    </template>
+                                    <template x-if="!user.avatar_url">
+                                        <span
+                                            class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-100 text-xs font-semibold text-gray-600 ring-1 ring-gray-200"
+                                            x-text="userInitials(user)"
+                                        ></span>
+                                    </template>
+
+                                    <div class="min-w-0">
+                                        <div class="flex min-w-0 items-center gap-2">
+                                            <span class="truncate text-sm font-semibold text-gray-900" x-text="user.name"></span>
+                                            <span
+                                                x-show="user.email_verified"
+                                                class="inline-flex shrink-0 items-center rounded-md bg-green-50 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 ring-1 ring-green-600/20"
+                                            >
+                                                Verified
+                                            </span>
+                                        </div>
+                                        <div class="truncate text-xs text-gray-500" x-text="user.email"></div>
+                                        <div x-show="user.discord_name" class="truncate text-xs text-gray-500">
+                                            Discord:
+                                            <span x-text="user.discord_name"></span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="role in user.roles" :key="`${user.id}-${role}`">
+                                        <span
+                                            class="inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-gray-600"
+                                            x-text="role"
+                                        ></span>
+                                    </template>
+                                    <span
+                                        x-show="!user.roles || user.roles.length === 0"
+                                        class="text-xs text-gray-400"
+                                    >
+                                        No roles
+                                    </span>
+                                </div>
+
+                                <div class="text-left sm:text-right">
+                                    <div class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold" :class="presenceClass(user)">
+                                        <span class="h-2 w-2 rounded-full" :class="presenceDotClass(user)"></span>
+                                        <span x-text="user.presence?.label ?? 'Offline'"></span>
+                                    </div>
+                                    <div class="mt-1 text-xs text-gray-500" x-text="formatUserLastSeen(user)"></div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="users.length === 0" class="px-4 py-8 text-sm text-gray-500">
+                            No users found.
+                        </div>
+                    </div>
                 </div>
             </div>
 

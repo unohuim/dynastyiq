@@ -10,5 +10,6 @@
         'imports' => $imports,
         'hasPlayers' => $hasPlayers,
         'hasFantraxPlayers' => $hasFantraxPlayers,
+        'users' => $users,
     ])
 </x-app-layout>

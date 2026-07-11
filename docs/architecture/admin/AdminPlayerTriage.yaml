@@ -62,7 +62,7 @@ rules:
   - The default triage inbox should focus on identities with current resolver confidence below 75 percent or no confidence; explicit filters may include higher-confidence recommendations.
   - Resolver recommendation previews used by the triage inbox must bound canonical player candidates by provider identity name evidence before applying PHP scoring.
   - The admin control panel may embed the full triage inbox, but the standalone triage route must remain available and protected.
-  - The admin control panel top-level tabs may expose Player Imports, Game Imports, Triage, and NHL Validations as approved operational tabs.
+  - The admin control panel top-level tabs may expose Player Imports, Game Imports, Platform Imports, Users, Triage, and NHL Validations as approved operational tabs.
   - Admin-only triage routes must remain protected by admin middleware.
 public_interface:
   - admin.player-triage

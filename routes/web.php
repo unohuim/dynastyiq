@@ -100,6 +100,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/dashboard', fn () => view('dashboard'))->name('dashboard');
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
+            ->middleware(['admin.super', 'admin.lifecycle'])
             ->name('admin.dashboard');
 
         // Yahoo user integration

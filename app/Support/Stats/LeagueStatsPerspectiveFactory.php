@@ -129,14 +129,12 @@ final class LeagueStatsPerspectiveFactory
 
         $columns = $categoryRows
             ->filter(static fn (mixed $category): bool => is_array($category))
-            ->filter(static fn (array $category): bool => (bool) ($category['is_supported'] ?? false)
-                || trim((string) ($category['stat_key'] ?? '')) !== '')
             ->map(static function (array $category): ?array {
                 $statKey = trim((string) ($category['stat_key'] ?? ''));
                 $formula = trim((string) ($category['formula'] ?? ''));
                 $derivedKey = trim((string) ($category['id'] ?? ''));
 
-                if ($statKey === '' && $formula === '') {
+                if ($statKey === '' && $formula === '' && $derivedKey === '') {
                     return null;
                 }
 
@@ -157,6 +155,7 @@ final class LeagueStatsPerspectiveFactory
                         : [],
                     'provider_group' => $category['provider_group'] ?? null,
                     'normalized_group' => $category['normalized_group'] ?? $category['group'] ?? null,
+                    'is_supported' => (bool) ($category['is_supported'] ?? false),
                 ];
             })
             ->filter()

@@ -578,6 +578,28 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### Platform League Player Stat Scope
+
+**Name:** Platform league player stat scope
+**Storage location(s):** `platform_league_player_stats.scope`
+**Allowed values:**
+
+- `season`
+- `period`
+- `active_lineup`
+
+**Semantic meaning:**
+
+- `season`: Provider-earned player totals for a fantasy season.
+- `period`: Provider-earned player totals for one provider scoring period.
+- `active_lineup`: Provider-earned totals that count only active lineup usage when the provider exposes that scope separately.
+
+**Notes:**
+
+- Provider fantasy stat scopes represent what the fantasy platform counted, not raw NHL source-of-truth stats.
+
+---
+
 ### NHL Player Transaction Source
 
 **Name:** NHL player transaction source

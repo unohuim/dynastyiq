@@ -1365,6 +1365,7 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 - `app/Services/SyncFantraxLeague.php`
 - `app/Services/FantraxScoringCategoryMapper.php`
 - `app/Services/PlatformLeagueScoringCategoryService.php`
+- `app/Services/PlatformLeaguePlayerStatService.php`
 - `app/Services/FantraxLogoSyncService.php`
 - `app/Support/FantraxLogoBrowserProfile.php`
 - `app/Services/ImportFantraxLeagues.php`
@@ -1374,6 +1375,7 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 - `app/Events/TeamLogosSynced.php`
 - `app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php`
 - `app/Models/PlatformLeague.php`
+- `app/Models/PlatformLeaguePlayerStat.php`
 - `app/Models/PlatformLeagueScoringCategory.php`
 - `app/Models/PlatformTeam.php`
 - `app/Models/PlatformRosterMembership.php`
@@ -1386,6 +1388,9 @@ Authenticated browser logo extraction backend code is league-scoped and persists
 Completed browser logo extraction may broadcast a user-scoped logo update event so the league list can update without a page refresh.
 Fantrax league scoring categories are enriched from the platform category mapping dictionary during league sync, with manual mappings overriding dictionary auto mappings while preserving support metadata.
 Provider scoring categories that power league UI persist to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
+Provider-earned fantasy player stats that power league fantasy results persist to platform_league_player_stats and remain distinct from DynastyIQ NHL source-of-truth season stats.
+Fantrax public API does not currently expose individual fantasy stat totals, so provider stat sync remains dormant unless a verified provider payload is configured.
+Fantrax player stat sync is non-blocking, and league stats views may display provider scoring categories that DynastyIQ cannot locally derive only when provider-earned stat rows supply those values.
 Provider scoring category sync normalizes shorthand group names, upserts current rows, and deletes stale rows no longer present in the provider payload.
 Scheduled league refresh uses the same league sync path as the user-triggered top-level Leagues refresh action and runs on a four-hour cadence.
 
@@ -1402,6 +1407,7 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 - `FantraxLeagueService`
 - `FantraxScoringCategoryMapper`
 - `PlatformLeagueScoringCategoryService`
+- `PlatformLeaguePlayerStatService`
 - `FantraxLogoSyncService`
 - `leagues.team-logos.sync`
 - `community.leagues.team-logos.sync`
@@ -1409,6 +1415,7 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 - `fantrax:inspect-logos`
 - `FantraxLogoBrowserProfile`
 - Platform league/team/roster models
+- Platform league player stat rows
 - Platform league scoring category rows
 
 **Example Usage:**

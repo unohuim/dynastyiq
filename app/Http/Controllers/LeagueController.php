@@ -21,6 +21,7 @@ use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
 use App\Services\FantraxLogoSyncService;
+use App\Services\PlatformLeaguePlayerStatService;
 use App\Services\PlatformLeagueScoringCategoryService;
 use App\Services\SyncFantraxDraftState;
 use App\Services\YahooFantasyLeagueService;
@@ -1233,9 +1234,10 @@ final class LeagueController extends Controller
             ? self::fantraxEligibilityByPlatformPlayerId($teams->pluck('roster')->flatten())
             : [];
         $fantraxContractDefinitions = $this->fantraxContractCodeDefinitions($league);
+        $providerStatsByPlayerId = app(PlatformLeaguePlayerStatService::class)->statsForLeagueByPlayerId($league);
 
         $teamRows = $teams
-            ->map(static function ($t) use ($authId, $slotOrder, $rosterSlots, $fantraxEligibility, $fantraxContractDefinitions, $league): array {
+            ->map(static function ($t) use ($authId, $slotOrder, $rosterSlots, $fantraxEligibility, $fantraxContractDefinitions, $providerStatsByPlayerId, $league): array {
                 // default avatar per TEAM name
                 $defaultAvatar = config('ui.default_team_avatar')
                     ?: 'https://ui-avatars.com/api/?name=' . urlencode($t->name) . '&background=E5E7EB&color=111827&size=64';
@@ -1253,7 +1255,7 @@ final class LeagueController extends Controller
                 $ownedByMe = $authId ? in_array((int) $authId, $ownerIds, true) : false;
 
                 $players = $t->roster
-                    ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $fantraxContractDefinitions, $league, $t, $ownerAvatar): array {
+                    ->map(static function ($p) use ($slotOrder, $fantraxEligibility, $fantraxContractDefinitions, $providerStatsByPlayerId, $league, $t, $ownerAvatar): array {
                         $slot = (string) ($p->pivot->slot ?? '');
                         $rosterStatus = (string) ($p->pivot->status ?? '');
                         $eligibility = self::normalizeEligibility($p->pivot->eligibility);
@@ -1278,6 +1280,7 @@ final class LeagueController extends Controller
                         $rosterSortOrder = $rosterGroup === 'minor'
                             ? self::minorRosterPositionSortOrder($platformEligibility)
                             : ($slotOrder[$slot] ?? self::fallbackRosterSlotOrder($displaySlot));
+                        $providerStats = $providerStatsByPlayerId[(int) $p->id] ?? [];
 
                         return [
                             'id'            => (int) $p->id,
@@ -1314,6 +1317,8 @@ final class LeagueController extends Controller
                             'fantasy_contract' => $membershipMetadata['fantrax_contract'] ?? null,
                             'fantasy_contract_code' => $fantraxContract,
                             'contract' => self::playerContractPayload($p),
+                            'stats' => $providerStats,
+                            'stats_source' => $providerStats !== [] ? 'provider' : null,
                         ];
                     });
                 $slotCounts = $players
@@ -1744,6 +1749,8 @@ final class LeagueController extends Controller
             'fantasy_contract' => null,
             'fantasy_contract_code' => null,
             'contract' => null,
+            'stats' => [],
+            'stats_source' => null,
             'league_roster_placeholder' => true,
         ];
     }

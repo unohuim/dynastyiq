@@ -179,6 +179,15 @@
 
         return 'text-slate-900';
       },
+      scoringMappingOptionTitle(option){
+        return [
+          option?.label,
+          option?.description,
+          option?.formula,
+          option?.stat_key,
+          option?.alignment_status,
+        ].filter(Boolean).join(' | ');
+      },
 
       init(){
         window.addEventListener('diq:stats-page-ready', () => {
@@ -1569,8 +1578,9 @@
                         <span class="sr-only">DynastyIQ scoring option</span>
                         <input
                           type="text"
-                          class="block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                          class="block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-xs text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
                           :value="scoringMappingQuery(category)"
+                          :title="scoringMappingQuery(category)"
                           @focus="openScoringMappingCombobox(category)"
                           @input="
                             scoringMappingQueries[String(category.id)] = $event.target.value;
@@ -1600,14 +1610,14 @@
                       <div
                         x-show="scoringMappingOpen[String(category.id)]"
                         x-cloak
-                        class="absolute right-0 z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black/5"
+                        class="absolute right-0 z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-md bg-white py-1 text-xs shadow-lg ring-1 ring-black/5"
                       >
                         <button
                           type="button"
                           class="block w-full px-3 py-2 text-left text-slate-600 hover:bg-slate-50"
                           @click="clearScoringMappingOverride(category)"
                         >
-                          <span class="block font-medium" x-text="`Use recognized: ${scoringMappingDisplay(category)}`"></span>
+                          <span class="block font-medium" :title="scoringMappingDisplay(category)" x-text="`Use recognized: ${scoringMappingDisplay(category)}`"></span>
                           <span class="block truncate text-xs text-slate-500">Clear manual override</span>
                         </button>
                         <template x-for="option in scoringMappingFilteredOptions(category)" :key="option.key">
@@ -1618,10 +1628,10 @@
                             @click="selectScoringMappingOption(category, option)"
                           >
                             <span class="flex items-center justify-between gap-3">
-                              <span class="truncate font-medium" :class="scoringMappingOptionClass(option)" x-text="option.label"></span>
+                              <span class="truncate font-medium" :class="scoringMappingOptionClass(option)" :title="scoringMappingOptionTitle(option)" x-text="option.label"></span>
                               <span class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-600" x-text="option.type"></span>
                             </span>
-                            <span class="mt-0.5 block truncate text-xs text-slate-500" x-text="option.description || option.formula || option.stat_key || option.alignment_status"></span>
+                            <span class="mt-0.5 block truncate text-[11px] text-slate-500" :title="scoringMappingOptionTitle(option)" x-text="option.description || option.formula || option.stat_key || option.alignment_status"></span>
                           </button>
                         </template>
                         <div

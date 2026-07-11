@@ -85,6 +85,14 @@ class PlatformLeague extends Model
             ->orderBy('sort_order');
     }
 
+    /**
+     * Provider-earned fantasy player stats for this platform league.
+     */
+    public function playerStats(): HasMany
+    {
+        return $this->hasMany(PlatformLeaguePlayerStat::class, 'platform_league_id');
+    }
+
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(

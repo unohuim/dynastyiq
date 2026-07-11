@@ -2142,6 +2142,43 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## platform_league_player_stats
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** Provider-earned fantasy player stat totals for external fantasy leagues, preserving league-specific scoring and lineup decisions separately from DynastyIQ NHL source-of-truth stats.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| platform_team_id | bigint | Yes | FK -> platform_teams.id (SET NULL); fantasy team credited by provider when available |
+| player_id | bigint | Yes | FK -> players.id (SET NULL); canonical player match when known |
+| platform | string(32) | No | Fantasy platform, e.g. `fantrax` |
+| provider_identity_key | string | No | Stable provider stat row identity within the league for deterministic upserts |
+| platform_player_id | string | Yes | External provider player ID |
+| season | string(16) | No | Provider fantasy season key |
+| scoring_period | string(64) | Yes | Provider scoring period/week when scoped below season |
+| scope | string(32) | No | Provider stat scope, e.g. `season`, `period`, or `active_lineup` |
+| stats | json | No | Provider category/stat totals keyed by provider category or normalized mapping key |
+| raw_payload | json | Yes | Raw provider stat row payload for audit/debug context |
+| synced_at | timestamp | Yes | Last provider sync timestamp for this row |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, provider_identity_key)` (`uq_platform_league_player_stat_identity`)
+- Index: `(platform_league_id, season, scope)` (`ix_platform_league_player_stat_scope`)
+- Index: `(platform_team_id, season)` (`ix_platform_league_player_stat_team`)
+- Index: `(player_id, season)` (`ix_platform_league_player_stat_player`)
+- Index: `(platform, platform_player_id)` (`ix_platform_league_player_stat_provider`)
+- Implicit (FK index): `platform_league_id`
+
+---
+
 ## platform_player_ids
 
 **Organization-owned:** No

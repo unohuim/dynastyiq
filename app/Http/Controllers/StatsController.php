@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Perspective;
 use App\Services\FantasyLeagueAccess;
+use App\Services\PlatformLeaguePlayerStatService;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
@@ -265,6 +266,15 @@ class StatsController extends BaseController
         $ownershipTimings = $logStatsTiming ? [] : null;
         $payload = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user?->id, $ownershipTimings);
         $mark('ownership_ms');
+
+        if ($isFantraxLeaguePerspective || $isLeagueScoringPerspective) {
+            $payload = app(PlatformLeaguePlayerStatService::class)->overlayStatsPayload(
+                $payload,
+                $league,
+                is_string($season) ? $season : null,
+            );
+        }
+        $mark('provider_stats_overlay_ms');
 
         $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
         $payload['perspectives'] = $leaguePerspectiveFactory->perspectives($user, $league);

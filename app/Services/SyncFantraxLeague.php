@@ -24,6 +24,7 @@ final class SyncFantraxLeague
         private readonly SyncFantraxDraftState $draftStateSync,
         private readonly FantraxScoringCategoryMapper $scoringCategoryMapper,
         private readonly PlatformLeagueScoringCategoryService $scoringCategoryService,
+        private readonly PlatformLeaguePlayerStatService $playerStatService,
     ) {
     }
 
@@ -200,6 +201,15 @@ final class SyncFantraxLeague
         }
 
         $fantraxToPlayerId = self::canonicalPlayerIdsByFantraxId($allFantraxIds, $now);
+
+        $this->playerStatService->syncFromRosterPayload(
+            $league,
+            $teamRosters,
+            $teamIdMap,
+            $fantraxToPlayerId,
+            $now,
+        );
+        $this->syncProviderPlayerStats($league, $teamIdMap, $fantraxToPlayerId, $now);
 
         // Invert for quick lookup player_id -> fantrax id
         $playerIdToFantrax = [];
@@ -442,6 +452,68 @@ final class SyncFantraxLeague
                 'platform_league_id' => $league->id,
                 'provider_league_id' => $league->platform_league_id,
                 'message' => $throwable->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Sync provider-earned player stats only when a verified Fantrax endpoint is configured.
+     *
+     * Fantrax's public API does not currently expose individual fantasy stat totals.
+     * This path is intentionally dormant until a real provider payload is available.
+     *
+     * @param array<string,int> $teamIdMap
+     * @param array<string,int> $fantraxToPlayerId
+     */
+    private function syncProviderPlayerStats(
+        PlatformLeague $league,
+        array $teamIdMap,
+        array $fantraxToPlayerId,
+        CarbonInterface $now,
+    ): void {
+        if (! array_key_exists('player_stats', config('apiurls.fantrax.endpoints', []))) {
+            return;
+        }
+
+        try {
+            $payload = $this->getAPIData('fantrax', 'player_stats', [
+                'leagueId' => (string) $league->platform_league_id,
+            ]);
+        } catch (RequestException $exception) {
+            Log::info('[FX Sync] Player stats endpoint skipped', [
+                'platform_league_id' => $league->id,
+                'provider_league_id' => $league->platform_league_id,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return;
+        } catch (Throwable $throwable) {
+            Log::info('[FX Sync] Player stats sync skipped', [
+                'platform_league_id' => $league->id,
+                'provider_league_id' => $league->platform_league_id,
+                'message' => $throwable->getMessage(),
+            ]);
+
+            return;
+        }
+
+        if (! is_array($payload)) {
+            return;
+        }
+
+        $syncedCount = $this->playerStatService->syncFromProviderPayload(
+            $league,
+            $payload,
+            $teamIdMap,
+            $fantraxToPlayerId,
+            $now,
+        );
+
+        if ($syncedCount > 0) {
+            Log::info('[FX Sync] Player stats synced', [
+                'platform_league_id' => $league->id,
+                'provider_league_id' => $league->platform_league_id,
+                'synced_count' => $syncedCount,
             ]);
         }
     }

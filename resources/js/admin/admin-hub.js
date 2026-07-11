@@ -56,7 +56,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'platform-imports', 'game-imports', 'triage', 'validations'];
+    const validInitialTabs = ['imports', 'platform-imports', 'users', 'game-imports', 'triage', 'validations'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
@@ -64,6 +64,7 @@ export default function adminHub(options = {}) {
     return {
         activeTab: initialTab,
         imports: options.imports ?? [],
+        users: options.users ?? [],
         activeSource: initialSource,
         hasPlayers: nhlAvailable,
         hasFantrax: fantraxAvailable,
@@ -1679,6 +1680,47 @@ export default function adminHub(options = {}) {
 
         formatNumber(value) {
             return new Intl.NumberFormat().format(Number(value) || 0);
+        },
+
+        userInitials(user) {
+            const source = String(user?.name || user?.email || '').trim();
+
+            if (!source) {
+                return 'U';
+            }
+
+            const parts = source.split(/\s+/).filter(Boolean);
+            const initials = parts.length > 1
+                ? `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`
+                : source.slice(0, 2);
+
+            return initials.toUpperCase();
+        },
+
+        presenceClass(user) {
+            return {
+                online: 'bg-green-50 text-green-700 ring-1 ring-green-600/20',
+                recent: 'bg-amber-50 text-amber-700 ring-1 ring-amber-600/20',
+                offline: 'bg-gray-50 text-gray-600 ring-1 ring-gray-200',
+            }[user?.presence?.state] ?? 'bg-gray-50 text-gray-600 ring-1 ring-gray-200';
+        },
+
+        presenceDotClass(user) {
+            return {
+                online: 'bg-green-500',
+                recent: 'bg-amber-500',
+                offline: 'bg-gray-300',
+            }[user?.presence?.state] ?? 'bg-gray-300';
+        },
+
+        formatUserLastSeen(user) {
+            const date = this.parseDate(user?.last_seen_at);
+
+            if (!date) {
+                return 'No active session';
+            }
+
+            return `Last seen ${this.formatSocialDate(date)}`;
         },
 
         formatLastRun(key) {
