@@ -118,6 +118,7 @@ class SumNHLPlayByPlay
                 $a   = $nonSO->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
                 $eva = $nonSOForStrength('EV')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
                 $ppa = $nonSOForStrength('PP')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
+                $pka = $nonSOForStrength('PK')->filter(fn ($p) => $p->assist1_player_id == $playerId || $p->assist2_player_id == $playerId)->count();
 
                 $a1   = $nonSO->where('assist1_player_id', $playerId)->count();
                 $eva1 = $nonSOForStrength('EV')->where('assist1_player_id', $playerId)->count();
@@ -215,7 +216,7 @@ class SumNHLPlayByPlay
 
                     // Goals / Assists / Points
                     'g' => $g, 'evg' => $evg, 'ppg' => $ppg, 'pkg' => $pkg,
-                    'a' => $a, 'eva' => $eva, 'ppa' => $ppa,
+                    'a' => $a, 'eva' => $eva, 'ppa' => $ppa, 'pka' => $pka,
                     'a1' => $a1, 'eva1' => $eva1, 'ppa1' => $ppa1,
                     'a2' => $a2, 'eva2' => $eva2, 'ppa2' => $ppa2,
                     'pts' => $pts, 'evpts' => $evpts, 'ppp' => $ppp, 'pkp' => $pkp,

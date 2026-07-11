@@ -120,6 +120,7 @@ final class LeagueStatsPerspectiveFactory
             ->map(static function (array $category) use ($scoringOrderByStatId): array {
                 $category['display_order'] = (int) (
                     $scoringOrderByStatId[(string) ($category['id'] ?? '')]
+                    ?? $category['sort_order']
                     ?? $category['scoring_order']
                     ?? PHP_INT_MAX
                 );
