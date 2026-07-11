@@ -1419,6 +1419,7 @@ Authenticated browser logo extraction backend code is league-scoped and persists
 Completed browser logo extraction may broadcast a user-scoped logo update event so the league list can update without a page refresh.
 Fantrax league scoring categories are enriched from the platform category mapping dictionary during league sync, with manual mappings overriding dictionary auto mappings while preserving support metadata.
 Provider scoring categories that power league UI persist to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
+Fantrax scoring system type is retained on league scoring settings; points leagues can compute read-time Fantasy Pts from persisted scoring weights, while rotisserie/category leagues remain category-column views.
 Provider-earned fantasy player stats that power league fantasy results persist to platform_league_player_stats and remain distinct from DynastyIQ NHL source-of-truth season stats.
 Fantrax public API does not currently expose individual fantasy stat totals, so provider stat sync remains dormant unless a verified provider payload is configured.
 Fantrax player stat sync is non-blocking, and league stats views may display provider scoring categories that DynastyIQ cannot locally derive only when provider-earned stat rows supply those values.

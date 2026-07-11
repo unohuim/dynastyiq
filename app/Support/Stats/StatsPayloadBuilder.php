@@ -204,6 +204,7 @@ final class StatsPayloadBuilder
                 'columnGroups' => $settings['columnGroups'] ?? null,
                 'columnGroupSort' => $settings['columnGroupSort'] ?? null,
                 'activeColumnGroup' => $settings['activeColumnGroup'] ?? null,
+                'fantasyScoring' => $settings['fantasyScoring'] ?? null,
             ],
             'meta' => [
                 'availableSeasons' => $availableSeasons,
@@ -220,6 +221,7 @@ final class StatsPayloadBuilder
                 'league_id' => $availability > 0 ? $availability : null,
                 'positionButtons' => $this->positionButtons($settings),
                 'supportsDateRange' => ! $isProspects,
+                'fantasyScoring' => $settings['fantasyScoring'] ?? null,
             ],
         ];
         $buildMark('format_ms');
@@ -329,6 +331,7 @@ final class StatsPayloadBuilder
                 'columnGroups' => $settings['columnGroups'] ?? null,
                 'columnGroupSort' => $settings['columnGroupSort'] ?? null,
                 'activeColumnGroup' => $settings['activeColumnGroup'] ?? null,
+                'fantasyScoring' => $settings['fantasyScoring'] ?? null,
             ],
             'meta' => [
                 'availableSeasons' => [],
@@ -344,6 +347,7 @@ final class StatsPayloadBuilder
                 'league_id' => $availability > 0 ? $availability : null,
                 'positionButtons' => $this->positionButtons($settings),
                 'supportsDateRange' => true,
+                'fantasyScoring' => $settings['fantasyScoring'] ?? null,
             ],
         ];
         $buildMark('format_ms');

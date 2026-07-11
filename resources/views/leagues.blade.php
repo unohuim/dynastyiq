@@ -22,6 +22,8 @@
         'searchPlayers' => $searchPlayers ?? [],
         'scoringSettingsUpdateUrl' => $scoringSettingsUpdateUrl ?? '',
         'leagueStatsPayloadUrl' => $leagueStatsPayloadUrl ?? '',
+        'leagueStatsPerspectives' => $leagueStatsPerspectives ?? [],
+        'selectedLeagueStatsPerspective' => $selectedLeagueStatsPerspective ?? '',
         'playersPayloadUrl' => $playersPayloadUrl ?? '',
         'isScoringFullyMapped' => $isScoringFullyMapped ?? false,
         'canShowLeagueStats' => $canShowLeagueStats ?? false,

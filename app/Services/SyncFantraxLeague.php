@@ -568,6 +568,10 @@ final class SyncFantraxLeague
                 'fantrax_league_info_keys' => array_keys($leagueInfo),
             ]),
             'scoring_settings' => [
+                'type' => $this->nullableScoringString(data_get($leagueInfo, 'scoringSystem.type')),
+                'season_year' => data_get($leagueInfo, 'seasonYear'),
+                'start_date' => data_get($leagueInfo, 'startDate'),
+                'end_date' => data_get($leagueInfo, 'endDate'),
                 'categories' => $categories,
                 'manual_mappings' => $manualMappings,
                 'raw_payload' => $rawScoringPayload,
@@ -605,7 +609,10 @@ final class SyncFantraxLeague
                 }
 
                 $key = $groupCode . ':' . $code;
-                $points = $this->parseFantraxPoints(data_get($category, 'points'));
+                $points = $this->parseFantraxPoints(
+                    data_get($config, 'weight')
+                    ?? data_get($category, 'points')
+                );
                 $shortName = (string) (data_get($category, 'shortName') ?? $code);
                 $autoStatKey = $this->autoStatKey($shortName, data_get($category, 'name'));
 
@@ -620,7 +627,10 @@ final class SyncFantraxLeague
                     'is_mapped' => $autoStatKey !== null,
                     'mapping_source' => $autoStatKey !== null ? 'auto' : null,
                     'position_values' => [],
-                    'raw_payload' => $category,
+                    'raw_payload' => [
+                        'config' => $config,
+                        'scoringCategory' => $category,
+                    ],
                 ];
 
                 $alias = $this->scoringAliasKey($groupCode, $shortName);
@@ -659,7 +669,10 @@ final class SyncFantraxLeague
                 ];
 
                 if (! is_array($value)) {
-                    $rows[$key]['value'] = $this->parseFantraxPoints($value);
+                    $parsedValue = $this->parseFantraxPoints($value);
+                    if (! is_numeric($rows[$key]['value'] ?? null)) {
+                        $rows[$key]['value'] = $parsedValue;
+                    }
                 }
             }
         }
@@ -694,6 +707,16 @@ final class SyncFantraxLeague
             'GOALIE' => 'HOCKEY_GOALIE',
             default => $groupCode !== '' ? $groupCode : 'UNKNOWN',
         };
+    }
+
+    /**
+     * Normalize optional Fantrax scoring-system strings.
+     */
+    private function nullableScoringString(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value !== '' ? strtolower($value) : null;
     }
 
     /**

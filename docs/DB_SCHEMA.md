@@ -2170,7 +2170,7 @@ Migrations remain the **sole source of truth**.
 | sport | string | Yes | Sport key |
 | logo_url | string | Yes | Provider league logo URL when exposed |
 | settings | json | Yes | Provider league settings payload, including `custom_cap` and league-scoped Fantrax contract code definitions for custom salary leagues |
-| scoring_settings | json | Yes | Provider scoring categories and modifiers |
+| scoring_settings | json | Yes | Provider scoring metadata, including normalized scoring type, category rows/manual mappings fallback, and raw provider scoring payload |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |

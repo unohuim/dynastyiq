@@ -166,15 +166,31 @@ class StatsController extends BaseController
         $period = $context->period;
         $requestedColumnGroup = (string) ($context->columnGroup ?? '');
         $requestedPerspective = $context->requestedPerspective;
+        $leagueReportPerspective = $this->leagueReportPerspectiveSlug($requestedPerspective);
+        $leagueReportUnderlyingPerspective = $leagueReportPerspective !== null
+            ? $this->leagueReportUnderlyingPerspectiveSlug($leagueReportPerspective, $requestedColumnGroup)
+            : null;
         $isLeagueScoringPerspective = ! $request->filled('perspectiveId')
             && $leaguePerspectiveSlug !== null
+            && $leagueReportUnderlyingPerspective === null
             && ($requestedPerspective === '' || $requestedPerspective === $leaguePerspectiveSlug);
         $isFantraxLeaguePerspective = ! $request->filled('perspectiveId')
             && $fantraxPerspectiveSlug !== null
+            && $leagueReportUnderlyingPerspective === null
             && ($requestedPerspective === '' || $requestedPerspective === $fantraxPerspectiveSlug);
         $mark('request_context_ms');
 
-        if ($isLeagueScoringPerspective) {
+        if ($leagueReportUnderlyingPerspective !== null) {
+            $perspective = $this->resolveStatsPerspective($request, $user, $leagueReportUnderlyingPerspective);
+            $settings = is_array($perspective->settings)
+                ? $perspective->settings
+                : (json_decode($perspective->settings ?? '[]', true) ?: []);
+            $canSlice = (bool) ($perspective->is_slicable ?? true);
+
+            if ($this->isProspectsPerspective($perspective, $settings['filters'] ?? [])) {
+                $period = 'season';
+            }
+        } elseif ($isLeagueScoringPerspective) {
             $settings = $leaguePerspectiveFactory->leagueScoringPerspectiveSettings($league);
 
             if ($settings === null) {
@@ -255,6 +271,16 @@ class StatsController extends BaseController
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['ownerColumn'] = true;
         $payload['settings']['leaguePlatform'] = (string) ($league->platform ?? '');
+        $payload['meta'] = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
+        if ($leagueReportPerspective !== null) {
+            $payload['meta']['positionButtons'] = ['F', 'C', 'LW', 'RW', 'D', 'G'];
+        }
+        $selectedPerspectiveSlug = strtolower((string) ($perspective->slug ?? $perspective->name ?? ''));
+        if (in_array($selectedPerspectiveSlug, ['prospects', 'prospects-goalies'], true)) {
+            $payload['meta']['leagueProspectMode'] = $selectedPerspectiveSlug === 'prospects-goalies'
+                ? 'goalies'
+                : 'skaters';
+        }
         if ($isFantraxLeaguePerspective) {
             $payload = $leaguePerspectiveFactory->withFantraxGoalieColumnGroup($payload, $league);
         }
@@ -265,6 +291,7 @@ class StatsController extends BaseController
 
         $ownershipTimings = $logStatsTiming ? [] : null;
         $payload = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user?->id, $ownershipTimings);
+        $payload = $this->dedupeLeagueProspectRows($payload);
         $mark('ownership_ms');
 
         if ($isFantraxLeaguePerspective || $isLeagueScoringPerspective) {
@@ -278,7 +305,10 @@ class StatsController extends BaseController
 
         $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
         $payload['perspectives'] = $leaguePerspectiveFactory->perspectives($user, $league);
-        $payload['selectedPerspective'] = $perspective->slug ?? $perspective->name ?? $defaultPerspectiveSlug;
+        $payload['selectedPerspective'] = $leagueReportPerspective
+            ?? $perspective->slug
+            ?? $perspective->name
+            ?? $defaultPerspectiveSlug;
         $mark('metadata_ms');
 
         if ($isLeagueScoringPerspective || $isFantraxLeaguePerspective) {
@@ -588,6 +618,111 @@ class StatsController extends BaseController
             'range'      => [$from ? Carbon::parse($from) : null, $to ? Carbon::parse($to) : null],
             default      => [null, null],
         };
+    }
+
+    private function leagueReportPerspectiveSlug(string $requestedPerspective): ?string
+    {
+        $slug = strtolower(trim($requestedPerspective));
+
+        return in_array($slug, ['basic', 'advanced', 'prospects'], true) ? $slug : null;
+    }
+
+    private function leagueReportUnderlyingPerspectiveSlug(string $reportPerspective, string $columnGroup): string
+    {
+        $isGoalie = $columnGroup === 'goalie';
+
+        return match ($reportPerspective) {
+            'advanced' => $isGoalie ? 'goalies-adv' : 'skaters-adv',
+            'prospects' => $isGoalie ? 'prospects-goalies' : 'prospects',
+            default => $isGoalie ? 'goalies' : 'skaters',
+        };
+    }
+
+    /**
+     * League prospect payloads can contain multiple legacy stat rows for one player.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function dedupeLeagueProspectRows(array $payload): array
+    {
+        if (! in_array((string) data_get($payload, 'meta.leagueProspectMode', ''), ['skaters', 'goalies'], true)) {
+            return $payload;
+        }
+
+        $bestRows = [];
+        $passthroughRows = [];
+
+        foreach (($payload['data'] ?? []) as $row) {
+            if (! is_array($row)) {
+                $passthroughRows[] = $row;
+                continue;
+            }
+
+            if ((bool) ($row['league_roster_placeholder'] ?? false)) {
+                $passthroughRows[] = $row;
+                continue;
+            }
+
+            $key = $this->leagueStatsRowIdentityKey($row);
+
+            if ($key === null) {
+                $passthroughRows[] = $row;
+                continue;
+            }
+
+            if (
+                ! isset($bestRows[$key]) ||
+                $this->leagueStatsRowScore($row) > $this->leagueStatsRowScore($bestRows[$key])
+            ) {
+                $bestRows[$key] = $row;
+            }
+        }
+
+        $payload['data'] = array_values(array_merge($bestRows, $passthroughRows));
+
+        return $payload;
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function leagueStatsRowIdentityKey(array $row): ?string
+    {
+        foreach (['player_id', 'id', 'nhl_player_id'] as $field) {
+            $value = trim((string) ($row[$field] ?? ''));
+
+            if ($value !== '') {
+                return $field . ':' . $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function leagueStatsRowScore(array $row): float
+    {
+        $score = 0.0;
+
+        if (filled($row['fantasy_team_id'] ?? null)) {
+            $score += 1_000_000;
+        }
+
+        if (! (bool) ($row['league_roster_only'] ?? false)) {
+            $score += 100_000;
+        }
+
+        $score += ((float) ($row['gp'] ?? 0)) * 1_000;
+        $score += collect($row)
+            ->filter(static fn (mixed $value, mixed $key): bool => is_numeric($value)
+                && ! in_array((string) $key, ['id', 'player_id', 'nhl_player_id'], true)
+                && (float) $value !== 0.0)
+            ->count();
+
+        return $score;
     }
 
     private function isProspectsPerspective(object $p, array $filters): bool

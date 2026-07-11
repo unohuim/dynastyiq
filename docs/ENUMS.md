@@ -594,6 +594,26 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### Fantrax Scoring System Type
+
+**Name:** Fantrax scoring system type
+**Storage location(s):** `platform_leagues.scoring_settings.type`, fallback `platform_leagues.scoring_settings.raw_payload.scoringSystem.type`
+**Allowed values currently emitted:**
+
+- `points`
+- `rotisserie`
+
+**Semantic meaning:**
+
+- `points`: Category weights are arithmetic rules that can produce read-time computed `Fantasy Pts` and `Fantasy Pts/G` when every active category has a supported DynastyIQ stat or formula mapping.
+- `rotisserie`: Category values describe category participation/weighting and must not be summed into one player fantasy-point total.
+
+**Notes:**
+
+- The value is provider-sourced and string-backed. Add newly observed Fantrax scoring system types here before using them in branching logic.
+
+---
+
 ### Platform League Player Stat Scope
 
 **Name:** Platform league player stat scope

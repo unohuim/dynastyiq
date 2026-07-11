@@ -37,6 +37,8 @@
       capSettingsUpdateUrl: @js($capSettingsUpdateUrl ?? ''),
       teamLogoSyncUrl: @js($teamLogoSyncUrl ?? ''),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
+      leagueStatsPerspectives: @js($leagueStatsPerspectives ?? []),
+      selectedLeagueStatsPerspective: @js($selectedLeagueStatsPerspective ?? $leagueStatsFallbackSlug),
       playersPayloadUrl: @js($playersPayloadUrl ?? ''),
       playersFreeAgentsPayloadUrl: @js($playersFreeAgentsPayloadUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
@@ -336,6 +338,11 @@
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
+          this.leagueStatsPerspectives = Array.isArray(payload.leagueStatsPerspectives)
+            ? payload.leagueStatsPerspectives
+            : this.leagueStatsPerspectives;
+          this.selectedLeagueStatsPerspective = payload.selectedLeagueStatsPerspective
+            ?? this.selectedLeagueStatsPerspective;
           this.playersFreeAgentsPayloadUrl = payload.playersFreeAgentsPayloadUrl ?? this.playersFreeAgentsPayloadUrl;
           this.applyDeferredTeams();
           this.resetSelectedTeamIndex();
@@ -1004,13 +1011,15 @@
             initialPayload: {},
             initialLoading: true,
             apiUrl: this.leagueStatsPayloadUrl,
-            perspectives: [
-              {
-                slug: @js($leagueStatsFallbackSlug),
-                name: @js($leagueStatsFallbackName),
-              },
-            ],
-            selectedPerspective: @js($leagueStatsFallbackSlug),
+            perspectives: this.leagueStatsPerspectives?.length
+              ? this.leagueStatsPerspectives
+              : [
+                {
+                  slug: @js($leagueStatsFallbackSlug),
+                  name: @js($leagueStatsFallbackName),
+                },
+              ],
+            selectedPerspective: this.selectedLeagueStatsPerspective || @js($leagueStatsFallbackSlug),
             mobileBreakpoint: @js(config('viewports.mobile', 640)),
             syncUrl: false,
           });

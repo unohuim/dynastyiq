@@ -184,6 +184,15 @@ export class StatsPageShell {
   applyPayload(payload) {
     this.payload = payload;
     this.schemaAdapter = new StatsSchemaAdapter(this.payload);
+    if (Array.isArray(this.payload.perspectives) && this.payload.perspectives.length > 0) {
+      this.perspectives = this.payload.perspectives;
+    }
+    if (
+      this.payload.selectedPerspective
+      && this.perspectiveOptions().some((option) => option.value === this.payload.selectedPerspective)
+    ) {
+      this.state.perspective = this.payload.selectedPerspective;
+    }
     this.connectedLeagues = Array.isArray(this.payload.connectedLeagues)
       ? this.payload.connectedLeagues
       : this.connectedLeagues;

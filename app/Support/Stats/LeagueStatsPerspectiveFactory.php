@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
-use App\Models\Perspective;
 use App\Models\PlatformLeague;
 use App\Services\PlatformLeagueScoringCategoryService;
 
@@ -49,13 +48,11 @@ final class LeagueStatsPerspectiveFactory
             return $fantraxPerspectiveSlug;
         }
 
-        $perspective = $defaultSavedPerspective($user);
-
-        return (string) ($perspective->slug ?? $perspective->name);
+        return 'basic';
     }
 
     /**
-     * Return the synthetic league perspectives followed by normal user perspectives.
+     * Return report-level league perspectives. The endpoint maps these to saved stat perspectives.
      *
      * @return array<int,array{id:int|string|null,slug:string,name:string,is_slicable:bool}>
      */
@@ -80,19 +77,28 @@ final class LeagueStatsPerspectiveFactory
             ]]
             : [];
 
-        $perspectives = Perspective::forUser($user)
-            ->orderBy('id')
-            ->get()
-            ->map(static fn (Perspective $perspective): array => [
-                'id' => $perspective->id,
-                'slug' => $perspective->slug ?? $perspective->name,
-                'name' => $perspective->name,
-                'is_slicable' => (bool) ($perspective->is_slicable ?? true),
-            ])
-            ->values()
-            ->all();
-
-        return [...$leaguePerspective, ...$fantraxPerspective, ...$perspectives];
+        return [
+            ...$leaguePerspective,
+            ...$fantraxPerspective,
+            [
+                'id' => 'basic',
+                'slug' => 'basic',
+                'name' => 'Basic',
+                'is_slicable' => true,
+            ],
+            [
+                'id' => 'advanced',
+                'slug' => 'advanced',
+                'name' => 'Advanced',
+                'is_slicable' => true,
+            ],
+            [
+                'id' => 'prospects',
+                'slug' => 'prospects',
+                'name' => 'Prospects',
+                'is_slicable' => false,
+            ],
+        ];
     }
 
     /**
@@ -150,6 +156,13 @@ final class LeagueStatsPerspectiveFactory
                     'label' => $label !== '' ? $label : strtoupper($statKey),
                     'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
                     'formula' => $formula !== '' && $statKey === '' ? $formula : null,
+                    'fantasy_scoring_category' => true,
+                    'fantasy_weight' => is_numeric($category['value'] ?? null)
+                        ? (float) $category['value']
+                        : null,
+                    'position_values' => is_array($category['position_values'] ?? null)
+                        ? $category['position_values']
+                        : [],
                     'required_schema_columns' => is_array($category['required_schema_columns'] ?? null)
                         ? array_values($category['required_schema_columns'])
                         : [],
@@ -167,6 +180,8 @@ final class LeagueStatsPerspectiveFactory
             return null;
         }
 
+        $isPointsLeague = $this->isPointsLeague($league);
+
         $goalieColumns = collect($columns)
             ->filter(fn (array $column): bool => $this->columnIsGoalie($column))
             ->values()
@@ -176,13 +191,19 @@ final class LeagueStatsPerspectiveFactory
             ->values()
             ->all();
 
-        $sortKey = collect(['pts', 'g', 'a', 'wins', 'sv', 'sog'])
+        if ($isPointsLeague) {
+            $skaterColumns = $this->withFantasyPointColumns($skaterColumns);
+            $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
+            $columns = $this->withFantasyPointColumns($columns);
+        }
+
+        $sortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'wins', 'sv', 'sog'])
             ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
             ?? $columns[0]['key'];
-        $skaterSortKey = collect(['pts', 'g', 'a', 'sog'])
+        $skaterSortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'sog'])
             ->first(static fn (string $key): bool => collect($skaterColumns)->contains('key', $key))
             ?? ($skaterColumns[0]['key'] ?? $sortKey);
-        $goalieSortKey = collect(['wins', 'sv', 'sv_pct', 'gaa'])
+        $goalieSortKey = collect(['fantasy_pts', 'wins', 'sv', 'sv_pct', 'gaa'])
             ->first(static fn (string $key): bool => collect($goalieColumns)->contains('key', $key))
             ?? ($goalieColumns[0]['key'] ?? $sortKey);
 
@@ -208,6 +229,13 @@ final class LeagueStatsPerspectiveFactory
             ],
             'activeColumnGroup' => 'skater',
             'filters' => [],
+            'fantasyScoring' => [
+                'type' => $this->scoringType($league),
+                'computed' => $isPointsLeague,
+                'incompleteCategoryCount' => $isPointsLeague
+                    ? $this->unsupportedCategoryCount($columns)
+                    : 0,
+            ],
             'ui' => [
                 'positionButtons' => ['F', 'C', 'LW', 'RW', 'D', 'G'],
             ],
@@ -229,6 +257,9 @@ final class LeagueStatsPerspectiveFactory
 
         if ($goalieColumns === []) {
             $goalieColumns = $this->defaultGoalieScoringColumns();
+        }
+        if ($this->isPointsLeague($league)) {
+            $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
 
         $settings['columns'] = $goalieColumns;
@@ -268,6 +299,9 @@ final class LeagueStatsPerspectiveFactory
 
         if ($goalieColumns === []) {
             return $payload;
+        }
+        if ($this->isPointsLeague($league)) {
+            $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
 
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
@@ -327,9 +361,19 @@ final class LeagueStatsPerspectiveFactory
                     'label' => $label !== '' ? $label : strtoupper($columnKey),
                     'type' => in_array($statKey, ['sv_pct', 'gaa'], true) ? 'float' : 'int',
                     'formula' => $formula !== '' && $statKey === '' ? $formula : null,
+                    'fantasy_scoring_category' => true,
+                    'fantasy_weight' => is_numeric($category['value'] ?? null)
+                        ? (float) $category['value']
+                        : null,
+                    'position_values' => is_array($category['position_values'] ?? null)
+                        ? $category['position_values']
+                        : [],
                     'required_schema_columns' => is_array($category['required_schema_columns'] ?? null)
                         ? array_values($category['required_schema_columns'])
                         : [],
+                    'provider_group' => $category['provider_group'] ?? null,
+                    'normalized_group' => $category['normalized_group'] ?? $category['group'] ?? null,
+                    'is_supported' => (bool) ($category['is_supported'] ?? false),
                 ];
             })
             ->filter()
@@ -356,9 +400,61 @@ final class LeagueStatsPerspectiveFactory
      */
     public function goalieSortKey(array $columns): string
     {
-        return collect(['wins', 'sv', 'sv_pct', 'gaa'])
+        return collect(['fantasy_pts', 'wins', 'sv', 'sv_pct', 'gaa'])
             ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
             ?? (string) ($columns[0]['key'] ?? 'gp');
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $columns
+     * @return array<int,array<string,mixed>>
+     */
+    private function withFantasyPointColumns(array $columns): array
+    {
+        if ($columns === [] || collect($columns)->contains('key', 'fantasy_pts')) {
+            return $columns;
+        }
+
+        return [
+            [
+                'key' => 'fantasy_pts',
+                'label' => 'FPts',
+                'type' => 'float',
+                'computed_fantasy_points' => true,
+            ],
+            [
+                'key' => 'fantasy_pts_pg',
+                'label' => 'FP/G',
+                'type' => 'float',
+                'computed_fantasy_points_per_game' => true,
+            ],
+            ...$columns,
+        ];
+    }
+
+    private function isPointsLeague(PlatformLeague $league): bool
+    {
+        return $this->scoringType($league) === 'points';
+    }
+
+    private function scoringType(PlatformLeague $league): ?string
+    {
+        $type = data_get($league, 'scoring_settings.type')
+            ?? data_get($league, 'scoring_settings.raw_payload.scoringSystem.type');
+        $type = strtolower(trim((string) $type));
+
+        return $type !== '' ? $type : null;
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $columns
+     */
+    private function unsupportedCategoryCount(array $columns): int
+    {
+        return collect($columns)
+            ->filter(static fn (array $column): bool => (bool) ($column['fantasy_scoring_category'] ?? false))
+            ->reject(static fn (array $column): bool => (bool) ($column['is_supported'] ?? false))
+            ->count();
     }
 
     /**

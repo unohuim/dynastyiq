@@ -52,6 +52,8 @@ rules:
   - Provider scoring categories that power league UI must be persisted to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
   - Provider scoring category sync must normalize shorthand group names before identity comparison, including SKATING to HOCKEY_SKATING and GOALIE to HOCKEY_GOALIE.
   - Provider scoring category sync must upsert current categories and delete stale categories that are no longer present in the provider payload.
+  - Fantrax scoringSystem.type must be persisted with league scoring settings; points leagues may compute fantasy point totals from scoring category weights, while rotisserie/category leagues must not be treated as points leagues.
+  - Fantrax scoring category weights must prefer scoringCategorySettings configs weight values, with scoringCategories shorthand values used only as fallback or shorthand reconciliation.
   - Provider-earned fantasy player stats that power league fantasy results must persist to platform_league_player_stats and must not be inferred from DynastyIQ NHL source-of-truth season stats.
   - NHL season stats may remain available for scouting or comparison views, but Fantrax league fantasy standings and earned player totals must use provider-earned stat rows when available.
   - Fantrax public API does not currently expose individual fantasy stat totals; provider stat sync must remain dormant unless a verified provider payload is configured.

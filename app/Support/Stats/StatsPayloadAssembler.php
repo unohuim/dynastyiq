@@ -96,7 +96,15 @@ final class StatsPayloadAssembler
 
             foreach ($columns as $column) {
                 $key = $column['key'] ?? null;
-                if (! $key || ! empty($column['formula']) || $key === 'gp' || $key === 'toi' || $key === 'toi_seconds') {
+                if (
+                    ! $key
+                    || ! empty($column['formula'])
+                    || ! empty($column['computed_fantasy_points'])
+                    || ! empty($column['computed_fantasy_points_per_game'])
+                    || $key === 'gp'
+                    || $key === 'toi'
+                    || $key === 'toi_seconds'
+                ) {
                     continue;
                 }
 
@@ -118,6 +126,7 @@ final class StatsPayloadAssembler
             $row = $this->withFormulaDependencyValues($row, $columns, $entry, $playerStats, $isSeason);
             $row = $this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason);
             $row = $this->withFormulaColumns($row, $columns);
+            $row = $this->withComputedFantasyPoints($row, $columns);
 
             $rows->push($row);
         }
@@ -203,6 +212,113 @@ final class StatsPayloadAssembler
         }
 
         return $row;
+    }
+
+    /**
+     * Compute points-league fantasy totals from already assembled scoring columns.
+     *
+     * @param array<string,mixed> $row
+     * @param array<int,array<string,mixed>> $columns
+     * @return array<string,mixed>
+     */
+    private function withComputedFantasyPoints(array $row, array $columns): array
+    {
+        $shouldCompute = collect($columns)->contains(
+            static fn (array $column): bool => (bool) ($column['computed_fantasy_points'] ?? false)
+        );
+
+        if (! $shouldCompute) {
+            return $row;
+        }
+
+        $total = 0.0;
+        $unsupported = 0;
+        $missingWeights = 0;
+
+        foreach ($columns as $column) {
+            if (! (bool) ($column['fantasy_scoring_category'] ?? false)) {
+                continue;
+            }
+
+            if (! (bool) ($column['is_supported'] ?? false)) {
+                $unsupported++;
+                continue;
+            }
+
+            $key = trim((string) ($column['key'] ?? ''));
+            if ($key === '') {
+                continue;
+            }
+
+            $value = $row[$key] ?? 0;
+            if (! is_numeric($value)) {
+                continue;
+            }
+
+            [$weight, $usedDefaultWeight] = $this->fantasyWeightForRow($column, $row);
+            if ($usedDefaultWeight) {
+                $missingWeights++;
+            }
+
+            $total += ((float) $value) * $weight;
+        }
+
+        $gamesPlayed = (int) ($row['gp'] ?? 0);
+        $row['fantasy_pts'] = $this->roundFantasyPoints($total);
+        $row['fantasy_pts_pg'] = $gamesPlayed > 0
+            ? $this->roundFantasyPoints($total / $gamesPlayed)
+            : 0.0;
+        $row['fantasy_pts_complete'] = $unsupported === 0 && $missingWeights === 0;
+        $row['fantasy_pts_unsupported_categories'] = $unsupported;
+        $row['fantasy_pts_default_weight_categories'] = $missingWeights;
+
+        return $row;
+    }
+
+    /**
+     * @param array<string,mixed> $column
+     * @param array<string,mixed> $row
+     */
+    private function fantasyWeightForRow(array $column, array $row): array
+    {
+        $positionValues = is_array($column['position_values'] ?? null)
+            ? $column['position_values']
+            : [];
+
+        $positionCandidates = collect([
+            $row['pos'] ?? null,
+            $row['pos_type'] ?? null,
+            ($row['pos'] ?? null) === 'D' ? 'DEFENSE' : null,
+            in_array($row['pos'] ?? null, ['C', 'LW', 'RW', 'F'], true) ? 'FORWARD' : null,
+            ($row['pos'] ?? null) === 'G' ? 'GOALIE' : null,
+            'DEFAULT',
+            'Default',
+        ])
+            ->map(static fn (mixed $position): string => strtoupper(trim((string) $position)))
+            ->filter()
+            ->unique()
+            ->values();
+
+        foreach ($positionCandidates as $position) {
+            foreach ($positionValues as $key => $value) {
+                if (strtoupper(trim((string) $key)) === $position && is_numeric($value)) {
+                    return [(float) $value, false];
+                }
+            }
+        }
+
+        if (is_numeric($column['fantasy_weight'] ?? null)) {
+            return [(float) $column['fantasy_weight'], false];
+        }
+
+        return [1.0, true];
+    }
+
+    private function roundFantasyPoints(float $value): float|int
+    {
+        $rounded = round($value, 3);
+
+        return fmod($rounded, 1.0) === 0.0 ? (int) $rounded : $rounded;
     }
 
     /**

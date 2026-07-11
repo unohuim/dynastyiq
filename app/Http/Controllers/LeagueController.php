@@ -17,6 +17,7 @@ use App\Models\PlatformTeam;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
+use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
@@ -121,6 +122,9 @@ final class LeagueController extends Controller
         $drafting = $activeLeague
             ? $this->draftingPayload($activeLeague)
             : app(FantraxDraftingWindow::class)->normalize([], []);
+        $leagueStatsControls = $activeLeague
+            ? $this->leagueStatsPerspectiveControls($user, $activeLeague)
+            : ['perspectives' => [], 'selected' => ''];
 
         return view('leagues', [
             'leagues' => $leagues,
@@ -138,6 +142,8 @@ final class LeagueController extends Controller
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
             'capSettingsUpdateUrl' => $activeLeague ? route('leagues.cap-settings.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
+            'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
+            'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
             'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
@@ -165,6 +171,7 @@ final class LeagueController extends Controller
             ->where('platform_leagues.id', $leagueId)
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->firstOrFail();
+        $leagueStatsControls = $this->leagueStatsPerspectiveControls($user, $league);
 
         return view('leagues._panel', [
             'league' => $league,
@@ -179,6 +186,8 @@ final class LeagueController extends Controller
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
+            'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
@@ -209,17 +218,60 @@ final class LeagueController extends Controller
             ->where('platform_leagues.id', $leagueId)
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->firstOrFail();
+        $leagueStatsControls = $this->leagueStatsPerspectiveControls($user, $league);
 
         return response()->json([
             'teams' => $this->teamsPayload($league, false),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
+            'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
+            'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => $this->customCapEnabled($league),
             'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
             'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
         ]);
+    }
+
+    /**
+     * Return league-scoped stats controls without loading stat rows.
+     *
+     * @return array{perspectives:array<int,array{id:int|string|null,slug:string,name:string,is_slicable:bool}>,selected:string}
+     */
+    private function leagueStatsPerspectiveControls($user, $league): array
+    {
+        $perspectives = app(LeagueStatsPerspectiveFactory::class)->perspectives($user, $league);
+
+        return [
+            'perspectives' => $perspectives,
+            'selected' => $this->selectedLeagueStatsPerspectiveFromList($perspectives),
+        ];
+    }
+
+    /**
+     * Choose the first selected Players-tab perspective from the available options.
+     *
+     * @param array<int,array<string,mixed>> $perspectives
+     */
+    private function selectedLeagueStatsPerspectiveFromList(array $perspectives): string
+    {
+        $synthetic = collect($perspectives)
+            ->first(static fn (array $perspective): bool => str_contains((string) ($perspective['slug'] ?? ''), '-league-'));
+
+        if (is_array($synthetic) && filled($synthetic['slug'] ?? null)) {
+            return (string) $synthetic['slug'];
+        }
+
+        $skaters = collect($perspectives)
+            ->first(static fn (array $perspective): bool => ($perspective['slug'] ?? null) === 'skaters'
+                || ($perspective['name'] ?? null) === 'Skaters');
+
+        if (is_array($skaters) && filled($skaters['slug'] ?? null)) {
+            return (string) $skaters['slug'];
+        }
+
+        return (string) ($perspectives[0]['slug'] ?? '');
     }
 
     /**

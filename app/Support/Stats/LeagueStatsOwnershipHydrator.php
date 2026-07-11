@@ -97,6 +97,7 @@ final class LeagueStatsOwnershipHydrator
                     return ($playerId !== '' && isset($seenPlayerIds[$playerId]))
                         || ($nhlPlayerId !== '' && isset($seenNhlIds[$nhlPlayerId]));
                 })
+                ->filter(fn (array $row): bool => $this->shouldAppendRosterOnlyRow($row, $payload))
                 ->values()
                 ->all();
             $missingRows = $this->hydrateRosterOnlyRowsFromSeasonStats($missingRows, $payload);
@@ -151,7 +152,7 @@ final class LeagueStatsOwnershipHydrator
         $teams = $league->teams()
             ->select('id', 'platform_team_id', 'name')
             ->with([
-                'roster:id,nhl_id,full_name,first_name,last_name,position,pos_type,dob,team_abbrev,head_shot_url,is_goalie,status',
+                'roster:id,nhl_id,full_name,first_name,last_name,position,pos_type,dob,team_abbrev,head_shot_url,is_goalie,is_prospect,status',
                 'users' => static function ($query): void {
                     $query->wherePivot('is_active', true)
                         ->select('users.id')
@@ -256,6 +257,35 @@ final class LeagueStatsOwnershipHydrator
             'by_nhl_id' => $byNhlId,
             'roster_rows' => $rosterRows,
         ];
+    }
+
+    /**
+     * Respect perspective-specific row universes before appending roster-only rows.
+     *
+     * @param array<string,mixed> $row
+     * @param array<string,mixed> $payload
+     */
+    private function shouldAppendRosterOnlyRow(array $row, array $payload): bool
+    {
+        $prospectMode = (string) data_get($payload, 'meta.leagueProspectMode', '');
+
+        if ($prospectMode === '') {
+            return true;
+        }
+
+        if ((bool) ($row['league_roster_placeholder'] ?? false)) {
+            return false;
+        }
+
+        if (! (bool) ($row['is_prospect'] ?? false)) {
+            return false;
+        }
+
+        $isGoalie = (bool) ($row['is_goalie'] ?? false)
+            || strtoupper((string) ($row['pos_type'] ?? '')) === 'G'
+            || strtoupper((string) ($row['pos'] ?? '')) === 'G';
+
+        return $prospectMode === 'goalies' ? $isGoalie : ! $isGoalie;
     }
 
     /**
@@ -369,6 +399,7 @@ final class LeagueStatsOwnershipHydrator
             'pos' => $player->is_goalie ? 'G' : $player->position,
             'pos_type' => $player->is_goalie ? 'G' : $player->pos_type,
             'is_goalie' => (bool) $player->is_goalie,
+            'is_prospect' => (bool) $player->is_prospect,
             'contract_value' => null,
             'contract_value_num' => null,
             'contract_last_year' => null,

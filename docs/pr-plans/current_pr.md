@@ -124,11 +124,14 @@ Fantrax sync should:
 4. Preserve existing manual mapping keys by stable category identity.
 5. Upsert normalized category rows.
 6. Delete category rows for the league that are no longer present in the provider payload.
-7. Store raw provider scoring payload for audit/debug context only.
+7. Persist scoring-system metadata such as provider scoring type, season year, and scoring dates alongside the normalized category rows.
+8. Store raw provider scoring payload for audit/debug context only.
 
 The sync should not depend on JSON category rows as the source of truth after migration.
 
 Yahoo sync should follow the same platform-neutral row model, even if its provider payload is simpler.
+
+Fantrax points leagues may compute `Fantasy Pts` and `Fantasy Pts/G` at read time from persisted scoring category weights and supported DynastyIQ stat/formula mappings. Fantrax rotisserie/category leagues must remain category-column views and must not sum category values into a single fantasy-point total.
 
 ## Manual Mapping Behavior
 
