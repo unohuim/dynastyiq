@@ -213,6 +213,10 @@ class ImportNhlBoxscore
                 continue;
             }
 
+            if (! ImportNHLPlayer::playerExists((string) $goalieId)) {
+                app(ImportNHLPlayer::class)->import((string) $goalieId);
+            }
+
             $toi = $this->toiToSeconds($goalie['toi'] ?? '00:00');
             $shotsAgainst = (int) ($goalie['shotsAgainst'] ?? 0);
             $saves = (int) ($goalie['saves'] ?? 0);

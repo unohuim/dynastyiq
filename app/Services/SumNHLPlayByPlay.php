@@ -463,6 +463,10 @@ class SumNHLPlayByPlay
                     return;
                 }
 
+                if (! ImportNHLPlayer::playerExists((string) $boxscore->nhl_player_id)) {
+                    app(ImportNHLPlayer::class)->import((string) $boxscore->nhl_player_id);
+                }
+
                 $toiSeconds = $this->boxscoreToiSeconds($boxscore);
                 $shotsAgainst = (int) $boxscore->shots_against;
                 $saves = (int) $boxscore->saves;
