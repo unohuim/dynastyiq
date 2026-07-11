@@ -21,6 +21,7 @@ use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
 use App\Http\Controllers\CommunityMemberController;
 use App\Http\Controllers\CommunityTierController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\PatreonConnectController;
 use App\Http\Controllers\PatreonSyncController;
 use App\Services\ImportUserFantraxLeagues;
@@ -33,6 +34,9 @@ use App\Services\ImportUserFantraxLeagues;
 
 Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/', fn () => view('welcome'))->name('welcome');
+
+    Route::post('/analytics/events', [AnalyticsController::class, 'store'])
+        ->name('analytics.events.store');
 
     // Public pages
     Route::get('/players', [PlayerStatsController::class, 'index'])

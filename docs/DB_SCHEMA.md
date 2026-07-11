@@ -22,6 +22,10 @@ Migrations remain the **sole source of truth**.
 
 ## Table Index
 
+- analytics_events
+- analytics_identity_links
+- analytics_sessions
+- analytics_visitors
 - cache
 - cache_locks
 - capwages_players
@@ -128,6 +132,123 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `key`
+
+---
+
+## analytics_visitors
+
+**Organization-owned:** No
+**Purpose:** First-party anonymous browser visitor record that may later be linked to an authenticated user.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| anonymous_id | uuid | No | Unique app-owned anonymous visitor identifier |
+| user_id | bigint | Yes | FK -> users.id (SET NULL) |
+| first_seen_at | timestamp | Yes | First observed analytics request |
+| last_seen_at | timestamp | Yes | Most recent analytics request |
+| first_path | string(2048) | Yes | First observed page path |
+| last_path | string(2048) | Yes | Most recent observed page path |
+| ip_hash | string(64) | Yes | HMAC hash of request IP |
+| user_agent_hash | string(64) | Yes | HMAC hash of request user agent |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `anonymous_id`
+- Index: `ix_analytics_visitors_user_seen` on `(user_id, last_seen_at)`
+
+---
+
+## analytics_sessions
+
+**Organization-owned:** No
+**Purpose:** First-party analytics session scoped to a visitor cookie.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| analytics_visitor_id | bigint | No | FK -> analytics_visitors.id (CASCADE) |
+| user_id | bigint | Yes | FK -> users.id (SET NULL) |
+| session_uuid | uuid | No | Unique app-owned session identifier |
+| started_at | timestamp | No | Session start timestamp |
+| last_seen_at | timestamp | Yes | Most recent event timestamp |
+| ended_at | timestamp | Yes | Session close timestamp when known |
+| engaged_seconds | unsignedInteger | No | Visible-tab heartbeat total |
+| landing_path | string(2048) | Yes | First page path in session |
+| last_path | string(2048) | Yes | Most recent page path in session |
+| referrer | string(2048) | Yes | Session referrer |
+| ip_hash | string(64) | Yes | HMAC hash of request IP |
+| user_agent_hash | string(64) | Yes | HMAC hash of request user agent |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `session_uuid`
+- Index: `ix_analytics_sessions_user_seen` on `(user_id, last_seen_at)`
+- Index: `ix_analytics_sessions_visitor_seen` on `(analytics_visitor_id, last_seen_at)`
+
+---
+
+## analytics_events
+
+**Organization-owned:** No
+**Purpose:** First-party browser analytics events emitted by Vite-managed UI tracking.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| analytics_visitor_id | bigint | No | FK -> analytics_visitors.id (CASCADE) |
+| analytics_session_id | bigint | Yes | FK -> analytics_sessions.id (SET NULL) |
+| user_id | bigint | Yes | FK -> users.id (SET NULL) |
+| event_name | string(120) | No | Event key emitted by browser tracking |
+| path | string(2048) | Yes | Page path for the event |
+| referrer | string(2048) | Yes | Browser referrer when provided |
+| properties | json | Yes | Small event metadata payload |
+| occurred_at | timestamp | No | Browser-supplied or server fallback event time |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Index: `ix_analytics_events_name_time` on `(event_name, occurred_at)`
+- Index: `ix_analytics_events_user_time` on `(user_id, occurred_at)`
+- Index: `ix_analytics_events_visitor_time` on `(analytics_visitor_id, occurred_at)`
+
+---
+
+## analytics_identity_links
+
+**Organization-owned:** No
+**Purpose:** Audit table recording anonymous visitor to authenticated user linking.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| analytics_visitor_id | bigint | No | FK -> analytics_visitors.id (CASCADE) |
+| user_id | bigint | No | FK -> users.id (CASCADE) |
+| method | string(32) | No | Link method; see `docs/ENUMS.md` |
+| linked_at | timestamp | No | Time the identity link was observed |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `uq_analytics_identity_link_user` on `(analytics_visitor_id, user_id)`
 
 ---
 

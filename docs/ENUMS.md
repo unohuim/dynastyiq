@@ -28,6 +28,22 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+## Analytics
+
+### Analytics Identity Link Method
+
+**Name:** Analytics identity link method
+**Storage location(s):** `analytics_identity_links.method` (string column)
+**Allowed values currently emitted:**
+
+- `authenticated_request`
+
+**Semantic meaning:**
+
+- `authenticated_request`: An app-owned anonymous visitor cookie was observed on a request made by an authenticated user, allowing prior anonymous analytics rows to be linked to that user.
+
+---
+
 ## Authorization
 
 ### Role Scope

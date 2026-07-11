@@ -8,6 +8,7 @@ import { StatsColumnGroupAdapter } from './stats-column-group-adapter.js';
 import { StatsFilterState } from './stats-filter-state.js';
 import { StatsPayloadClient, normalizeStatsPayload, statsIdentityKeys } from './stats-payload-client.js';
 import { StatsSchemaAdapter } from './stats-schema-adapter.js';
+import '../analytics-tracker.js';
 
 const Alpine = window.Alpine ?? AlpineImport;
 

@@ -73,6 +73,37 @@ Route::get('/stats', [StatsController::class, 'index'])->name('stats.index');
 
 ---
 
+### Product Analytics
+
+**Name:** Product Analytics
+**Type:** First-Party Analytics Pattern
+**Location:**
+- `app/Http/Controllers/AnalyticsController.php`
+- `app/Services/AnalyticsTracker.php`
+- `resources/js/analytics-tracker.js`
+- `database/migrations/*_create_analytics_tables.php`
+
+**Purpose:**
+Capture first-party page view and engagement events for anonymous and authenticated users while preserving later identity linking.
+
+**When to Use:**
+Recording product usage, visible-tab engagement, explicitly tagged UI actions, and linking anonymous visitor history after authentication.
+
+**When Not to Use:**
+Import/sync auditing, billing events, authorization/security audit logs, raw form contents, private content, third-party presence, or external analytics payloads.
+
+**Public Interface:**
+- `analytics.events.store`
+- `AnalyticsTracker::track()`
+- `data-track` browser attributes
+
+**Example Usage:**
+```js
+enqueue('page_view', { title: document.title });
+```
+
+---
+
 ### Yahoo Fantasy Player Import
 
 **Name:** Yahoo Fantasy Player Import

@@ -1,0 +1,32 @@
+name: Product Analytics
+type: First-Party Analytics Pattern
+location:
+  - app/Http/Controllers/AnalyticsController.php
+  - app/Services/AnalyticsTracker.php
+  - app/Models/AnalyticsVisitor.php
+  - app/Models/AnalyticsSession.php
+  - app/Models/AnalyticsEvent.php
+  - app/Models/AnalyticsIdentityLink.php
+  - resources/js/analytics-tracker.js
+  - routes/web.php
+purpose: Capture first-party page view and engagement events for anonymous and authenticated users while preserving later identity linking.
+when_to_use:
+  - Recording product usage such as page views, visible-tab engagement, and explicitly tagged UI actions.
+  - Linking anonymous visitor history to a user after authentication.
+  - Building admin-facing activity reporting from first-party application data.
+when_not_to_use:
+  - Import, sync, billing, authorization, or security audit logging.
+  - Capturing raw form values, private content, third-party presence, or external analytics payloads.
+rules:
+  - Analytics collection stays first-party and is ingested through Laravel routes.
+  - Anonymous identity is represented by app-owned visitor and session cookies.
+  - Authenticated requests may link prior anonymous visitor, session, and event rows to the current user.
+  - Raw IP addresses and raw user agents must not be persisted; store only hashes when fingerprints are needed.
+  - Browser tracking must be Vite-managed JavaScript, not page-local executable Blade script.
+  - General click tracking is opt-in through explicit `data-track` attributes.
+public_interface:
+  - `analytics.events.store`
+  - `AnalyticsTracker::track()`
+  - `data-track` browser attributes
+example_usage: |
+  enqueue('page_view', { title: document.title });
