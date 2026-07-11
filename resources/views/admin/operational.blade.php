@@ -9,6 +9,7 @@
         x-data="adminHub({
             imports: @js($imports),
             users: @js($users ?? []),
+            activity: @js($activity ?? []),
             hasPlayers: {{ $hasPlayers ? 'true' : 'false' }},
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
             triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1])),
@@ -28,6 +29,7 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.player-imports"
                     @click="setTab('imports')"
                     :class="activeTab === 'imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -36,6 +38,7 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.game-imports"
                     @click="setTab('game-imports')"
                     :class="activeTab === 'game-imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -44,6 +47,7 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.platform-imports"
                     @click="setTab('platform-imports')"
                     :class="activeTab === 'platform-imports' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -52,6 +56,7 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.users"
                     @click="setTab('users')"
                     :class="activeTab === 'users' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -60,6 +65,16 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.activity"
+                    @click="setTab('activity')"
+                    :class="activeTab === 'activity' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Activity
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.game-validations"
                     @click="setTab('validations')"
                     :class="activeTab === 'validations' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -68,6 +83,7 @@
                 <button
                     type="button"
                     class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.triage"
                     @click="setTab('triage')"
                     :class="activeTab === 'triage' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
@@ -282,6 +298,87 @@
 
                         <div x-show="users.length === 0" class="px-4 py-8 text-sm text-gray-500">
                             No users found.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'activity'" x-cloak>
+                <div class="border-y border-gray-200 bg-white">
+                    <div class="flex flex-col gap-1 border-b border-gray-200 px-4 py-3">
+                        <h3 class="text-sm font-semibold text-gray-900">Activity</h3>
+                        <p class="text-xs text-gray-500">First-party page views, engagement heartbeats, and explicitly tagged UI events.</p>
+                    </div>
+
+                    <div class="grid gap-px bg-gray-200 sm:grid-cols-3 lg:grid-cols-6">
+                        <template x-for="item in activitySummaryItems()" :key="item.key">
+                            <div class="bg-white px-4 py-3">
+                                <div class="text-[11px] font-semibold uppercase text-gray-500" x-text="item.label"></div>
+                                <div class="mt-1 text-lg font-semibold text-gray-900" x-text="formatNumber(item.value)"></div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div class="grid gap-px bg-gray-200 lg:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.6fr)]">
+                        <div class="bg-white">
+                            <div class="border-b border-gray-200 px-4 py-3">
+                                <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Events</h4>
+                            </div>
+                            <div class="divide-y divide-gray-200">
+                                <template x-for="event in activity.recent_events ?? []" :key="event.id">
+                                    <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)_11rem] sm:items-center">
+                                        <div>
+                                            <span class="inline-flex rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700" x-text="event.event_name"></span>
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="truncate text-gray-900" x-text="event.path || 'Unknown page'"></div>
+                                            <div class="truncate text-xs text-gray-500" x-text="activityActor(event)"></div>
+                                        </div>
+                                        <div class="text-xs text-gray-500 sm:text-right" x-text="formatDateTime(event.occurred_at)"></div>
+                                    </div>
+                                </template>
+                                <div x-show="(activity.recent_events ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
+                                    No activity events recorded yet.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-white">
+                            <div class="border-b border-gray-200 px-4 py-3">
+                                <h4 class="text-xs font-semibold uppercase text-gray-500">Event Mix</h4>
+                            </div>
+                            <div class="divide-y divide-gray-200">
+                                <template x-for="item in activityEventMix()" :key="item.name">
+                                    <div class="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                                        <span class="truncate text-gray-700" x-text="item.name"></span>
+                                        <span class="font-semibold text-gray-900" x-text="formatNumber(item.count)"></span>
+                                    </div>
+                                </template>
+                                <div x-show="activityEventMix().length === 0" class="px-4 py-8 text-sm text-gray-500">
+                                    No events in the last 7 days.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-gray-200 bg-white">
+                        <div class="border-b border-gray-200 px-4 py-3">
+                            <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Sessions</h4>
+                        </div>
+                        <div class="divide-y divide-gray-200">
+                            <template x-for="session in activity.recent_sessions ?? []" :key="session.id">
+                                <div class="grid gap-2 px-4 py-3 text-sm md:grid-cols-[minmax(0,1fr)_8rem_11rem] md:items-center">
+                                    <div class="min-w-0">
+                                        <div class="truncate font-medium text-gray-900" x-text="activityActor(session)"></div>
+                                        <div class="truncate text-xs text-gray-500" x-text="session.last_path || session.landing_path || 'Unknown page'"></div>
+                                    </div>
+                                    <div class="text-xs text-gray-600" x-text="formatDuration(session.engaged_seconds)"></div>
+                                    <div class="text-xs text-gray-500 md:text-right" x-text="formatDateTime(session.last_seen_at)"></div>
+                                </div>
+                            </template>
+                            <div x-show="(activity.recent_sessions ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
+                                No sessions recorded yet.
+                            </div>
                         </div>
                     </div>
                 </div>

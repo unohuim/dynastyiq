@@ -11,5 +11,6 @@
         'hasPlayers' => $hasPlayers,
         'hasFantraxPlayers' => $hasFantraxPlayers,
         'users' => $users,
+        'activity' => $activity,
     ])
 </x-app-layout>

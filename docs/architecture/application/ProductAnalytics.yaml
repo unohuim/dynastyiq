@@ -24,9 +24,12 @@ rules:
   - Raw IP addresses and raw user agents must not be persisted; store only hashes when fingerprints are needed.
   - Browser tracking must be Vite-managed JavaScript, not page-local executable Blade script.
   - General click tracking is opt-in through explicit `data-track` attributes.
+  - Super-admin activity reporting may summarize events, sessions, linked visitors, and anonymous visitors from these tables.
+  - Raw event retention must be bounded before high-volume tracking is expanded beyond page views, heartbeats, and explicit action hooks.
 public_interface:
   - `analytics.events.store`
   - `AnalyticsTracker::track()`
   - `data-track` browser attributes
+  - Admin Activity tab
 example_usage: |
   enqueue('page_view', { title: document.title });

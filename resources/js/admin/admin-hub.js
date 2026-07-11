@@ -56,7 +56,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'platform-imports', 'users', 'game-imports', 'triage', 'validations'];
+    const validInitialTabs = ['imports', 'platform-imports', 'users', 'activity', 'game-imports', 'triage', 'validations'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
@@ -65,6 +65,7 @@ export default function adminHub(options = {}) {
         activeTab: initialTab,
         imports: options.imports ?? [],
         users: options.users ?? [],
+        activity: options.activity ?? {},
         activeSource: initialSource,
         hasPlayers: nhlAvailable,
         hasFantrax: fantraxAvailable,
@@ -1680,6 +1681,63 @@ export default function adminHub(options = {}) {
 
         formatNumber(value) {
             return new Intl.NumberFormat().format(Number(value) || 0);
+        },
+
+        activitySummaryItems() {
+            const summary = this.activity?.summary ?? {};
+
+            return [
+                { key: 'events_24h', label: 'Events 24h', value: summary.events_24h },
+                { key: 'events_7d', label: 'Events 7d', value: summary.events_7d },
+                { key: 'visitors_24h', label: 'Visitors 24h', value: summary.visitors_24h },
+                { key: 'sessions_24h', label: 'Sessions 24h', value: summary.sessions_24h },
+                { key: 'anonymous_visitors', label: 'Anonymous', value: summary.anonymous_visitors },
+                { key: 'linked_visitors', label: 'Linked', value: summary.linked_visitors },
+            ];
+        },
+
+        activityEventMix() {
+            return Object.entries(this.activity?.events_by_name ?? {})
+                .map(([name, count]) => ({ name, count: Number(count) || 0 }));
+        },
+
+        activityActor(item) {
+            if (item?.user?.name) {
+                return item.user.name;
+            }
+
+            if (item?.user?.email) {
+                return item.user.email;
+            }
+
+            return 'Anonymous visitor';
+        },
+
+        formatDuration(seconds) {
+            const total = Number(seconds) || 0;
+            const minutes = Math.floor(total / 60);
+            const remainder = total % 60;
+
+            if (minutes <= 0) {
+                return `${remainder}s`;
+            }
+
+            return `${minutes}m ${remainder}s`;
+        },
+
+        formatDateTime(value) {
+            const date = this.parseDate(value);
+
+            if (!date) {
+                return 'Never';
+            }
+
+            return date.toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+            });
         },
 
         userInitials(user) {

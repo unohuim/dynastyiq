@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AnalyticsEvent;
+use App\Models\AnalyticsSession;
+use App\Models\AnalyticsVisitor;
 use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
 use App\Models\Player;
@@ -13,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class DashboardController extends Controller
@@ -57,6 +61,7 @@ class DashboardController extends Controller
             'hasPlayers' => $hasPlayers,
             'hasFantraxPlayers' => $hasFantraxPlayers,
             'users' => $this->usersPayload(),
+            'activity' => $this->activityPayload(),
         ]);
     }
 
@@ -188,6 +193,128 @@ class DashboardController extends Controller
 
         return $users
             ->map(fn (User $user): array => $this->userPayload($user, $lastActivityByUserId))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build the super-admin activity overview payload.
+     *
+     * @return array<string,mixed>
+     */
+    private function activityPayload(): array
+    {
+        if (
+            ! Schema::hasTable('analytics_events') ||
+            ! Schema::hasTable('analytics_sessions') ||
+            ! Schema::hasTable('analytics_visitors')
+        ) {
+            return [
+                'summary' => [
+                    'events_24h' => 0,
+                    'events_7d' => 0,
+                    'visitors_24h' => 0,
+                    'sessions_24h' => 0,
+                    'anonymous_visitors' => 0,
+                    'linked_visitors' => 0,
+                ],
+                'events_by_name' => [],
+                'recent_events' => [],
+                'recent_sessions' => [],
+            ];
+        }
+
+        $now = now();
+        $dayAgo = $now->copy()->subDay();
+        $weekAgo = $now->copy()->subDays(7);
+
+        $eventCountsByName = AnalyticsEvent::query()
+            ->select('event_name', DB::raw('COUNT(*) as aggregate'))
+            ->where('occurred_at', '>=', $weekAgo)
+            ->groupBy('event_name')
+            ->orderByDesc('aggregate')
+            ->limit(8)
+            ->pluck('aggregate', 'event_name')
+            ->mapWithKeys(static fn (mixed $count, mixed $name): array => [(string) $name => (int) $count])
+            ->all();
+
+        return [
+            'summary' => [
+                'events_24h' => AnalyticsEvent::query()->where('occurred_at', '>=', $dayAgo)->count(),
+                'events_7d' => AnalyticsEvent::query()->where('occurred_at', '>=', $weekAgo)->count(),
+                'visitors_24h' => AnalyticsVisitor::query()->where('last_seen_at', '>=', $dayAgo)->count(),
+                'sessions_24h' => AnalyticsSession::query()->where('last_seen_at', '>=', $dayAgo)->count(),
+                'anonymous_visitors' => AnalyticsVisitor::query()->whereNull('user_id')->count(),
+                'linked_visitors' => AnalyticsVisitor::query()->whereNotNull('user_id')->count(),
+            ],
+            'events_by_name' => $eventCountsByName,
+            'recent_events' => $this->recentActivityEvents(),
+            'recent_sessions' => $this->recentActivitySessions(),
+        ];
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function recentActivityEvents(): array
+    {
+        return AnalyticsEvent::query()
+            ->with('user:id,name,email')
+            ->latest('occurred_at')
+            ->limit(25)
+            ->get([
+                'id',
+                'user_id',
+                'event_name',
+                'path',
+                'occurred_at',
+            ])
+            ->map(static fn (AnalyticsEvent $event): array => [
+                'id' => (int) $event->id,
+                'event_name' => (string) $event->event_name,
+                'path' => $event->path,
+                'occurred_at' => $event->occurred_at?->toIso8601String(),
+                'user' => $event->user ? [
+                    'id' => (int) $event->user->id,
+                    'name' => (string) $event->user->name,
+                    'email' => (string) $event->user->email,
+                ] : null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function recentActivitySessions(): array
+    {
+        return AnalyticsSession::query()
+            ->with('user:id,name,email')
+            ->latest('last_seen_at')
+            ->limit(12)
+            ->get([
+                'id',
+                'user_id',
+                'started_at',
+                'last_seen_at',
+                'engaged_seconds',
+                'landing_path',
+                'last_path',
+            ])
+            ->map(static fn (AnalyticsSession $session): array => [
+                'id' => (int) $session->id,
+                'started_at' => $session->started_at?->toIso8601String(),
+                'last_seen_at' => $session->last_seen_at?->toIso8601String(),
+                'engaged_seconds' => (int) $session->engaged_seconds,
+                'landing_path' => $session->landing_path,
+                'last_path' => $session->last_path,
+                'user' => $session->user ? [
+                    'id' => (int) $session->user->id,
+                    'name' => (string) $session->user->name,
+                    'email' => (string) $session->user->email,
+                ] : null,
+            ])
             ->values()
             ->all();
     }
