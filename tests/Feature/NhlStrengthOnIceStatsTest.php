@@ -624,7 +624,7 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
     $goalie->update([
         'position' => 'G',
         'pos_type' => 'G',
-        'is_goalie' => true,
+        'is_goalie' => false,
     ]);
 
     DB::table('nhl_game_summaries')->insert([
