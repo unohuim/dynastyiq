@@ -283,6 +283,11 @@ class StatsController extends BaseController
         }
         if ($isFantraxLeaguePerspective) {
             $payload = $leaguePerspectiveFactory->withFantraxGoalieColumnGroup($payload, $league);
+            $payload = $leaguePerspectiveFactory->withActiveFantraxColumnGroupPayload(
+                $payload,
+                $league,
+                $requestedColumnGroup !== '' ? $requestedColumnGroup : null,
+            );
         }
         $mark('payload_settings_ms');
 

@@ -146,19 +146,6 @@ export class StatsPageShell {
   }
 
   activeHeadings() {
-    const activeGroup = this.activeColumnGroup();
-    const hasSkaterFilter = [...this.state.selectedPosTypes, ...this.state.selectedPos]
-      .some((value) => String(value) !== 'G');
-
-    if (
-      activeGroup === 'skater'
-      && hasSkaterFilter
-      && Array.isArray(this.cachedSkaterHeadings)
-      && this.cachedSkaterHeadings.length > 0
-    ) {
-      return this.cachedSkaterHeadings;
-    }
-
     return this.columnGroupAdapter.activeHeadings(this.payload, this.settings, this.state);
   }
 

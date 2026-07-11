@@ -596,6 +596,7 @@ final class SyncFantraxLeague
             ?? [];
         $rows = [];
         $shortAliases = [];
+        $sortOrder = 1;
 
         foreach ((array) $groups as $groupBlock) {
             $groupCode = $this->scoringGroupCode((string) (data_get($groupBlock, 'group.code') ?? 'UNKNOWN'));
@@ -627,6 +628,7 @@ final class SyncFantraxLeague
                     'is_mapped' => $autoStatKey !== null,
                     'mapping_source' => $autoStatKey !== null ? 'auto' : null,
                     'position_values' => [],
+                    'sort_order' => $sortOrder++,
                     'raw_payload' => [
                         'config' => $config,
                         'scoringCategory' => $category,
@@ -665,6 +667,7 @@ final class SyncFantraxLeague
                     'is_mapped' => $autoStatKey !== null,
                     'mapping_source' => $autoStatKey !== null ? 'auto' : null,
                     'position_values' => [],
+                    'sort_order' => $sortOrder++,
                     'raw_payload' => $value,
                 ];
 

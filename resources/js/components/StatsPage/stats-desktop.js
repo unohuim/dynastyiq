@@ -216,6 +216,8 @@ const renderLeagueOwnerStatsDesktop = (
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
     const useRosterSlotColumn = () => isRosterSlotLeague && hasSelectedFantasyTeam();
+    const isRosterSlotSortActive = () => useRosterSlotColumn() && settings.leagueUserSortActive !== true;
+    const activeSortKey = () => (isRosterSlotSortActive() ? "pos_type" : settings.sortKey);
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
@@ -411,9 +413,11 @@ const renderLeagueOwnerStatsDesktop = (
 
         if (key !== "__rk") {
             th.classList.add("cursor-pointer");
-            if (settings.sortKey === key) {
+            if (activeSortKey() === key) {
                 const arrow = document.createElement("span");
-                arrow.textContent = settings.sortDirection === "asc" ? "↑" : "↓";
+                arrow.textContent = isRosterSlotSortActive()
+                    ? "↓"
+                    : (settings.sortDirection === "asc" ? "↑" : "↓");
                 th.appendChild(arrow);
                 th.classList.add("text-gray-900");
             }
@@ -427,7 +431,7 @@ const renderLeagueOwnerStatsDesktop = (
                     return;
                 }
 
-                const same = settings.sortKey === key;
+                const same = settings.sortKey === key && settings.leagueUserSortActive === true;
                 onSortChange?.({
                     sortKey: key,
                     sortDirection: same && settings.sortDirection === "desc" ? "asc" : "desc",
@@ -600,7 +604,7 @@ const renderLeagueOwnerStatsDesktop = (
         const rawVal = row.stats?.[key] ?? row[key];
         const val = formatStatValue(key, rawVal);
         const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
-        cell.className = settings.sortKey === key ? `${common} font-semibold` : common;
+        cell.className = activeSortKey() === key ? `${common} font-semibold` : common;
         cell.textContent = isAAVKey(key) ? formatAAV(rawVal) : formatDesktopNumber(val);
 
         return cell;

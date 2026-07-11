@@ -172,7 +172,11 @@ final class LeagueStatsPerspectiveFactory
                 ];
             })
             ->filter()
-            ->unique(static fn (array $column): string => $column['key'])
+            ->unique(static fn (array $column): string => implode(':', [
+                (string) ($column['normalized_group'] ?? ''),
+                (string) ($column['provider_group'] ?? ''),
+                (string) ($column['key'] ?? ''),
+            ]))
             ->values()
             ->all();
 
@@ -197,18 +201,15 @@ final class LeagueStatsPerspectiveFactory
             $columns = $this->withFantasyPointColumns($columns);
         }
 
-        $sortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'wins', 'sv', 'sog'])
-            ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
-            ?? $columns[0]['key'];
         $skaterSortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'sog'])
             ->first(static fn (string $key): bool => collect($skaterColumns)->contains('key', $key))
-            ?? ($skaterColumns[0]['key'] ?? $sortKey);
+            ?? ($skaterColumns[0]['key'] ?? $columns[0]['key']);
         $goalieSortKey = collect(['fantasy_pts', 'wins', 'sv', 'sv_pct', 'gaa'])
             ->first(static fn (string $key): bool => collect($goalieColumns)->contains('key', $key))
-            ?? ($goalieColumns[0]['key'] ?? $sortKey);
+            ?? ($goalieColumns[0]['key'] ?? $skaterSortKey);
 
         return [
-            'columns' => $columns,
+            'columns' => $skaterColumns,
             'sort' => [
                 'sortKey' => $skaterSortKey,
                 'sortDirection' => 'desc',
@@ -323,16 +324,87 @@ final class LeagueStatsPerspectiveFactory
     }
 
     /**
+     * Force Fantrax league payload headings to match the active scoring column group.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    public function withActiveFantraxColumnGroupPayload(
+        array $payload,
+        PlatformLeague $league,
+        ?string $columnGroup,
+    ): array {
+        $settings = $this->leagueScoringPerspectiveSettings($league);
+
+        if ($settings === null) {
+            return $payload;
+        }
+
+        $activeGroup = $columnGroup === 'goalie' ? 'goalie' : 'skater';
+        $skaterColumns = is_array(data_get($settings, 'columnGroups.skater'))
+            ? data_get($settings, 'columnGroups.skater')
+            : [];
+        $goalieColumns = $this->fantraxGoalieScoringColumns($league);
+        if ($this->isPointsLeague($league)) {
+            $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
+        }
+        $activeColumns = $activeGroup === 'goalie' ? $goalieColumns : $skaterColumns;
+        $groupSort = is_array(data_get($settings, "columnGroupSort.{$activeGroup}"))
+            ? data_get($settings, "columnGroupSort.{$activeGroup}")
+            : [];
+
+        $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
+        $payload['settings']['columnGroups'] = [
+            'skater' => $skaterColumns,
+            'goalie' => $goalieColumns,
+        ];
+        $payload['settings']['columnGroupSort'] = [
+            'skater' => data_get($settings, 'columnGroupSort.skater'),
+            'goalie' => data_get($settings, 'columnGroupSort.goalie'),
+        ];
+        $payload['settings']['activeColumnGroup'] = $activeGroup;
+        $sortKey = (string) (
+            $groupSort['sortKey']
+            ?? $activeColumns[0]['key']
+            ?? $payload['settings']['defaultSort']
+            ?? 'gp'
+        );
+        $sortDirection = (string) (
+            $groupSort['sortDirection']
+            ?? $payload['settings']['defaultSortDirection']
+            ?? 'desc'
+        );
+        $payload['settings']['sortKey'] = $sortKey;
+        $payload['settings']['displayKey'] = $sortKey;
+        $payload['settings']['sortDirection'] = $sortDirection;
+        $payload['settings']['defaultSort'] = $sortKey;
+        $payload['settings']['defaultSortDirection'] = $sortDirection;
+
+        $payload['headings'] = $this->headingsForColumnGroup($payload, $activeColumns);
+        $payload['settings']['sortable'] = collect($payload['headings'])
+            ->pluck('key')
+            ->filter()
+            ->values()
+            ->all();
+        $payload['data'] = $this->sortPayloadData(
+            $payload['data'] ?? [],
+            $sortKey,
+            strtolower($sortDirection) === 'asc' ? 'asc' : 'desc',
+        );
+
+        return $payload;
+    }
+
+    /**
      * @return array<int,array{key:string,label:string,type:string}>
      */
     public function fantraxGoalieScoringColumns(PlatformLeague $league): array
     {
-        $goalieKeys = $this->goalieScoringStatKeys();
         $seen = [];
 
         return collect(app(PlatformLeagueScoringCategoryService::class)->payloadRows($league))
             ->filter(static fn (mixed $category): bool => is_array($category))
-            ->map(function (array $category) use ($goalieKeys, &$seen): ?array {
+            ->map(function (array $category) use (&$seen): ?array {
                 $manualStatKey = trim((string) ($category['stat_key'] ?? ''));
                 $autoStatKey = trim((string) ($category['auto_stat_key'] ?? ''));
                 $statKey = $manualStatKey !== '' ? $manualStatKey : $autoStatKey;
@@ -342,7 +414,7 @@ final class LeagueStatsPerspectiveFactory
 
                 if (
                     $columnKey === ''
-                    || ! $this->categoryIsGoalie($category, $goalieKeys)
+                    || ! $this->categoryHasExplicitGoalieGroup($category)
                     || isset($seen[$columnKey])
                 ) {
                     return null;
@@ -505,6 +577,10 @@ final class LeagueStatsPerspectiveFactory
      */
     private function categoryIsGoalie(array $category, array $goalieKeys): bool
     {
+        if ($this->categoryHasExplicitGoalieGroup($category)) {
+            return true;
+        }
+
         $group = strtoupper(trim((string) (
             $category['normalized_group']
             ?? $category['group']
@@ -515,12 +591,12 @@ final class LeagueStatsPerspectiveFactory
         $key = strtoupper(trim((string) ($category['key'] ?? '')));
 
         if (
-            $group === 'HOCKEY_GOALIE'
-            || $group === 'GOALIE'
-            || str_starts_with($id, 'HOCKEY_GOALIE:')
-            || str_starts_with($key, 'HOCKEY_GOALIE:')
+            $group === 'HOCKEY_SKATING'
+            || $group === 'SKATING'
+            || str_starts_with($id, 'HOCKEY_SKATING:')
+            || str_starts_with($key, 'HOCKEY_SKATING:')
         ) {
-            return true;
+            return false;
         }
 
         $requiredColumns = is_array($category['required_schema_columns'] ?? null)
@@ -538,6 +614,91 @@ final class LeagueStatsPerspectiveFactory
 
         return $keys->isNotEmpty()
             && $keys->every(static fn (string $key): bool => in_array($key, $goalieKeys, true));
+    }
+
+    /**
+     * @param array<string,mixed> $category
+     */
+    private function categoryHasExplicitGoalieGroup(array $category): bool
+    {
+        $group = strtoupper(trim((string) (
+            $category['normalized_group']
+            ?? $category['group']
+            ?? $category['provider_group']
+            ?? ''
+        )));
+        $id = strtoupper(trim((string) ($category['id'] ?? '')));
+        $key = strtoupper(trim((string) ($category['key'] ?? '')));
+
+        return $group === 'HOCKEY_GOALIE'
+            || $group === 'GOALIE'
+            || str_starts_with($id, 'HOCKEY_GOALIE:')
+            || str_starts_with($key, 'HOCKEY_GOALIE:');
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @param array<int,array<string,mixed>> $columns
+     * @return array<int,array<string,mixed>>
+     */
+    private function headingsForColumnGroup(array $payload, array $columns): array
+    {
+        $identityKeys = [
+            'name',
+            'player',
+            'team',
+            'league',
+            'pos',
+            'pos_type',
+            'age',
+            'contract_value',
+            'contract_value_num',
+            'contract_last_year',
+            'contract_last_year_num',
+            'avatar_url',
+            'head_shot_url',
+            'id',
+            'nhl_player_id',
+            'gp',
+        ];
+        $seen = [];
+
+        return collect($payload['headings'] ?? [])
+            ->filter(static fn (mixed $heading): bool => is_array($heading))
+            ->filter(static fn (array $heading): bool => in_array((string) ($heading['key'] ?? ''), $identityKeys, true))
+            ->concat($columns)
+            ->filter(static function (mixed $heading) use (&$seen): bool {
+                if (! is_array($heading)) {
+                    return false;
+                }
+
+                $key = (string) ($heading['key'] ?? '');
+                if ($key === '' || isset($seen[$key])) {
+                    return false;
+                }
+
+                $seen[$key] = true;
+
+                return true;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param mixed $rows
+     * @return array<int,mixed>
+     */
+    private function sortPayloadData(mixed $rows, string $sortKey, string $sortDirection): array
+    {
+        return collect($rows)
+            ->sortBy(
+                static fn (mixed $row): mixed => is_array($row) ? ($row[$sortKey] ?? null) : null,
+                SORT_REGULAR,
+                $sortDirection === 'desc',
+            )
+            ->values()
+            ->all();
     }
 
     /**
