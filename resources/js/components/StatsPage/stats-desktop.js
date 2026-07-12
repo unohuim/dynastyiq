@@ -1,5 +1,5 @@
 // stats-desktop.js
-import { formatStatValue, teamBg } from "./stats-utils.js";
+import { formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, teamBg } from "./stats-utils.js";
 
 // === keep your colours exactly as set before ===
 export const BORDER_COLOUR_F = "#7CCCF2";
@@ -213,18 +213,24 @@ const renderLeagueOwnerStatsDesktop = (
 
     const isRosterSlotLeague = ["fantrax", "yahoo"].includes(settings?.leaguePlatform);
     const isGoalieFilterActive = settings?.goalieFilterActive === true;
+    const isProspectMode = isLeagueProspectMode(settings);
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
     const hasRosterSlotRows = () => (Array.isArray(data) ? data : []).some((row) =>
         row?.roster_slot != null || row?.roster_sort_order != null || row?.league_roster_placeholder === true
     );
-    const useRosterSlotColumn = () => isRosterSlotLeague && hasSelectedFantasyTeam();
-    const isRosterSlotSortActive = () => isRosterSlotLeague && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
+    const useRosterSlotColumn = () => isRosterSlotLeague && !isProspectMode && hasSelectedFantasyTeam();
+    const isRosterSlotSortActive = () => isRosterSlotLeague && !isProspectMode && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
     const rosterSlotHeadingKey = () => left.find((heading) =>
         ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
     )?.key ?? "pos_type";
-    const activeSortKey = () => (isRosterSlotSortActive() ? rosterSlotHeadingKey() : settings.sortKey);
+    const isDefaultProspectSort = () => isProspectMode && settings.leagueUserSortActive !== true;
+    const activeSortKey = () => {
+        if (isDefaultProspectSort()) return rosterSlotHeadingKey();
+
+        return isRosterSlotSortActive() ? rosterSlotHeadingKey() : settings.sortKey;
+    };
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
 
@@ -421,7 +427,7 @@ const renderLeagueOwnerStatsDesktop = (
             th.classList.add("cursor-pointer");
             if (activeSortKey() === key) {
                 const arrow = document.createElement("span");
-                arrow.textContent = isRosterSlotSortActive()
+                arrow.textContent = isRosterSlotSortActive() || isDefaultProspectSort()
                     ? "↓"
                     : (settings.sortDirection === "asc" ? "↑" : "↓");
                 th.appendChild(arrow);
@@ -621,9 +627,15 @@ const renderLeagueOwnerStatsDesktop = (
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
 
-        const appendGroupSeparator = (label) => {
+        const appendGroupSeparator = (label, tone = "blue") => {
+            const separatorClass = tone === "gray"
+                ? "border-t bg-gray-100 text-gray-700"
+                : "border-t bg-blue-100 text-blue-700";
+            const emptySeparatorClass = tone === "gray"
+                ? "border-t bg-gray-100"
+                : "border-t bg-blue-100";
             const leftRow = document.createElement("div");
-            leftRow.className = "grid h-8 border-t bg-blue-100 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-blue-700";
+            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${separatorClass}`;
             leftRow.style.gridTemplateColumns = leftGridCols;
             const leftLabel = document.createElement("div");
             leftLabel.style.gridColumn = "1 / -1";
@@ -632,39 +644,33 @@ const renderLeagueOwnerStatsDesktop = (
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = "grid h-8 border-t bg-blue-100 px-4 py-1.5";
+            statsRow.className = `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
             statsRow.style.gridTemplateColumns = statGridCols;
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
-            ownerRow.className = "h-8 border-t bg-blue-100 px-4 py-1.5";
+            ownerRow.className = `h-8 px-4 py-1.5 ${emptySeparatorClass}`;
             ownerBody.appendChild(ownerRow);
         };
 
         const rows = applyFilters(data);
-        rows.forEach((row, idx) => {
-            if (
-                hasSelectedFantasyTeam()
-                && row?.roster_group === "minor"
-                && rows?.[idx - 1]?.roster_group !== "minor"
-            ) {
-                appendGroupSeparator("Minor League");
-            }
+        const renderPlayerRow = (row, idx) => {
+            const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
-            leftRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
+            leftRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
             leftRow.style.gridTemplateColumns = leftGridCols;
             left.forEach((heading, i) => leftRow.appendChild(renderLeftCell(row, heading, idx, i)));
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
+            statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
             statsRow.style.gridTemplateColumns = statGridCols;
             stats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
-            ownerRow.className = `flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 transition-colors ${rosterRowClass(row, hasSelectedFantasyTeam())}`;
+            ownerRow.className = `flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 transition-colors ${rosterRowClass(row, allowRosterColors)}`;
             const ownerName = String(row?.fantasy_team_name ?? "").trim();
             const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
 
@@ -678,7 +684,30 @@ const renderLeagueOwnerStatsDesktop = (
             }
 
             ownerBody.appendChild(ownerRow);
-        });
+        };
+
+        if (isDefaultProspectSort()) {
+            let rowIndex = 0;
+            groupRowsByProspectPosition(rows).forEach((group) => {
+                group.rows.forEach((row) => {
+                    renderPlayerRow(row, rowIndex);
+                    rowIndex += 1;
+                });
+            });
+        } else {
+            rows.forEach((row, idx) => {
+                if (
+                    !isProspectMode
+                    && hasSelectedFantasyTeam()
+                    && row?.roster_group === "minor"
+                    && rows?.[idx - 1]?.roster_group !== "minor"
+                ) {
+                    appendGroupSeparator("Minor League");
+                }
+
+                renderPlayerRow(row, idx);
+            });
+        }
 
         updateScrollHints();
     };

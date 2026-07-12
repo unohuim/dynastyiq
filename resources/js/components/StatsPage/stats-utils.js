@@ -12,6 +12,67 @@ export function sortData(data, sortKey, sortDirection = 'desc') {
     });
 }
 
+const PROSPECT_POSITION_ORDER = ['C', 'L', 'R', 'D', 'G'];
+
+const prospectPositionRank = (label) => {
+    const index = PROSPECT_POSITION_ORDER.indexOf(label);
+
+    return index === -1 ? PROSPECT_POSITION_ORDER.length : index;
+};
+
+const positionTokens = (value) => String(value ?? '')
+    .toUpperCase()
+    .split(/[^A-Z]+/)
+    .filter(Boolean);
+
+export function isLeagueProspectMode(settings = {}) {
+    return ['skaters', 'goalies'].includes(String(settings?.leagueProspectMode ?? ''));
+}
+
+export function prospectPositionGroup(row = {}) {
+    const tokens = [
+        ...positionTokens(row?.pos),
+        ...positionTokens(row?.position),
+        ...positionTokens(row?.eligible_positions),
+        ...positionTokens(row?.position_eligibility),
+        ...positionTokens(row?.fantrax_position),
+        ...positionTokens(row?.roster_slot),
+        ...positionTokens(row?.pos_type),
+        ...positionTokens(row?.type),
+    ];
+
+    if (tokens.some((token) => token === 'C')) return 'C';
+    if (tokens.some((token) => ['LW', 'L'].includes(token))) return 'L';
+    if (tokens.some((token) => ['RW', 'R'].includes(token))) return 'R';
+    if (tokens.some((token) => token === 'D')) return 'D';
+    if (tokens.some((token) => token === 'G')) return 'G';
+    if (tokens.some((token) => token === 'F')) return 'F';
+
+    return 'Other';
+}
+
+export function groupRowsByProspectPosition(rows = []) {
+    const groups = new Map();
+
+    rows.forEach((row) => {
+        const label = prospectPositionGroup(row);
+
+        if (!groups.has(label)) {
+            groups.set(label, []);
+        }
+
+        groups.get(label).push(row);
+    });
+
+    return [...groups.entries()]
+        .sort(([a], [b]) => {
+            const rank = prospectPositionRank(a) - prospectPositionRank(b);
+
+            return rank !== 0 ? rank : String(a).localeCompare(String(b));
+        })
+        .map(([label, groupedRows]) => ({ label, rows: groupedRows }));
+}
+
 export function formatContractValue(value) {
     return value ?? 0;
 }

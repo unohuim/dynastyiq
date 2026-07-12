@@ -26,6 +26,15 @@ if (!window.__alpineStarted) {
 }
 
 const IDENTITY_KEYS = statsIdentityKeys;
+const PROSPECT_HIDDEN_HEADING_KEYS = new Set([
+  'aav',
+  'cap_hit',
+  'salary',
+  'contract_value',
+  'contract_value_num',
+  'contract_last_year',
+  'contract_last_year_num',
+]);
 
 const createElement = (tag, className = '', text = '') => {
   const node = document.createElement(tag);
@@ -718,7 +727,11 @@ export class StatsPageShell {
 
     this.contentEl.innerHTML = '';
     this.syncColumnGroupSort();
-    const activeHeadings = this.activeHeadings();
+    const renderSettings = {
+      ...this.settings,
+      leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
+    };
+    const activeHeadings = this.prospectHeadings(this.activeHeadings(), renderSettings);
     const sorted = sortData(this.locallyFilteredRows(), this.settings.sortKey, this.settings.sortDirection);
 
     if (this.state.isMobile) {
@@ -726,17 +739,29 @@ export class StatsPageShell {
         container: this.contentEl,
         data: sorted,
         headings: activeHeadings,
-        settings: this.settings,
+        settings: renderSettings,
         onSortChange: this.onSortChange,
       });
       return;
     }
 
     renderStatsDesktop(this.contentEl, sorted, activeHeadings, {
-      ...this.settings,
+      ...renderSettings,
       activeRenderedColumnGroup: this.activeColumnGroup(),
       goalieFilterActive: this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G'),
     }, this.onSortChange);
+  }
+
+  prospectHeadings(headings, settings) {
+    if (!['skaters', 'goalies'].includes(String(settings?.leagueProspectMode ?? ''))) {
+      return headings;
+    }
+
+    return (Array.isArray(headings) ? headings : []).filter((heading) => {
+      const key = String(heading?.key ?? '').toLowerCase();
+
+      return !PROSPECT_HIDDEN_HEADING_KEYS.has(key);
+    });
   }
 
   rememberSkaterHeadings() {

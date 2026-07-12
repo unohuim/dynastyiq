@@ -30,17 +30,17 @@ final class StatsPayloadAssembler
         $rows = collect();
         $officialToiByPlayer = $this->officialBoxscoreToiByPlayer($collection, $mode, $filters);
 
-        $grouped = $collection->groupBy(function ($row) use ($mode, $filters): string {
+        $grouped = $collection->groupBy(function ($row): string {
             $playerId = (string) ($row->player_id ?? $row->nhl_player_id ?? '');
-
-            if ($mode === 'prospects' && ! (bool) ($filters['draft_context'] ?? false)) {
-                return $playerId . '|' . (string) ($row->league_abbrev ?? '');
-            }
 
             return $playerId;
         });
 
         foreach ($grouped as $playerStats) {
+            if ($mode === 'prospects' && ! (bool) ($filters['draft_context'] ?? false)) {
+                $playerStats = $this->prospectStatsForPrimaryLeague($playerStats);
+            }
+
             $entry = $playerStats->count() === 1 ? $playerStats->first() : $playerStats->sortByDesc('gp')->first();
             $player = $entry->player;
             $isSeason = ($mode === 'season' || ($mode === 'prospects' && (bool) ($filters['draft_context'] ?? false)));
@@ -189,6 +189,34 @@ final class StatsPayloadAssembler
         }
 
         return 0;
+    }
+
+    /**
+     * Keep only the prospect league where the player had the most games played.
+     *
+     * @param Collection<int,object> $playerStats
+     * @return Collection<int,object>
+     */
+    private function prospectStatsForPrimaryLeague(Collection $playerStats): Collection
+    {
+        if ($playerStats->count() <= 1) {
+            return $playerStats;
+        }
+
+        $primaryLeague = $playerStats
+            ->groupBy(static fn (object $row): string => (string) ($row->league_abbrev ?? ''))
+            ->map(static fn (Collection $leagueRows): int => (int) $leagueRows->sum('gp'))
+            ->sortDesc()
+            ->keys()
+            ->first();
+
+        if ($primaryLeague === null) {
+            return $playerStats;
+        }
+
+        return $playerStats
+            ->filter(static fn (object $row): bool => (string) ($row->league_abbrev ?? '') === (string) $primaryLeague)
+            ->values();
     }
 
     /**
@@ -614,6 +642,9 @@ final class StatsPayloadAssembler
         $pkSaves = $total('pksv');
 
         return array_merge($row, [
+            'g_per_gp' => $this->perGameAlias($total('g'), $gamesPlayed),
+            'a_per_gp' => $this->perGameAlias($total('a'), $gamesPlayed),
+            'pts_per_gp' => $this->perGameAlias($total('pts'), $gamesPlayed),
             'sog_per_gp' => $this->perGameAlias($sog, $gamesPlayed),
             'sat_per_gp' => $this->perGameAlias($sat, $gamesPlayed),
             'hits_per_gp' => $this->perGameAlias($hits, $gamesPlayed),

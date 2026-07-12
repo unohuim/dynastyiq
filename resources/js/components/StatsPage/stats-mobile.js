@@ -1,5 +1,5 @@
 // stats-mobile.js
-import { teamBg, formatStatValue, sortData } from './stats-utils.js';
+import { teamBg, formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, sortData } from './stats-utils.js';
 import { UI } from './ui/UIComponent.js';
 
 const SORT_ALIASES = {
@@ -162,6 +162,7 @@ function getOrCreateElement(id) {
 export function StatsMobile({ container, data, headings, settings, onSortChange }) {
   let searchTerm = '';
   const rows = Array.isArray(data) ? data : [];
+  const isDefaultProspectSort = () => isLeagueProspectMode(settings) && settings.leagueUserSortActive !== true;
 
   ensureDisplayKey(settings, headings);
 
@@ -187,7 +188,7 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         fragment.appendChild(emptyState('No players match the current view.'));
       }
 
-      filteredData.forEach((player) => {
+      const appendPlayerCard = (player) => {
         const card = document.createElement('div');
         card.className = 'player-stats-card-mobile';
 
@@ -340,7 +341,15 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         card.appendChild(teamDivWrapper);
         card.appendChild(contentWrapper);
         fragment.appendChild(card);
-      });
+      };
+
+      if (isDefaultProspectSort()) {
+        groupRowsByProspectPosition(filteredData).forEach((group) => {
+          group.rows.forEach(appendPlayerCard);
+        });
+      } else {
+        filteredData.forEach(appendPlayerCard);
+      }
 
       listWrapper.replaceChildren(fragment);
     } catch (error) {
