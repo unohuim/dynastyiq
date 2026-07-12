@@ -62,6 +62,7 @@ rules:
   - Manual league scoring mappings may target native stat fields or imported dictionary formulas and must override dictionary auto mappings while preserving support metadata for warnings.
   - Scheduled league refresh should use the same league sync path as the user-triggered top-level Leagues refresh action and should run on a four-hour cadence.
   - PlatformLeague.settings.custom_cap defaults to false and, when true, league Cap views must use persisted Fantrax roster salaries instead of CapWages cap hits.
+  - PlatformLeague.settings.salary_cap may store a commissioner-configured team salary cap in whole dollars, and league Cap views may use it to show cap space as salary cap minus non-minor roster cap hit while including IR players.
   - Fantrax custom salary seasons turn over on July 1; before July 1, the current season starts in the previous calendar year, and on or after July 1, the current season starts in the current calendar year.
   - PlatformLeague.settings.fantrax_contract_code_definitions may store commissioner-defined meanings for detected Fantrax contract code prefixes, while raw provider contract labels remain preserved on roster membership metadata.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.

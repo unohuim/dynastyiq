@@ -29,7 +29,7 @@ class SumNHLPlayByPlay
             $awayTeamId = (int)($game->away_team_id ?? 0);
 
             // --- GWG/OTG/SHOG/SHOGWG/PS/PSG pre-computation -------------------
-            [$gwgByPlayer, $otgByPlayer, $otaByPlayer] = $this->computeGwgAndOtg($plays);
+            [$gwgByPlayer, $otgByPlayer, $otaByPlayer] = $this->computeGwgAndOtg($plays, $game);
             [$shogByPlayer, $shogwgByPlayer] = $this->computeShogAndWinner($plays);
             [$psByPlayer, $psgByPlayer] = $this->computePenaltyShots($plays);
             $firstGoalPid = $this->computeFirstGoalScorer($plays);
@@ -299,7 +299,7 @@ class SumNHLPlayByPlay
 
 
 
-    private function computeGwgAndOtg(Collection $plays): array
+    private function computeGwgAndOtg(Collection $plays, ?NhlGame $game): array
     {
         // All non-shootout goals in chronological order
         $goals = $plays->filter(fn ($p) => ($p->type_desc_key ?? null) === 'goal' && ($p->period_type ?? null) !== 'SO')
@@ -327,21 +327,24 @@ class SumNHLPlayByPlay
 
         if (!$hadShootout && $goals->isNotEmpty()) {
             $last = $goals->last();
-            $finalHome = (int)($last->home_score ?? 0);
-            $finalAway = (int)($last->away_score ?? 0);
+            $finalHome = is_numeric($game?->home_team_score)
+                ? (int) $game->home_team_score
+                : (int) ($last->home_score ?? 0);
+            $finalAway = is_numeric($game?->away_team_score)
+                ? (int) $game->away_team_score
+                : (int) ($last->away_score ?? 0);
 
             if ($finalHome !== $finalAway) {
-                $finalDiff    = abs($finalHome - $finalAway);
                 $winnerIsHome = $finalHome > $finalAway;
+                $losingFinalScore = $winnerIsHome ? $finalAway : $finalHome;
+                $gameWinningScore = $losingFinalScore + 1;
 
                 foreach ($goals as $g) {
-                    $leadHome = (int)$g->home_score - (int)$g->away_score;
-                    if ($winnerIsHome && $leadHome === $finalDiff) {
+                    if ($winnerIsHome && (int)$g->home_score === $gameWinningScore) {
                         if ($g->scoring_player_id) $gwgByPlayer[(int)$g->scoring_player_id] = 1;
                         break;
                     }
-                    $leadAway = (int)$g->away_score - (int)$g->home_score;
-                    if (!$winnerIsHome && $leadAway === $finalDiff) {
+                    if (!$winnerIsHome && (int)$g->away_score === $gameWinningScore) {
                         if ($g->scoring_player_id) $gwgByPlayer[(int)$g->scoring_player_id] = 1;
                         break;
                     }

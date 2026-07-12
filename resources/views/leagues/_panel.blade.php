@@ -44,6 +44,8 @@
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
       customCap: @js((bool) ($customCap ?? false)),
+      salaryCap: @js($salaryCap ?? null),
+      salaryCapInput: @js(($salaryCap ?? null) !== null ? (string) $salaryCap : ''),
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
       fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
       activeLeagueTab: 'draft',
@@ -61,7 +63,7 @@
       capTeamLoading: false,
       capTeamError: '',
       settingsOpen: false,
-      scoringAlignmentOpen: true,
+      scoringAlignmentOpen: false,
       savingScoringAlignment: false,
       scoringAlignmentMessage: '',
       scoringAlignmentError: '',
@@ -335,6 +337,8 @@
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
           this.customCap = Boolean(payload.customCap ?? this.customCap);
+          this.salaryCap = payload.salaryCap ?? this.salaryCap;
+          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
@@ -623,11 +627,25 @@
 
         this.capSeasonColumns.forEach(column => {
           totals[column.key] = this.capPlayers.reduce((sum, player) => {
+            if (player?.roster_group === 'minor') return sum;
+
             const season = this.capSeasonForPlayer(player, column.key);
             const value = Number(season?.cap_hit || 0);
 
             return sum + (Number.isFinite(value) ? value : 0);
           }, 0);
+        });
+
+        return totals;
+      },
+      get capSpaceTotals(){
+        const salaryCap = Number(this.salaryCap || 0);
+        const totals = {};
+
+        this.capSeasonColumns.forEach(column => {
+          const capHit = Number(this.capTotals[column.key] || 0);
+
+          totals[column.key] = Number.isFinite(salaryCap) && salaryCap > 0 ? salaryCap - capHit : null;
         });
 
         return totals;
@@ -778,6 +796,17 @@
 
         return `$${(number / 1000000).toFixed(2)}M`;
       },
+      capSpaceMoney(value){
+        if (value === null || value === undefined) return '-';
+
+        const number = Number(value);
+
+        if (!Number.isFinite(number)) return '-';
+
+        const sign = number < 0 ? '-' : '';
+
+        return `${sign}$${(Math.abs(number) / 1000000).toFixed(2)}M`;
+      },
       async toggleCustomCap(){
         if (!this.capSettingsUpdateUrl || this.savingCapSettings) return;
 
@@ -806,6 +835,8 @@
           }
 
           this.customCap = Boolean(payload.customCap ?? next);
+          this.salaryCap = payload.salaryCap ?? this.salaryCap;
+          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.capSettingsMessage = payload.message || 'Cap settings saved.';
@@ -878,6 +909,8 @@
           }
 
           this.customCap = Boolean(payload.customCap ?? this.customCap);
+          this.salaryCap = payload.salaryCap ?? this.salaryCap;
+          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.capSettingsMessage = 'Contract codes saved.';
@@ -886,6 +919,43 @@
           this.$nextTick(() => this.loadLeagueStats(true));
         } catch (error) {
           this.capSettingsError = error?.message || 'Could not save contract codes.';
+        } finally {
+          this.savingCapSettings = false;
+        }
+      },
+      async saveSalaryCap(){
+        if (!this.capSettingsUpdateUrl || this.savingCapSettings) return;
+
+        this.savingCapSettings = true;
+        this.capSettingsMessage = '';
+        this.capSettingsError = '';
+
+        try {
+          const response = await fetch(this.capSettingsUpdateUrl, {
+            method: 'PUT',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+            body: JSON.stringify({
+              custom_cap: this.customCap,
+              salary_cap: this.salaryCapInput,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not save salary cap.');
+          }
+
+          this.customCap = Boolean(payload.customCap ?? this.customCap);
+          this.salaryCap = payload.salaryCap ?? null;
+          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.capSettingsMessage = 'Salary cap saved.';
+        } catch (error) {
+          this.capSettingsError = error?.message || 'Could not save salary cap.';
         } finally {
           this.savingCapSettings = false;
         }
@@ -1385,6 +1455,42 @@
           <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto pb-12 pr-2">
             <table class="min-w-max divide-y divide-slate-200 text-sm">
               <thead class="sticky top-0 z-20 bg-slate-50">
+                <tr class="bg-sky-50">
+                  <th
+                    scope="row"
+                    :colspan="3 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-sky-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-sky-700"
+                    x-text="customCap ? 'Total custom cap' : 'Total cap hit'"
+                  ></th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-total-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                        x-text="capMoney(capTotals[column.key])"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
+                <tr class="bg-emerald-50">
+                  <th
+                    scope="row"
+                    :colspan="3 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-emerald-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-emerald-700"
+                  >
+                    Cap space
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-space-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold ring-1"
+                        :class="Number(capSpaceTotals[column.key] || 0) < 0 ? 'text-red-700 ring-red-200' : 'text-emerald-700 ring-emerald-200'"
+                        x-text="capSpaceMoney(capSpaceTotals[column.key])"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
                 <tr>
                   <th scope="col" class="sticky left-0 z-10 w-56 bg-slate-50 px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                     <button type="button" class="inline-flex items-center gap-1 hover:text-slate-800" @click="setCapSort('player')">
@@ -1475,20 +1581,6 @@
                   <td :colspan="4 + capSeasonColumns.length + (customCap ? 1 : 0)" class="h-12 border-0 p-0"></td>
                 </tr>
               </tbody>
-              <tfoot class="border-t border-slate-200 bg-slate-50">
-                <tr>
-                  <th scope="row" :colspan="3 + (customCap ? 1 : 0)" class="px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600" x-text="customCap ? 'Total custom cap' : 'Total cap hit'"></th>
-                  <template x-for="(column, index) in capSeasonColumns" :key="`total-${column.key}`">
-                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
-                      <span
-                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
-                        x-text="capMoney(capTotals[column.key])"
-                      ></span>
-                    </td>
-                  </template>
-                  <td class="px-0 py-1" aria-hidden="true"></td>
-                </tr>
-              </tfoot>
             </table>
           </div>
         </section>
@@ -1673,6 +1765,46 @@
                 </button>
               </div>
             </form>
+          </div>
+        </section>
+        <section class="mt-4 rounded-lg border border-slate-200 bg-white">
+          <div class="border-b border-slate-200 px-4 py-3">
+            <div class="text-sm font-semibold text-slate-950">Cap settings</div>
+            <div class="mt-1 text-xs text-slate-500">Configure league-wide cap values used in the Cap tab.</div>
+          </div>
+          <div class="p-4">
+            <div class="rounded-md border border-slate-200 p-3">
+              <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                <label class="block">
+                  <span class="text-sm font-semibold text-slate-950">Team salary cap</span>
+                  <span class="mt-1 block text-xs text-slate-500">Used to calculate cap space in the Cap tab.</span>
+                  <input
+                    type="text"
+                    class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                    x-model="salaryCapInput"
+                    placeholder="95500000 or 95.5M"
+                    :disabled="savingCapSettings"
+                    @keydown.enter.prevent="saveSalaryCap()"
+                  >
+                </label>
+                <button
+                  type="button"
+                  class="inline-flex h-9 items-center justify-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                  :disabled="savingCapSettings"
+                  @click="saveSalaryCap()"
+                >
+                  <span x-show="!savingCapSettings">Save cap</span>
+                  <span x-show="savingCapSettings">Saving...</span>
+                </button>
+              </div>
+              <div class="mt-2 text-xs text-slate-500">
+                Current cap: <span class="font-semibold text-slate-700" x-text="capMoney(salaryCap)"></span>
+              </div>
+              <div class="mt-2 min-h-4 text-xs">
+                <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+                <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+              </div>
+            </div>
           </div>
         </section>
         @if ($league->platform === 'fantrax')

@@ -148,6 +148,7 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
             'customCap' => $activeLeague ? $this->customCapEnabled($activeLeague) : false,
+            'salaryCap' => $activeLeague ? $this->salaryCap($activeLeague) : null,
             'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload($activeLeague) : [],
             'fantraxContractCodeDefinitions' => $activeLeague ? $this->fantraxContractCodeDefinitions($activeLeague) : [],
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
@@ -192,6 +193,7 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
             'customCap' => $this->customCapEnabled($league),
+            'salaryCap' => $this->salaryCap($league),
             'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
             'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
@@ -229,6 +231,7 @@ final class LeagueController extends Controller
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => $this->customCapEnabled($league),
+            'salaryCap' => $this->salaryCap($league),
             'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
             'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
         ]);
@@ -385,6 +388,7 @@ final class LeagueController extends Controller
 
         $validated = $request->validate([
             'custom_cap' => ['required', 'boolean'],
+            'salary_cap' => ['nullable', 'string', 'max:32'],
             'contract_code_definitions' => ['nullable', 'array'],
             'contract_code_definitions.*.label' => ['nullable', 'string', 'max:80'],
             'contract_code_definitions.*.type' => ['nullable', 'string', 'max:80'],
@@ -395,6 +399,10 @@ final class LeagueController extends Controller
             is_array($league->settings) ? $league->settings : [],
         );
         $settings['custom_cap'] = (bool) $validated['custom_cap'];
+
+        if (array_key_exists('salary_cap', $validated)) {
+            $settings['salary_cap'] = $this->normalizeSalaryCap($validated['salary_cap']);
+        }
 
         if (array_key_exists('contract_code_definitions', $validated)) {
             $settings['fantrax_contract_code_definitions'] = $this->normalizeFantraxContractCodeDefinitions(
@@ -412,6 +420,7 @@ final class LeagueController extends Controller
                 ? 'Custom Fantrax cap enabled.'
                 : 'Custom Fantrax cap disabled.',
             'customCap' => $settings['custom_cap'],
+            'salaryCap' => $settings['salary_cap'] ?? null,
             'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
             'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
         ]);
@@ -1030,6 +1039,43 @@ final class LeagueController extends Controller
     private function customCapEnabled($league): bool
     {
         return (bool) data_get($league, 'settings.custom_cap', false);
+    }
+
+    /**
+     * Return the saved league salary cap in whole dollars.
+     */
+    private function salaryCap($league): ?int
+    {
+        $value = data_get($league, 'settings.salary_cap');
+
+        return is_numeric($value) && (int) $value > 0 ? (int) $value : null;
+    }
+
+    /**
+     * Normalize a commissioner-entered salary-cap value into whole dollars.
+     */
+    private function normalizeSalaryCap(mixed $value): ?int
+    {
+        $raw = trim((string) $value);
+
+        if ($raw === '') {
+            return null;
+        }
+
+        $isMillions = str_ends_with(strtolower($raw), 'm');
+        $normalized = preg_replace('/[^0-9.]/', '', $raw);
+
+        if ($normalized === null || $normalized === '' || ! is_numeric($normalized)) {
+            return null;
+        }
+
+        $amount = (float) $normalized;
+
+        if ($isMillions) {
+            $amount *= 1000000;
+        }
+
+        return $amount > 0 ? (int) round($amount) : null;
     }
 
     /**
