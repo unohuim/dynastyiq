@@ -74,6 +74,7 @@ Migrations remain the **sole source of truth**.
 - perspectives
 - platform_leagues
 - platform_league_roster_slots
+- platform_league_user_settings
 - platform_player_ids
 - platform_roster_memberships
 - platform_teams
@@ -2169,7 +2170,7 @@ Migrations remain the **sole source of truth**.
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
 | logo_url | string | Yes | Provider league logo URL when exposed |
-| settings | json | Yes | Provider league settings payload, including `custom_cap` and league-scoped Fantrax contract code definitions for custom salary leagues |
+| settings | json | Yes | Shared platform league settings managed by commissioner or league admin authority, including `custom_cap`, `salary_cap`, and league-scoped Fantrax contract code definitions for custom salary leagues |
 | scoring_settings | json | Yes | Provider scoring metadata, including normalized scoring type, category rows/manual mappings fallback, and raw provider scoring payload |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -2297,6 +2298,31 @@ Migrations remain the **sole source of truth**.
 - Index: `(player_id, season)` (`ix_platform_league_player_stat_player`)
 - Index: `(platform, platform_player_id)` (`ix_platform_league_player_stat_provider`)
 - Implicit (FK index): `platform_league_id`
+
+---
+
+## platform_league_user_settings
+
+**Organization-owned:** No; user-owned fallback settings for platform leagues
+**Purpose:** Per-user league settings used when a platform league has no connected commissioner or league admin authority.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| user_id | bigint | No | FK -> users.id (CASCADE) |
+| settings | json | Yes | Manager-local league settings fallback |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, user_id)` (`uq_platform_league_user_settings`)
+- Implicit (FK index): `platform_league_id`
+- Implicit (FK index): `user_id`
 
 ---
 

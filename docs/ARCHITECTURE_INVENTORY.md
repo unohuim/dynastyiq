@@ -250,6 +250,37 @@ SyncFantraxDraftStateJob::dispatch($platformLeague->id);
 
 ---
 
+### Platform League Settings Resolution
+
+**Name:** Platform League Settings Resolution
+**Type:** External Platform Settings Pattern
+**Location:**
+- `app/Services/PlatformLeagueSettingsResolver.php`
+- `app/Models/PlatformLeagueUserSetting.php`
+- `database/migrations/*_create_platform_league_user_settings_table.php`
+
+**Purpose:**
+Resolve league settings from shared commissioner/league-admin authority or manager-local fallback settings before a league admin is connected.
+
+**When to Use:**
+Reading or saving fantasy platform league settings that managers may need before commissioner authority exists.
+
+**When Not to Use:**
+Provider raw payload sync, NHL imports, or scoring category row persistence.
+
+**Public Interface:**
+- `PlatformLeagueSettingsResolver::resolve`
+- `PlatformLeagueSettingsResolver::save`
+- `PlatformLeagueSettingsResolver::canManage`
+- `platform_league_user_settings`
+
+**Example Usage:**
+```php
+$resolved = app(PlatformLeagueSettingsResolver::class)->resolve($platformLeague, $user);
+```
+
+---
+
 ### Stats Payload Pipeline
 
 **Name:** Stats Payload Pipeline

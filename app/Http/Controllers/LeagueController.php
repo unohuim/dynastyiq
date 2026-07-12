@@ -22,6 +22,7 @@ use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
 use App\Services\FantraxLogoSyncService;
+use App\Services\PlatformLeagueSettingsResolver;
 use App\Services\PlatformLeaguePlayerStatService;
 use App\Services\PlatformLeagueScoringCategoryService;
 use App\Services\SyncFantraxDraftState;
@@ -125,6 +126,9 @@ final class LeagueController extends Controller
         $leagueStatsControls = $activeLeague
             ? $this->leagueStatsPerspectiveControls($user, $activeLeague)
             : ['perspectives' => [], 'selected' => ''];
+        $leagueSettings = $activeLeague
+            ? $this->resolvedLeagueSettings($activeLeague, $user)
+            : $this->emptyLeagueSettings();
 
         return view('leagues', [
             'leagues' => $leagues,
@@ -147,10 +151,17 @@ final class LeagueController extends Controller
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
             'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
-            'customCap' => $activeLeague ? $this->customCapEnabled($activeLeague) : false,
-            'salaryCap' => $activeLeague ? $this->salaryCap($activeLeague) : null,
-            'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload($activeLeague) : [],
-            'fantraxContractCodeDefinitions' => $activeLeague ? $this->fantraxContractCodeDefinitions($activeLeague) : [],
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => $leagueSettings['can_edit'],
+            'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload(
+                $activeLeague,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ) : [],
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
             'isScoringFullyMapped' => $activeLeague ? $this->isScoringFullyMapped($activeLeague) : false,
             'canShowLeagueStats' => $activeLeague ? $this->canShowLeagueStats($activeLeague) : false,
             'canManageLeague' => $activeLeague ? $this->canManageLeague($activeLeague, $user) : false,
@@ -173,6 +184,7 @@ final class LeagueController extends Controller
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->firstOrFail();
         $leagueStatsControls = $this->leagueStatsPerspectiveControls($user, $league);
+        $leagueSettings = $this->resolvedLeagueSettings($league, $user);
 
         return view('leagues._panel', [
             'league' => $league,
@@ -192,10 +204,17 @@ final class LeagueController extends Controller
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
-            'customCap' => $this->customCapEnabled($league),
-            'salaryCap' => $this->salaryCap($league),
-            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
-            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => $leagueSettings['can_edit'],
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $league,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
@@ -221,19 +240,27 @@ final class LeagueController extends Controller
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->firstOrFail();
         $leagueStatsControls = $this->leagueStatsPerspectiveControls($user, $league);
+        $leagueSettings = $this->resolvedLeagueSettings($league, $user);
 
         return response()->json([
-            'teams' => $this->teamsPayload($league, false),
+            'teams' => $this->teamsPayload($league, false, $user),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
             'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
-            'customCap' => $this->customCapEnabled($league),
-            'salaryCap' => $this->salaryCap($league),
-            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
-            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => $leagueSettings['can_edit'],
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $league,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
         ]);
     }
 
@@ -383,8 +410,7 @@ final class LeagueController extends Controller
         $league = $leagueAccess->activeLeaguesForUser($user)
             ->where('platform_leagues.id', $leagueId)
             ->firstOrFail();
-
-        abort_unless($this->canManageLeague($league, $user), 403);
+        $settingsResolver = app(PlatformLeagueSettingsResolver::class);
 
         $validated = $request->validate([
             'custom_cap' => ['required', 'boolean'],
@@ -394,10 +420,10 @@ final class LeagueController extends Controller
             'contract_code_definitions.*.type' => ['nullable', 'string', 'max:80'],
             'contract_code_definitions.*.suffix_years_remaining' => ['nullable', 'boolean'],
         ]);
-        $settings = array_replace(
-            ['custom_cap' => false],
-            is_array($league->settings) ? $league->settings : [],
-        );
+        $resolved = $settingsResolver->resolve($league, $user);
+        abort_unless($resolved['can_edit'], 403);
+
+        $settings = $settingsResolver->mergeDefaults($resolved['settings']);
         $settings['custom_cap'] = (bool) $validated['custom_cap'];
 
         if (array_key_exists('salary_cap', $validated)) {
@@ -410,19 +436,24 @@ final class LeagueController extends Controller
             );
         }
 
-        $league->forceFill([
-            'settings' => $settings,
-        ])->save();
-        $league->refresh();
+        $resolved = $settingsResolver->save($league, $user, $settings);
+        $settings = $resolved['settings'];
 
         return response()->json([
-            'message' => $settings['custom_cap']
-                ? 'Custom Fantrax cap enabled.'
-                : 'Custom Fantrax cap disabled.',
+            'message' => $resolved['source'] === 'manager_local'
+                ? 'Personal league settings saved.'
+                : ($settings['custom_cap'] ? 'Custom Fantrax cap enabled.' : 'Custom Fantrax cap disabled.'),
             'customCap' => $settings['custom_cap'],
             'salaryCap' => $settings['salary_cap'] ?? null,
-            'fantraxContractCodes' => $this->fantraxContractCodesPayload($league),
-            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($league),
+            'leagueSettingsSource' => $resolved['source'],
+            'canEditLeagueSettings' => $resolved['can_edit'],
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $league,
+                $settings['fantrax_contract_code_definitions'] ?? [],
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                $settings['fantrax_contract_code_definitions'] ?? [],
+            ),
         ]);
     }
 
@@ -951,6 +982,7 @@ final class LeagueController extends Controller
             ->with(['teams' => static fn ($q) => $q->orderBy('name')])
             ->first();
         abort_if($activeLeague === null, 404);
+        $leagueSettings = $this->resolvedLeagueSettings($activeLeague, $user);
 
         return view('leagues', [
             'leagues' => $leagues,
@@ -971,9 +1003,17 @@ final class LeagueController extends Controller
             'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $activeLeague->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
-            'customCap' => $this->customCapEnabled($activeLeague),
-            'fantraxContractCodes' => $this->fantraxContractCodesPayload($activeLeague),
-            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitions($activeLeague),
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => $leagueSettings['can_edit'],
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $activeLeague,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($activeLeague),
             'canShowLeagueStats' => $this->canShowLeagueStats($activeLeague),
             'canManageLeague' => $this->canManageLeague($activeLeague, $user),
@@ -989,48 +1029,32 @@ final class LeagueController extends Controller
             return false;
         }
 
-        if (method_exists($user, 'hasGlobalRole') && $user->hasGlobalRole('super-admin')) {
-            return true;
-        }
+        return app(PlatformLeagueSettingsResolver::class)->canManage($league, $user);
+    }
 
-        $platformLeagueId = (int) $league->id;
+    /**
+     * Resolve current settings and edit authority for a league.
+     *
+     * @return array{settings:array<string,mixed>,source:string,can_edit:bool,has_league_admin:bool}
+     */
+    private function resolvedLeagueSettings($league, $user): array
+    {
+        return app(PlatformLeagueSettingsResolver::class)->resolve($league, $user);
+    }
 
-        $internalLeagueIds = DB::table('league_platform_league')
-            ->where('platform_league_id', $platformLeagueId)
-            ->pluck('league_id')
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-
-        if ($internalLeagueIds === []) {
-            return false;
-        }
-
-        $hasLeagueRole = DB::table('league_user_roles')
-            ->where('user_id', (int) $user->id)
-            ->whereIn('league_id', $internalLeagueIds)
-            ->whereIn('role', ['commissioner', 'co_commissioner'])
-            ->exists();
-
-        if ($hasLeagueRole) {
-            return true;
-        }
-
-        $hasProviderAssignmentFlag = DB::table('league_user_teams')
-            ->where('user_id', (int) $user->id)
-            ->where('platform_league_id', $platformLeagueId)
-            ->where(static function ($query): void {
-                $query->where('extras->is_commish', true)
-                    ->orWhere('extras->is_admin', true);
-            })
-            ->exists();
-
-        if ($hasProviderAssignmentFlag) {
-            return true;
-        }
-
-        return false;
+    /**
+     * Return an empty league settings resolution for views without an active league.
+     *
+     * @return array{settings:array<string,mixed>,source:string,can_edit:bool,has_league_admin:bool}
+     */
+    private function emptyLeagueSettings(): array
+    {
+        return [
+            'settings' => app(PlatformLeagueSettingsResolver::class)->defaults(),
+            'source' => 'league_default',
+            'can_edit' => false,
+            'has_league_admin' => false,
+        ];
     }
 
     /**
@@ -1089,9 +1113,20 @@ final class LeagueController extends Controller
             return [];
         }
 
-        return $this->normalizeFantraxContractCodeDefinitions(
+        return $this->fantraxContractCodeDefinitionsFromSettings(
             data_get($league, 'settings.fantrax_contract_code_definitions', []),
         );
+    }
+
+    /**
+     * Return normalized Fantrax contract-code definitions from a settings value.
+     *
+     * @param mixed $definitions
+     * @return array<string,array{label:string,type:string,suffix_years_remaining:bool}>
+     */
+    private function fantraxContractCodeDefinitionsFromSettings(mixed $definitions): array
+    {
+        return $this->normalizeFantraxContractCodeDefinitions(is_array($definitions) ? $definitions : []);
     }
 
     /**
@@ -1145,13 +1180,15 @@ final class LeagueController extends Controller
      *
      * @return array<int,array{prefix:string,count:int,examples:string,codes:array<int,array{code:string,count:int,years_remaining:int|null}>,definition:array<string,mixed>|null}>
      */
-    private function fantraxContractCodesPayload($league): array
+    private function fantraxContractCodesPayload($league, mixed $definitions = null): array
     {
         if (! $league || (string) ($league->platform ?? '') !== 'fantrax') {
             return [];
         }
 
-        $definitions = $this->fantraxContractCodeDefinitions($league);
+        $definitions = $definitions === null
+            ? $this->fantraxContractCodeDefinitions($league)
+            : $this->fantraxContractCodeDefinitionsFromSettings($definitions);
         $codes = DB::table('platform_roster_memberships as prm')
             ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
             ->where('pt.platform_league_id', (int) $league->id)
@@ -1283,7 +1320,7 @@ final class LeagueController extends Controller
     /**
      * Build the team, avatar, ownership, and roster payload for a league.
      */
-    private function teamsPayload($league, bool $includeFreeAgents = true): array
+    private function teamsPayload($league, bool $includeFreeAgents = true, $user = null): array
     {
         $authId = auth()->id();
         $rosterSlots = $league->rosterSlots()
@@ -1331,7 +1368,12 @@ final class LeagueController extends Controller
         $fantraxEligibility = $league->platform === 'fantrax'
             ? self::fantraxEligibilityByPlatformPlayerId($teams->pluck('roster')->flatten())
             : [];
-        $fantraxContractDefinitions = $this->fantraxContractCodeDefinitions($league);
+        $leagueSettings = $user
+            ? $this->resolvedLeagueSettings($league, $user)
+            : ['settings' => is_array($league->settings) ? $league->settings : []];
+        $fantraxContractDefinitions = $this->fantraxContractCodeDefinitionsFromSettings(
+            data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+        );
         $providerStatsByPlayerId = app(PlatformLeaguePlayerStatService::class)->statsForLeagueByPlayerId($league);
 
         $teamRows = $teams

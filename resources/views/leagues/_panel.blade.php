@@ -14,6 +14,8 @@
   $teamCountForHeader = $teamRowsForHeader->count();
   $teamCountLabel = $teamCountForHeader === 1 ? 'Team' : 'Teams';
   $canManageLeague = (bool) ($canManageLeague ?? false);
+  $canEditLeagueSettings = (bool) ($canEditLeagueSettings ?? $canManageLeague);
+  $leagueSettingsSource = (string) ($leagueSettingsSource ?? 'league_default');
   $canSyncTeamLogos = $canManageLeague && in_array($league?->platform, ['fantrax', 'yahoo'], true) && filled($teamLogoSyncUrl ?? null);
 @endphp
 
@@ -46,6 +48,8 @@
       customCap: @js((bool) ($customCap ?? false)),
       salaryCap: @js($salaryCap ?? null),
       salaryCapInput: @js(($salaryCap ?? null) !== null ? (string) $salaryCap : ''),
+      leagueSettingsSource: @js($leagueSettingsSource),
+      canEditLeagueSettings: @js($canEditLeagueSettings),
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
       fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
       activeLeagueTab: 'draft',
@@ -339,6 +343,8 @@
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.salaryCap = payload.salaryCap ?? this.salaryCap;
           this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
+          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
@@ -837,6 +843,8 @@
           this.customCap = Boolean(payload.customCap ?? next);
           this.salaryCap = payload.salaryCap ?? this.salaryCap;
           this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
+          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.capSettingsMessage = payload.message || 'Cap settings saved.';
@@ -911,6 +919,8 @@
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.salaryCap = payload.salaryCap ?? this.salaryCap;
           this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
+          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
           this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
           this.capSettingsMessage = 'Contract codes saved.';
@@ -953,6 +963,8 @@
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.salaryCap = payload.salaryCap ?? null;
           this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
+          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.capSettingsMessage = 'Salary cap saved.';
         } catch (error) {
           this.capSettingsError = error?.message || 'Could not save salary cap.';
@@ -1108,7 +1120,7 @@
       <div class="relative min-h-44 overflow-hidden bg-slate-950 text-white">
         <div class="absolute inset-0 bg-[linear-gradient(110deg,rgba(2,6,23,0.98),rgba(15,23,42,0.86)_46%,rgba(29,78,216,0.72)),radial-gradient(circle_at_78%_16%,rgba(96,165,250,0.62),transparent_25%)]" aria-hidden="true"></div>
         <div class="absolute inset-x-0 bottom-0 h-px bg-blue-300/70 shadow-[0_0_28px_rgba(96,165,250,0.92)]" aria-hidden="true"></div>
-        @if ($canManageLeague)
+        @if ($canEditLeagueSettings)
         <button
           type="button"
           class="absolute right-4 top-4 z-10 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-white/10 text-white/90 shadow-sm transition-colors hover:bg-white/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-200/70"
@@ -1602,7 +1614,7 @@
     </div>
     </div>
 
-    @if ($canManageLeague)
+    @if ($canEditLeagueSettings)
     <x-ui.slide-over show="settingsOpen" close-action="settingsOpen = false" title-id="league-options-title" max-width="max-w-2xl">
       <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
         <div>
@@ -1622,7 +1634,7 @@
       </div>
 
       <div class="flex-1 overflow-y-auto p-6">
-        @if (in_array($league->platform, ['yahoo', 'fantrax'], true))
+        @if ($canManageLeague && in_array($league->platform, ['yahoo', 'fantrax'], true))
         <section class="rounded-lg border border-slate-200 bg-white">
           <button
             type="button"
@@ -1773,6 +1785,11 @@
             <div class="mt-1 text-xs text-slate-500">Configure league-wide cap values used in the Cap tab.</div>
           </div>
           <div class="p-4">
+            <div class="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <span x-show="leagueSettingsSource === 'manager_local'">These settings are only for your DynastyIQ view until a commissioner or league admin connects.</span>
+              <span x-show="leagueSettingsSource === 'league_admin'">These settings are shared league settings managed by a commissioner or league admin.</span>
+              <span x-show="leagueSettingsSource === 'league_default'">These settings use DynastyIQ defaults until a league value is saved.</span>
+            </div>
             <div class="rounded-md border border-slate-200 p-3">
               <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <label class="block">

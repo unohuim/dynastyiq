@@ -1,0 +1,38 @@
+name: Platform League Settings Resolution
+type: External Platform Settings Pattern
+location:
+  - app/Services/PlatformLeagueSettingsResolver.php
+  - app/Models/PlatformLeagueUserSetting.php
+  - app/Models/PlatformLeague.php
+  - app/Http/Controllers/LeagueController.php
+  - database/migrations/*_create_platform_league_user_settings_table.php
+purpose: Resolve fantasy platform league settings from shared league-admin authority or manager-local fallback settings.
+when_to_use:
+  - Reading league settings for league UI.
+  - Persisting settings that may be league-admin-owned or manager-local.
+  - Determining whether a connected manager may edit fallback settings before a commissioner or league admin connects.
+when_not_to_use:
+  - Provider raw payload sync.
+  - NHL source-of-truth imports.
+  - Organization-wide role authorization.
+  - Fantasy scoring category row persistence.
+rules:
+  - Shared platform league settings remain stored on platform_leagues.settings.
+  - Manager-local fallback settings must be stored on platform_league_user_settings and scoped by platform_league_id plus user_id.
+  - Commissioner and league admin authority may edit shared platform_leagues.settings.
+  - League admin authority includes league_user_roles commissioner/co_commissioner roles and provider assignment flags that mark a connected user as commissioner or admin.
+  - When any connected commissioner or league admin authority exists for a platform league, non-admin managers must not edit league settings.
+  - When no connected commissioner or league admin authority exists, connected managers may edit only their own manager-local fallback settings.
+  - UI payloads must receive resolved settings instead of reading platform_leagues.settings directly when user-specific fallback behavior matters.
+  - Existing shared settings may be used as the read base for unmanaged leagues until a manager-local row exists, but manager writes must still target platform_league_user_settings.
+public_interface:
+  - PlatformLeagueSettingsResolver::resolve
+  - PlatformLeagueSettingsResolver::save
+  - PlatformLeagueSettingsResolver::canManage
+  - PlatformLeagueSettingsResolver::hasLeagueAdmin
+  - PlatformLeagueUserSetting
+  - PlatformLeague::userSettings
+  - platform_league_user_settings
+example_usage: |
+  $resolved = app(PlatformLeagueSettingsResolver::class)->resolve($platformLeague, $user);
+  $settings = $resolved['settings'];

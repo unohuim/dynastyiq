@@ -82,7 +82,7 @@ fantrax_label,definition,alignment_status,formula,required_schema_columns,unavai
 "Goon2","Instigator Penalties + Major Penalties + Misconduct Penalties + Fights","planned_derivation","instigator_penalties + major_penalties + misconduct_penalties + f","instigator_penalties,major_penalties,misconduct_penalties,f","","Penalty subtype counts are derivable from play-by-play."
 "Goon","Instigator Penalties + Major Penalties + Misconduct Penalties","planned_derivation","instigator_penalties + major_penalties + misconduct_penalties","instigator_penalties,major_penalties,misconduct_penalties","","Penalty subtype counts are derivable from play-by-play."
 "Gordie Howe Hat Tricks","At least 1 goal, 1 assist and 1 fight in a given game.","planned_derivation","SUM(CASE WHEN g >= 1 AND a >= 1 AND f >= 1 THEN 1 ELSE 0 END)","g,a,f","","Derive from game summaries."
-"Hat Tricks","Three or more goals in a game","planned_derivation","SUM(CASE WHEN g >= 3 THEN 1 ELSE 0 END)","g","","Derive from game summaries."
+"Hat Tricks","Three or more goals in a game","formula","htk","htk","","Stored as htk from game summaries."
 "Hat Tricks + Gordie Howe Hat Tricks","","planned_derivation","htk + ghht","htk,ghht","","Both components are derivable from game summaries."
 "Hat Tricks + Short-Handed Points","","formula","htk + pkp","htk,pkp","",""
 "Hits","","direct","h","h","",""

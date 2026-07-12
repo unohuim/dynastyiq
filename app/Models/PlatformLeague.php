@@ -93,6 +93,14 @@ class PlatformLeague extends Model
         return $this->hasMany(PlatformLeaguePlayerStat::class, 'platform_league_id');
     }
 
+    /**
+     * User-local settings used while a league has no connected league admin.
+     */
+    public function userSettings(): HasMany
+    {
+        return $this->hasMany(PlatformLeagueUserSetting::class, 'platform_league_id');
+    }
+
     public function users(): BelongsToMany
     {
         return $this->belongsToMany(
