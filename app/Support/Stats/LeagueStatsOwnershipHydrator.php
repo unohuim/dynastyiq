@@ -351,6 +351,7 @@ final class LeagueStatsOwnershipHydrator
             ->pluck('key');
         $statKeys = $headingKeys
             ->merge($goalieColumnKeys)
+            ->push('gp')
             ->map(static fn (mixed $key): string => (string) $key)
             ->reject(static fn (string $key): bool => in_array($key, [
                 '',

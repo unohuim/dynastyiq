@@ -426,7 +426,7 @@ it('hydrates rostered goalie rows already present in the payload from season sta
         'wins' => 11,
     ]);
     $payload = [
-        'headings' => [['key' => 'gp']],
+        'headings' => [['key' => 'wins']],
         'data' => [[
             'name' => 'Roster Goalie',
             'player_id' => $player->id,
