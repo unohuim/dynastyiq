@@ -1026,6 +1026,9 @@ describe('stats page prospect controls', () => {
     expect(Array.from(document.body.querySelectorAll('div'))
       .find((node) => node.textContent.trim() === 'Goalies')?.className)
       .toContain('sticky');
+    expect(Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Goalies')?.className)
+      .toContain('bg-gray-100');
     expect(document.body.textContent.indexOf('Active Skater'))
       .toBeLessThan(document.body.textContent.indexOf('Minor Skater'));
     expect(document.body.textContent.indexOf('Minor Skater'))

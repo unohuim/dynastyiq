@@ -829,18 +829,23 @@ const renderLeagueOwnerStatsDesktop = (
         ownerBody.innerHTML = "";
 
         const appendGroupSeparator = (label, tone = "blue", sectionStats = null, sectionGridCols = statGridCols, sticky = false) => {
-            const separatorClass = tone === "gray"
+            const separatorClass = sticky
                 ? "border-t bg-gray-100 text-gray-700"
-                : "border-t bg-blue-100 text-blue-700";
-            const emptySeparatorClass = tone === "gray"
+                : (tone === "gray"
+                ? "border-t bg-gray-100 text-gray-700"
+                : "border-t bg-blue-100 text-blue-700");
+            const emptySeparatorClass = sticky
                 ? "border-t bg-gray-100"
-                : "border-t bg-blue-100";
+                : (tone === "gray"
+                ? "border-t bg-gray-100"
+                : "border-t bg-blue-100");
             const leftRow = document.createElement("div");
             leftRow.className = [
                 "grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide",
                 separatorClass,
                 sticky ? "sticky top-0 z-30" : "",
             ].filter(Boolean).join(" ");
+            if (sticky) leftRow.dataset.stickyRosterHeader = "true";
             leftRow.style.gridTemplateColumns = leftGridCols;
             const leftLabel = document.createElement("div");
             leftLabel.style.gridColumn = "1 / -1";
@@ -855,6 +860,7 @@ const renderLeagueOwnerStatsDesktop = (
                 emptySeparatorClass,
                 sticky ? "sticky top-0 z-30" : "",
             ].filter(Boolean).join(" ");
+            if (sticky) statsRow.dataset.stickyRosterHeader = "true";
             statsRow.style.gridTemplateColumns = sectionGridCols;
             (sectionStats || []).forEach((heading) => {
                 const cell = document.createElement("div");
@@ -870,6 +876,7 @@ const renderLeagueOwnerStatsDesktop = (
                 emptySeparatorClass,
                 sticky ? "sticky top-0 z-30" : "",
             ].filter(Boolean).join(" ");
+            if (sticky) ownerRow.dataset.stickyRosterHeader = "true";
             ownerBody.appendChild(ownerRow);
         };
 
@@ -985,18 +992,31 @@ const renderLeagueOwnerStatsDesktop = (
     wrapper.appendChild(table);
     container.appendChild(wrapper);
 
+    const updateStickyHeaderOffset = () => {
+        const offset = `${controls.offsetHeight || 0}px`;
+        [leftHeader, statsHeader, ownerHeader].forEach((header) => {
+            header.style.top = offset;
+        });
+        [...leftBody.querySelectorAll("[data-sticky-roster-header]"), ...statsBody.querySelectorAll("[data-sticky-roster-header]"), ...ownerBody.querySelectorAll("[data-sticky-roster-header]")].forEach((header) => {
+            header.style.top = offset;
+        });
+    };
+
     syncOwnerPaneVisibility();
     statsScroll.addEventListener("scroll", updateScrollHints, { passive: true });
     window.addEventListener("resize", updateScrollHints, { passive: true });
+    window.addEventListener("resize", updateStickyHeaderOffset, { passive: true });
 
     renderRows();
     syncRosterSlotHeader();
     notifyFantasyTeamFilterChange();
+    updateStickyHeaderOffset();
     window.requestAnimationFrame(updateScrollHints);
 
     const observer = new MutationObserver(() => {
         if (!container.contains(wrapper)) {
             window.removeEventListener("resize", updateScrollHints);
+            window.removeEventListener("resize", updateStickyHeaderOffset);
             observer.disconnect();
         }
     });
