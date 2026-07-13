@@ -36,6 +36,7 @@ rules:
   - Terminal game completion or stage failure must ask the run supervisor to fill freed active game slots so the next game can start without waiting for the scheduled command.
   - Discovery runs may intentionally reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before filling active game slots.
   - Reprocessing existing rows is an explicit operator action and must not happen during ordinary discovery.
+  - Explicit reprocess runs must true-sync game-scoped source and derived stage rows by clearing stage-owned rows before reading or recalculating current provider data.
   - The PBP stage must pass core NHL source preflight before the game pipeline claims or dispatches any stage.
   - Source preflight gaps must leave provider-source details in nhl_game_source_statuses.
   - Missing shiftcharts must skip only shift-derived on-ice stages and allow validation to run for comparable core fields.

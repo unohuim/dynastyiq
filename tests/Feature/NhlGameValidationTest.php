@@ -389,9 +389,6 @@ it('returns deltas for retained skater validation fields', function (): void {
         'penalty_minutes' => 2,
         'hits' => 3,
         'power_play_goals' => 2,
-        'power_play_assists' => 1,
-        'short_handed_goals' => 1,
-        'short_handed_assists' => 1,
         'sog' => 5,
         'shifts' => 20,
         'blocks' => 2,
@@ -406,12 +403,95 @@ it('returns deltas for retained skater validation fields', function (): void {
             'penalty_minutes',
             'hits',
             'power_play_goals',
-            'power_play_assists',
-            'short_handed_goals',
-            'short_handed_assists',
             'sog',
             'shifts',
             'blocks'
+        );
+});
+
+it('tolerates the boxscore penalty-minute gap for committed match penalties', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8477149, [
+        'first_name' => 'Scott',
+        'last_name' => 'Sabourin',
+        'full_name' => 'Scott Sabourin',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8477149, ['penalty_minutes' => 5]);
+    ($this->insertSummary)(2026020001, 8477149, ['pim' => 15]);
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '83',
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '02:18',
+        'time_remaining' => '17:42',
+        'seconds_in_period' => 138,
+        'seconds_in_game' => 138,
+        'seconds_remaining' => 1062,
+        'type_desc_key' => 'penalty',
+        'desc_key' => 'match-penalty',
+        'sort_order' => 83,
+        'committed_by_player_id' => 8477149,
+        'duration' => 5,
+        'penalty_type_code' => 'MAT',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
+        ->not->toContain('penalty_minutes');
+});
+
+it('keeps ordinary penalty-minute mismatches blocking without a committed match penalty', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8477416, [
+        'first_name' => 'Oliver',
+        'last_name' => 'Bjorkstrand',
+        'full_name' => 'Oliver Bjorkstrand',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8477416, ['penalty_minutes' => 7]);
+    ($this->insertSummary)(2026020001, 8477416, ['pim' => 17]);
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '83',
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '02:18',
+        'time_remaining' => '17:42',
+        'seconds_in_period' => 138,
+        'seconds_in_game' => 138,
+        'seconds_remaining' => 1062,
+        'type_desc_key' => 'penalty',
+        'desc_key' => 'match-penalty',
+        'sort_order' => 83,
+        'committed_by_player_id' => 8477149,
+        'duration' => 5,
+        'penalty_type_code' => 'MAT',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
+        ->toContain('penalty_minutes');
+});
+
+it('does not validate skater special teams fields absent from the NHL boxscore feed', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'power_play_assists' => 2,
+        'short_handed_goals' => 1,
+        'short_handed_assists' => 1,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402);
+
+    expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
+        ->not->toContain(
+            'power_play_assists',
+            'short_handed_goals',
+            'short_handed_assists'
         );
 });
 
@@ -1021,10 +1101,6 @@ it('returns goalie-only deltas for persisted and derived goalie fields', functio
 
     expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
         ->toContain(
-            'goals',
-            'assists',
-            'points',
-            'sog',
             'goals_against',
             'saves',
             'shots_against',
@@ -1039,6 +1115,27 @@ it('returns goalie-only deltas for persisted and derived goalie fields', functio
             'pk_goals_against',
             'save_percentage'
         );
+});
+
+it('does not validate offensive goalie fields absent from the NHL boxscore goalie feed', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402, ['position' => 'G']);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'position' => 'G',
+        'goals' => 0,
+        'assists' => 0,
+        'points' => 0,
+        'sog' => 0,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'g' => 1,
+        'a' => 1,
+        'pts' => 2,
+        'sog' => 1,
+    ]);
+
+    expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
+        ->not->toContain('goals', 'assists', 'points', 'sog');
 });
 
 it('uses official goalie strength goals against instead of deriving them from shots minus saves', function (): void {
@@ -1090,6 +1187,119 @@ it('uses official goalie strength goals against instead of deriving them from sh
 
     expect(collect(app(CompareNhlPbPBoxscore::class)->compare(2026020001))->pluck('field')->all())
         ->not->toContain('pp_goals_against');
+});
+
+it('clears game-scoped source and derived rows before a reprocess PBP stage', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402);
+
+    DB::table('nhl_game_import_runs')->insert([
+        'id' => 777,
+        'action' => 'discover',
+        'mode' => 'range',
+        'status' => 'running',
+        'start_date' => '2026-10-01',
+        'end_date' => '2026-10-01',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => json_encode(['reprocess_existing' => true]),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => 777,
+        'season_id' => '20262027',
+        'game_date' => '2026-10-01',
+        'game_id' => '2026020001',
+        'game_type' => 2,
+        'import_type' => NhlImportStages::PBP,
+        'items_count' => 0,
+        'status' => 'running',
+        'discovered_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => 'stale-event',
+        'type_desc_key' => 'goal',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    ($this->insertBoxscore)(2026020001, 8478402);
+    ($this->insertSummary)(2026020001, 8478402);
+
+    $job = new class(2026020001) extends BaseNhlJob {
+        protected function stageName(): string
+        {
+            return NhlImportStages::PBP;
+        }
+
+        protected function perform(int $gameId): int
+        {
+            return DB::table('play_by_plays')->where('nhl_game_id', $gameId)->count()
+                + DB::table('nhl_boxscores')->where('nhl_game_id', $gameId)->count()
+                + DB::table('nhl_game_summaries')->where('nhl_game_id', $gameId)->count();
+        }
+    };
+
+    $job->handle(app(NhlImportOrchestrator::class), app(NhlGameImportEligibility::class));
+
+    expect(DB::table('play_by_plays')->where('nhl_game_id', 2026020001)->count())->toBe(0)
+        ->and(DB::table('nhl_boxscores')->where('nhl_game_id', 2026020001)->count())->toBe(0)
+        ->and(DB::table('nhl_game_summaries')->where('nhl_game_id', 2026020001)->count())->toBe(0)
+        ->and(DB::table('nhl_import_progress')->where('game_id', '2026020001')->where('import_type', NhlImportStages::PBP)->value('items_count'))->toBe(0);
+});
+
+it('keeps normal PBP stage processing idempotent without reprocess cleanup', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402);
+
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20262027',
+        'game_date' => '2026-10-01',
+        'game_id' => '2026020001',
+        'game_type' => 2,
+        'import_type' => NhlImportStages::PBP,
+        'items_count' => 0,
+        'status' => 'running',
+        'discovered_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => 'existing-event',
+        'type_desc_key' => 'goal',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    ($this->insertBoxscore)(2026020001, 8478402);
+    ($this->insertSummary)(2026020001, 8478402);
+
+    $job = new class(2026020001) extends BaseNhlJob {
+        protected function stageName(): string
+        {
+            return NhlImportStages::PBP;
+        }
+
+        protected function perform(int $gameId): int
+        {
+            return DB::table('play_by_plays')->where('nhl_game_id', $gameId)->count()
+                + DB::table('nhl_boxscores')->where('nhl_game_id', $gameId)->count()
+                + DB::table('nhl_game_summaries')->where('nhl_game_id', $gameId)->count();
+        }
+    };
+
+    $job->handle(app(NhlImportOrchestrator::class), app(NhlGameImportEligibility::class));
+
+    expect(DB::table('play_by_plays')->where('nhl_game_id', 2026020001)->count())->toBe(1)
+        ->and(DB::table('nhl_boxscores')->where('nhl_game_id', 2026020001)->count())->toBe(1)
+        ->and(DB::table('nhl_game_summaries')->where('nhl_game_id', 2026020001)->count())->toBe(1)
+        ->and(DB::table('nhl_import_progress')->where('game_id', '2026020001')->where('import_type', NhlImportStages::PBP)->value('items_count'))->toBe(3);
 });
 
 it('persists an approved validation when no deltas exist', function (): void {

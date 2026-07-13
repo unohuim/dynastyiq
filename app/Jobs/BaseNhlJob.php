@@ -13,6 +13,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -75,6 +76,10 @@ abstract class BaseNhlJob implements ShouldQueue
                 ));
             }
 
+            if ($orchestrator->isReprocessStage($this->gameId, $this->stageName())) {
+                $this->clearStageDataForReprocess($this->gameId, $this->stageName());
+            }
+
             $count = $this->perform($this->gameId);
 
             $orchestrator->onSuccess($this->gameId, $this->stageName(), [
@@ -128,5 +133,84 @@ abstract class BaseNhlJob implements ShouldQueue
             'nhl-import-' . $this->stageName(),
             "game-id:{$this->gameId}",
         ];
+    }
+
+    /**
+     * Clear game-scoped rows owned by the stage before an explicit reprocess sync.
+     */
+    private function clearStageDataForReprocess(int $gameId, string $stage): void
+    {
+        match ($stage) {
+            NhlImportStages::PBP => $this->clearFullGameSyncData($gameId),
+            NhlImportStages::SUMMARY => $this->clearGameSummaries($gameId),
+            NhlImportStages::BOXSCORE => $this->clearBoxscores($gameId),
+            NhlImportStages::SHIFTS => $this->clearRawShifts($gameId),
+            NhlImportStages::SHIFT_UNITS => $this->clearUnitShiftOutputs($gameId),
+            NhlImportStages::CONNECT_EVENTS => $this->clearEventUnitLinks($gameId),
+            NhlImportStages::SUM_GAME_UNITS => $this->clearUnitSummaryOutputs($gameId),
+            default => null,
+        };
+    }
+
+    /**
+     * Clear the previous game-scoped import graph before reading current provider sources.
+     */
+    private function clearFullGameSyncData(int $gameId): void
+    {
+        $this->clearEventUnitLinks($gameId);
+        $this->clearUnitSummaryOutputs($gameId);
+        DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
+        $this->clearRawShifts($gameId);
+        $this->clearGameSummaries($gameId);
+        $this->clearBoxscores($gameId);
+        DB::table('play_by_plays')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearEventUnitLinks(int $gameId): void
+    {
+        DB::table('event_unit_shifts')
+            ->whereIn('unit_shift_id', function ($query) use ($gameId): void {
+                $query->select('id')
+                    ->from('nhl_unit_shifts')
+                    ->where('nhl_game_id', $gameId);
+            })
+            ->delete();
+
+        DB::table('event_unit_shifts')
+            ->whereIn('event_id', function ($query) use ($gameId): void {
+                $query->select('id')
+                    ->from('play_by_plays')
+                    ->where('nhl_game_id', $gameId);
+            })
+            ->delete();
+    }
+
+    private function clearUnitShiftOutputs(int $gameId): void
+    {
+        $this->clearEventUnitLinks($gameId);
+        $this->clearUnitSummaryOutputs($gameId);
+        DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearUnitSummaryOutputs(int $gameId): void
+    {
+        DB::table('nhl_player_game_strength_summaries')->where('nhl_game_id', $gameId)->delete();
+        DB::table('nhl_unit_game_strength_summaries')->where('nhl_game_id', $gameId)->delete();
+        DB::table('nhl_unit_game_summaries')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearRawShifts(int $gameId): void
+    {
+        DB::table('nhl_shifts')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearGameSummaries(int $gameId): void
+    {
+        DB::table('nhl_game_summaries')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearBoxscores(int $gameId): void
+    {
+        DB::table('nhl_boxscores')->where('nhl_game_id', $gameId)->delete();
     }
 }

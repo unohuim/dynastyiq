@@ -24,8 +24,10 @@ rules:
   - Regular season and playoff game types must keep validation deltas as failed hard stops.
   - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.
   - Skater blocking validation fields are goals, assists, points, penalty minutes, hits, power-play goals, shots on goal, faceoff percentage, time on ice with tolerance, shifts, and blocked shots.
+  - Penalty-minute validation must tolerate the NHL boxscore gap for match penalties only when a player's computed summary exceeds the official boxscore by exactly ten minutes per committed match-penalty event in the imported play-by-play.
   - Skater faceoffs won, faceoffs lost, giveaways, takeaways, and missing summary records must not be blocking validation fields.
   - Goalie blocking validation fields are goals against, shots against, saves, save percentage, even-strength/power-play/shorthanded saves and shots against, derived even-strength/power-play/shorthanded goals against, penalty minutes, and time on ice with tolerance.
+  - Goalie offensive fields such as goals, assists, points, and shots on goal must not be blocking validation fields because NHL boxscore goalie rows do not provide them consistently.
   - Starter and decision metadata must not be blocking validation fields.
   - Admin Game Validations should use embedded row-level detail disclosure in the admin control panel, keyed by nhl_game_validations.id, while standalone validation routes may remain for direct access.
   - Validation type, status, and severity values must remain aligned with docs/ENUMS.md.

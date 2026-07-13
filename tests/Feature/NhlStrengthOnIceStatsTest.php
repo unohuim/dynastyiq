@@ -768,8 +768,11 @@ it('uses official boxscore goalie decisions before primary goalie fallback', fun
             'saves' => 10,
             'goalsAgainst' => 0,
             'evenStrengthShotsAgainst' => '10/10',
+            'evenStrengthGoalsAgainst' => 0,
             'powerPlayShotsAgainst' => '0/0',
+            'powerPlayGoalsAgainst' => 0,
             'shorthandedShotsAgainst' => '0/0',
+            'shorthandedGoalsAgainst' => 0,
             'starter' => false,
             'decision' => 'W',
         ],
@@ -780,8 +783,11 @@ it('uses official boxscore goalie decisions before primary goalie fallback', fun
             'saves' => 18,
             'goalsAgainst' => 2,
             'evenStrengthShotsAgainst' => '18/20',
+            'evenStrengthGoalsAgainst' => 1,
             'powerPlayShotsAgainst' => '0/0',
+            'powerPlayGoalsAgainst' => 1,
             'shorthandedShotsAgainst' => '0/0',
+            'shorthandedGoalsAgainst' => 0,
             'starter' => true,
             'decision' => 'ND',
         ],
@@ -801,7 +807,10 @@ it('uses official boxscore goalie decisions before primary goalie fallback', fun
         ->first();
 
     expect($reliefWinner?->goalie_decision)->toBe('W')
-        ->and($starter?->goalie_decision)->toBe('ND');
+        ->and($starter?->goalie_decision)->toBe('ND')
+        ->and((int) $starter?->evga)->toBe(1)
+        ->and((int) $starter?->ppga)->toBe(1)
+        ->and((int) $starter?->pkga)->toBe(0);
 });
 
 it('exposes native advanced skater aliases and perspective position buttons in stats payload', function (): void {

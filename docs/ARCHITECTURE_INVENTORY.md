@@ -764,7 +764,7 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 
 **Purpose:**
 Move NHL game imports through explicit progress stages while tracking status, dependencies, failures, and stale running jobs.
-Discovery runs may explicitly reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before normal slot-based processing resumes.
+Discovery runs may explicitly reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before normal slot-based processing resumes. Explicit reprocess runs true-sync game-scoped source and derived stage rows by clearing stage-owned rows before current provider data is read or recalculated.
 
 **When to Use:**
 Scheduling or executing game-level NHL imports that must run in dependency order.
@@ -835,7 +835,7 @@ php artisan nhl:discover --date=2026-01-15
 - `app/Services/SumNhlSeasonStats.php`
 
 **Purpose:**
-Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
+Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Explicit reprocess runs delete game-scoped stage-owned rows before importing or recalculating so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
 
 **When to Use:**
 Implementing or changing a single NHL import stage.
@@ -1048,7 +1048,8 @@ $result = app(NhlGameSourcePreflight::class)->check($gameId);
 - `database/migrations/2026_06_29_010000_create_nhl_game_validations_table.php`
 
 **Purpose:**
-Persist an auditable validation result comparing computed NHL player game summaries against official NHL boxscore totals.
+Persist an auditable validation result comparing computed NHL player game summaries against official NHL boxscore totals. Goalie offensive fields are not blocking validation fields because NHL boxscore goalie rows do not consistently provide goals, assists, points, or shots on goal.
+Penalty-minute validation tolerates the NHL boxscore gap for match penalties only when a player's computed summary exceeds the official boxscore by exactly ten minutes per committed match-penalty event in imported play-by-play.
 
 **When to Use:**
 Validating completed NHL game summaries, persisting field-level deltas, or accepting reviewed exceptions.
@@ -1996,7 +1997,7 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel.
+Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel. Processed discovery run cards must not display date-window progress after their stage rows are reassigned to a newer reprocess run.
 
 **When to Use:**
 Admin-triggered NHL game discovery, discovery-row processing actions, season stat rollups, queued nhl:empty --games resets, and recent orchestration progress display.

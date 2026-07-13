@@ -493,6 +493,79 @@ it('returns NHL game import status with pipeline progress counts', function () {
         ->assertJsonPath('processable.date_count', 1);
 });
 
+it('does not show reassigned reprocess progress on older processed discovery runs', function () {
+    $now = now();
+    $oldRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2025-10-11',
+        'end_date' => '2025-10-01',
+        'date_count' => 11,
+        'queued_jobs' => 11,
+        'payload' => [
+            'start' => '2025-10-11',
+            'end' => '2025-10-01',
+            'processing_started_at' => '2026-07-13T18:00:00+00:00',
+        ],
+        'created_at' => $now->copy()->subMinute(),
+        'updated_at' => $now->copy()->subMinute(),
+    ]);
+    $reprocessRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2025-10-11',
+        'end_date' => '2025-10-01',
+        'date_count' => 11,
+        'queued_jobs' => 11,
+        'payload' => [
+            'start' => '2025-10-11',
+            'end' => '2025-10-01',
+            'processing_started_at' => '2026-07-13T18:05:00+00:00',
+            'reprocess_existing' => true,
+        ],
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    foreach ([
+        ['type' => NhlImportStages::PBP, 'status' => 'completed'],
+        ['type' => NhlImportStages::SUMMARY, 'status' => 'running'],
+        ['type' => NhlImportStages::BOXSCORE, 'status' => 'scheduled'],
+    ] as $row) {
+        DB::table('nhl_import_progress')->insert([
+            'run_id' => $reprocessRun->id,
+            'season_id' => '20252026',
+            'game_date' => '2025-10-01',
+            'game_id' => '2025020001',
+            'game_type' => 2,
+            'import_type' => $row['type'],
+            'status' => $row['status'],
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    $runs = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->json('runs');
+
+    $oldPayload = collect($runs)->firstWhere('id', $oldRun->id);
+    $reprocessPayload = collect($runs)->firstWhere('id', $reprocessRun->id);
+
+    expect($oldPayload['status'])->toBe(NhlGameImportRun::STATUS_COMPLETED)
+        ->and($oldPayload['progress']['total_stage_rows'])->toBe(0)
+        ->and($oldPayload['progress']['running_stage_rows'])->toBe(0)
+        ->and($oldPayload['games'])->toBe([])
+        ->and($reprocessPayload['status'])->toBe(NhlGameImportRun::STATUS_RUNNING)
+        ->and($reprocessPayload['progress']['total_stage_rows'])->toBe(3)
+        ->and($reprocessPayload['progress']['completed_stage_rows'])->toBe(1)
+        ->and($reprocessPayload['progress']['running_stage_rows'])->toBe(1)
+        ->and($reprocessPayload['progress']['scheduled_stage_rows'])->toBe(1);
+});
+
 it('returns discovered NHL game import runs as completed once pipeline rows exist', function () {
     $now = now();
     $run = NhlGameImportRun::create([

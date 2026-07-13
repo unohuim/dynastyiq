@@ -102,6 +102,31 @@ class NhlImportOrchestrator
         return $this->repo->isRunning($gameId, $type, $runId);
     }
 
+    /** Determine whether a running stage belongs to an explicit reprocess run. */
+    public function isReprocessStage(int $gameId, string $type): bool
+    {
+        $payload = DB::table('nhl_import_progress as progress')
+            ->join('nhl_game_import_runs as runs', 'runs.id', '=', 'progress.run_id')
+            ->where('progress.game_id', $gameId)
+            ->where('progress.import_type', $type)
+            ->where('progress.status', 'running')
+            ->value('runs.payload');
+
+        if ($payload === null) {
+            return false;
+        }
+
+        if (is_string($payload)) {
+            $payload = json_decode($payload, true) ?: [];
+        }
+
+        if (! is_array($payload)) {
+            return false;
+        }
+
+        return filter_var($payload['reprocess_existing'] ?? false, FILTER_VALIDATE_BOOL);
+    }
+
     /** Jobs call this on success; centralizes status/metrics and advancement. */
     public function onSuccess(int $gameId, string $type, array $meta = []): void
     {

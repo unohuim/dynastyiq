@@ -616,7 +616,7 @@ class NhlGameImportController extends Controller
      */
     private function gamesForRun(NhlGameImportRun $run): array
     {
-        $rows = DB::table('nhl_import_progress as progress')
+        $rows = $this->progressQueryForRun($run, 'progress')
             ->select([
                 'progress.game_id',
                 'progress.game_date',
@@ -624,14 +624,6 @@ class NhlGameImportController extends Controller
                 'progress.status',
                 'progress.last_error',
             ])
-            ->when(
-                $this->hasRunScopedProgress($run),
-                fn ($query) => $query->where('progress.run_id', $run->id),
-                fn ($query) => $query->whereBetween(
-                    'progress.game_date',
-                    [$run->end_date->toDateString(), $run->start_date->toDateString()]
-                )
-            )
             ->orderBy('progress.game_date')
             ->orderBy('progress.game_id')
             ->orderBy('progress.import_type')
@@ -707,15 +699,24 @@ class NhlGameImportController extends Controller
             ->exists();
     }
 
-    private function progressQueryForRun(NhlGameImportRun $run)
+    private function progressQueryForRun(NhlGameImportRun $run, ?string $alias = null)
     {
-        $query = DB::table('nhl_import_progress');
+        $table = $alias ? "nhl_import_progress as {$alias}" : 'nhl_import_progress';
+        $query = DB::table($table);
+        $prefix = $alias ? "{$alias}." : '';
 
         if ($this->hasRunScopedProgress($run)) {
-            return $query->where('run_id', $run->id);
+            return $query->where("{$prefix}run_id", $run->id);
         }
 
-        return $query->whereBetween('game_date', [
+        if (
+            $run->action === NhlGameImportRun::ACTION_DISCOVER
+            && (bool) (($run->payload ?? [])['processing_started_at'] ?? false)
+        ) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->whereBetween("{$prefix}game_date", [
             $run->end_date->toDateString(),
             $run->start_date->toDateString(),
         ]);
@@ -846,6 +847,10 @@ class NhlGameImportController extends Controller
         $processingStarted = (bool) (($run->payload ?? [])['processing_started_at'] ?? false);
 
         if ($run->action === NhlGameImportRun::ACTION_DISCOVER && ! $processingStarted && $total > 0) {
+            return NhlGameImportRun::STATUS_COMPLETED;
+        }
+
+        if ($run->action === NhlGameImportRun::ACTION_DISCOVER && $processingStarted && $total === 0) {
             return NhlGameImportRun::STATUS_COMPLETED;
         }
 

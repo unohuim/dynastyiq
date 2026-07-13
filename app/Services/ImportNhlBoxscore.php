@@ -258,6 +258,9 @@ class ImportNhlBoxscore
             [$evSaves, $evShotsAgainst] = $this->parseSaveShots($goalie['evenStrengthShotsAgainst'] ?? '0/0');
             [$ppSaves, $ppShotsAgainst] = $this->parseSaveShots($goalie['powerPlayShotsAgainst'] ?? '0/0');
             [$pkSaves, $pkShotsAgainst] = $this->parseSaveShots($goalie['shorthandedShotsAgainst'] ?? '0/0');
+            $evGoalsAgainst = (int) ($goalie['evenStrengthGoalsAgainst'] ?? 0);
+            $ppGoalsAgainst = (int) ($goalie['powerPlayGoalsAgainst'] ?? 0);
+            $pkGoalsAgainst = (int) ($goalie['shorthandedGoalsAgainst'] ?? 0);
             $savePercentage = $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : 0.0;
             $goalsAgainstAverage = $toi > 0 ? round(($goalsAgainst * 3600) / $toi, 3) : 0.0;
             $started = $hasStarterFlag
@@ -288,10 +291,13 @@ class ImportNhlBoxscore
                     'ga' => $goalsAgainst,
                     'evsa' => $evShotsAgainst,
                     'evsv' => $evSaves,
+                    'evga' => $evGoalsAgainst,
                     'ppsa' => $ppShotsAgainst,
                     'ppsv' => $ppSaves,
+                    'ppga' => $ppGoalsAgainst,
                     'pksa' => $pkShotsAgainst,
                     'pksv' => $pkSaves,
+                    'pkga' => $pkGoalsAgainst,
                 ]
             );
         }

@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\NhlBoxscore;
 use App\Models\NhlGameSummary;
 use App\Models\NhlGameValidationDelta;
+use App\Models\PlayByPlay;
 
 /**
  * Compares computed NHL game summaries against official NHL boxscore totals.
@@ -32,19 +33,12 @@ class CompareNhlPbPBoxscore
         'hits' => 'h',
         'blocks' => 'b',
         'power_play_goals' => 'ppg',
-        'power_play_assists' => 'ppa',
-        'short_handed_goals' => 'pkg',
-        'short_handed_assists' => 'pka',
         'plus_minus' => 'plus_minus',
         'shifts' => 'shifts',
     ];
 
     /** @var array<string,string> */
     private const GOALIE_EXACT_FIELD_MAP = [
-        'goals' => 'g',
-        'assists' => 'a',
-        'points' => 'pts',
-        'sog' => 'sog',
         'penalty_minutes' => 'pim',
         'goals_against' => 'ga',
         'saves' => 'sv',
@@ -102,6 +96,10 @@ class CompareNhlPbPBoxscore
                 $summaryValue = $this->numericValue($summary->{$summaryField});
 
                 if ($boxscoreValue !== $summaryValue) {
+                    if ($this->isToleratedMatchPenaltyPimDelta($gameId, $playerId, $boxscoreField, $boxscoreValue, $summaryValue)) {
+                        continue;
+                    }
+
                     $deltas[] = $this->delta(
                         $playerId,
                         $boxscoreField,
@@ -245,6 +243,40 @@ class CompareNhlPbPBoxscore
             $summaryValue,
             $summaryValue - $boxscoreValue
         );
+    }
+
+    /**
+     * NHL boxscores omit the extra ten minutes that play-by-play assigns to match penalties.
+     */
+    private function isToleratedMatchPenaltyPimDelta(
+        int $gameId,
+        ?int $playerId,
+        string $boxscoreField,
+        int|float $boxscoreValue,
+        int|float $summaryValue
+    ): bool {
+        if ($boxscoreField !== 'penalty_minutes' || $playerId === null) {
+            return false;
+        }
+
+        $delta = $summaryValue - $boxscoreValue;
+
+        if ($delta <= 0 || fmod((float) $delta, 10.0) !== 0.0) {
+            return false;
+        }
+
+        $matchPenalties = PlayByPlay::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('type_desc_key', 'penalty')
+            ->where('committed_by_player_id', $playerId)
+            ->where(function ($query): void {
+                $query
+                    ->whereRaw("UPPER(COALESCE(penalty_type_code, '')) = 'MAT'")
+                    ->orWhere('desc_key', 'match-penalty');
+            })
+            ->count();
+
+        return (float) $delta === (float) ($matchPenalties * 10);
     }
 
     /**
