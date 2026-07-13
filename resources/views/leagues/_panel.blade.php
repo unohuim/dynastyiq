@@ -1254,7 +1254,7 @@
             </div>
 
             {{-- Combobox --}}
-            <div class="relative" @click.stop>
+            <div class="relative z-50" @click.stop>
               <label for="team-combobox" class="block text-sm font-medium text-slate-900 sr-only">Team</label>
               <div class="flex items-center gap-2">
                 <img x-show="current?.owner_avatar_url" :src="current?.owner_avatar_url" alt=""
@@ -1286,7 +1286,7 @@
 
                   {{-- Options --}}
                   <div x-show="teamListOpen" @click.outside="teamListOpen = false" x-transition
-                       class="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg outline outline-1 outline-black/5">
+                       class="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg outline outline-1 outline-black/5">
                     <template x-for="o in filtered" :key="o.idx">
                       <button type="button"
                               class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-slate-900 hover:bg-indigo-600 hover:text-white"

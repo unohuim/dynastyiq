@@ -659,7 +659,7 @@ export class StatsPageShell {
 
   renderDesktopControls() {
     const outer = createElement('div', 'px-4');
-    const panel = createElement('div', 'relative z-30 overflow-visible rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2');
+    const panel = createElement('div', 'relative z-50 overflow-visible rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2');
     const row = createElement('div', 'flex flex-wrap justify-between items-center gap-3 p-3');
 
     row.appendChild(this.renderSelect(this.perspectiveOptions(), this.state.perspective, (value) => this.setPerspective(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
@@ -701,8 +701,8 @@ export class StatsPageShell {
   }
 
   renderSelect(options, selectedValue, onChange, className) {
-    const wrapper = createElement('div', '-mr-px grid grow grid-cols-1');
-    const select = createElement('select', className);
+    const wrapper = createElement('div', 'relative z-50 -mr-px grid grow grid-cols-1');
+    const select = createElement('select', `${className} appearance-none`);
     select.value = selectedValue;
     select.addEventListener('change', (event) => onChange(event.target.value));
 
@@ -714,7 +714,20 @@ export class StatsPageShell {
     });
 
     select.value = selectedValue;
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('viewBox', '0 0 20 20');
+    icon.setAttribute('fill', 'currentColor');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.classList.add('pointer-events-none', 'col-start-1', 'row-start-1', 'mr-3', 'size-4', 'self-center', 'justify-self-end', 'text-gray-400');
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('fill-rule', 'evenodd');
+    path.setAttribute('clip-rule', 'evenodd');
+    path.setAttribute('d', 'M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z');
+    icon.appendChild(path);
+
     wrapper.appendChild(select);
+    wrapper.appendChild(icon);
 
     return wrapper;
   }

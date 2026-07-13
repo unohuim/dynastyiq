@@ -127,6 +127,40 @@ const numericStatValue = (value) => {
     return null;
 };
 
+const buildSelectChevron = () => {
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 20 20");
+    icon.setAttribute("fill", "currentColor");
+    icon.setAttribute("aria-hidden", "true");
+    icon.classList.add("pointer-events-none", "col-start-1", "row-start-1", "mr-3", "size-4", "self-center", "justify-self-end", "text-gray-400");
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill-rule", "evenodd");
+    path.setAttribute("clip-rule", "evenodd");
+    path.setAttribute("d", "M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z");
+    icon.appendChild(path);
+
+    return icon;
+};
+
+const wrapNativeSelect = (select) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "relative z-50 grid grid-cols-1";
+    select.classList.add("appearance-none", "col-start-1", "row-start-1", "pr-9");
+    wrapper.appendChild(select);
+    wrapper.appendChild(buildSelectChevron());
+
+    return wrapper;
+};
+
+const buildDropdownButtonChevron = () => {
+    const icon = buildSelectChevron();
+    icon.className.baseVal = "";
+    icon.classList.add("pointer-events-none", "ml-auto", "size-4", "shrink-0", "text-gray-400");
+
+    return icon;
+};
+
 const isRankableStatKey = (key) => {
     const normalized = String(key ?? "").toLowerCase();
 
@@ -483,7 +517,7 @@ const renderLeagueOwnerStatsDesktop = (
     wrapper.className = "w-full overflow-visible bg-white shadow rounded-lg border border-gray-200";
 
     const controls = document.createElement("div");
-    controls.className = "sticky top-0 z-20 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+    controls.className = "sticky top-0 z-50 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
 
     const nameInput = document.createElement("input");
     nameInput.type = "text";
@@ -495,7 +529,7 @@ const renderLeagueOwnerStatsDesktop = (
     controls.appendChild(nameInput);
 
     const fantasyTeamPicker = document.createElement("div");
-    fantasyTeamPicker.className = "relative w-56";
+    fantasyTeamPicker.className = "relative z-50 w-56";
     const fantasyTeamButton = document.createElement("button");
     fantasyTeamButton.type = "button";
     fantasyTeamButton.className =
@@ -516,10 +550,11 @@ const renderLeagueOwnerStatsDesktop = (
             ? "Free Agents"
             : (selected?.name || "All Players");
         fantasyTeamButton.appendChild(label);
+        fantasyTeamButton.appendChild(buildDropdownButtonChevron());
     };
     const fantasyTeamMenu = document.createElement("div");
     fantasyTeamMenu.className =
-        "absolute left-0 top-11 z-40 hidden max-h-72 w-full overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg";
+        "absolute left-0 top-11 z-50 hidden max-h-72 w-full overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg";
     const addFantasyTeamOption = (team) => {
         const option = document.createElement("button");
         option.type = "button";
@@ -596,7 +631,7 @@ const renderLeagueOwnerStatsDesktop = (
             leagueSelect.appendChild(opt);
         });
         leagueSelect.value = state.leagueFilter;
-        controls.appendChild(leagueSelect);
+        controls.appendChild(wrapNativeSelect(leagueSelect));
     }
 
     const headerTable = document.createElement("div");
@@ -1223,7 +1258,7 @@ export function renderStatsDesktop(
     // Controls bar (sticky)
     const controls = document.createElement("div");
     controls.className =
-        "sticky top-0 z-10 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+        "sticky top-0 z-50 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
 
     // Name filter input
     const nameInput = document.createElement("input");
@@ -1251,7 +1286,7 @@ export function renderStatsDesktop(
         teamSelect.appendChild(opt);
     });
     teamSelect.value = state.teamFilter;
-    controls.appendChild(teamSelect);
+    controls.appendChild(wrapNativeSelect(teamSelect));
 
     let leagueSelect = null;
     if (leagues.length > 0) {
@@ -1270,7 +1305,7 @@ export function renderStatsDesktop(
             leagueSelect.appendChild(opt);
         });
         leagueSelect.value = state.leagueFilter;
-        controls.appendChild(leagueSelect);
+        controls.appendChild(wrapNativeSelect(leagueSelect));
     }
 
     // Columns header (original height, sticky under controls)
