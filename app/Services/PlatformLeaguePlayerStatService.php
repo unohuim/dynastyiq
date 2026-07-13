@@ -170,6 +170,7 @@ final class PlatformLeaguePlayerStatService
                 'age',
                 'avatar_url',
                 'head_shot_url',
+                'gp',
                 'contract_value',
                 'contract_value_num',
                 'contract_last_year',

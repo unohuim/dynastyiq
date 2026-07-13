@@ -6,9 +6,11 @@ use App\Models\IntegrationSecret;
 use App\Models\NhlSeasonStat;
 use App\Models\Perspective;
 use App\Models\PlatformLeague;
+use App\Models\PlatformLeaguePlayerStat;
 use App\Models\PlatformTeam;
 use App\Models\Player;
 use App\Models\User;
+use App\Services\PlatformLeaguePlayerStatService;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
@@ -454,6 +456,57 @@ it('hydrates rostered goalie rows already present in the payload from season sta
         ->and($hydrated['data'][0]['wins'])->toBe(11)
         ->and($hydrated['data'][0]['stats']['gp'])->toBe(29)
         ->and($hydrated['data'][0]['stats']['wins'])->toBe(11);
+});
+
+it('preserves payload games played when overlaying provider league stats', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'league-provider-stats',
+        'name' => 'Provider Stats League',
+        'sport' => 'hockey',
+    ]);
+    $player = Player::create([
+        'nhl_id' => 9901,
+        'first_name' => 'Goalie',
+        'last_name' => 'Overlay',
+        'full_name' => 'Goalie Overlay',
+        'dob' => '2000-01-01',
+        'position' => 'G',
+        'pos_type' => 'G',
+        'team_abbrev' => 'TOR',
+        'is_goalie' => true,
+    ]);
+    PlatformLeaguePlayerStat::create([
+        'platform_league_id' => $league->id,
+        'player_id' => $player->id,
+        'platform' => 'fantrax',
+        'provider_identity_key' => 'fantrax:league-provider-stats:20252026:season:goalie-overlay',
+        'platform_player_id' => 'goalie-overlay',
+        'season' => '20252026',
+        'scope' => 'season',
+        'stats' => ['gp' => 0, 'wins' => 12],
+        'raw_payload' => [],
+        'synced_at' => now(),
+    ]);
+    $payload = [
+        'headings' => [['key' => 'gp'], ['key' => 'wins']],
+        'data' => [[
+            'player_id' => $player->id,
+            'nhl_player_id' => $player->nhl_id,
+            'pos_type' => 'G',
+            'is_goalie' => true,
+            'gp' => 29,
+            'wins' => 0,
+        ]],
+        'settings' => ['defaultSort' => 'wins', 'defaultSortDirection' => 'desc'],
+        'meta' => ['season' => '20252026'],
+    ];
+
+    $overlaid = app(PlatformLeaguePlayerStatService::class)->overlayStatsPayload($payload, $league, '20252026');
+
+    expect($overlaid['data'][0]['gp'])->toBe(29)
+        ->and($overlaid['data'][0]['wins'])->toBe(12)
+        ->and($overlaid['meta']['statsSource'])->toBe('provider');
 });
 
 it('reuses cached ownership maps within the ownership cache window', function (): void {
