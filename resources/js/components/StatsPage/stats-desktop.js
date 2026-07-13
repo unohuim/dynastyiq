@@ -150,7 +150,7 @@ const valueNeedsHydratedRowFallback = (key) => {
 const statValueAliases = (key) => {
     const normalized = String(key ?? "").toLowerCase();
 
-    if (normalized === "gp") return ["gp", "games_played"];
+    if (normalized === "gp") return ["gp", "games_played", "gamesPlayed", "games"];
 
     return [key];
 };
@@ -170,11 +170,11 @@ const statValueWithHydratedRowFallback = (row, key) => {
     const nestedValue = firstStatValueForKeys(row?.stats, keys);
     const rowValue = firstStatValueForKeys(row, keys);
 
-    if (
-        valueNeedsHydratedRowFallback(key)
-        && !hasMeaningfulStatValue(nestedValue)
-    ) {
-        return firstStatValueForKeys(row, keys, true) ?? rowValue ?? nestedValue;
+    if (valueNeedsHydratedRowFallback(key)) {
+        return firstStatValueForKeys(row, keys, true)
+            ?? firstStatValueForKeys(row?.stats, keys, true)
+            ?? rowValue
+            ?? nestedValue;
     }
 
     return nestedValue ?? rowValue;
