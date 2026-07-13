@@ -428,7 +428,7 @@ const renderLeagueOwnerStatsDesktop = (
     container.innerHTML = "";
 
     const wrapper = document.createElement("div");
-    wrapper.className = "w-full overflow-hidden bg-white shadow rounded-lg border border-gray-200";
+    wrapper.className = "w-full overflow-visible bg-white shadow rounded-lg border border-gray-200";
 
     const controls = document.createElement("div");
     controls.className = "sticky top-0 z-20 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
@@ -547,13 +547,18 @@ const renderLeagueOwnerStatsDesktop = (
         controls.appendChild(leagueSelect);
     }
 
+    const headerTable = document.createElement("div");
+    headerTable.className = "sticky top-0 z-30 grid min-w-0";
     const table = document.createElement("div");
     table.className = "grid min-w-0";
     const syncOwnerPaneVisibility = () => {
-        table.style.gridTemplateColumns = hasSelectedFantasyTeam()
+        const columns = hasSelectedFantasyTeam()
             ? "minmax(0, 418px) minmax(0, 1fr)"
             : "minmax(0, 418px) minmax(0, 1fr) 190px";
+        table.style.gridTemplateColumns = columns;
+        headerTable.style.gridTemplateColumns = columns;
         ownerPane.classList.toggle("hidden", hasSelectedFantasyTeam());
+        ownerHeader.classList.toggle("hidden", hasSelectedFantasyTeam());
     };
 
     const leftPane = document.createElement("div");
@@ -584,20 +589,28 @@ const renderLeagueOwnerStatsDesktop = (
     `;
 
     const leftHeader = document.createElement("div");
-    leftHeader.className = "sticky top-0 z-10 grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+    leftHeader.className = "grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
     leftHeader.style.gridTemplateColumns = leftGridCols;
 
+    const statsHeaderViewport = document.createElement("div");
+    statsHeaderViewport.className = "min-w-0 overflow-hidden bg-gray-100";
+    const statsHeaderPane = document.createElement("div");
+    statsHeaderPane.className = "min-w-max";
     const statsHeader = document.createElement("div");
-    statsHeader.className = "sticky top-0 z-10 grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+    statsHeader.className = "grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
     statsHeader.style.gridTemplateColumns = statGridCols;
 
     const ownerHeader = document.createElement("div");
-    ownerHeader.className = "sticky top-0 z-10 flex h-9 items-center justify-end bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
+    ownerHeader.className = "flex h-9 items-center justify-end bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
 
     const leftBody = document.createElement("div");
     const statsBody = document.createElement("div");
     const ownerBody = document.createElement("div");
     const typeHeaderCells = [];
+
+    const syncHeaderHorizontalScroll = () => {
+        statsHeaderPane.style.transform = `translateX(${-statsScroll.scrollLeft}px)`;
+    };
 
     const sortableHeader = (heading, className) => {
         const key = heading?.key;
@@ -659,12 +672,22 @@ const renderLeagueOwnerStatsDesktop = (
             "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
         ));
     });
-    visibleStats().forEach((heading) => {
-        statsHeader.appendChild(sortableHeader(
-            heading,
-            "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
-        ));
-    });
+    let activeStatsHeaderGroup = "";
+    const renderStatsHeader = (headerStats, headerGridCols, group = "") => {
+        if (activeStatsHeaderGroup === group) return;
+
+        activeStatsHeaderGroup = group;
+        statsHeader.innerHTML = "";
+        statsHeader.style.gridTemplateColumns = headerGridCols;
+        headerStats.forEach((heading) => {
+            statsHeader.appendChild(sortableHeader(
+                heading,
+                "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
+            ));
+        });
+        syncHeaderHorizontalScroll();
+    };
+    renderStatsHeader(visibleStats(), statGridCols, shouldSplitSelectedTeamRoster() ? "skater" : "default");
 
     const buildPosShape = (raw, rawType) => {
         const v = displayPosition(raw);
@@ -827,25 +850,17 @@ const renderLeagueOwnerStatsDesktop = (
         leftBody.innerHTML = "";
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
+        let firstGoalieRow = null;
 
-        const appendGroupSeparator = (label, tone = "blue", sectionStats = null, sectionGridCols = statGridCols, sticky = false) => {
-            const separatorClass = sticky
+        const appendGroupSeparator = (label, tone = "blue") => {
+            const separatorClass = tone === "gray"
                 ? "border-t bg-gray-100 text-gray-700"
-                : (tone === "gray"
-                ? "border-t bg-gray-100 text-gray-700"
-                : "border-t bg-blue-100 text-blue-700");
-            const emptySeparatorClass = sticky
+                : "border-t bg-blue-100 text-blue-700";
+            const emptySeparatorClass = tone === "gray"
                 ? "border-t bg-gray-100"
-                : (tone === "gray"
-                ? "border-t bg-gray-100"
-                : "border-t bg-blue-100");
+                : "border-t bg-blue-100";
             const leftRow = document.createElement("div");
-            leftRow.className = [
-                "grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide",
-                separatorClass,
-                sticky ? "sticky top-0 z-30" : "",
-            ].filter(Boolean).join(" ");
-            if (sticky) leftRow.dataset.stickyRosterHeader = "true";
+            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${separatorClass}`;
             leftRow.style.gridTemplateColumns = leftGridCols;
             const leftLabel = document.createElement("div");
             leftLabel.style.gridColumn = "1 / -1";
@@ -854,34 +869,17 @@ const renderLeagueOwnerStatsDesktop = (
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = [
-                "grid h-8 px-4 py-1.5",
-                sectionStats ? "text-[11px] font-semibold uppercase tracking-wide text-gray-700" : "",
-                emptySeparatorClass,
-                sticky ? "sticky top-0 z-30" : "",
-            ].filter(Boolean).join(" ");
-            if (sticky) statsRow.dataset.stickyRosterHeader = "true";
-            statsRow.style.gridTemplateColumns = sectionGridCols;
-            (sectionStats || []).forEach((heading) => {
-                const cell = document.createElement("div");
-                cell.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
-                cell.textContent = heading?.label ?? "";
-                statsRow.appendChild(cell);
-            });
+            statsRow.className = `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
+            statsRow.style.gridTemplateColumns = statGridCols;
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
-            ownerRow.className = [
-                "h-8 px-4 py-1.5",
-                emptySeparatorClass,
-                sticky ? "sticky top-0 z-30" : "",
-            ].filter(Boolean).join(" ");
-            if (sticky) ownerRow.dataset.stickyRosterHeader = "true";
+            ownerRow.className = `h-8 px-4 py-1.5 ${emptySeparatorClass}`;
             ownerBody.appendChild(ownerRow);
         };
 
         const rows = applyFilters(data);
-        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols) => {
+        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols, rowGroup = "") => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
@@ -911,6 +909,9 @@ const renderLeagueOwnerStatsDesktop = (
             }
 
             ownerBody.appendChild(ownerRow);
+            if (rowGroup === "goalie" && firstGoalieRow === null) {
+                firstGoalieRow = leftRow;
+            }
         };
 
         if (isDefaultProspectSort()) {
@@ -931,9 +932,8 @@ const renderLeagueOwnerStatsDesktop = (
                 rowIndex += 1;
             });
 
-            appendGroupSeparator("Goalies", "blue", goalieStats, goalieStatGridCols, true);
             goalieRows.forEach((row) => {
-                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols);
+                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols, "goalie");
                 rowIndex += 1;
             });
         } else {
@@ -951,6 +951,27 @@ const renderLeagueOwnerStatsDesktop = (
             });
         }
 
+        const updateActiveStatsHeader = () => {
+            if (!shouldSplitSelectedTeamRoster() || !firstGoalieRow) {
+                renderStatsHeader(visibleStats(), statGridCols, shouldSplitSelectedTeamRoster() ? "skater" : "default");
+                return;
+            }
+
+            const headerBottom = statsHeader.getBoundingClientRect().bottom;
+            const goalieTop = firstGoalieRow.getBoundingClientRect().top;
+            if (goalieTop <= headerBottom + 1) {
+                renderStatsHeader(goalieStats, goalieStatGridCols, "goalie");
+            } else {
+                renderStatsHeader(skaterStats, statGridCols, "skater");
+            }
+        };
+
+        if (container.__diqStatsHeaderScrollHandler) {
+            document.removeEventListener("scroll", container.__diqStatsHeaderScrollHandler, true);
+        }
+        container.__diqStatsHeaderScrollHandler = updateActiveStatsHeader;
+        document.addEventListener("scroll", updateActiveStatsHeader, true);
+        updateActiveStatsHeader();
         updateScrollHints();
     };
 
@@ -962,6 +983,7 @@ const renderLeagueOwnerStatsDesktop = (
 
         leftHint.classList.toggle("hidden", !hasHiddenLeftContent);
         rightHint.classList.toggle("hidden", !isAtLeftEdge);
+        syncHeaderHorizontalScroll();
     };
 
     nameInput.addEventListener("input", () => {
@@ -975,31 +997,28 @@ const renderLeagueOwnerStatsDesktop = (
         renderRows();
     });
 
-    leftPane.appendChild(leftHeader);
     leftPane.appendChild(leftBody);
-    statsPane.appendChild(statsHeader);
+    statsHeaderPane.appendChild(statsHeader);
+    statsHeaderViewport.appendChild(statsHeaderPane);
     statsPane.appendChild(statsBody);
     statsScroll.appendChild(statsPane);
     statsViewport.appendChild(statsScroll);
     statsViewport.appendChild(leftHint);
     statsViewport.appendChild(rightHint);
-    ownerPane.appendChild(ownerHeader);
     ownerPane.appendChild(ownerBody);
+    headerTable.appendChild(leftHeader);
+    headerTable.appendChild(statsHeaderViewport);
+    headerTable.appendChild(ownerHeader);
     table.appendChild(leftPane);
     table.appendChild(statsViewport);
     table.appendChild(ownerPane);
     wrapper.appendChild(controls);
+    wrapper.appendChild(headerTable);
     wrapper.appendChild(table);
     container.appendChild(wrapper);
 
     const updateStickyHeaderOffset = () => {
-        const offset = `${controls.offsetHeight || 0}px`;
-        [leftHeader, statsHeader, ownerHeader].forEach((header) => {
-            header.style.top = offset;
-        });
-        [...leftBody.querySelectorAll("[data-sticky-roster-header]"), ...statsBody.querySelectorAll("[data-sticky-roster-header]"), ...ownerBody.querySelectorAll("[data-sticky-roster-header]")].forEach((header) => {
-            header.style.top = offset;
-        });
+        headerTable.style.top = `${controls.offsetHeight || 0}px`;
     };
 
     syncOwnerPaneVisibility();
@@ -1017,6 +1036,10 @@ const renderLeagueOwnerStatsDesktop = (
         if (!container.contains(wrapper)) {
             window.removeEventListener("resize", updateScrollHints);
             window.removeEventListener("resize", updateStickyHeaderOffset);
+            statsScroll.removeEventListener("scroll", updateScrollHints);
+            if (container.__diqStatsHeaderScrollHandler) {
+                document.removeEventListener("scroll", container.__diqStatsHeaderScrollHandler, true);
+            }
             observer.disconnect();
         }
     });
