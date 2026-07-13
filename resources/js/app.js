@@ -3,7 +3,6 @@ import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
 
 // import { PlayerStatsPage } from './components/PlayerStatsPage/player-stats-page.js';
-import './components/StatsPage/stats-page.js';
 import './leagues-hub.js';
 import './community-hub.js';
 import './transactions.js';

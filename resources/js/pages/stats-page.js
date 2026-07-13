@@ -1,7 +1,7 @@
 import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
 import { registerToastStack } from '../components/toast-stack.js';
-import { sortData } from '../components/StatsPage/stats-utils.js';
+import { leagueRosterHeadings, sortData } from '../components/StatsPage/stats-utils.js';
 import { renderStatsDesktop } from '../components/StatsPage/stats-desktop.js';
 import { StatsMobile } from '../components/StatsPage/stats-mobile.js';
 import { StatsColumnGroupAdapter } from './stats-column-group-adapter.js';
@@ -762,7 +762,10 @@ export class StatsPageShell {
       leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,
       onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
     };
-    const activeHeadings = this.prospectHeadings(this.activeHeadings(), renderSettings);
+    const activeHeadings = leagueRosterHeadings(
+      this.prospectHeadings(this.activeHeadings(), renderSettings),
+      renderSettings,
+    );
     const sorted = sortData(this.locallyFilteredRows(), this.settings.sortKey, this.settings.sortDirection);
 
     if (this.state.isMobile) {

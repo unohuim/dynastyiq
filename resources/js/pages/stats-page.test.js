@@ -911,6 +911,136 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).not.toContain('Hidden Goalie');
   });
 
+  it('adds league roster GP headings after an initially empty league payload loads', async () => {
+    setViewport(1280);
+    const { StatsPageShell } = await loadStatsPage();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const shell = new StatsPageShell(container, {
+      apiUrl: '/api/stats',
+      selectedPerspective: 'fantrax-league-1',
+      perspectives: [{ slug: 'fantrax-league-1', name: 'Fantrax League' }],
+      initialPayload: {},
+      initialLoading: true,
+      syncUrl: false,
+    });
+    shell.applyPayload({
+      headings: [
+        { key: 'name', label: 'Player' },
+        { key: 'team', label: 'Team' },
+        { key: 'league', label: 'League' },
+        { key: 'pos_type', label: 'Type' },
+        { key: 'age', label: 'Age' },
+        { key: 'contract_value_num', label: 'AAV' },
+        { key: 'contract_last_year', label: 'Term End' },
+        { key: 'contract_type', label: 'Contract Type' },
+      ],
+      data: [
+        {
+          name: 'Loaded Goalie',
+          team: 'TOR',
+          pos_type: 'G',
+          is_goalie: true,
+          age: 29,
+          contract_value_num: 6.3,
+          contract_last_year: '2029-30',
+          contract_type: 'Standard',
+          gamesPlayed: 30,
+          fantasy_pts_pg: 7.7,
+          wins: 10,
+          stats: { gp: 0, fantasy_pts_pg: 0, wins: 10 },
+          fantasy_team_name: 'My Team',
+          fantasy_team_is_user_team: true,
+          roster_slot: 'G',
+          roster_status: 'active',
+          roster_group: 'active',
+          roster_sort_order: 10,
+          roster_group_sort_order: 0,
+          roster_status_sort_order: 10,
+        },
+      ],
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        columnGroups: {
+          skater: [],
+          goalie: [{ key: 'fantasy_pts_pg', label: 'FP/G' }, { key: 'wins', label: 'W' }],
+        },
+      },
+      meta: {
+        season: '20252026',
+        game_type: 2,
+        positionButtons: ['F', 'D', 'G'],
+      },
+    });
+    shell.state.loading = false;
+
+    shell.render();
+
+    const exactCellValues = Array.from(document.body.querySelectorAll('div'))
+      .map((node) => node.textContent.trim());
+    expect(document.body.textContent).toContain('GP');
+    expect(document.body.textContent).toContain('Loaded Goalie');
+    expect(exactCellValues).toContain('30');
+  });
+
+  it('shows mobile league roster GP from games played aliases over nested zeroes', async () => {
+    setViewport(390);
+    const { StatsPageShell } = await loadStatsPage();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const shell = new StatsPageShell(container, {
+      apiUrl: '/api/stats',
+      selectedPerspective: 'fantrax-league-1',
+      perspectives: [{ slug: 'fantrax-league-1', name: 'Fantrax League' }],
+      initialPayload: {},
+      initialLoading: true,
+      syncUrl: false,
+    });
+    shell.applyPayload({
+      headings: [
+        { key: 'name', label: 'Player' },
+        { key: 'team', label: 'Team' },
+        { key: 'pos_type', label: 'Type' },
+      ],
+      data: [
+        {
+          name: 'Mobile Goalie',
+          team: 'TOR',
+          pos_type: 'G',
+          is_goalie: true,
+          gamesPlayed: 30,
+          stats: { gp: 0 },
+          fantasy_team_name: 'My Team',
+          fantasy_team_is_user_team: true,
+        },
+      ],
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        columnGroups: {
+          skater: [],
+          goalie: [],
+        },
+      },
+      meta: {
+        season: '20252026',
+        game_type: 2,
+        positionButtons: ['F', 'D', 'G'],
+      },
+    });
+    shell.state.loading = false;
+
+    shell.render();
+
+    expect(document.body.textContent).toContain('GP');
+    expect(document.body.textContent).toContain('30');
+  });
+
   it('orders selected fantasy team rosters with a visible goalie stat header', async () => {
     const shell = await createShell({
       settings: {

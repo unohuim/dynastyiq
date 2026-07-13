@@ -44,6 +44,25 @@ export function statValueForKey(row, key) {
     return nestedValue ?? rowValue;
 }
 
+const leagueRosterPlatform = (settings = {}) => ['fantrax', 'yahoo'].includes(String(settings?.leaguePlatform ?? ''));
+
+export function leagueRosterHeadings(headings, settings = {}) {
+    if (settings?.ownerColumn !== true || !leagueRosterPlatform(settings)) {
+        return headings;
+    }
+
+    const source = Array.isArray(headings) ? headings : [];
+    const seen = new Set();
+
+    return [...source, { key: 'gp', label: 'GP' }].filter((heading) => {
+        const key = String(heading?.key ?? '');
+        if (key === '' || seen.has(key)) return false;
+
+        seen.add(key);
+        return true;
+    });
+}
+
 export function sortData(data, sortKey, sortDirection = 'desc') {
     if (!sortKey) return data;
 

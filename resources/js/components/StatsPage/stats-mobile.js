@@ -1,5 +1,5 @@
 // stats-mobile.js
-import { teamBg, formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, sortData } from './stats-utils.js';
+import { teamBg, formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, sortData, statValueForKey } from './stats-utils.js';
 import { UI } from './ui/UIComponent.js';
 
 const SORT_ALIASES = {
@@ -54,7 +54,7 @@ const mobileMetricKeys = (headings) => (Array.isArray(headings) ? headings : [])
 
 const firstMobileMetricKey = (headings, fallback = 'gp') => mobileMetricKeys(headings)[0] || fallback;
 
-const displayValue = (row, key) => row?.[key] ?? row?.stats?.[key];
+const displayValue = (row, key) => statValueForKey(row, key);
 
 const headingLabel = (headings, key) => (
   (Array.isArray(headings) ? headings : []).find((heading) => heading?.key === key)?.label || key
@@ -298,10 +298,9 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         const statGroup = document.createElement('div');
         statGroup.className = 'player-stats-stat-group-mobile';
 
-        const statsObj = player?.stats || {};
-        let statKeys = mobileMetricKeys(headings).filter((key) => statsObj[key] !== undefined || player?.[key] !== undefined);
+        let statKeys = mobileMetricKeys(headings).filter((key) => statValueForKey(player, key) !== undefined);
 
-        if ((statsObj.gp !== undefined || player?.gp !== undefined) && String(settings.sortKey) !== 'gp') {
+        if (statValueForKey(player, 'gp') !== undefined && String(settings.sortKey) !== 'gp') {
           statKeys = ['gp', ...statKeys.filter((key) => key !== 'gp')];
         }
 
@@ -316,7 +315,7 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         });
 
         selectedKeys.slice(0, 6).forEach((key) => {
-          const value = key === 'gp' ? (statsObj.gp ?? player?.gp) : (statsObj[key] ?? player?.[key]);
+          const value = statValueForKey(player, key);
           if (value === undefined) return;
 
           const stat = document.createElement('div');
