@@ -920,7 +920,7 @@ describe('stats page prospect controls', () => {
         sortKey: 'gp',
         columnGroups: {
           skater: [{ key: 'gp', label: 'GP' }],
-          goalie: [{ key: 'wins', label: 'W' }],
+          goalie: [{ key: 'fantasy_pts_pg', label: 'FP/G' }, { key: 'wins', label: 'W' }],
         },
       },
     });
@@ -982,8 +982,9 @@ describe('stats page prospect controls', () => {
         contract_last_year: '2026-27',
         contract_type: 'Bridge',
         gp: 15,
+        fantasy_pts_pg: 3.4,
         wins: 2,
-        stats: { gp: 15, wins: 2 },
+        stats: { gp: 0, fantasy_pts_pg: 0, wins: 2 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'BN',
@@ -1003,8 +1004,9 @@ describe('stats page prospect controls', () => {
         contract_last_year: '2029-30',
         contract_type: 'Standard',
         gp: 30,
+        fantasy_pts_pg: 7.7,
         wins: 10,
-        stats: { gp: 30, wins: 10 },
+        stats: { gp: 0, fantasy_pts_pg: 0, wins: 10 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'G',
@@ -1024,8 +1026,9 @@ describe('stats page prospect controls', () => {
         contract_last_year: '2025-26',
         contract_type: 'Veteran',
         gp: 5,
+        fantasy_pts_pg: 1.2,
         wins: 1,
-        stats: { gp: 5, wins: 1 },
+        stats: { gp: 0, fantasy_pts_pg: 0, wins: 1 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'IR',
@@ -1045,8 +1048,9 @@ describe('stats page prospect controls', () => {
         contract_last_year: '2026-27',
         contract_type: 'ELC',
         gp: 3,
+        fantasy_pts_pg: 0.8,
         wins: 0,
-        stats: { gp: 3, wins: 0 },
+        stats: { gp: 0, fantasy_pts_pg: 0, wins: 0 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'MIN',
@@ -1067,6 +1071,7 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('Type');
     expect(document.body.textContent).toContain('Term');
     expect(document.body.textContent).toContain('GP');
+    expect(document.body.textContent).toContain('FP/G');
     expect(document.body.textContent).not.toContain('Term End');
     expect(document.body.textContent).not.toContain('Contract Type');
     expect(document.body.textContent).toContain('4.5');
@@ -1074,6 +1079,7 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('Standard');
     expect(document.body.textContent).toContain('6.3');
     expect(document.body.textContent).toContain('2029-30');
+    expect(document.body.textContent).toContain('7.7');
     expect(document.body.textContent.indexOf('AAV'))
       .toBeLessThan(document.body.textContent.indexOf('Type'));
     expect(document.body.textContent.indexOf('Type'))
@@ -1088,6 +1094,7 @@ describe('stats page prospect controls', () => {
       .map((node) => node.textContent.trim());
     expect(exactCellValues).toContain('20');
     expect(exactCellValues).toContain('30');
+    expect(exactCellValues).toContain('7.7');
     const goalieHeader = Array.from(document.body.querySelectorAll('div'))
       .find((node) => node.textContent.trim() === 'Goalies');
     expect(goalieHeader?.className).toContain('bg-gray-100');

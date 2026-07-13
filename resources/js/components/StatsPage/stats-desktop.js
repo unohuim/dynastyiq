@@ -133,6 +133,35 @@ const isRankableStatKey = (key) => {
     return normalized !== "" && !NON_RANKED_STAT_KEYS.has(normalized);
 };
 
+const hasMeaningfulStatValue = (value) => value !== undefined
+    && value !== null
+    && value !== ""
+    && value !== 0
+    && value !== "0";
+
+const valueNeedsHydratedRowFallback = (key) => {
+    const normalized = String(key ?? "").toLowerCase();
+
+    return normalized === "gp"
+        || normalized === "fantasy_pts_pg"
+        || normalized === "fantasy_pts_per_game";
+};
+
+const statValueWithHydratedRowFallback = (row, key) => {
+    const nestedValue = row?.stats?.[key];
+    const rowValue = row?.[key];
+
+    if (
+        valueNeedsHydratedRowFallback(key)
+        && !hasMeaningfulStatValue(nestedValue)
+        && hasMeaningfulStatValue(rowValue)
+    ) {
+        return rowValue;
+    }
+
+    return nestedValue ?? rowValue;
+};
+
 const buildCompetitionRankMaps = (rows, headings) => {
     const rankMaps = new Map();
     const sourceRows = Array.isArray(rows) ? rows : [];
@@ -144,7 +173,7 @@ const buildCompetitionRankMaps = (rows, headings) => {
         const values = sourceRows
             .map((row, index) => ({
                 index,
-                value: numericStatValue(row?.stats?.[key] ?? row?.[key]),
+                value: numericStatValue(statValueWithHydratedRowFallback(row, key)),
             }))
             .filter((entry) => entry.value !== null)
             .sort((a, b) => b.value - a.value);
@@ -874,10 +903,24 @@ const renderLeagueOwnerStatsDesktop = (
         return cell;
     };
 
-    const renderStatCell = (row, heading) => {
+    const statCellValue = (row, key, rowGroup = "") => {
+        const nestedValue = row.stats?.[key];
+        const rowValue = row?.[key];
+
+        if (
+            rowGroup === "goalie"
+            && valueNeedsHydratedRowFallback(key)
+        ) {
+            return statValueWithHydratedRowFallback(row, key);
+        }
+
+        return nestedValue ?? rowValue;
+    };
+
+    const renderStatCell = (row, heading, rowGroup = "") => {
         const key = heading?.key;
         const cell = document.createElement("div");
-        const rawVal = row.stats?.[key] ?? row[key];
+        const rawVal = statCellValue(row, key, rowGroup);
         const val = formatStatValue(key, rawVal);
         const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
         cell.className = activeSortKey() === key ? `${common} font-semibold` : common;
@@ -957,7 +1000,7 @@ const renderLeagueOwnerStatsDesktop = (
         };
 
         const rows = applyFilters(data);
-        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols) => {
+        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols, rowGroup = "") => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
@@ -969,7 +1012,7 @@ const renderLeagueOwnerStatsDesktop = (
             const statsRow = document.createElement("div");
             statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
             statsRow.style.gridTemplateColumns = rowStatGridCols;
-            rowStats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
+            rowStats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading, rowGroup)));
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
@@ -1012,7 +1055,7 @@ const renderLeagueOwnerStatsDesktop = (
             }
 
             goalieRows.forEach((row) => {
-                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols);
+                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols, "goalie");
                 rowIndex += 1;
             });
         } else {
