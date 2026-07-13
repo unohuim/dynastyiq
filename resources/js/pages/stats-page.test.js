@@ -924,11 +924,26 @@ describe('stats page prospect controls', () => {
         },
       },
     });
+    shell.payload.headings = [
+      { key: 'name', label: 'Player' },
+      { key: 'team', label: 'Team' },
+      { key: 'league', label: 'League' },
+      { key: 'pos_type', label: 'Type' },
+      { key: 'age', label: 'Age' },
+      { key: 'contract_value_num', label: 'Salary' },
+      { key: 'contract_last_year', label: 'Contract End' },
+      { key: 'contract_type', label: 'Contract Type' },
+      { key: 'gp', label: 'GP' },
+    ];
     shell.payload.data = [
       {
         name: 'Minor Skater',
         team: 'TOR',
         pos_type: 'F',
+        age: 21,
+        contract_value_num: 1.2,
+        contract_last_year: '2027-28',
+        contract_type: 'ELC',
         gp: 1,
         stats: { gp: 1 },
         fantasy_team_name: 'My Team',
@@ -943,6 +958,10 @@ describe('stats page prospect controls', () => {
         name: 'Active Skater',
         team: 'TOR',
         pos_type: 'F',
+        age: 25,
+        contract_value_num: 4.5,
+        contract_last_year: '2028-29',
+        contract_type: 'Standard',
         gp: 20,
         stats: { gp: 20 },
         fantasy_team_name: 'My Team',
@@ -958,6 +977,10 @@ describe('stats page prospect controls', () => {
         team: 'TOR',
         pos_type: 'G',
         is_goalie: true,
+        age: 27,
+        contract_value_num: 2.1,
+        contract_last_year: '2026-27',
+        contract_type: 'Bridge',
         wins: 2,
         stats: { wins: 2 },
         fantasy_team_name: 'My Team',
@@ -974,6 +997,10 @@ describe('stats page prospect controls', () => {
         team: 'TOR',
         pos_type: 'G',
         is_goalie: true,
+        age: 29,
+        contract_value_num: 6.3,
+        contract_last_year: '2029-30',
+        contract_type: 'Standard',
         wins: 10,
         stats: { wins: 10 },
         fantasy_team_name: 'My Team',
@@ -990,6 +1017,10 @@ describe('stats page prospect controls', () => {
         team: 'TOR',
         pos_type: 'G',
         is_goalie: true,
+        age: 31,
+        contract_value_num: 3.4,
+        contract_last_year: '2025-26',
+        contract_type: 'Veteran',
         wins: 1,
         stats: { wins: 1 },
         fantasy_team_name: 'My Team',
@@ -1006,6 +1037,10 @@ describe('stats page prospect controls', () => {
         team: 'TOR',
         pos_type: 'G',
         is_goalie: true,
+        age: 22,
+        contract_value_num: 0.9,
+        contract_last_year: '2026-27',
+        contract_type: 'ELC',
         wins: 0,
         stats: { wins: 0 },
         fantasy_team_name: 'My Team',
@@ -1023,10 +1058,22 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).not.toContain('Skaters');
     expect(document.body.textContent).toContain('Goalies');
     expect(document.body.textContent).not.toContain('Minors');
+    expect(document.body.textContent).toContain('Age');
+    expect(document.body.textContent).toContain('Salary');
+    expect(document.body.textContent).toContain('Contract End');
+    expect(document.body.textContent).toContain('Contract Type');
+    expect(document.body.textContent).toContain('4.5');
+    expect(document.body.textContent).toContain('2028-29');
+    expect(document.body.textContent).toContain('Standard');
+    expect(document.body.textContent).toContain('6.3');
+    expect(document.body.textContent).toContain('2029-30');
     const goalieHeader = Array.from(document.body.querySelectorAll('div'))
       .find((node) => node.textContent.trim() === 'Goalies');
     expect(goalieHeader?.className).toContain('bg-gray-100');
     expect(goalieHeader?.className).not.toContain('sticky');
+    const ageHeader = Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Age');
+    expect(ageHeader?.className).not.toContain('select-none');
     expect(document.body.textContent.indexOf('Active Skater'))
       .toBeLessThan(document.body.textContent.indexOf('Minor Skater'));
     expect(document.body.textContent.indexOf('Minor Skater'))

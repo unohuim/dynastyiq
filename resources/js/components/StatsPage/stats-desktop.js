@@ -77,6 +77,21 @@ const NON_RANKED_STAT_KEYS = new Set([
     "contract_type",
 ]);
 
+const SHARED_LEAGUE_PLAYER_STAT_KEYS = new Set([
+    "age",
+    "salary",
+    "fantasy_salary",
+    "fantrax_salary",
+    "contract",
+    "contract_value",
+    "contract_value_num",
+    "contract_last_year",
+    "contract_last_year_num",
+    "contract_term",
+    "contract_length",
+    "contract_type",
+]);
+
 const numericStatValue = (value) => {
     if (typeof value === "number") {
         return Number.isFinite(value) ? value : null;
@@ -305,12 +320,15 @@ const uniqueHeadings = (headings) => {
     });
 };
 
-const statHeadingsForGroup = (settings, group, fallback = []) => {
-    const headings = Array.isArray(settings?.columnGroups?.[group])
+const sharedLeaguePlayerStatHeadings = (headings) => (Array.isArray(headings) ? headings : [])
+    .filter((heading) => SHARED_LEAGUE_PLAYER_STAT_KEYS.has(String(heading?.key ?? "").toLowerCase()));
+
+const statHeadingsForGroup = (settings, group, fallback = [], shared = []) => {
+    const groupHeadings = Array.isArray(settings?.columnGroups?.[group])
         ? settings.columnGroups[group]
         : fallback;
 
-    return uniqueHeadings(headings);
+    return uniqueHeadings([...shared, ...groupHeadings]);
 };
 
 const headingWidth = (key, settings = {}) => {
@@ -358,8 +376,9 @@ const renderLeagueOwnerStatsDesktop = (
     const useRosterSlotColumn = () => isRosterSlotLeague && !isProspectMode && hasSelectedFantasyTeam();
     const isRosterSlotSortActive = () => isRosterSlotLeague && !isProspectMode && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
-    const skaterStats = statHeadingsForGroup(settings, "skater", stats);
-    const goalieStats = statHeadingsForGroup(settings, "goalie", stats);
+    const sharedStats = sharedLeaguePlayerStatHeadings(stats);
+    const skaterStats = statHeadingsForGroup(settings, "skater", stats, sharedStats);
+    const goalieStats = statHeadingsForGroup(settings, "goalie", stats, sharedStats);
     const shouldSplitSelectedTeamRoster = () => isRosterSlotLeague
         && !isProspectMode
         && hasSelectedFantasyTeam()
@@ -669,7 +688,7 @@ const renderLeagueOwnerStatsDesktop = (
     left.forEach((heading) => {
         leftHeader.appendChild(sortableHeader(
             heading,
-            "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
+            "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
         ));
     });
     let activeStatsHeaderGroup = "";
@@ -682,7 +701,7 @@ const renderLeagueOwnerStatsDesktop = (
         headerStats.forEach((heading) => {
             statsHeader.appendChild(sortableHeader(
                 heading,
-                "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
+                "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
             ));
         });
         syncHeaderHorizontalScroll();
@@ -896,7 +915,7 @@ const renderLeagueOwnerStatsDesktop = (
             statsRow.style.gridTemplateColumns = goalieStatGridCols;
             goalieStats.forEach((heading) => {
                 const cell = document.createElement("div");
-                cell.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
+                cell.className = "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
                 cell.textContent = heading?.label ?? "";
                 statsRow.appendChild(cell);
             });
@@ -1234,8 +1253,8 @@ export function renderStatsDesktop(
     displayHeadings.forEach(({ key, label }) => {
         const th = document.createElement("div");
         th.className = isOwnerColumn(key)
-            ? "sticky right-0 z-30 select-none flex items-center justify-end gap-1 whitespace-nowrap bg-gray-100 pl-3 text-right"
-            : "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
+            ? "sticky right-0 z-30 flex items-center justify-end gap-1 whitespace-nowrap bg-gray-100 pl-3 text-right"
+            : "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
         th.textContent = label;
 
         if (key !== "__rk" && !isOwnerColumn(key)) {

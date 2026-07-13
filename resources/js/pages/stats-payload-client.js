@@ -10,6 +10,7 @@ const IDENTITY_KEYS = new Set([
   'contract_value_num',
   'contract_last_year',
   'contract_last_year_num',
+  'contract_type',
   'avatar_url',
   'head_shot_url',
   'id',
