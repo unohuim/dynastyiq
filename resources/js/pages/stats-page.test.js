@@ -911,7 +911,7 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).not.toContain('Hidden Goalie');
   });
 
-  it('orders selected fantasy team rosters as skaters then goalies without body stat headers', async () => {
+  it('orders selected fantasy team rosters with a visible goalie stat header', async () => {
     const shell = await createShell({
       settings: {
         ownerColumn: true,
@@ -1021,11 +1021,17 @@ describe('stats page prospect controls', () => {
     shell.render();
 
     expect(document.body.textContent).not.toContain('Skaters');
-    expect(document.body.textContent).not.toContain('Goalies');
+    expect(document.body.textContent).toContain('Goalies');
     expect(document.body.textContent).not.toContain('Minors');
+    const goalieHeader = Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Goalies');
+    expect(goalieHeader?.className).toContain('bg-gray-100');
+    expect(goalieHeader?.className).not.toContain('sticky');
     expect(document.body.textContent.indexOf('Active Skater'))
       .toBeLessThan(document.body.textContent.indexOf('Minor Skater'));
     expect(document.body.textContent.indexOf('Minor Skater'))
+      .toBeLessThan(document.body.textContent.indexOf('Goalies'));
+    expect(document.body.textContent.indexOf('Goalies'))
       .toBeLessThan(document.body.textContent.indexOf('Active Goalie'));
     expect(document.body.textContent.indexOf('Active Goalie'))
       .toBeLessThan(document.body.textContent.indexOf('Reserve Goalie'));

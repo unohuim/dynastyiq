@@ -850,7 +850,7 @@ const renderLeagueOwnerStatsDesktop = (
         leftBody.innerHTML = "";
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
-        let firstGoalieRow = null;
+        let goalieHeaderRow = null;
 
         const appendGroupSeparator = (label, tone = "blue") => {
             const separatorClass = tone === "gray"
@@ -878,8 +878,37 @@ const renderLeagueOwnerStatsDesktop = (
             ownerBody.appendChild(ownerRow);
         };
 
+        const appendGoalieHeader = () => {
+            const rowClass = "border-t bg-gray-100 text-gray-700";
+
+            const leftRow = document.createElement("div");
+            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${rowClass}`;
+            leftRow.style.gridTemplateColumns = leftGridCols;
+            const leftLabel = document.createElement("div");
+            leftLabel.style.gridColumn = "1 / -1";
+            leftLabel.textContent = "Goalies";
+            leftRow.appendChild(leftLabel);
+            leftBody.appendChild(leftRow);
+            goalieHeaderRow = leftRow;
+
+            const statsRow = document.createElement("div");
+            statsRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${rowClass}`;
+            statsRow.style.gridTemplateColumns = goalieStatGridCols;
+            goalieStats.forEach((heading) => {
+                const cell = document.createElement("div");
+                cell.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
+                cell.textContent = heading?.label ?? "";
+                statsRow.appendChild(cell);
+            });
+            statsBody.appendChild(statsRow);
+
+            const ownerRow = document.createElement("div");
+            ownerRow.className = `h-8 px-4 py-1.5 ${rowClass}`;
+            ownerBody.appendChild(ownerRow);
+        };
+
         const rows = applyFilters(data);
-        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols, rowGroup = "") => {
+        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols) => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
@@ -909,9 +938,6 @@ const renderLeagueOwnerStatsDesktop = (
             }
 
             ownerBody.appendChild(ownerRow);
-            if (rowGroup === "goalie" && firstGoalieRow === null) {
-                firstGoalieRow = leftRow;
-            }
         };
 
         if (isDefaultProspectSort()) {
@@ -932,8 +958,12 @@ const renderLeagueOwnerStatsDesktop = (
                 rowIndex += 1;
             });
 
+            if (goalieRows.length > 0) {
+                appendGoalieHeader();
+            }
+
             goalieRows.forEach((row) => {
-                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols, "goalie");
+                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols);
                 rowIndex += 1;
             });
         } else {
@@ -952,13 +982,13 @@ const renderLeagueOwnerStatsDesktop = (
         }
 
         const updateActiveStatsHeader = () => {
-            if (!shouldSplitSelectedTeamRoster() || !firstGoalieRow) {
+            if (!shouldSplitSelectedTeamRoster() || !goalieHeaderRow) {
                 renderStatsHeader(visibleStats(), statGridCols, shouldSplitSelectedTeamRoster() ? "skater" : "default");
                 return;
             }
 
             const headerBottom = statsHeader.getBoundingClientRect().bottom;
-            const goalieTop = firstGoalieRow.getBoundingClientRect().top;
+            const goalieTop = goalieHeaderRow.getBoundingClientRect().top;
             if (goalieTop <= headerBottom + 1) {
                 renderStatsHeader(goalieStats, goalieStatGridCols, "goalie");
             } else {
