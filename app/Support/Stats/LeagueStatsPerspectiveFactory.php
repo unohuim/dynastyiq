@@ -201,6 +201,7 @@ final class LeagueStatsPerspectiveFactory
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
             $columns = $this->withFantasyPointColumns($columns);
         }
+        $goalieColumns = $this->withGoalieGamesPlayedColumn($goalieColumns);
         $allColumns = $columns;
 
         $skaterSortKey = collect(['fantasy_pts', 'pts', 'g', 'a', 'sog'])
@@ -272,6 +273,7 @@ final class LeagueStatsPerspectiveFactory
         if ($this->isPointsLeague($league)) {
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
+        $goalieColumns = $this->withGoalieGamesPlayedColumn($goalieColumns);
 
         $settings['columns'] = $goalieColumns;
         $settings['sort'] = [
@@ -314,6 +316,7 @@ final class LeagueStatsPerspectiveFactory
         if ($this->isPointsLeague($league)) {
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
+        $goalieColumns = $this->withGoalieGamesPlayedColumn($goalieColumns);
 
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['columnGroups'] = is_array($payload['settings']['columnGroups'] ?? null)
@@ -361,6 +364,7 @@ final class LeagueStatsPerspectiveFactory
         if ($this->isPointsLeague($league)) {
             $goalieColumns = $this->withFantasyPointColumns($goalieColumns);
         }
+        $goalieColumns = $this->withGoalieGamesPlayedColumn($goalieColumns);
         $activeColumns = match ($activeGroup) {
             'goalie' => $goalieColumns,
             'skater' => $skaterColumns,
@@ -494,6 +498,20 @@ final class LeagueStatsPerspectiveFactory
         return collect(['fantasy_pts', 'wins', 'sv', 'sv_pct', 'gaa'])
             ->first(static fn (string $key): bool => collect($columns)->contains('key', $key))
             ?? (string) ($columns[0]['key'] ?? 'gp');
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $columns
+     * @return array<int,array<string,mixed>>
+     */
+    private function withGoalieGamesPlayedColumn(array $columns): array
+    {
+        $gpColumn = ['key' => 'gp', 'label' => 'GP', 'type' => 'int'];
+
+        return collect([$gpColumn, ...$columns])
+            ->unique(static fn (array $column): string => (string) ($column['key'] ?? ''))
+            ->values()
+            ->all();
     }
 
     /**

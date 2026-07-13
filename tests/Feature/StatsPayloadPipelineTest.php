@@ -646,7 +646,7 @@ it('builds yahoo scoring settings only when every scoring category is mapped', f
 
     expect($settings['columns'])->toHaveCount(2)
         ->and($settings['columnGroups']['skater'][0]['key'])->toBe('g')
-        ->and($settings['columnGroups']['goalie'][0]['key'])->toBe('sv_pct');
+        ->and(collect($settings['columnGroups']['goalie'])->pluck('key')->all())->toBe(['gp', 'sv_pct']);
 });
 
 it('builds league scoring settings for supported formula categories', function (): void {
@@ -776,7 +776,7 @@ it('applies fantrax goalie settings with goalie filters and goalie columns', fun
         'filters' => [],
     ], $league);
 
-    expect(collect($settings['columns'])->pluck('key')->all())->toBe(['wins', 'sv_pct'])
+    expect(collect($settings['columns'])->pluck('key')->all())->toBe(['gp', 'wins', 'sv_pct'])
         ->and($settings['filters']['pos_type']['value'])->toBe(['G'])
         ->and($settings['sort']['sortKey'])->toBe('wins');
 });
@@ -816,7 +816,36 @@ it('adds fantrax goalie column group to payload settings', function (): void {
 
     expect(collect($next['settings']['columnGroups']['skater'])->pluck('key')->all())->toBe(['g'])
         ->and(collect($next['settings']['columnGroups']['goalie'])->pluck('key')->all())
-        ->toBe(['wins', 'HOCKEY_GOALIE:GPT4']);
+        ->toBe(['gp', 'wins', 'HOCKEY_GOALIE:GPT4']);
+});
+
+it('adds games played to active fantrax goalie payload headings', function (): void {
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fantrax-active-goalie-column-group',
+        'name' => 'Fantrax Active Goalie Column Group',
+        'sport' => 'hockey',
+        'scoring_settings' => [
+            'categories' => [
+                ['short' => 'W', 'auto_stat_key' => 'wins'],
+            ],
+        ],
+    ]);
+    $payload = [
+        'headings' => [
+            ['key' => 'name', 'label' => 'Player'],
+            ['key' => 'team', 'label' => 'Team'],
+            ['key' => 'pos_type', 'label' => 'Type'],
+        ],
+        'settings' => [],
+        'data' => [],
+    ];
+
+    $next = app(LeagueStatsPerspectiveFactory::class)
+        ->withActiveFantraxColumnGroupPayload($payload, $league, 'goalie');
+
+    expect(collect($next['headings'])->pluck('key')->all())->toBe(['name', 'team', 'pos_type', 'gp', 'wins'])
+        ->and(collect($next['settings']['columnGroups']['goalie'])->pluck('key')->all())->toBe(['gp', 'wins']);
 });
 
 it('returns league stats payload for a connected active league member', function (): void {
