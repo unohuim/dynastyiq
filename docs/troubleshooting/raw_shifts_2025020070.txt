@@ -1,0 +1,8 @@
+{
+    "source": "shifts",
+    "url": "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2025020070",
+    "payload": {
+        "data": [],
+        "total": 0
+    }
+}

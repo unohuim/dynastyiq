@@ -65,6 +65,80 @@ const formatDesktopNumber = (value) => {
     return value ?? "";
 };
 
+const NON_RANKED_STAT_KEYS = new Set([
+    "age",
+    "contract",
+    "contract_value",
+    "contract_value_num",
+    "contract_last_year",
+    "contract_last_year_num",
+    "contract_term",
+    "contract_length",
+    "contract_type",
+]);
+
+const numericStatValue = (value) => {
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? value : null;
+    }
+
+    if (typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed === "") return null;
+
+        const normalized = trimmed.replace(/[$,%]/g, "");
+        if (/^-?\d+(\.\d+)?$/.test(normalized)) {
+            const parsed = Number(normalized);
+
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+    }
+
+    return null;
+};
+
+const isRankableStatKey = (key) => {
+    const normalized = String(key ?? "").toLowerCase();
+
+    return normalized !== "" && !NON_RANKED_STAT_KEYS.has(normalized);
+};
+
+const buildCompetitionRankMaps = (rows, headings) => {
+    const rankMaps = new Map();
+    const sourceRows = Array.isArray(rows) ? rows : [];
+
+    (Array.isArray(headings) ? headings : []).forEach((heading) => {
+        const key = String(heading?.key ?? "");
+        if (!isRankableStatKey(key)) return;
+
+        const values = sourceRows
+            .map((row, index) => ({
+                index,
+                value: numericStatValue(row?.stats?.[key] ?? row?.[key]),
+            }))
+            .filter((entry) => entry.value !== null)
+            .sort((a, b) => b.value - a.value);
+
+        const ranks = new Map();
+        let previousValue = null;
+        let previousRank = 0;
+
+        values.forEach((entry, index) => {
+            const rank = previousValue !== null && entry.value === previousValue
+                ? previousRank
+                : index + 1;
+
+            ranks.set(entry.index, rank);
+            previousValue = entry.value;
+            previousRank = rank;
+        });
+
+        rankMaps.set(key, ranks);
+    });
+
+    return rankMaps;
+};
+
 const playerInitials = (name = "") => String(name)
     .trim()
     .split(/\s+/)
@@ -208,6 +282,7 @@ const renderLeagueOwnerStatsDesktop = (
         nameFilter: typeof prev.nameFilter === "string" ? prev.nameFilter : "",
         fantasyTeamFilter: typeof prev.fantasyTeamFilter === "string" ? prev.fantasyTeamFilter : "",
         leagueFilter: typeof prev.leagueFilter === "string" ? prev.leagueFilter : "",
+        showRanks: prev.showRanks === true,
     };
     desktopState.set(container, state);
 
@@ -233,6 +308,7 @@ const renderLeagueOwnerStatsDesktop = (
     };
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
+    const rankMaps = buildCompetitionRankMaps(data, stats);
 
     const leagues = Array.from(
         new Set(
@@ -340,6 +416,25 @@ const renderLeagueOwnerStatsDesktop = (
     fantasyTeamPicker.appendChild(fantasyTeamButton);
     fantasyTeamPicker.appendChild(fantasyTeamMenu);
     controls.appendChild(fantasyTeamPicker);
+
+    const ranksButton = document.createElement("button");
+    ranksButton.type = "button";
+    ranksButton.className = state.showRanks
+        ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+    ranksButton.textContent = "Ranks";
+    ranksButton.title = "Show stat ranks among all players in this view";
+    ranksButton.setAttribute("aria-pressed", state.showRanks ? "true" : "false");
+    ranksButton.addEventListener("click", () => {
+        state.showRanks = !state.showRanks;
+        desktopState.set(container, state);
+        ranksButton.className = state.showRanks
+            ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        ranksButton.setAttribute("aria-pressed", state.showRanks ? "true" : "false");
+        renderRows();
+    });
+    controls.appendChild(ranksButton);
 
     let leagueSelect = null;
     if (leagues.length > 0) {
@@ -520,7 +615,7 @@ const renderLeagueOwnerStatsDesktop = (
         const fantasyTeamQ = state.fantasyTeamFilter.trim().toUpperCase();
         const leagueQ = state.leagueFilter.trim().toUpperCase();
 
-        const filtered = rows.filter((row) => {
+        const filtered = rows.map((row, sourceIndex) => ({ row, sourceIndex })).filter(({ row }) => {
             const isRosterOnly = row?.league_roster_only === true;
             const isRosterPlaceholder = row?.league_roster_placeholder === true;
             const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === "1";
@@ -539,9 +634,14 @@ const renderLeagueOwnerStatsDesktop = (
             return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague;
         });
 
+        const rowsWithRankSource = filtered.map((entry) => ({
+            ...entry.row,
+            __rankSourceIndex: entry.sourceIndex,
+        }));
+
         return isRosterSlotSortActive()
-            ? sortByRosterOrder(filtered)
-            : filtered;
+            ? sortByRosterOrder(rowsWithRankSource)
+            : rowsWithRankSource;
     };
 
     const renderLeftCell = (row, heading, idx, i) => {
@@ -617,6 +717,15 @@ const renderLeagueOwnerStatsDesktop = (
         const val = formatStatValue(key, rawVal);
         const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
         cell.className = activeSortKey() === key ? `${common} font-semibold` : common;
+
+        if (state.showRanks && isRankableStatKey(key)) {
+            const sourceIndex = Number(row?.__rankSourceIndex);
+            const rank = Number.isInteger(sourceIndex) ? rankMaps.get(String(key))?.get(sourceIndex) : null;
+            cell.textContent = rank ? String(rank) : "-";
+
+            return cell;
+        }
+
         cell.textContent = isAAVKey(key) ? formatAAV(rawVal) : formatDesktopNumber(val);
 
         return cell;
