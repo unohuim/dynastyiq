@@ -50,7 +50,27 @@ class SumNhlSeasonStats
                         THEN 1
                         ELSE 0
                     END) = 1
-                    THEN COUNT(DISTINCT CASE WHEN COALESCE(gs.toi, 0) > 0 THEN gs.nhl_game_id END)
+                    THEN COUNT(DISTINCT CASE
+                        WHEN COALESCE(gs.goalie_started, false) IS TRUE
+                            OR COALESCE(gs.quality_start, false) IS TRUE
+                            OR COALESCE(gs.really_bad_start, false) IS TRUE
+                            OR gs.goalie_decision IS NOT NULL
+                            OR COALESCE(gs.sa, 0) > 0
+                            OR COALESCE(gs.sv, 0) > 0
+                            OR COALESCE(gs.ga, 0) > 0
+                            OR COALESCE(gs.evsa, 0) > 0
+                            OR COALESCE(gs.evsv, 0) > 0
+                            OR COALESCE(gs.evga, 0) > 0
+                            OR COALESCE(gs.ppsa, 0) > 0
+                            OR COALESCE(gs.ppsv, 0) > 0
+                            OR COALESCE(gs.ppga, 0) > 0
+                            OR COALESCE(gs.pksa, 0) > 0
+                            OR COALESCE(gs.pksv, 0) > 0
+                            OR COALESCE(gs.pkga, 0) > 0
+                            OR COALESCE(gs.shosv, 0) > 0
+                            OR COALESCE(gs.so, 0) > 0
+                        THEN gs.nhl_game_id
+                    END)
                     ELSE COUNT(DISTINCT gs.nhl_game_id)
                 END as gp,
 

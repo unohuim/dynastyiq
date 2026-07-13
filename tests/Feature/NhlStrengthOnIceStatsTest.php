@@ -688,6 +688,65 @@ it('rolls goalie fantasy fields into nhl season stats', function (): void {
         ->and((float) $row->quality_start_percentage)->toBe(1.0);
 });
 
+it('counts goalie games played from goalie evidence when time on ice is zero', function (): void {
+    ($this->insertGame)();
+    ($this->insertGame)(2026020002);
+    $goalie = ($this->makePlayer)(31, 'Zero Toi Goalie');
+    $goalie->update([
+        'position' => 'G',
+        'pos_type' => 'G',
+        'is_goalie' => false,
+    ]);
+
+    DB::table('nhl_game_summaries')->insert([
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => 31,
+            'nhl_team_id' => 1,
+            'toi' => 0,
+            'sa' => 32,
+            'sv' => 30,
+            'ga' => 2,
+            'goalie_started' => false,
+            'goalie_decision' => 'W',
+            'quality_start' => false,
+            'really_bad_start' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026020002,
+            'nhl_player_id' => 31,
+            'nhl_team_id' => 1,
+            'toi' => 0,
+            'sa' => 28,
+            'sv' => 25,
+            'ga' => 3,
+            'goalie_started' => false,
+            'goalie_decision' => 'L',
+            'quality_start' => false,
+            'really_bad_start' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    app(SumNhlSeasonStats::class)->sum('20262027');
+
+    $row = DB::table('nhl_season_stats')
+        ->where('season_id', '20262027')
+        ->where('nhl_player_id', 31)
+        ->where('game_type', 2)
+        ->first();
+
+    expect((int) $row->gp)->toBe(2)
+        ->and((int) $row->wins)->toBe(1)
+        ->and((int) $row->losses)->toBe(1)
+        ->and((int) $row->sa)->toBe(60)
+        ->and((int) $row->sv)->toBe(55)
+        ->and((int) $row->ga)->toBe(5);
+});
+
 it('uses official boxscore goalie decisions before primary goalie fallback', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(31, 'Relief Winner')->update([
