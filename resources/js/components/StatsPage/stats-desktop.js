@@ -67,6 +67,7 @@ const formatDesktopNumber = (value) => {
 
 const NON_RANKED_STAT_KEYS = new Set([
     "age",
+    "gp",
     "contract",
     "contract_value",
     "contract_value_num",
@@ -76,6 +77,19 @@ const NON_RANKED_STAT_KEYS = new Set([
     "contract_length",
     "contract_type",
 ]);
+
+const sharedLeaguePlayerStatOrder = (heading) => {
+    const key = String(heading?.key ?? "").toLowerCase();
+    const label = String(heading?.label ?? "").trim().toLowerCase();
+
+    if (key === "age") return 10;
+    if (["salary", "fantasy_salary", "fantrax_salary", "contract", "contract_value", "contract_value_num"].includes(key)) return 20;
+    if (key === "contract_type" || (key === "contract_last_year" && label === "type")) return 30;
+    if (["contract_last_year", "contract_last_year_num", "contract_term", "contract_length"].includes(key)) return 40;
+    if (key === "gp") return 50;
+
+    return 90;
+};
 
 const SHARED_LEAGUE_PLAYER_STAT_KEYS = new Set([
     "age",
@@ -90,6 +104,7 @@ const SHARED_LEAGUE_PLAYER_STAT_KEYS = new Set([
     "contract_term",
     "contract_length",
     "contract_type",
+    "gp",
 ]);
 
 const numericStatValue = (value) => {
@@ -321,7 +336,22 @@ const uniqueHeadings = (headings) => {
 };
 
 const sharedLeaguePlayerStatHeadings = (headings) => (Array.isArray(headings) ? headings : [])
-    .filter((heading) => SHARED_LEAGUE_PLAYER_STAT_KEYS.has(String(heading?.key ?? "").toLowerCase()));
+    .filter((heading) => SHARED_LEAGUE_PLAYER_STAT_KEYS.has(String(heading?.key ?? "").toLowerCase()))
+    .map((heading) => {
+        const key = String(heading?.key ?? "").toLowerCase();
+        const label = String(heading?.label ?? "").trim().toLowerCase();
+
+        if (key === "contract_type" && label === "contract type") {
+            return { ...heading, label: "Type" };
+        }
+
+        if (key === "contract_last_year" && label === "term end") {
+            return { ...heading, label: "Term" };
+        }
+
+        return heading;
+    })
+    .sort((a, b) => sharedLeaguePlayerStatOrder(a) - sharedLeaguePlayerStatOrder(b));
 
 const statHeadingsForGroup = (settings, group, fallback = [], shared = []) => {
     const groupHeadings = Array.isArray(settings?.columnGroups?.[group])

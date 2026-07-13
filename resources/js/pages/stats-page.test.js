@@ -930,8 +930,8 @@ describe('stats page prospect controls', () => {
       { key: 'league', label: 'League' },
       { key: 'pos_type', label: 'Type' },
       { key: 'age', label: 'Age' },
-      { key: 'contract_value_num', label: 'Salary' },
-      { key: 'contract_last_year', label: 'Contract End' },
+      { key: 'contract_value_num', label: 'AAV' },
+      { key: 'contract_last_year', label: 'Term End' },
       { key: 'contract_type', label: 'Contract Type' },
       { key: 'gp', label: 'GP' },
     ];
@@ -981,8 +981,9 @@ describe('stats page prospect controls', () => {
         contract_value_num: 2.1,
         contract_last_year: '2026-27',
         contract_type: 'Bridge',
+        gp: 15,
         wins: 2,
-        stats: { wins: 2 },
+        stats: { gp: 15, wins: 2 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'BN',
@@ -1001,8 +1002,9 @@ describe('stats page prospect controls', () => {
         contract_value_num: 6.3,
         contract_last_year: '2029-30',
         contract_type: 'Standard',
+        gp: 30,
         wins: 10,
-        stats: { wins: 10 },
+        stats: { gp: 30, wins: 10 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'G',
@@ -1021,8 +1023,9 @@ describe('stats page prospect controls', () => {
         contract_value_num: 3.4,
         contract_last_year: '2025-26',
         contract_type: 'Veteran',
+        gp: 5,
         wins: 1,
-        stats: { wins: 1 },
+        stats: { gp: 5, wins: 1 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'IR',
@@ -1041,8 +1044,9 @@ describe('stats page prospect controls', () => {
         contract_value_num: 0.9,
         contract_last_year: '2026-27',
         contract_type: 'ELC',
+        gp: 3,
         wins: 0,
-        stats: { wins: 0 },
+        stats: { gp: 3, wins: 0 },
         fantasy_team_name: 'My Team',
         fantasy_team_is_user_team: true,
         roster_slot: 'MIN',
@@ -1059,14 +1063,31 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('Goalies');
     expect(document.body.textContent).not.toContain('Minors');
     expect(document.body.textContent).toContain('Age');
-    expect(document.body.textContent).toContain('Salary');
-    expect(document.body.textContent).toContain('Contract End');
-    expect(document.body.textContent).toContain('Contract Type');
+    expect(document.body.textContent).toContain('AAV');
+    expect(document.body.textContent).toContain('Type');
+    expect(document.body.textContent).toContain('Term');
+    expect(document.body.textContent).toContain('GP');
+    expect(document.body.textContent).not.toContain('Term End');
+    expect(document.body.textContent).not.toContain('Contract Type');
     expect(document.body.textContent).toContain('4.5');
     expect(document.body.textContent).toContain('2028-29');
     expect(document.body.textContent).toContain('Standard');
     expect(document.body.textContent).toContain('6.3');
     expect(document.body.textContent).toContain('2029-30');
+    expect(document.body.textContent.indexOf('AAV'))
+      .toBeLessThan(document.body.textContent.indexOf('Type'));
+    expect(document.body.textContent.indexOf('Type'))
+      .toBeLessThan(document.body.textContent.indexOf('Term'));
+    expect(document.body.textContent.indexOf('Term'))
+      .toBeLessThan(document.body.textContent.indexOf('GP'));
+    Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.trim() === 'Ranks')
+      ?.click();
+    expect(document.body.querySelector('button[aria-pressed="true"]')?.textContent).toBe('Ranks');
+    const exactCellValues = Array.from(document.body.querySelectorAll('div'))
+      .map((node) => node.textContent.trim());
+    expect(exactCellValues).toContain('20');
+    expect(exactCellValues).toContain('30');
     const goalieHeader = Array.from(document.body.querySelectorAll('div'))
       .find((node) => node.textContent.trim() === 'Goalies');
     expect(goalieHeader?.className).toContain('bg-gray-100');
