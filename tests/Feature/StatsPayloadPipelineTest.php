@@ -433,6 +433,10 @@ it('hydrates rostered goalie rows already present in the payload from season sta
             'is_goalie' => true,
             'gp' => 0,
             'wins' => 0,
+            'stats' => [
+                'gp' => 0,
+                'wins' => 0,
+            ],
         ]],
         'meta' => ['season' => '20252026', 'game_type' => 2],
         'settings' => [
@@ -447,7 +451,9 @@ it('hydrates rostered goalie rows already present in the payload from season sta
     expect($hydrated['data'])->toHaveCount(1)
         ->and($hydrated['data'][0]['fantasy_team_name'])->toBe('Team One')
         ->and($hydrated['data'][0]['gp'])->toBe(29)
-        ->and($hydrated['data'][0]['wins'])->toBe(11);
+        ->and($hydrated['data'][0]['wins'])->toBe(11)
+        ->and($hydrated['data'][0]['stats']['gp'])->toBe(29)
+        ->and($hydrated['data'][0]['stats']['wins'])->toBe(11);
 });
 
 it('reuses cached ownership maps within the ownership cache window', function (): void {

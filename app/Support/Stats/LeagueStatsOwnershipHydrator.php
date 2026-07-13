@@ -399,6 +399,10 @@ final class LeagueStatsOwnershipHydrator
 
                     if ($value !== null) {
                         $row[$key] = is_numeric($value) ? (float) $value : $value;
+                        if (! isset($row['stats']) || ! is_array($row['stats'])) {
+                            $row['stats'] = [];
+                        }
+                        $row['stats'][$key] = $row[$key];
                     }
                 }
 
