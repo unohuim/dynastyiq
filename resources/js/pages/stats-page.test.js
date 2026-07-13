@@ -919,7 +919,7 @@ describe('stats page prospect controls', () => {
         defaultSort: 'gp',
         sortKey: 'gp',
         columnGroups: {
-          skater: [{ key: 'gp', label: 'GP' }],
+          skater: [],
           goalie: [{ key: 'fantasy_pts_pg', label: 'FP/G' }, { key: 'wins', label: 'W' }],
         },
       },
@@ -933,7 +933,6 @@ describe('stats page prospect controls', () => {
       { key: 'contract_value_num', label: 'AAV' },
       { key: 'contract_last_year', label: 'Term End' },
       { key: 'contract_type', label: 'Contract Type' },
-      { key: 'gp', label: 'GP' },
     ];
     shell.payload.data = [
       {

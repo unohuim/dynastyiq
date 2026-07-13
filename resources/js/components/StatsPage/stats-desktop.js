@@ -335,7 +335,10 @@ const uniqueHeadings = (headings) => {
     });
 };
 
-const sharedLeaguePlayerStatHeadings = (headings) => (Array.isArray(headings) ? headings : [])
+const sharedLeaguePlayerStatHeadings = (headings, { includeGp = false } = {}) => uniqueHeadings([
+    ...(Array.isArray(headings) ? headings : []),
+    ...(includeGp ? [{ key: "gp", label: "GP" }] : []),
+])
     .filter((heading) => SHARED_LEAGUE_PLAYER_STAT_KEYS.has(String(heading?.key ?? "").toLowerCase()))
     .map((heading) => {
         const key = String(heading?.key ?? "").toLowerCase();
@@ -406,7 +409,7 @@ const renderLeagueOwnerStatsDesktop = (
     const useRosterSlotColumn = () => isRosterSlotLeague && !isProspectMode && hasSelectedFantasyTeam();
     const isRosterSlotSortActive = () => isRosterSlotLeague && !isProspectMode && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
-    const sharedStats = sharedLeaguePlayerStatHeadings(stats);
+    const sharedStats = sharedLeaguePlayerStatHeadings(stats, { includeGp: isRosterSlotLeague });
     const skaterStats = statHeadingsForGroup(settings, "skater", stats, sharedStats);
     const goalieStats = statHeadingsForGroup(settings, "goalie", stats, sharedStats);
     const shouldSplitSelectedTeamRoster = () => isRosterSlotLeague
