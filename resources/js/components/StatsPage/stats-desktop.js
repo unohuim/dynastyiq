@@ -828,7 +828,7 @@ const renderLeagueOwnerStatsDesktop = (
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
 
-        const appendGroupSeparator = (label, tone = "blue", sectionStats = null, sectionGridCols = statGridCols) => {
+        const appendGroupSeparator = (label, tone = "blue", sectionStats = null, sectionGridCols = statGridCols, sticky = false) => {
             const separatorClass = tone === "gray"
                 ? "border-t bg-gray-100 text-gray-700"
                 : "border-t bg-blue-100 text-blue-700";
@@ -836,7 +836,11 @@ const renderLeagueOwnerStatsDesktop = (
                 ? "border-t bg-gray-100"
                 : "border-t bg-blue-100";
             const leftRow = document.createElement("div");
-            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${separatorClass}`;
+            leftRow.className = [
+                "grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide",
+                separatorClass,
+                sticky ? "sticky top-0 z-30" : "",
+            ].filter(Boolean).join(" ");
             leftRow.style.gridTemplateColumns = leftGridCols;
             const leftLabel = document.createElement("div");
             leftLabel.style.gridColumn = "1 / -1";
@@ -845,9 +849,12 @@ const renderLeagueOwnerStatsDesktop = (
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = sectionStats
-                ? `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-700 ${emptySeparatorClass}`
-                : `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
+            statsRow.className = [
+                "grid h-8 px-4 py-1.5",
+                sectionStats ? "text-[11px] font-semibold uppercase tracking-wide text-gray-700" : "",
+                emptySeparatorClass,
+                sticky ? "sticky top-0 z-30" : "",
+            ].filter(Boolean).join(" ");
             statsRow.style.gridTemplateColumns = sectionGridCols;
             (sectionStats || []).forEach((heading) => {
                 const cell = document.createElement("div");
@@ -858,7 +865,11 @@ const renderLeagueOwnerStatsDesktop = (
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
-            ownerRow.className = `h-8 px-4 py-1.5 ${emptySeparatorClass}`;
+            ownerRow.className = [
+                "h-8 px-4 py-1.5",
+                emptySeparatorClass,
+                sticky ? "sticky top-0 z-30" : "",
+            ].filter(Boolean).join(" ");
             ownerBody.appendChild(ownerRow);
         };
 
@@ -908,28 +919,13 @@ const renderLeagueOwnerStatsDesktop = (
             const skaterRows = sortByRosterOrder(rows.filter((row) => !rowIsGoalie(row)));
             const goalieRows = sortGoalieRosterRows(rows.filter((row) => rowIsGoalie(row)));
 
-            appendGroupSeparator("Skaters", "blue", skaterStats, statGridCols);
             skaterRows.forEach((row, idx) => {
-                if (
-                    row?.roster_group === "minor"
-                    && skaterRows?.[idx - 1]?.roster_group !== "minor"
-                ) {
-                    appendGroupSeparator("Minors", "gray", skaterStats, statGridCols);
-                }
-
                 renderPlayerRow(row, rowIndex, skaterStats, statGridCols);
                 rowIndex += 1;
             });
 
-            appendGroupSeparator("Goalies", "blue", goalieStats, goalieStatGridCols);
-            goalieRows.forEach((row, idx) => {
-                if (
-                    row?.roster_group === "minor"
-                    && goalieRows?.[idx - 1]?.roster_group !== "minor"
-                ) {
-                    appendGroupSeparator("Minors", "gray", goalieStats, goalieStatGridCols);
-                }
-
+            appendGroupSeparator("Goalies", "blue", goalieStats, goalieStatGridCols, true);
+            goalieRows.forEach((row) => {
                 renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols);
                 rowIndex += 1;
             });

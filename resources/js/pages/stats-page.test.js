@@ -1020,8 +1020,12 @@ describe('stats page prospect controls', () => {
 
     shell.render();
 
-    expect(document.body.textContent).toContain('Skaters');
+    expect(document.body.textContent).not.toContain('Skaters');
     expect(document.body.textContent).toContain('Goalies');
+    expect(document.body.textContent).not.toContain('Minors');
+    expect(Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Goalies')?.className)
+      .toContain('sticky');
     expect(document.body.textContent.indexOf('Active Skater'))
       .toBeLessThan(document.body.textContent.indexOf('Minor Skater'));
     expect(document.body.textContent.indexOf('Minor Skater'))
