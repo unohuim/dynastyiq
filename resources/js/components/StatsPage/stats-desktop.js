@@ -147,16 +147,34 @@ const valueNeedsHydratedRowFallback = (key) => {
         || normalized === "fantasy_pts_per_game";
 };
 
+const statValueAliases = (key) => {
+    const normalized = String(key ?? "").toLowerCase();
+
+    if (normalized === "gp") return ["gp", "games_played"];
+
+    return [key];
+};
+
+const firstStatValueForKeys = (source, keys, meaningfulOnly = false) => {
+    if (!source || typeof source !== "object") return undefined;
+
+    return keys.map((key) => source?.[key]).find((value) => {
+        if (meaningfulOnly) return hasMeaningfulStatValue(value);
+
+        return value !== undefined && value !== null && value !== "";
+    });
+};
+
 const statValueWithHydratedRowFallback = (row, key) => {
-    const nestedValue = row?.stats?.[key];
-    const rowValue = row?.[key];
+    const keys = statValueAliases(key);
+    const nestedValue = firstStatValueForKeys(row?.stats, keys);
+    const rowValue = firstStatValueForKeys(row, keys);
 
     if (
         valueNeedsHydratedRowFallback(key)
         && !hasMeaningfulStatValue(nestedValue)
-        && hasMeaningfulStatValue(rowValue)
     ) {
-        return rowValue;
+        return firstStatValueForKeys(row, keys, true) ?? rowValue ?? nestedValue;
     }
 
     return nestedValue ?? rowValue;
