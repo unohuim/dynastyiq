@@ -89,6 +89,8 @@ final class LeagueStatsOwnershipHydrator
         $mark('ownership_decorate_ms');
 
         if (in_array((string) ($league->platform ?? ''), ['fantrax', 'yahoo'], true)) {
+            $payload['data'] = $this->hydrateRosteredGoalieRowsFromSeasonStats($payload['data'], $payload);
+
             $missingRows = collect($ownership['roster_rows'])
                 ->reject(static function (array $row) use ($seenPlayerIds, $seenNhlIds): bool {
                     $playerId = (string) ($row['player_id'] ?? '');
@@ -100,7 +102,7 @@ final class LeagueStatsOwnershipHydrator
                 ->filter(fn (array $row): bool => $this->shouldAppendRosterOnlyRow($row, $payload))
                 ->values()
                 ->all();
-            $missingRows = $this->hydrateRosterOnlyRowsFromSeasonStats($missingRows, $payload);
+            $missingRows = $this->hydrateRowsFromSeasonStats($missingRows, $payload);
             $missingRows = collect($missingRows)
                 ->map(fn (array $row): array => $this->applyCustomCapContractFields($row, $row))
                 ->values()
@@ -289,13 +291,30 @@ final class LeagueStatsOwnershipHydrator
     }
 
     /**
-     * Fill appended roster-only rows from the same NHL season stat source as the table payload.
+     * Fill existing rostered goalie rows from the same NHL season stat source as the table payload.
      *
-     * @param array<int,array<string,mixed>> $rows
+     * @param array<int,mixed> $rows
      * @param array<string,mixed> $payload
-     * @return array<int,array<string,mixed>>
+     * @return array<int,mixed>
      */
-    private function hydrateRosterOnlyRowsFromSeasonStats(array $rows, array $payload): array
+    private function hydrateRosteredGoalieRowsFromSeasonStats(array $rows, array $payload): array
+    {
+        return $this->hydrateRowsFromSeasonStats(
+            $rows,
+            $payload,
+            fn (array $row): bool => $this->isRosteredGoalieRow($row),
+        );
+    }
+
+    /**
+     * Fill rows from the same NHL season stat source as the table payload.
+     *
+     * @param array<int,mixed> $rows
+     * @param array<string,mixed> $payload
+     * @param (callable(array<string,mixed>): bool)|null $shouldHydrate
+     * @return array<int,mixed>
+     */
+    private function hydrateRowsFromSeasonStats(array $rows, array $payload, ?callable $shouldHydrate = null): array
     {
         if ($rows === []) {
             return [];
@@ -308,7 +327,12 @@ final class LeagueStatsOwnershipHydrator
             return $rows;
         }
 
-        $nhlPlayerIds = collect($rows)
+        $hydrationRows = collect($rows)
+            ->filter(static fn (mixed $row): bool => is_array($row))
+            ->filter(static fn (array $row): bool => $shouldHydrate === null || $shouldHydrate($row))
+            ->values();
+
+        $nhlPlayerIds = $hydrationRows
             ->pluck('nhl_player_id')
             ->filter()
             ->map(static fn (mixed $id): int => (int) $id)
@@ -359,7 +383,11 @@ final class LeagueStatsOwnershipHydrator
             ->keyBy(static fn (NhlSeasonStat $stat): int => (int) $stat->nhl_player_id);
 
         return collect($rows)
-            ->map(function (array $row) use ($statsByPlayerId, $statKeys): array {
+            ->map(function (mixed $row) use ($shouldHydrate, $statsByPlayerId, $statKeys): mixed {
+                if (! is_array($row) || ($shouldHydrate !== null && ! $shouldHydrate($row))) {
+                    return $row;
+                }
+
                 $stat = $statsByPlayerId->get((int) ($row['nhl_player_id'] ?? 0));
 
                 if (! $stat instanceof NhlSeasonStat) {
@@ -382,6 +410,24 @@ final class LeagueStatsOwnershipHydrator
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     */
+    private function isRosteredGoalieRow(array $row): bool
+    {
+        $isRostered = filled($row['fantasy_team_id'] ?? null)
+            || filled($row['fantasy_team_name'] ?? null)
+            || filled($row['roster_slot'] ?? null);
+
+        if (! $isRostered) {
+            return false;
+        }
+
+        return (bool) ($row['is_goalie'] ?? false)
+            || strtoupper((string) ($row['pos_type'] ?? '')) === 'G'
+            || strtoupper((string) ($row['pos'] ?? '')) === 'G';
     }
 
     /**

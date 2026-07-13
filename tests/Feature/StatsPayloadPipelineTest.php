@@ -407,6 +407,49 @@ it('appends roster only rows missing from the payload', function (): void {
         ->and($hydrated['data'][0]['g'])->toBe(5.0);
 });
 
+it('hydrates rostered goalie rows already present in the payload from season stats', function (): void {
+    [$user, $league, , $player] = ($this->createRosterFixture)([
+        'position' => 'G',
+        'pos_type' => 'G',
+        'is_goalie' => true,
+        'slot' => 'G',
+        'eligibility' => ['G'],
+    ]);
+    NhlSeasonStat::create([
+        'season_id' => '20252026',
+        'nhl_player_id' => $player->nhl_id,
+        'nhl_team_id' => 1,
+        'game_type' => 2,
+        'gp' => 29,
+        'wins' => 11,
+    ]);
+    $payload = [
+        'headings' => [['key' => 'gp']],
+        'data' => [[
+            'name' => 'Roster Goalie',
+            'player_id' => $player->id,
+            'nhl_player_id' => $player->nhl_id,
+            'pos_type' => 'G',
+            'is_goalie' => true,
+            'gp' => 0,
+            'wins' => 0,
+        ]],
+        'meta' => ['season' => '20252026', 'game_type' => 2],
+        'settings' => [
+            'columnGroups' => [
+                'goalie' => [['key' => 'wins']],
+            ],
+        ],
+    ];
+
+    $hydrated = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user->id);
+
+    expect($hydrated['data'])->toHaveCount(1)
+        ->and($hydrated['data'][0]['fantasy_team_name'])->toBe('Team One')
+        ->and($hydrated['data'][0]['gp'])->toBe(29)
+        ->and($hydrated['data'][0]['wins'])->toBe(11);
+});
+
 it('reuses cached ownership maps within the ownership cache window', function (): void {
     [$user, $league, $team, $player] = ($this->createRosterFixture)();
     $payload = [
