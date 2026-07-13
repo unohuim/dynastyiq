@@ -825,4 +825,212 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent.indexOf('High GP Player'))
       .toBeLessThan(document.body.textContent.indexOf('Slot First Player'));
   });
+
+  it('defaults league owner stats to the current user fantasy team and labels the global option all players', async () => {
+    const shell = await createShell({
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        columnGroups: {
+          skater: [{ key: 'gp', label: 'GP' }],
+          goalie: [{ key: 'wins', label: 'W' }],
+        },
+      },
+    });
+    shell.payload.data = [
+      {
+        name: 'Other Team Player',
+        team: 'NYR',
+        pos_type: 'F',
+        gp: 20,
+        stats: { gp: 20 },
+        fantasy_team_name: 'Other Team',
+        fantasy_team_avatar_url: 'https://example.test/other.png',
+      },
+      {
+        name: 'My Team Player',
+        team: 'TOR',
+        pos_type: 'F',
+        gp: 10,
+        stats: { gp: 10 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_avatar_url: 'https://example.test/my.png',
+        fantasy_team_is_user_team: true,
+      },
+    ];
+
+    shell.render();
+
+    expect(document.body.textContent).toContain('My Team');
+    expect(document.body.textContent).toContain('All Players');
+    expect(document.body.textContent).not.toContain('All Teams');
+    expect(document.body.textContent).toContain('My Team Player');
+    expect(document.body.textContent).not.toContain('Other Team Player');
+  });
+
+  it('auto-selects forward and defense filters for non-team league selections', async () => {
+    const shell = await createShell({
+      meta: {
+        positionButtons: ['F', 'D', 'G'],
+      },
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        columnGroups: {
+          skater: [{ key: 'gp', label: 'GP' }],
+          goalie: [{ key: 'wins', label: 'W' }],
+        },
+      },
+    });
+    shell.payload.data = [
+      {
+        name: 'Visible Skater',
+        team: 'TOR',
+        pos_type: 'F',
+        gp: 10,
+        stats: { gp: 10 },
+      },
+      {
+        name: 'Hidden Goalie',
+        team: 'TOR',
+        pos_type: 'G',
+        is_goalie: true,
+        wins: 5,
+        stats: { wins: 5 },
+      },
+    ];
+
+    shell.render();
+
+    expect(shell.state.selectedPosTypes).toEqual(['F', 'D']);
+    expect(document.body.textContent).toContain('Visible Skater');
+    expect(document.body.textContent).not.toContain('Hidden Goalie');
+  });
+
+  it('splits selected fantasy team rosters into skater and goalie stat sections', async () => {
+    const shell = await createShell({
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        columnGroups: {
+          skater: [{ key: 'gp', label: 'GP' }],
+          goalie: [{ key: 'wins', label: 'W' }],
+        },
+      },
+    });
+    shell.payload.data = [
+      {
+        name: 'Minor Skater',
+        team: 'TOR',
+        pos_type: 'F',
+        gp: 1,
+        stats: { gp: 1 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'MIN',
+        roster_group: 'minor',
+        roster_sort_order: 40,
+        roster_group_sort_order: 1,
+        roster_status_sort_order: 10,
+      },
+      {
+        name: 'Active Skater',
+        team: 'TOR',
+        pos_type: 'F',
+        gp: 20,
+        stats: { gp: 20 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'LW',
+        roster_group: 'active',
+        roster_sort_order: 10,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 10,
+      },
+      {
+        name: 'Reserve Goalie',
+        team: 'TOR',
+        pos_type: 'G',
+        is_goalie: true,
+        wins: 2,
+        stats: { wins: 2 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'BN',
+        roster_status: 'bench',
+        roster_group: 'active',
+        roster_sort_order: 20,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 20,
+      },
+      {
+        name: 'Active Goalie',
+        team: 'TOR',
+        pos_type: 'G',
+        is_goalie: true,
+        wins: 10,
+        stats: { wins: 10 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'G',
+        roster_status: 'active',
+        roster_group: 'active',
+        roster_sort_order: 10,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 10,
+      },
+      {
+        name: 'IR Goalie',
+        team: 'TOR',
+        pos_type: 'G',
+        is_goalie: true,
+        wins: 1,
+        stats: { wins: 1 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'IR',
+        roster_status: 'ir',
+        roster_group: 'active',
+        roster_sort_order: 30,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 30,
+      },
+      {
+        name: 'Minor Goalie',
+        team: 'TOR',
+        pos_type: 'G',
+        is_goalie: true,
+        wins: 0,
+        stats: { wins: 0 },
+        fantasy_team_name: 'My Team',
+        fantasy_team_is_user_team: true,
+        roster_slot: 'MIN',
+        roster_group: 'minor',
+        roster_sort_order: 40,
+        roster_group_sort_order: 1,
+        roster_status_sort_order: 10,
+      },
+    ];
+
+    shell.render();
+
+    expect(document.body.textContent).toContain('Skaters');
+    expect(document.body.textContent).toContain('Goalies');
+    expect(document.body.textContent.indexOf('Active Skater'))
+      .toBeLessThan(document.body.textContent.indexOf('Minor Skater'));
+    expect(document.body.textContent.indexOf('Minor Skater'))
+      .toBeLessThan(document.body.textContent.indexOf('Goalies'));
+    expect(document.body.textContent.indexOf('Active Goalie'))
+      .toBeLessThan(document.body.textContent.indexOf('Reserve Goalie'));
+    expect(document.body.textContent.indexOf('Reserve Goalie'))
+      .toBeLessThan(document.body.textContent.indexOf('IR Goalie'));
+    expect(document.body.textContent.indexOf('IR Goalie'))
+      .toBeLessThan(document.body.textContent.indexOf('Minor Goalie'));
+  });
 });

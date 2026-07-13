@@ -76,6 +76,7 @@ export class StatsPageShell {
       selectedLeagues: [],
       numericFilters: {},
       dirtyNumericFilters: {},
+      leagueAutoSkaterFilter: false,
       loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
@@ -325,6 +326,7 @@ export class StatsPageShell {
     this.state.perspective = value;
     this.state.selectedPos = [];
     this.state.selectedPosTypes = [];
+    this.state.leagueAutoSkaterFilter = false;
     this.state.selectedLeagues = [];
     this.state.numericFilters = {};
     this.state.dirtyNumericFilters = {};
@@ -357,6 +359,7 @@ export class StatsPageShell {
   }
 
   togglePosition(value) {
+    this.state.leagueAutoSkaterFilter = false;
     const wasGoalieMode = this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G');
     if (!wasGoalieMode) {
       this.rememberSkaterHeadings();
@@ -383,6 +386,30 @@ export class StatsPageShell {
   isPositionActive(value) {
     return this.filterState.isPositionActive(value);
   }
+
+  onLeagueFantasyTeamFilterChange = ({ teamSpecific = false } = {}) => {
+    const shouldAutoSkaters = !teamSpecific;
+    const hasAutoSkaters = this.state.leagueAutoSkaterFilter === true
+      && this.state.selectedPosTypes.length === 2
+      && this.state.selectedPosTypes.includes('F')
+      && this.state.selectedPosTypes.includes('D')
+      && this.state.selectedPos.length === 0;
+
+    if (shouldAutoSkaters && hasAutoSkaters) return;
+    if (!shouldAutoSkaters && !this.state.leagueAutoSkaterFilter) return;
+
+    if (shouldAutoSkaters) {
+      this.state.selectedPos = [];
+      this.state.selectedPosTypes = ['F', 'D'];
+      this.state.leagueAutoSkaterFilter = true;
+    } else {
+      this.state.selectedPos = [];
+      this.state.selectedPosTypes = [];
+      this.state.leagueAutoSkaterFilter = false;
+    }
+
+    this.renderControls();
+  };
 
   locallyFilteredRows() {
     return this.filterState.filterRows(this.payload.data);
@@ -730,6 +757,10 @@ export class StatsPageShell {
     const renderSettings = {
       ...this.settings,
       leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
+      selectedPos: [...this.state.selectedPos],
+      selectedPosTypes: [...this.state.selectedPosTypes],
+      leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,
+      onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
     };
     const activeHeadings = this.prospectHeadings(this.activeHeadings(), renderSettings);
     const sorted = sortData(this.locallyFilteredRows(), this.settings.sortKey, this.settings.sortDirection);

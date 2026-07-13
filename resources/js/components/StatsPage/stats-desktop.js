@@ -216,6 +216,42 @@ const sortByRosterOrder = (rows) => [...rows].sort((a, b) => {
     return String(a?.name ?? "").localeCompare(String(b?.name ?? ""));
 });
 
+const rowIsGoalie = (row) => row?.is_goalie === true
+    || row?.is_goalie === 1
+    || row?.is_goalie === "1"
+    || String(row?.pos_type ?? "").toUpperCase() === "G"
+    || String(row?.pos ?? "").toUpperCase() === "G";
+
+const rowIsReserve = (row) => {
+    const slot = String(row?.roster_slot ?? "").trim().toUpperCase();
+    const status = String(row?.roster_status ?? "").trim().toLowerCase();
+
+    return ["BN", "BEN", "BENCH", "RES", "RESERVE"].includes(slot)
+        || ["bench", "reserve"].includes(status);
+};
+
+const rowIsIr = (row) => {
+    const slot = String(row?.roster_slot ?? "").trim().toUpperCase();
+    const status = String(row?.roster_status ?? "").trim().toLowerCase();
+
+    return ["IR", "IR+"].includes(slot) || status === "ir";
+};
+
+const goalieRosterSortValue = (row) => {
+    if (row?.roster_group === "minor") return 4000 + rosterOrderValue(row, "roster_sort_order", 999);
+    if (rowIsIr(row)) return 3000 + rosterOrderValue(row, "roster_sort_order", 999);
+    if (rowIsReserve(row)) return 2000 + rosterOrderValue(row, "roster_sort_order", 999);
+
+    return 1000 + rosterOrderValue(row, "roster_sort_order", 999);
+};
+
+const sortGoalieRosterRows = (rows) => [...rows].sort((a, b) => {
+    const goalieOrder = goalieRosterSortValue(a) - goalieRosterSortValue(b);
+    if (goalieOrder !== 0) return goalieOrder;
+
+    return String(a?.name ?? "").localeCompare(String(b?.name ?? ""));
+});
+
 const rosterRowClass = (row, allowRosterColors = false) => {
     if (!allowRosterColors) return "hover:bg-gray-50";
 
@@ -257,6 +293,26 @@ const splitLeagueOwnerHeadings = (headings, useRosterSlotColumn = false) => {
     return { left, stats };
 };
 
+const uniqueHeadings = (headings) => {
+    const seen = new Set();
+
+    return (Array.isArray(headings) ? headings : []).filter((heading) => {
+        const key = String(heading?.key ?? "");
+        if (key === "" || seen.has(key)) return false;
+
+        seen.add(key);
+        return true;
+    });
+};
+
+const statHeadingsForGroup = (settings, group, fallback = []) => {
+    const headings = Array.isArray(settings?.columnGroups?.[group])
+        ? settings.columnGroups[group]
+        : fallback;
+
+    return uniqueHeadings(headings);
+};
+
 const headingWidth = (key, settings = {}) => {
     const normalized = String(key ?? "").toLowerCase();
 
@@ -291,12 +347,30 @@ const renderLeagueOwnerStatsDesktop = (
     const isProspectMode = isLeagueProspectMode(settings);
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
     const hasSelectedFantasyTeam = () => state.fantasyTeamFilter.trim() !== "" && !isFreeAgentFantasyFilter();
+    const selectedPositionFilters = [
+        ...(Array.isArray(settings?.selectedPosTypes) ? settings.selectedPosTypes : []),
+        ...(Array.isArray(settings?.selectedPos) ? settings.selectedPos : []),
+    ].filter(Boolean);
+    const hasExplicitPositionFilter = () => selectedPositionFilters.length > 0 && settings?.leagueAutoSkaterFilter !== true;
     const hasRosterSlotRows = () => (Array.isArray(data) ? data : []).some((row) =>
         row?.roster_slot != null || row?.roster_sort_order != null || row?.league_roster_placeholder === true
     );
     const useRosterSlotColumn = () => isRosterSlotLeague && !isProspectMode && hasSelectedFantasyTeam();
     const isRosterSlotSortActive = () => isRosterSlotLeague && !isProspectMode && hasRosterSlotRows() && settings.leagueUserSortActive !== true;
     const { left, stats } = splitLeagueOwnerHeadings(headings, useRosterSlotColumn());
+    const skaterStats = statHeadingsForGroup(settings, "skater", stats);
+    const goalieStats = statHeadingsForGroup(settings, "goalie", stats);
+    const shouldSplitSelectedTeamRoster = () => isRosterSlotLeague
+        && !isProspectMode
+        && hasSelectedFantasyTeam()
+        && !hasExplicitPositionFilter();
+    const shouldAutoSkaterOnly = () => isRosterSlotLeague
+        && !isProspectMode
+        && !hasSelectedFantasyTeam()
+        && !hasExplicitPositionFilter();
+    const visibleStats = () => shouldSplitSelectedTeamRoster() || shouldAutoSkaterOnly()
+        ? skaterStats
+        : stats;
     const rosterSlotHeadingKey = () => left.find((heading) =>
         ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
     )?.key ?? "pos_type";
@@ -307,8 +381,9 @@ const renderLeagueOwnerStatsDesktop = (
         return isRosterSlotSortActive() ? rosterSlotHeadingKey() : settings.sortKey;
     };
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
-    const statGridCols = stats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
-    const rankMaps = buildCompetitionRankMaps(data, stats);
+    const statGridCols = visibleStats().map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
+    const goalieStatGridCols = goalieStats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || statGridCols;
+    const rankMaps = buildCompetitionRankMaps(data, uniqueHeadings([...stats, ...skaterStats, ...goalieStats]));
 
     const leagues = Array.from(
         new Set(
@@ -334,6 +409,21 @@ const renderLeagueOwnerStatsDesktop = (
 
         return a.name.localeCompare(b.name);
     });
+    const userFantasyTeam = fantasyTeams.find((team) => team.isUserTeam) || null;
+    if (prev.leagueFantasyTeamInitialized !== true && state.fantasyTeamFilter === "" && userFantasyTeam) {
+        state.fantasyTeamFilter = userFantasyTeam.name;
+    }
+    state.leagueFantasyTeamInitialized = true;
+    desktopState.set(container, state);
+
+    const notifyFantasyTeamFilterChange = () => {
+        if (typeof settings?.onLeagueFantasyTeamFilterChange !== "function") return;
+
+        settings.onLeagueFantasyTeamFilterChange({
+            teamSpecific: hasSelectedFantasyTeam(),
+            fantasyTeam: state.fantasyTeamFilter,
+        });
+    };
 
     container.innerHTML = "";
 
@@ -372,7 +462,7 @@ const renderLeagueOwnerStatsDesktop = (
         label.className = "min-w-0 flex-1 truncate";
         label.textContent = isFreeAgentFantasyFilter()
             ? "Free Agents"
-            : (selected?.name || "All Teams");
+            : (selected?.name || "All Players");
         fantasyTeamButton.appendChild(label);
     };
     const fantasyTeamMenu = document.createElement("div");
@@ -402,11 +492,12 @@ const renderLeagueOwnerStatsDesktop = (
             renderFantasyTeamButton();
             syncOwnerPaneVisibility();
             syncRosterSlotHeader();
+            notifyFantasyTeamFilterChange();
             renderRows();
         });
         fantasyTeamMenu.appendChild(option);
     };
-    addFantasyTeamOption({ name: "", value: "", label: "All Teams", avatarUrl: "" });
+    addFantasyTeamOption({ name: "", value: "", label: "All Players", avatarUrl: "" });
     addFantasyTeamOption({ name: "Free Agents", value: "__free_agents", label: "Free Agents", avatarUrl: "" });
     fantasyTeams.forEach(addFantasyTeamOption);
     fantasyTeamButton.addEventListener("click", () => {
@@ -568,7 +659,7 @@ const renderLeagueOwnerStatsDesktop = (
             "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
         ));
     });
-    stats.forEach((heading) => {
+    visibleStats().forEach((heading) => {
         statsHeader.appendChild(sortableHeader(
             heading,
             "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
@@ -618,7 +709,7 @@ const renderLeagueOwnerStatsDesktop = (
         const filtered = rows.map((row, sourceIndex) => ({ row, sourceIndex })).filter(({ row }) => {
             const isRosterOnly = row?.league_roster_only === true;
             const isRosterPlaceholder = row?.league_roster_placeholder === true;
-            const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === "1";
+            const isGoalie = rowIsGoalie(row);
             const name = String(row?.name ?? "").toLowerCase();
             const hitName = !nameQ || name.includes(nameQ);
             const rowFantasyTeam = String(row?.fantasy_team_name ?? "").trim();
@@ -626,12 +717,13 @@ const renderLeagueOwnerStatsDesktop = (
                 ? rowFantasyTeam === ""
                 : (!fantasyTeamQ || rowFantasyTeam.toUpperCase() === fantasyTeamQ);
             const hitLeague = !leagueQ || String(row?.league ?? "").toUpperCase() === leagueQ;
+            const hitAutoSkaterOnly = !shouldAutoSkaterOnly() || !isGoalie;
 
             const canShowRosterOnly = !isRosterOnly
                 || hasSelectedFantasyTeam()
                 || (isGoalieFilterActive && isGoalie && !isRosterPlaceholder);
 
-            return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague;
+            return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague && hitAutoSkaterOnly;
         });
 
         const rowsWithRankSource = filtered.map((entry) => ({
@@ -736,7 +828,7 @@ const renderLeagueOwnerStatsDesktop = (
         statsBody.innerHTML = "";
         ownerBody.innerHTML = "";
 
-        const appendGroupSeparator = (label, tone = "blue") => {
+        const appendGroupSeparator = (label, tone = "blue", sectionStats = null, sectionGridCols = statGridCols) => {
             const separatorClass = tone === "gray"
                 ? "border-t bg-gray-100 text-gray-700"
                 : "border-t bg-blue-100 text-blue-700";
@@ -753,8 +845,16 @@ const renderLeagueOwnerStatsDesktop = (
             leftBody.appendChild(leftRow);
 
             const statsRow = document.createElement("div");
-            statsRow.className = `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
-            statsRow.style.gridTemplateColumns = statGridCols;
+            statsRow.className = sectionStats
+                ? `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-700 ${emptySeparatorClass}`
+                : `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
+            statsRow.style.gridTemplateColumns = sectionGridCols;
+            (sectionStats || []).forEach((heading) => {
+                const cell = document.createElement("div");
+                cell.className = "select-none flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
+                cell.textContent = heading?.label ?? "";
+                statsRow.appendChild(cell);
+            });
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
@@ -763,7 +863,7 @@ const renderLeagueOwnerStatsDesktop = (
         };
 
         const rows = applyFilters(data);
-        const renderPlayerRow = (row, idx) => {
+        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols) => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
@@ -774,8 +874,8 @@ const renderLeagueOwnerStatsDesktop = (
 
             const statsRow = document.createElement("div");
             statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
-            statsRow.style.gridTemplateColumns = statGridCols;
-            stats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
+            statsRow.style.gridTemplateColumns = rowStatGridCols;
+            rowStats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading)));
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
@@ -802,6 +902,36 @@ const renderLeagueOwnerStatsDesktop = (
                     renderPlayerRow(row, rowIndex);
                     rowIndex += 1;
                 });
+            });
+        } else if (shouldSplitSelectedTeamRoster()) {
+            let rowIndex = 0;
+            const skaterRows = sortByRosterOrder(rows.filter((row) => !rowIsGoalie(row)));
+            const goalieRows = sortGoalieRosterRows(rows.filter((row) => rowIsGoalie(row)));
+
+            appendGroupSeparator("Skaters", "blue", skaterStats, statGridCols);
+            skaterRows.forEach((row, idx) => {
+                if (
+                    row?.roster_group === "minor"
+                    && skaterRows?.[idx - 1]?.roster_group !== "minor"
+                ) {
+                    appendGroupSeparator("Minors", "gray", skaterStats, statGridCols);
+                }
+
+                renderPlayerRow(row, rowIndex, skaterStats, statGridCols);
+                rowIndex += 1;
+            });
+
+            appendGroupSeparator("Goalies", "blue", goalieStats, goalieStatGridCols);
+            goalieRows.forEach((row, idx) => {
+                if (
+                    row?.roster_group === "minor"
+                    && goalieRows?.[idx - 1]?.roster_group !== "minor"
+                ) {
+                    appendGroupSeparator("Minors", "gray", goalieStats, goalieStatGridCols);
+                }
+
+                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols);
+                rowIndex += 1;
             });
         } else {
             rows.forEach((row, idx) => {
@@ -865,6 +995,7 @@ const renderLeagueOwnerStatsDesktop = (
 
     renderRows();
     syncRosterSlotHeader();
+    notifyFantasyTeamFilterChange();
     window.requestAnimationFrame(updateScrollHints);
 
     const observer = new MutationObserver(() => {
