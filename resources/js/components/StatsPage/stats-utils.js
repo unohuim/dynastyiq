@@ -1,10 +1,56 @@
+const HYDRATED_ROW_FALLBACK_KEYS = new Set([
+    'gp',
+    'fantasy_pts_pg',
+    'fantasy_pts_per_game',
+]);
+
+const hasMeaningfulStatValue = (value) => value !== undefined
+    && value !== null
+    && value !== ''
+    && value !== 0
+    && value !== '0';
+
+const statValueAliases = (key) => {
+    const normalized = String(key ?? '').toLowerCase();
+
+    if (normalized === 'gp') return ['gp', 'games_played', 'gamesPlayed', 'games'];
+
+    return [key];
+};
+
+const firstStatValueForKeys = (source, keys, meaningfulOnly = false) => {
+    if (!source || typeof source !== 'object') return undefined;
+
+    return keys.map((key) => source?.[key]).find((value) => {
+        if (meaningfulOnly) return hasMeaningfulStatValue(value);
+
+        return value !== undefined && value !== null && value !== '';
+    });
+};
+
+export function statValueForKey(row, key) {
+    const normalized = String(key ?? '').toLowerCase();
+    const keys = statValueAliases(key);
+    const nestedValue = firstStatValueForKeys(row?.stats, keys);
+    const rowValue = firstStatValueForKeys(row, keys);
+
+    if (HYDRATED_ROW_FALLBACK_KEYS.has(normalized)) {
+        return firstStatValueForKeys(row, keys, true)
+            ?? firstStatValueForKeys(row?.stats, keys, true)
+            ?? rowValue
+            ?? nestedValue;
+    }
+
+    return nestedValue ?? rowValue;
+}
+
 export function sortData(data, sortKey, sortDirection = 'desc') {
     if (!sortKey) return data;
 
     return [...data].sort((a, b) => {
         const key = sortKey === 'toi' ? 'toi_seconds' : sortKey;
-        const aValue = a.stats?.[key] ?? a[key];
-        const bValue = b.stats?.[key] ?? b[key];
+        const aValue = statValueForKey(a, key);
+        const bValue = statValueForKey(b, key);
 
         if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
         if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;

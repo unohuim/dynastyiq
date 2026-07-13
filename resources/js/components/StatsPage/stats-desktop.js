@@ -1,5 +1,5 @@
 // stats-desktop.js
-import { formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, teamBg } from "./stats-utils.js";
+import { formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, statValueForKey, teamBg } from "./stats-utils.js";
 
 // === keep your colours exactly as set before ===
 export const BORDER_COLOUR_F = "#7CCCF2";
@@ -133,53 +133,6 @@ const isRankableStatKey = (key) => {
     return normalized !== "" && !NON_RANKED_STAT_KEYS.has(normalized);
 };
 
-const hasMeaningfulStatValue = (value) => value !== undefined
-    && value !== null
-    && value !== ""
-    && value !== 0
-    && value !== "0";
-
-const valueNeedsHydratedRowFallback = (key) => {
-    const normalized = String(key ?? "").toLowerCase();
-
-    return normalized === "gp"
-        || normalized === "fantasy_pts_pg"
-        || normalized === "fantasy_pts_per_game";
-};
-
-const statValueAliases = (key) => {
-    const normalized = String(key ?? "").toLowerCase();
-
-    if (normalized === "gp") return ["gp", "games_played", "gamesPlayed", "games"];
-
-    return [key];
-};
-
-const firstStatValueForKeys = (source, keys, meaningfulOnly = false) => {
-    if (!source || typeof source !== "object") return undefined;
-
-    return keys.map((key) => source?.[key]).find((value) => {
-        if (meaningfulOnly) return hasMeaningfulStatValue(value);
-
-        return value !== undefined && value !== null && value !== "";
-    });
-};
-
-const statValueWithHydratedRowFallback = (row, key) => {
-    const keys = statValueAliases(key);
-    const nestedValue = firstStatValueForKeys(row?.stats, keys);
-    const rowValue = firstStatValueForKeys(row, keys);
-
-    if (valueNeedsHydratedRowFallback(key)) {
-        return firstStatValueForKeys(row, keys, true)
-            ?? firstStatValueForKeys(row?.stats, keys, true)
-            ?? rowValue
-            ?? nestedValue;
-    }
-
-    return nestedValue ?? rowValue;
-};
-
 const buildCompetitionRankMaps = (rows, headings) => {
     const rankMaps = new Map();
     const sourceRows = Array.isArray(rows) ? rows : [];
@@ -191,7 +144,7 @@ const buildCompetitionRankMaps = (rows, headings) => {
         const values = sourceRows
             .map((row, index) => ({
                 index,
-                value: numericStatValue(statValueWithHydratedRowFallback(row, key)),
+                value: numericStatValue(statValueForKey(row, key)),
             }))
             .filter((entry) => entry.value !== null)
             .sort((a, b) => b.value - a.value);
@@ -889,7 +842,7 @@ const renderLeagueOwnerStatsDesktop = (
             cell.className = "flex items-center justify-center text-gray-500";
             cell.appendChild(badge);
         } else if (String(key).toLowerCase() === "league") {
-            const rawVal = row.stats?.[key] ?? row[key];
+            const rawVal = statValueForKey(row, key);
             const val = formatStatValue(key, rawVal);
             cell.className = "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
             cell.textContent = val ?? "";
@@ -902,7 +855,7 @@ const renderLeagueOwnerStatsDesktop = (
                 return cell;
             }
 
-            const rawVal = row.stats?.[key] ?? row[key];
+            const rawVal = statValueForKey(row, key);
             const val = formatStatValue(key, rawVal);
             cell.className = "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
             cell.title = String(val ?? "");
@@ -912,7 +865,7 @@ const renderLeagueOwnerStatsDesktop = (
             cell.appendChild(buildPlayerAvatar(row, val));
             cell.appendChild(name);
         } else {
-            const rawVal = row.stats?.[key] ?? row[key];
+            const rawVal = statValueForKey(row, key);
             const val = formatStatValue(key, rawVal);
             cell.className = "flex items-center justify-center whitespace-nowrap text-gray-500";
             cell.textContent = formatDesktopNumber(val);
@@ -921,18 +874,8 @@ const renderLeagueOwnerStatsDesktop = (
         return cell;
     };
 
-    const statCellValue = (row, key, rowGroup = "") => {
-        const nestedValue = row.stats?.[key];
-        const rowValue = row?.[key];
-
-        if (
-            rowGroup === "goalie"
-            && valueNeedsHydratedRowFallback(key)
-        ) {
-            return statValueWithHydratedRowFallback(row, key);
-        }
-
-        return nestedValue ?? rowValue;
+    const statCellValue = (row, key) => {
+        return statValueForKey(row, key);
     };
 
     const renderStatCell = (row, heading, rowGroup = "") => {
@@ -1471,7 +1414,7 @@ export function renderStatsDesktop(
                         "flex items-center justify-center text-gray-500";
                     cell.appendChild(badge);
                 } else if (i === leagueIdx) {
-                    const rawVal = row.stats?.[key] ?? row[key];
+                    const rawVal = statValueForKey(row, key);
                     const val = formatStatValue(key, rawVal);
                     cell.className =
                         "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
@@ -1483,12 +1426,12 @@ export function renderStatsDesktop(
                         "flex items-center justify-center text-gray-500";
                     cell.appendChild(buildPosShape(val, typeVal));
                 } else if (isAAVKey(key)) {
-                    const raw = row.stats?.[key] ?? row[key];
+                    const raw = statValueForKey(row, key);
                     cell.className =
                         "flex items-center justify-center whitespace-nowrap text-sm text-gray-500";
                     cell.textContent = formatAAV(raw);
                 } else if (i === playerIdx) {
-                    const rawVal = row.stats?.[key] ?? row[key];
+                    const rawVal = statValueForKey(row, key);
                     const val = formatStatValue(key, rawVal);
                     cell.className =
                         "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
@@ -1499,7 +1442,7 @@ export function renderStatsDesktop(
                     cell.appendChild(buildPlayerAvatar(row, val));
                     cell.appendChild(name);
                 } else {
-                    const rawVal = row.stats?.[key] ?? row[key];
+                    const rawVal = statValueForKey(row, key);
                     const val = formatStatValue(key, rawVal);
                     const common =
                         "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";

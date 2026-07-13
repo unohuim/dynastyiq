@@ -1093,7 +1093,10 @@ describe('stats page prospect controls', () => {
     const exactCellValues = Array.from(document.body.querySelectorAll('div'))
       .map((node) => node.textContent.trim());
     expect(exactCellValues).toContain('20');
+    expect(exactCellValues).toContain('15');
     expect(exactCellValues).toContain('30');
+    expect(exactCellValues).toContain('5');
+    expect(exactCellValues).toContain('3');
     expect(exactCellValues).toContain('7.7');
     const goalieHeader = Array.from(document.body.querySelectorAll('div'))
       .find((node) => node.textContent.trim() === 'Goalies');
