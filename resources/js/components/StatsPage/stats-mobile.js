@@ -231,23 +231,23 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
         ageStat.className = 'player-stats-age-mobile';
         ageStat.textContent = player?.age ? `Age ${player.age}` : '';
 
-        const aav = document.createElement('span');
-        aav.className = 'player-stats-aav-mobile';
-        const rawAav = player?.contract_value;
+        const cap = document.createElement('span');
+        cap.className = 'player-stats-aav-mobile';
+        const rawCap = player?.contract_value;
         let millions = null;
-        if (typeof rawAav === 'number') {
-          millions = rawAav / 1e6;
-        } else if (typeof rawAav === 'string') {
-          const parsed = parseFloat(rawAav.replace(/[^0-9.]/g, ''));
+        if (typeof rawCap === 'number') {
+          millions = rawCap / 1e6;
+        } else if (typeof rawCap === 'string') {
+          const parsed = parseFloat(rawCap.replace(/[^0-9.]/g, ''));
           millions = Number.isFinite(parsed) ? (parsed <= 100 ? parsed : parsed / 1e6) : null;
         }
         const lastYear = String(player?.contract_last_year ?? '').trim();
-        aav.textContent = `$${(millions ?? 0).toFixed(1)}M${lastYear ? ` | ${lastYear}` : ''}`;
+        cap.textContent = `$${(millions ?? 0).toFixed(2)}M${lastYear ? ` | ${lastYear}` : ''}`;
 
         const meta = document.createElement('span');
         meta.className = 'player-stats-meta-mobile';
         meta.appendChild(ageStat);
-        meta.appendChild(aav);
+        meta.appendChild(cap);
 
         const nameBlock = document.createElement('span');
         nameBlock.className = 'player-stats-name-stack-mobile';

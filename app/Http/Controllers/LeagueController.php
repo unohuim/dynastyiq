@@ -548,7 +548,7 @@ final class LeagueController extends Controller
     }
 
     /**
-     * Persist user-owned projected AAV assumptions for expired-contract players.
+     * Persist user-owned projected cap assumptions for expired-contract players.
      */
     public function updateCapProjections(Request $request, string $leagueId): JsonResponse
     {
@@ -1345,7 +1345,7 @@ final class LeagueController extends Controller
     }
 
     /**
-     * Determine whether a player is eligible for projected AAV planning.
+     * Determine whether a player is eligible for projected cap planning.
      */
     private static function playerCanProjectExpiredContract(Player $player, int $seasonKey, int $currentSeasonKey): bool
     {
@@ -1359,9 +1359,9 @@ final class LeagueController extends Controller
     }
 
     /**
-     * Find the last expired contract AAV basis for a player with no active/future seasons.
+     * Find the last expired contract cap-hit basis for a player with no active/future seasons.
      *
-     * @return array{last_season_key:int,last_aav:int}|null
+     * @return array{last_season_key:int,last_cap_hit:int}|null
      */
     private static function expiredContractProjectionBasis(Player $player, int $currentSeasonKey): ?array
     {
@@ -1384,17 +1384,15 @@ final class LeagueController extends Controller
         }
 
         $lastSeason = $seasons->last();
-        $lastAav = is_numeric($lastSeason->aav)
-            ? (int) $lastSeason->aav
-            : (is_numeric($lastSeason->cap_hit) ? (int) $lastSeason->cap_hit : 0);
+        $lastCapHit = is_numeric($lastSeason->cap_hit) ? (int) $lastSeason->cap_hit : 0;
 
-        if ((int) $lastSeason->season_key <= 0 || $lastAav <= 0) {
+        if ((int) $lastSeason->season_key <= 0 || $lastCapHit <= 0) {
             return null;
         }
 
         return [
             'last_season_key' => (int) $lastSeason->season_key,
-            'last_aav' => $lastAav,
+            'last_cap_hit' => $lastCapHit,
         ];
     }
 
@@ -1443,26 +1441,34 @@ final class LeagueController extends Controller
                         'user_id' => (int) $user->id,
                         'player_id' => (int) $player->id,
                         'season_key' => $seasonKey,
-                        'projected_aav' => (int) $basis['last_aav'],
+                        'projected_aav' => (int) $basis['last_cap_hit'],
                         'source' => 'system',
-                        'basis' => 'last_aav',
+                        'basis' => 'last_cap_hit',
                     ]);
-                } elseif ((string) $row->source === 'system' && (int) $row->projected_aav !== (int) $basis['last_aav']) {
+                } elseif (
+                    (string) $row->source === 'system'
+                    && (
+                        (int) $row->projected_aav !== (int) $basis['last_cap_hit']
+                        || (string) $row->basis !== 'last_cap_hit'
+                    )
+                ) {
                     $row->forceFill([
-                        'projected_aav' => (int) $basis['last_aav'],
-                        'basis' => 'last_aav',
+                        'projected_aav' => (int) $basis['last_cap_hit'],
+                        'basis' => 'last_cap_hit',
                     ])->save();
                 }
 
-                $projectedAav = (int) $row->projected_aav;
+                $projectedCapHit = (int) $row->projected_aav;
                 $source = (string) $row->source;
                 $basisKey = (string) $row->basis;
 
                 $seasons[(string) $seasonKey] = [
                     'season_key' => $seasonKey,
                     'label' => self::seasonKeyLabel($seasonKey),
-                    'projected_aav' => $projectedAav,
-                    'projected_aav_label' => self::compactMoneyLabel($projectedAav),
+                    'projected_cap_hit' => $projectedCapHit,
+                    'projected_cap_hit_label' => self::compactMoneyLabel($projectedCapHit),
+                    'projected_aav' => $projectedCapHit,
+                    'projected_aav_label' => self::compactMoneyLabel($projectedCapHit),
                     'source' => $source,
                     'basis' => $basisKey,
                 ];
@@ -1472,8 +1478,8 @@ final class LeagueController extends Controller
                 $payload[(string) $player->id] = [
                     'player_id' => (int) $player->id,
                     'last_season_key' => (int) $basis['last_season_key'],
-                    'last_aav' => (int) $basis['last_aav'],
-                    'last_aav_label' => self::compactMoneyLabel((int) $basis['last_aav']),
+                    'last_cap_hit' => (int) $basis['last_cap_hit'],
+                    'last_cap_hit_label' => self::compactMoneyLabel((int) $basis['last_cap_hit']),
                     'seasons' => $seasons,
                 ];
             }
@@ -1563,6 +1569,7 @@ final class LeagueController extends Controller
                     is_array($adjustment['values_by_season'] ?? null)
                         ? $adjustment['values_by_season']
                         : [],
+                    $type,
                 );
 
                 if ($values === []) {
@@ -1580,9 +1587,12 @@ final class LeagueController extends Controller
                     'player_position' => trim((string) ($adjustment['player_position'] ?? '')),
                     'avatar_url' => trim((string) ($adjustment['avatar_url'] ?? '')),
                     'team_abbrev' => trim((string) ($adjustment['team_abbrev'] ?? '')),
-                    'percent' => max(0, min(100, (float) ($adjustment['percent'] ?? 0))),
+                    'percent' => $type === 'retention'
+                        ? max(-100, min(100, (float) ($adjustment['percent'] ?? 0)))
+                        : max(0, min(100, abs((float) ($adjustment['percent'] ?? 0)))),
                     'start_season' => $this->normalizeSeasonKey($adjustment['start_season'] ?? null),
                     'end_season' => $this->normalizeSeasonKey($adjustment['end_season'] ?? null),
+                    'payout_years' => max(1, (int) ($adjustment['payout_years'] ?? 1)),
                     'values_by_season' => $values,
                 ];
             }
@@ -1597,24 +1607,52 @@ final class LeagueController extends Controller
      * @param array<mixed,mixed> $values
      * @return array<string,int>
      */
-    private function normalizeAdjustmentValuesBySeason(array $values): array
+    private function normalizeAdjustmentValuesBySeason(array $values, string $type): array
     {
         $normalized = [];
 
         foreach ($values as $seasonKey => $value) {
             $seasonKey = $this->normalizeSeasonKey($seasonKey);
-            $amount = $this->normalizeSalaryCap($value);
+            $amount = $this->normalizeCapAdjustmentAmount($value);
 
             if ($seasonKey === null || $amount === null) {
                 continue;
             }
 
-            $normalized[$seasonKey] = $amount;
+            $normalized[$seasonKey] = $type === 'retention' ? $amount : abs($amount);
         }
 
         ksort($normalized);
 
         return $normalized;
+    }
+
+    /**
+     * Normalize a cap adjustment amount while preserving retention direction.
+     */
+    private function normalizeCapAdjustmentAmount(mixed $value): ?int
+    {
+        $raw = trim((string) $value);
+
+        if ($raw === '') {
+            return null;
+        }
+
+        $sign = str_starts_with($raw, '-') ? -1 : 1;
+        $usesMillionsSuffix = str_ends_with(strtolower($raw), 'm');
+        $normalized = preg_replace('/[^0-9.]/', '', $raw);
+
+        if ($normalized === null || $normalized === '' || ! is_numeric($normalized)) {
+            return null;
+        }
+
+        $amount = (float) $normalized;
+
+        if ($usesMillionsSuffix || $amount < 10000) {
+            $amount *= 1000000;
+        }
+
+        return $amount > 0 ? $sign * (int) round($amount) : null;
     }
 
     /**
@@ -2295,7 +2333,7 @@ final class LeagueController extends Controller
             return null;
         }
 
-        $currentSeason = $seasons->first(static fn (array $season): bool => ($season['aav'] ?? 0) > 0)
+        $currentSeason = $seasons->first(static fn (array $season): bool => ($season['cap_hit'] ?? 0) > 0)
             ?? $seasons->first();
         $lastSeason = $seasons->last();
 
@@ -2305,8 +2343,8 @@ final class LeagueController extends Controller
             'value' => $contract->contract_value !== null ? (int) $contract->contract_value : null,
             'value_label' => self::compactMoneyLabel($contract->contract_value !== null ? (int) $contract->contract_value : null),
             'expiry_status' => (string) ($contract->expiry_status ?? ''),
-            'current_aav' => $currentSeason['aav'] ?? null,
-            'current_aav_label' => $currentSeason['aav_label'] ?? '',
+            'current_cap_hit' => $currentSeason['cap_hit'] ?? null,
+            'current_cap_hit_label' => $currentSeason['cap_hit_label'] ?? '',
             'last_year' => $lastSeason['label'] ?? '',
             'last_season_key' => $lastSeason['season_key'] ?? null,
             'seasons' => $seasons->all(),

@@ -931,7 +931,7 @@ describe('stats page prospect controls', () => {
         { key: 'league', label: 'League' },
         { key: 'pos_type', label: 'Type' },
         { key: 'age', label: 'Age' },
-        { key: 'contract_value_num', label: 'AAV' },
+        { key: 'contract_value_num', label: 'Cap' },
         { key: 'contract_last_year', label: 'Term End' },
         { key: 'contract_type', label: 'Contract Type' },
       ],
@@ -1060,7 +1060,7 @@ describe('stats page prospect controls', () => {
       { key: 'league', label: 'League' },
       { key: 'pos_type', label: 'Type' },
       { key: 'age', label: 'Age' },
-      { key: 'contract_value_num', label: 'AAV' },
+      { key: 'contract_value_num', label: 'Cap' },
       { key: 'contract_last_year', label: 'Term End' },
       { key: 'contract_type', label: 'Contract Type' },
     ];
@@ -1196,7 +1196,7 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('Goalies');
     expect(document.body.textContent).not.toContain('Minors');
     expect(document.body.textContent).toContain('Age');
-    expect(document.body.textContent).toContain('AAV');
+    expect(document.body.textContent).toContain('Cap');
     expect(document.body.textContent).toContain('Type');
     expect(document.body.textContent).toContain('Term');
     expect(document.body.textContent).toContain('GP');
@@ -1209,7 +1209,7 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('6.3');
     expect(document.body.textContent).toContain('2029-30');
     expect(document.body.textContent).toContain('7.7');
-    expect(document.body.textContent.indexOf('AAV'))
+    expect(document.body.textContent.indexOf('Cap'))
       .toBeLessThan(document.body.textContent.indexOf('Type'));
     expect(document.body.textContent.indexOf('Type'))
       .toBeLessThan(document.body.textContent.indexOf('Term'));

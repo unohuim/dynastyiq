@@ -20,7 +20,7 @@ return new class extends Migration
             $table->unsignedInteger('season_key');
             $table->unsignedBigInteger('projected_aav');
             $table->string('source', 24)->default('system');
-            $table->string('basis', 48)->default('last_aav');
+            $table->string('basis', 48)->default('last_cap_hit');
             $table->timestamps();
 
             $table->unique(

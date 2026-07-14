@@ -27,13 +27,13 @@ const displayPosition = (raw) => {
     return first;
 };
 
-// AAV helpers
-const isAAVKey = (k = "") =>
+// Cap helpers
+const isCapKey = (k = "") =>
     ["aav", "contract_value", "contract_value_num"].includes(
         String(k).toLowerCase()
     );
 
-const formatAAV = (val) => {
+const formatCap = (val) => {
     let n = null;
     if (typeof val === "number") n = val;
     else if (typeof val === "string") {
@@ -43,7 +43,7 @@ const formatAAV = (val) => {
     }
     if (n == null) return "";
     if (n > 1000) n = n / 1e6;
-    return `$${n.toFixed(1)}`;
+    return `$${n.toFixed(2)}`;
 };
 
 const formatDesktopNumber = (value) => {
@@ -384,6 +384,10 @@ const sharedLeaguePlayerStatHeadings = (headings, { includeGp = false } = {}) =>
 
         if (key === "contract_last_year" && label === "term end") {
             return { ...heading, label: "Term" };
+        }
+
+        if (key === "contract_value_num" && label === "aav") {
+            return { ...heading, label: "Cap" };
         }
 
         return heading;
@@ -932,7 +936,7 @@ const renderLeagueOwnerStatsDesktop = (
             return cell;
         }
 
-        cell.textContent = isAAVKey(key) ? formatAAV(rawVal) : formatDesktopNumber(val);
+        cell.textContent = isCapKey(key) ? formatCap(rawVal) : formatDesktopNumber(val);
 
         return cell;
     };
@@ -1463,11 +1467,11 @@ export function renderStatsDesktop(
                     cell.className =
                         "flex items-center justify-center text-gray-500";
                     cell.appendChild(buildPosShape(val, typeVal));
-                } else if (isAAVKey(key)) {
+                } else if (isCapKey(key)) {
                     const raw = statValueForKey(row, key);
                     cell.className =
                         "flex items-center justify-center whitespace-nowrap text-sm text-gray-500";
-                    cell.textContent = formatAAV(raw);
+                    cell.textContent = formatCap(raw);
                 } else if (i === playerIdx) {
                     const rawVal = statValueForKey(row, key);
                     const val = formatStatValue(key, rawVal);

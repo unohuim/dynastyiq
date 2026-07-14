@@ -5,10 +5,10 @@ location:
   - app/Http/Controllers/LeagueController.php
   - database/migrations/*_create_cap_contract_projections_table.php
   - resources/views/leagues/_panel.blade.php
-purpose: Store user-owned projected AAV assumptions for rostered players whose real contracts have expired and no active or future contract season exists.
+purpose: Store user-owned projected cap assumptions for rostered players whose real contracts have expired and no active or future contract season exists.
 when_to_use:
   - Rendering league Cap Sheet projections for unsigned roster players.
-  - Persisting user edits to projected AAV values.
+  - Persisting user edits to projected cap values.
   - Separating planning assumptions from source-of-truth contract records.
 when_not_to_use:
   - Importing or correcting real contract data.
@@ -19,9 +19,9 @@ rules:
   - Real contract seasons remain authoritative and must not be overwritten by projections.
   - Projections must be scoped by platform league, platform team, user, player, and season.
   - Projection inputs may appear only for rostered players with an expired contract basis and no active or future contract season.
-  - The Cap Sheet should expose one editable projection input per player and render later projected seasons as read-only badges using the same projected AAV.
+  - The Cap Sheet should expose one editable projection input per player and render later projected seasons as read-only badges using the same projected cap value.
   - Projection-generated seasons must not extend beyond three cap seasons from the current season.
-  - System defaults may use the player's last expired AAV and may be persisted as source system rows during Cap Sheet payload assembly.
+  - System defaults may use the player's last expired cap hit and may be persisted as source system rows during Cap Sheet payload assembly.
   - User-edited rows must persist separately with source user and must not be overwritten by refreshed system defaults.
   - Cap Sheet projected totals may include projections, but projection rows must stay visibly distinct from real contract values.
   - Projection persistence must use dedicated rows rather than platform_leagues.settings or platform_league_user_settings JSON blobs.

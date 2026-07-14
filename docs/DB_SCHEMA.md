@@ -257,7 +257,7 @@ Migrations remain the **sole source of truth**.
 ## cap_contract_projections
 
 **Organization-owned:** No; user-owned planning data
-**Purpose:** User-owned projected AAV assumptions for rostered players with expired real contracts.
+**Purpose:** User-owned projected cap assumptions for rostered players with expired real contracts.
 
 ### Columns
 
@@ -269,7 +269,7 @@ Migrations remain the **sole source of truth**.
 | user_id | bigint | No | FK -> users.id (CASCADE) |
 | player_id | bigint | No | FK -> players.id (CASCADE) |
 | season_key | unsigned integer | No | NHL season key, e.g. `20262027` |
-| projected_aav | unsigned bigint | No | Projected AAV in whole dollars |
+| projected_aav | unsigned bigint | No | Projected cap value in whole dollars |
 | source | string(24) | No | Projection source; see docs/ENUMS.md |
 | basis | string(48) | No | Projection basis; see docs/ENUMS.md |
 | created_at | timestamp | Yes | Laravel timestamp |

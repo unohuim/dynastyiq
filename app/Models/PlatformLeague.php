@@ -94,7 +94,7 @@ class PlatformLeague extends Model
     }
 
     /**
-     * User-owned projected AAV assumptions for cap planning.
+     * User-owned projected cap assumptions for cap planning.
      */
     public function capContractProjections(): HasMany
     {

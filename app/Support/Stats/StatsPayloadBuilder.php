@@ -473,7 +473,7 @@ final class StatsPayloadBuilder
             ['key' => 'age', 'label' => 'Age'],
             ['key' => 'team', 'label' => 'Team'],
             ['key' => 'pos_type', 'label' => 'Type'],
-            ['key' => 'contract_value_num', 'label' => 'AAV'],
+            ['key' => 'contract_value_num', 'label' => 'Cap'],
             ['key' => 'contract_last_year', 'label' => 'Term End'],
             ['key' => 'gp', 'label' => 'GP'],
         ];

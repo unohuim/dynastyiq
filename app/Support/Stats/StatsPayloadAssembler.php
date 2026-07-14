@@ -50,10 +50,10 @@ final class StatsPayloadAssembler
                 : $player?->contracts()->first();
             $contractSeason = $contract?->seasons->last();
             $contractLastLabel = $contractSeason?->label ?? '';
-            $contractAavRaw = is_numeric($contractSeason?->aav) ? (float) $contractSeason->aav : 0.0;
+            $contractCapHitRaw = is_numeric($contractSeason?->cap_hit) ? (float) $contractSeason->cap_hit : 0.0;
 
-            $contractAavMillions = $contractAavRaw > 0 ? $contractAavRaw / 1_000_000 : 0.0;
-            $contractAav = $contractAavRaw > 0 ? '$' . number_format($contractAavMillions, 1) . 'm' : '$0.0m';
+            $contractCapHitMillions = $contractCapHitRaw > 0 ? $contractCapHitRaw / 1_000_000 : 0.0;
+            $contractCapHit = $contractCapHitRaw > 0 ? '$' . number_format($contractCapHitMillions, 2) . 'm' : '$0.00m';
             $lastYearNumber = $this->parseContractLastYear($contractLastLabel);
 
             if ($isSeason) {
@@ -84,8 +84,8 @@ final class StatsPayloadAssembler
                 'pos' => (bool) ($player?->is_goalie ?? false) ? 'G' : $player?->position,
                 'pos_type' => (bool) ($player?->is_goalie ?? false) ? 'G' : $player?->pos_type,
                 'is_goalie' => (bool) ($player?->is_goalie ?? false),
-                'contract_value' => $contractAav,
-                'contract_value_num' => round($contractAavMillions, 1),
+                'contract_value' => $contractCapHit,
+                'contract_value_num' => round($contractCapHitMillions, 2),
                 'contract_last_year' => $contractLastLabel,
                 'contract_last_year_num' => $lastYearNumber,
                 'gp' => max(0, $gamesPlayed),

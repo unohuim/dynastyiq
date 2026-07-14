@@ -2460,7 +2460,7 @@ slug: "fantasy-hockey-draft-strategy"
 - `database/migrations/*_create_cap_contract_projections_table.php`
 
 **Purpose:**
-Store user-owned projected AAV assumptions for rostered players whose real contracts have expired.
+Store user-owned projected cap assumptions for rostered players whose real contracts have expired.
 
 **Public Interface:**
 - `CapContractProjection`

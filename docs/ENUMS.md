@@ -1364,12 +1364,12 @@ Do not introduce new enum values without updating this document.
 **Storage location(s):** `cap_contract_projections.basis` (string column)
 **Allowed values currently emitted:**
 
-- `last_aav`
+- `last_cap_hit`
 - `manual`
 
 **Semantic meaning:**
 
-- `last_aav`: Projection default was derived from the player's last expired AAV.
+- `last_cap_hit`: Projection default was derived from the player's last expired cap hit.
 - `manual`: Projection value was directly entered by the user.
 
 **Notes:**

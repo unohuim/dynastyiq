@@ -40,7 +40,7 @@ final class StatsDerivedFilterApplier
         if ($bounds['contract_value_num']['max'] > 0) {
             $virtualSchema[] = [
                 'key' => 'contract_value_num',
-                'label' => 'AAV',
+                'label' => 'Cap',
                 'type' => 'number',
                 'bounds' => [
                     'min' => (float) floor($bounds['contract_value_num']['min']),

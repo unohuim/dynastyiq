@@ -57,7 +57,7 @@ class PlatformTeam extends Model
     }
 
     /**
-     * User-owned projected AAV assumptions for this fantasy team.
+     * User-owned projected cap assumptions for this fantasy team.
      */
     public function capContractProjections(): HasMany
     {

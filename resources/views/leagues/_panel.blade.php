@@ -79,6 +79,7 @@
         percent: 50,
         start_season: '',
         end_season: '',
+        payout_years: 1,
         values_by_season: {},
       },
       capAdjustmentOverrides: {},
@@ -791,7 +792,7 @@
             const season = this.capSeasonForPlayer(player, column.key);
             const value = Number(season?.cap_hit || 0);
             const projection = this.capProjectionForPlayer(player, column.key);
-            const projectedValue = season ? 0 : Number(projection?.projected_aav || 0);
+            const projectedValue = season ? 0 : Number(projection?.projected_cap_hit || projection?.projected_aav || 0);
 
             return sum
               + (Number.isFinite(value) ? value : 0)
@@ -810,7 +811,7 @@
             if (this.capSeasonForPlayer(player, column.key)) return sum;
 
             const projection = this.capProjectionForPlayer(player, column.key);
-            const value = Number(projection?.projected_aav || 0);
+            const value = Number(projection?.projected_cap_hit || projection?.projected_aav || 0);
 
             return sum + (Number.isFinite(value) ? value : 0);
           }, 0);
@@ -894,7 +895,7 @@
       },
       capProjectionEditValue(player, key){
         const projection = this.capProjectionForPlayer(player, key);
-        const value = Number(projection?.projected_aav || 0);
+        const value = Number(projection?.projected_cap_hit || projection?.projected_aav || 0);
 
         if (!Number.isFinite(value) || value <= 0) return '';
 
@@ -1020,7 +1021,7 @@
           const season = this.capSeasonForPlayer(player, seasonKey);
           const projection = this.capProjectionForPlayer(player, seasonKey);
 
-          return Number(season?.cap_hit || projection?.projected_aav || 0);
+          return Number(season?.cap_hit || projection?.projected_cap_hit || projection?.projected_aav || 0);
         }
 
         return '';
@@ -1065,9 +1066,9 @@
       capMoney(value){
         const number = Number(value || 0);
 
-        if (!Number.isFinite(number) || number <= 0) return '-';
+        if (!Number.isFinite(number) || number === 0) return '-';
 
-        return `$${(number / 1000000).toFixed(2)}M`;
+        return `${number < 0 ? '-' : ''}$${(Math.abs(number) / 1000000).toFixed(2)}M`;
       },
       capSpaceMoney(value){
         if (value === null || value === undefined) return '-';
@@ -1258,6 +1259,22 @@
       capAdjustmentValue(adjustment, seasonKey){
         return Number(adjustment?.values_by_season?.[String(seasonKey)] || 0);
       },
+      normalizedCapAdjustmentValuesForSave(){
+        const sign = this.capAdjustmentForm.type === 'retention' && Number(this.capAdjustmentForm.percent || 0) < 0 ? -1 : 1;
+        const values = {};
+
+        Object.entries(this.capAdjustmentForm.values_by_season || {}).forEach(([seasonKey, value]) => {
+          const numericValue = Number(value || 0);
+
+          if (!Number.isFinite(numericValue) || numericValue === 0) return;
+
+          values[seasonKey] = this.capAdjustmentForm.type === 'buyout'
+            ? Math.abs(Math.round(numericValue))
+            : sign * Math.abs(Math.round(numericValue));
+        });
+
+        return values;
+      },
       capAdjustmentTypeLabel(type){
         return String(type || '') === 'retention' ? 'Retention' : 'Buyout';
       },
@@ -1279,7 +1296,7 @@
 
         return (player?.contract?.seasons || []).some(season => {
           const seasonKey = Number(season?.season_key || 0);
-          const capHit = Number(season?.cap_hit || season?.aav || 0);
+          const capHit = Number(season?.cap_hit || 0);
 
           return seasonKey >= currentSeason && capHit > 0;
         });
@@ -1322,10 +1339,14 @@
           .concat(this.freeAgents || [])
           .find(player => Number(player?.id || 0) === id) || null;
       },
+      capAdjustmentSelectedPlayer(){
+        return this.capPlayerById(this.capAdjustmentForm.player_id) || null;
+      },
       openCapAdjustmentDrawer(adjustment = null){
         if (adjustment) {
           this.capAdjustmentMode = 'edit';
           this.capAdjustmentEditingId = String(adjustment.id || '');
+          const existingYears = Number(adjustment.payout_years || 0);
           this.capAdjustmentForm = {
             type: String(adjustment.type || 'buyout'),
             player_id: String(adjustment.player_id || ''),
@@ -1336,6 +1357,7 @@
             percent: Number(adjustment.percent || 50),
             start_season: String(adjustment.start_season || ''),
             end_season: String(adjustment.end_season || ''),
+            payout_years: existingYears > 0 ? existingYears : 1,
             values_by_season: { ...(adjustment.values_by_season || {}) },
           };
           this.capAdjustmentOverrides = Object.fromEntries(Object.keys(this.capAdjustmentForm.values_by_season || {}).map(key => [key, true]));
@@ -1354,6 +1376,7 @@
             percent: 50,
             start_season: firstSeason,
             end_season: '',
+            payout_years: 1,
             values_by_season: {},
           };
           this.capAdjustmentOverrides = {};
@@ -1363,6 +1386,7 @@
         this.capAdjustmentPlayerOpen = false;
         this.capAdjustmentDrawerOpen = true;
         this.loadFreeAgentsPayload();
+        this.normalizeCapAdjustmentPayoutYears();
         this.recalculateCapAdjustmentValues(false);
       },
       selectCapAdjustmentPlayer(player){
@@ -1373,7 +1397,19 @@
         this.capAdjustmentForm.team_abbrev = String(player?.team_abbrev || '');
         this.capAdjustmentPlayerQuery = this.capAdjustmentForm.player_name;
         this.capAdjustmentPlayerOpen = false;
+        this.setCapAdjustmentPayoutYearsToFullTerm();
         this.recalculateCapAdjustmentValues(false);
+      },
+      clearCapAdjustmentPlayer(){
+        this.capAdjustmentForm.player_id = '';
+        this.capAdjustmentForm.player_name = '';
+        this.capAdjustmentForm.player_position = '';
+        this.capAdjustmentForm.avatar_url = '';
+        this.capAdjustmentForm.team_abbrev = '';
+        this.capAdjustmentForm.values_by_season = {};
+        this.capAdjustmentOverrides = {};
+        this.capAdjustmentPlayerQuery = '';
+        this.capAdjustmentPlayerOpen = true;
       },
       capAdjustmentSeasonOptions(){
         const keys = new Set(this.capSeasonKeys(10));
@@ -1389,12 +1425,89 @@
           label: this.capSeasonLabel(key),
         }));
       },
+      capAdjustmentRemainingSeasonRows(){
+        const player = this.capAdjustmentSelectedPlayer();
+        const currentSeason = Number(this.currentCapSeasonKey());
+
+        return (player?.contract?.seasons || [])
+          .map(season => {
+            const key = String(season?.season_key || '');
+            const seasonKey = Number(key || 0);
+            const capHit = Number(season?.cap_hit || 0);
+
+            return {
+              key,
+              season_key: seasonKey,
+              label: season?.label || this.capSeasonLabel(key),
+              cap_hit: Number.isFinite(capHit) ? capHit : 0,
+              cap_hit_label: season?.cap_hit_label || this.capMoney(capHit),
+            };
+          })
+          .filter(row => row.key && row.season_key >= currentSeason && row.cap_hit > 0)
+          .sort((a, b) => a.season_key - b.season_key);
+      },
+      capAdjustmentPayoutMax(){
+        return Math.max(1, this.capAdjustmentRemainingSeasonRows().length);
+      },
+      capAdjustmentContractEndLabel(){
+        const rows = this.capAdjustmentRemainingSeasonRows();
+        const last = rows.length ? rows[rows.length - 1] : null;
+
+        return last?.label || '-';
+      },
+      normalizeCapAdjustmentPayoutYears(){
+        const max = this.capAdjustmentPayoutMax();
+        const current = Number(this.capAdjustmentForm.payout_years || 1);
+        const next = Math.min(max, Math.max(1, Number.isFinite(current) ? Math.round(current) : 1));
+
+        this.capAdjustmentForm.payout_years = next;
+      },
+      setCapAdjustmentPayoutYearsToFullTerm(){
+        this.capAdjustmentForm.payout_years = this.capAdjustmentPayoutMax();
+      },
+      setCapAdjustmentType(type){
+        this.capAdjustmentForm.type = type;
+
+        if (type === 'buyout') {
+          this.capAdjustmentForm.percent = Math.abs(Number(this.capAdjustmentForm.percent || 50));
+          this.normalizeCapAdjustmentPayoutYears();
+        }
+
+        this.recalculateCapAdjustmentValues(true);
+      },
+      toggleCapAdjustmentRetentionDirection(){
+        if (this.capAdjustmentForm.type !== 'retention') return;
+
+        const current = Number(this.capAdjustmentForm.percent || 0);
+        const absolute = Math.abs(Number.isFinite(current) ? current : 0) || 50;
+        this.capAdjustmentForm.percent = current < 0 ? absolute : -absolute;
+        this.recalculateCapAdjustmentValues(true);
+      },
+      capAdjustmentRetentionIsNegative(){
+        return this.capAdjustmentForm.type === 'retention' && Number(this.capAdjustmentForm.percent || 0) < 0;
+      },
+      capAdjustmentTotalContractValue(){
+        return this.capAdjustmentRemainingSeasonRows()
+          .reduce((sum, row) => sum + Number(row.cap_hit || 0), 0);
+      },
+      capAdjustmentTotalImpactValue(){
+        const percent = Math.abs(Number(this.capAdjustmentForm.percent || 0)) / 100;
+        const total = this.capAdjustmentTotalContractValue();
+
+        return Number.isFinite(percent) ? Math.round(total * percent) : 0;
+      },
+      capAdjustmentPerYearBuyoutValue(){
+        const years = Math.max(1, Number(this.capAdjustmentForm.payout_years || 1));
+
+        return Math.round(this.capAdjustmentTotalImpactValue() / years);
+      },
       capAdjustmentCalculatedRows(){
         return this.capAdjustmentSeasonOptions()
-          .filter(option => Number(this.capAdjustmentForm.values_by_season?.[option.key] || 0) > 0)
+          .filter(option => Number(this.capAdjustmentForm.values_by_season?.[option.key] || 0) !== 0)
           .map(option => ({
             ...option,
             value: this.capAdjustmentForm.values_by_season?.[option.key] ?? '',
+            money: this.capMoney(this.capAdjustmentForm.values_by_season?.[option.key] ?? 0),
           }));
       },
       setCapAdjustmentManualValue(seasonKey, value){
@@ -1409,30 +1522,36 @@
       },
       recalculateCapAdjustmentValues(clearOverrides = true){
         const player = this.capPlayerById(this.capAdjustmentForm.player_id);
-        const percent = Number(this.capAdjustmentForm.percent || 0) / 100;
-        const start = Number(this.capAdjustmentForm.start_season || 0);
-        const end = Number(this.capAdjustmentForm.end_season || 0);
+        const rawPercent = Number(this.capAdjustmentForm.percent || 0);
+        const percent = Math.abs(rawPercent) / 100;
+        const direction = this.capAdjustmentForm.type === 'retention' && rawPercent < 0 ? -1 : 1;
         const values = clearOverrides ? {} : { ...(this.capAdjustmentForm.values_by_season || {}) };
         const overrides = clearOverrides ? {} : this.capAdjustmentOverrides;
+        const seasons = this.capAdjustmentRemainingSeasonRows();
 
-        if (!player || !Number.isFinite(percent) || percent <= 0) {
+        if (!player || !Number.isFinite(percent) || percent <= 0 || seasons.length === 0) {
           this.capAdjustmentForm.values_by_season = values;
           this.capAdjustmentOverrides = overrides;
           return;
         }
 
-        (player?.contract?.seasons || []).forEach(season => {
-          const key = String(season?.season_key || '');
-          const numericKey = Number(key || 0);
-          const capHit = Number(season?.cap_hit || season?.aav || 0);
+        if (this.capAdjustmentForm.type === 'buyout') {
+          this.normalizeCapAdjustmentPayoutYears();
+          const payoutYears = Number(this.capAdjustmentForm.payout_years || 1);
+          const perYearValue = this.capAdjustmentPerYearBuyoutValue();
 
-          if (!key || capHit <= 0) return;
-          if (start && numericKey < start) return;
-          if (end && numericKey > end) return;
-          if (overrides[key]) return;
+          seasons.slice(0, payoutYears).forEach(row => {
+            if (!row.key || overrides[row.key]) return;
 
-          values[key] = Math.round(capHit * percent);
-        });
+            values[row.key] = perYearValue;
+          });
+        } else {
+          seasons.forEach(row => {
+            if (!row.key || overrides[row.key]) return;
+
+            values[row.key] = Math.round(row.cap_hit * percent * direction);
+          });
+        }
 
         this.capAdjustmentForm.values_by_season = values;
         this.capAdjustmentOverrides = overrides;
@@ -1445,6 +1564,7 @@
         if (!teamId) return;
 
         this.recalculateCapAdjustmentValues(false);
+        const valuesBySeason = this.normalizedCapAdjustmentValuesForSave();
 
         const existing = [...this.capTeamAdjustments];
         const row = {
@@ -1455,10 +1575,13 @@
           player_position: this.capAdjustmentForm.player_position,
           avatar_url: this.capAdjustmentForm.avatar_url,
           team_abbrev: this.capAdjustmentForm.team_abbrev,
-          percent: Number(this.capAdjustmentForm.percent || 0),
-          start_season: this.capAdjustmentForm.start_season || null,
-          end_season: this.capAdjustmentForm.end_season || null,
-          values_by_season: { ...(this.capAdjustmentForm.values_by_season || {}) },
+          percent: this.capAdjustmentForm.type === 'buyout'
+            ? Math.abs(Number(this.capAdjustmentForm.percent || 0))
+            : Number(this.capAdjustmentForm.percent || 0),
+          start_season: null,
+          end_season: null,
+          payout_years: Number(this.capAdjustmentForm.payout_years || 1),
+          values_by_season: valuesBySeason,
         };
         const nextRows = this.capAdjustmentMode === 'edit'
           ? existing.map(adjustment => String(adjustment.id) === String(row.id) ? row : adjustment)
@@ -2300,7 +2423,8 @@
                   <template x-for="(column, index) in capSeasonColumns" :key="`header-adjustments-${column.key}`">
                     <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
                       <span
-                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold ring-1"
+                        :class="Number(capAdjustmentTotals()[column.key] || 0) < 0 ? 'text-red-700 ring-red-200' : 'text-amber-700 ring-amber-200'"
                         x-text="capMoney(capAdjustmentTotals()[column.key])"
                       ></span>
                     </td>
@@ -2423,7 +2547,7 @@
                               class="h-6 w-14 rounded border-0 bg-slate-50 px-1 text-right text-[10px] font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-400 transition-colors focus:bg-white focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:opacity-60"
                               :value="capProjectionEditValue(row.player, column.key)"
                               :disabled="savingCapProjection"
-                              :aria-label="`Projected AAV for ${row.player.name} in ${column.label}`"
+                              :aria-label="`Projected cap for ${row.player.name} in ${column.label}`"
                               @change="saveCapProjection(row.player, column.key, $event.target.value)"
                             >
                           </div>
@@ -2431,7 +2555,7 @@
                         <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capProjectionForPlayer(row.player, column.key) && !isFirstCapProjectionSeason(row.player, column.key)">
                           <span
                             class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
-                            x-text="capProjectionForPlayer(row.player, column.key)?.projected_aav_label"
+                            x-text="capProjectionForPlayer(row.player, column.key)?.projected_cap_hit_label || capProjectionForPlayer(row.player, column.key)?.projected_aav_label"
                           ></span>
                         </template>
                         <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && !capProjectionForPlayer(row.player, column.key) && capExpiryBadge(row.player, column.key)">
@@ -2502,7 +2626,11 @@
                       <td class="px-3 py-2 text-xs text-slate-600" x-text="capAdjustmentTypeLabel(adjustment.type)"></td>
                       <td class="px-3 py-2 text-right text-xs text-slate-600" x-text="`${Number(adjustment.percent || 0)}%`"></td>
                       <template x-for="column in capSeasonColumns" :key="`${adjustment.id}-${column.key}`">
-                        <td class="px-3 py-2 text-right text-xs font-semibold text-slate-700" x-text="capMoney(capAdjustmentValue(adjustment, column.key))"></td>
+                        <td
+                          class="px-3 py-2 text-right text-xs font-semibold"
+                          :class="capAdjustmentValue(adjustment, column.key) < 0 ? 'text-red-700' : 'text-slate-700'"
+                          x-text="capMoney(capAdjustmentValue(adjustment, column.key))"
+                        ></td>
                       </template>
                       <td class="px-3 py-2 text-right">
                         <button type="button" class="text-xs font-semibold text-slate-600 hover:text-slate-950" @click="openCapAdjustmentDrawer(adjustment)">Edit</button>
@@ -2641,14 +2769,21 @@
     </x-ui.slide-over>
 
     <x-ui.slide-over show="capAdjustmentDrawerOpen" close-action="capAdjustmentDrawerOpen = false" title-id="cap-adjustment-title" max-width="max-w-2xl">
-      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-        <div>
-          <h2 id="cap-adjustment-title" class="text-sm font-semibold text-slate-950" x-text="capAdjustmentMode === 'edit' ? 'Edit buyout or retention' : 'Add buyout or retention'"></h2>
-          <p class="mt-1 text-xs text-slate-500" x-text="capTeam ? capTeam.name : ''"></p>
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div class="flex min-w-0 items-center gap-4">
+          <span class="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-sm shadow-indigo-600/20">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="h-6 w-6" aria-hidden="true">
+              <path fill-rule="evenodd" d="M13.25 7.25a.75.75 0 0 0 0-1.5H6.56l1.22-1.22a.75.75 0 0 0-1.06-1.06l-2.5 2.5a.75.75 0 0 0 0 1.06l2.5 2.5a.75.75 0 0 0 1.06-1.06L6.56 7.25h6.69Zm-6.5 5.5a.75.75 0 0 0 0 1.5h6.69l-1.22 1.22a.75.75 0 1 0 1.06 1.06l2.5-2.5a.75.75 0 0 0 0-1.06l-2.5-2.5a.75.75 0 1 0-1.06 1.06l1.22 1.22H6.75Z" clip-rule="evenodd" />
+            </svg>
+          </span>
+          <div class="min-w-0">
+            <h2 id="cap-adjustment-title" class="truncate text-xl font-semibold text-slate-950" x-text="capAdjustmentMode === 'edit' ? 'Edit buyout or retention' : 'Add buyout or retention'"></h2>
+            <p class="mt-1 truncate text-sm text-slate-500" x-text="capTeam ? capTeam.name : ''"></p>
+          </div>
         </div>
         <button
           type="button"
-          class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+          class="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
           @click="capAdjustmentDrawerOpen = false"
           aria-label="Close buyout or retention"
         >
@@ -2660,18 +2795,88 @@
       <div class="flex-1 overflow-y-auto p-6">
         <div class="space-y-5">
           <div class="relative" @click.outside="capAdjustmentPlayerOpen = false">
-            <label class="block">
-              <span class="text-sm font-semibold text-slate-950">Player</span>
-              <input
-                type="text"
-                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                x-model="capAdjustmentPlayerQuery"
-                @focus="capAdjustmentPlayerOpen = true"
-                @input="capAdjustmentPlayerOpen = true"
-                placeholder="Search roster players"
-                autocomplete="off"
-              >
-            </label>
+            <template x-if="capAdjustmentForm.player_id">
+              <div class="rounded-md border border-cyan-200 bg-white p-4 shadow-sm ring-1 ring-cyan-100/70">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="flex min-w-0 items-center gap-4">
+                    <span class="relative inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-white p-1 ring-2 ring-cyan-300">
+                      <template x-if="capAdjustmentForm.avatar_url">
+                        <img :src="capAdjustmentForm.avatar_url" alt="" class="h-full w-full rounded-full object-cover" loading="lazy">
+                      </template>
+                      <template x-if="!capAdjustmentForm.avatar_url">
+                        <span class="inline-flex h-full w-full items-center justify-center rounded-full bg-slate-100 text-base font-semibold text-slate-500" x-text="capAdjustmentInitials(capAdjustmentForm)"></span>
+                      </template>
+                    </span>
+                    <div class="min-w-0">
+                      <div class="truncate text-2xl font-semibold text-slate-950" x-text="capAdjustmentForm.player_name"></div>
+                      <div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+                        <span x-text="capAdjustmentForm.team_abbrev || '-'"></span>
+                        <span aria-hidden="true">•</span>
+                        <span x-text="capAdjustmentForm.player_position || '-'"></span>
+                      </div>
+                      <div class="mt-3 flex flex-wrap gap-2">
+                        <span class="inline-flex items-center gap-1.5 rounded-md bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-800 ring-1 ring-cyan-100">
+                          <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                            <path d="M3.25 13.25a.75.75 0 0 1 0-1.5h2.19l3.22-6.45a.75.75 0 0 1 1.32-.05l2.16 3.6 1.03-1.03a.75.75 0 0 1 1.06 0l2.5 2.5a.75.75 0 0 1-1.06 1.06l-1.97-1.97-1.24 1.24a.75.75 0 0 1-1.17-.15L9.4 7.35l-2.82 5.49a.75.75 0 0 1-.67.41H3.25Z" />
+                          </svg>
+                          <span x-text="`Cap hit: ${capAdjustmentSelectedPlayer()?.contract?.current_cap_hit_label || '-'}`"></span>
+                        </span>
+                        <span class="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-100">
+                          <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2ZM3.5 8.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V8.5h-13Z" clip-rule="evenodd" />
+                          </svg>
+                          <span x-text="`${capAdjustmentRemainingSeasonRows().length} season${capAdjustmentRemainingSeasonRows().length === 1 ? '' : 's'}`"></span>
+                        </span>
+                        <span class="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                          <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.78-9.72a.75.75 0 0 0-1.06-1.06L9 10.94 7.28 9.22a.75.75 0 1 0-1.06 1.06l2.25 2.25c.293.293.767.293 1.06 0l4.25-4.25Z" clip-rule="evenodd" />
+                          </svg>
+                          Active
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm ring-1 ring-inset ring-slate-200 transition hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                    @click="clearCapAdjustmentPlayer()"
+                    aria-label="Change player"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.731-.73h2.37a.75.75 0 0 0 0-1.5H3.57a.75.75 0 0 0-.75.75v4.18a.75.75 0 0 0 1.5 0v-2.37l.73.731a7 7 0 0 0 11.711-3.138.75.75 0 0 0-1.449-.389Zm1.868-8.014a.75.75 0 0 0-1.5 0v2.37l-.73-.731A7 7 0 0 0 3.239 8.187a.75.75 0 1 0 1.448.389 5.5 5.5 0 0 1 9.202-2.466l.731.73h-2.37a.75.75 0 0 0 0 1.5h4.18a.75.75 0 0 0 .75-.75V3.41Z" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+                <dl class="mt-4 grid grid-cols-3 gap-3 border-t border-slate-200/70 pt-3">
+                  <div>
+                    <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Remaining</dt>
+                    <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capMoney(capAdjustmentTotalContractValue())"></dd>
+                  </div>
+                  <div>
+                    <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Current</dt>
+                    <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capAdjustmentSelectedPlayer()?.contract?.current_cap_hit_label || '-'"></dd>
+                  </div>
+                  <div>
+                    <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Ends</dt>
+                    <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capAdjustmentContractEndLabel()"></dd>
+                  </div>
+                </dl>
+              </div>
+            </template>
+            <div x-show="!capAdjustmentForm.player_id">
+              <label class="block">
+                <span class="text-sm font-semibold text-slate-950">Player</span>
+                <input
+                  type="text"
+                  class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                  x-model="capAdjustmentPlayerQuery"
+                  @focus="capAdjustmentPlayerOpen = true"
+                  @input="capAdjustmentPlayerOpen = true"
+                  placeholder="Search contract players"
+                  autocomplete="off"
+                >
+              </label>
+            </div>
             <div
               x-show="capAdjustmentPlayerOpen"
               x-cloak
@@ -2692,79 +2897,143 @@
                     </template>
                     <span class="truncate font-medium text-slate-900" x-text="capAdjustmentPlayerLabel(player)"></span>
                   </span>
-                  <span class="shrink-0 text-xs text-slate-500" x-text="`${player.team_abbrev || '-'} ${player.contract?.current_aav_label || ''}`"></span>
+                  <span class="shrink-0 text-xs text-slate-500" x-text="`${player.team_abbrev || '-'} ${player.contract?.current_cap_hit_label || ''}`"></span>
                 </button>
               </template>
-              <div x-show="capAdjustmentPlayerCandidates().length === 0" class="px-3 py-3 text-sm text-slate-500">No contract-backed roster players found.</div>
+              <div x-show="capAdjustmentPlayerCandidates().length === 0" class="px-3 py-3 text-sm text-slate-500">No contract-backed players found.</div>
             </div>
           </div>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="block">
-              <span class="text-sm font-semibold text-slate-950">Type</span>
-              <select
-                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                x-model="capAdjustmentForm.type"
-              >
-                <option value="buyout">Buyout</option>
-                <option value="retention">Retention</option>
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-sm font-semibold text-slate-950">% of cap hit</span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                x-model.number="capAdjustmentForm.percent"
-                @input="recalculateCapAdjustmentValues(false)"
-              >
-            </label>
-            <label class="block">
-              <span class="text-sm font-semibold text-slate-950">Start season</span>
-              <select
-                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                x-model="capAdjustmentForm.start_season"
-                @change="recalculateCapAdjustmentValues(false)"
-              >
-                <template x-for="season in capAdjustmentSeasonOptions()" :key="`start-${season.key}`">
-                  <option :value="season.key" x-text="season.label"></option>
-                </template>
-              </select>
-            </label>
-            <label class="block">
-              <span class="text-sm font-semibold text-slate-950">End season</span>
-              <select
-                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                x-model="capAdjustmentForm.end_season"
-                @change="recalculateCapAdjustmentValues(false)"
-              >
-                <option value="">Contract end</option>
-                <template x-for="season in capAdjustmentSeasonOptions()" :key="`end-${season.key}`">
-                  <option :value="season.key" x-text="season.label"></option>
-                </template>
-              </select>
-            </label>
+          <div class="space-y-4">
+            <div class="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div>
+                <span class="text-sm font-semibold text-slate-950">Type</span>
+                <div class="mt-2 grid grid-cols-2 rounded-md bg-slate-50 p-1 ring-1 ring-inset ring-slate-200">
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-2 rounded px-3 py-2 text-sm font-semibold transition"
+                    :class="capAdjustmentForm.type === 'buyout' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-950'"
+                    @click="setCapAdjustmentType('buyout')"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                      <path d="M1.75 3a.75.75 0 0 0 0 1.5h.713l1.377 6.2A2.75 2.75 0 0 0 6.524 13h6.852a2.75 2.75 0 0 0 2.675-2.122l.807-3.43A1.75 1.75 0 0 0 15.155 5.3H4.42l-.242-1.09A1.5 1.5 0 0 0 2.713 3H1.75ZM6 16.5A1.5 1.5 0 1 0 6 13.5 1.5 1.5 0 0 0 6 16.5Zm8 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+                    </svg>
+                    Buyout
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex items-center justify-center gap-2 rounded px-3 py-2 text-sm font-semibold transition"
+                    :class="capAdjustmentForm.type === 'retention' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-950'"
+                    @click="setCapAdjustmentType('retention')"
+                  >
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M10 1.944 3.625 4.408a.75.75 0 0 0-.475.7v3.268c0 4.085 2.518 7.755 6.33 9.215a1.5 1.5 0 0 0 1.04 0c3.812-1.46 6.33-5.13 6.33-9.215V5.108a.75.75 0 0 0-.475-.7L10 1.944Zm3.78 6.336a.75.75 0 0 0-1.06-1.06L9 10.94 7.28 9.22a.75.75 0 1 0-1.06 1.06l2.25 2.25c.293.293.767.293 1.06 0l4.25-4.25Z" clip-rule="evenodd" />
+                    </svg>
+                    Retention
+                  </button>
+                </div>
+              </div>
+              <label class="block">
+                <span class="text-sm font-semibold text-slate-950">% of cap hit</span>
+                <div class="mt-2 flex items-center gap-2">
+                  <div class="relative min-w-0 flex-1">
+                    <input
+                      type="number"
+                      min="-100"
+                      max="100"
+                      step="0.01"
+                      class="block h-11 w-full rounded-md border-0 bg-white py-2 pl-3 pr-11 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                      x-model.number="capAdjustmentForm.percent"
+                      @input="recalculateCapAdjustmentValues(true)"
+                    >
+                    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-sm font-semibold text-slate-400">%</span>
+                  </div>
+                  <button
+                    x-show="capAdjustmentForm.type === 'retention'"
+                    x-cloak
+                    type="button"
+                    class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-white text-slate-600 shadow-sm ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                    :class="capAdjustmentRetentionIsNegative() ? 'text-red-600 ring-red-200' : ''"
+                    :aria-label="capAdjustmentRetentionIsNegative() ? 'Make retention increase cap' : 'Make retention reduce cap'"
+                    @click="toggleCapAdjustmentRetentionDirection()"
+                  >
+                    <svg x-show="!capAdjustmentRetentionIsNegative()" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M17 10a.75.75 0 0 1-.75.75H5.56l4.22 4.22a.75.75 0 1 1-1.06 1.06l-5.5-5.5a.75.75 0 0 1 0-1.06l5.5-5.5a.75.75 0 0 1 1.06 1.06L5.56 9.25h10.69A.75.75 0 0 1 17 10Z" clip-rule="evenodd" />
+                    </svg>
+                    <svg x-show="capAdjustmentRetentionIsNegative()" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M3 10a.75.75 0 0 1 .75-.75h10.69l-4.22-4.22a.75.75 0 0 1 1.06-1.06l5.5 5.5a.75.75 0 0 1 0 1.06l-5.5 5.5a.75.75 0 1 1-1.06-1.06l4.22-4.22H3.75A.75.75 0 0 1 3 10Z" clip-rule="evenodd" />
+                    </svg>
+                  </button>
+                </div>
+              </label>
+            </div>
+            <div x-show="capAdjustmentForm.type === 'buyout'" x-cloak class="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+              <dl class="grid grid-cols-3 gap-4">
+                <div>
+                  <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Contract value</dt>
+                  <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capMoney(capAdjustmentTotalContractValue())"></dd>
+                </div>
+                <div>
+                  <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Buyout value</dt>
+                  <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capMoney(capAdjustmentTotalImpactValue())"></dd>
+                </div>
+                <div>
+                  <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Season avg</dt>
+                  <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capMoney(capAdjustmentPerYearBuyoutValue())"></dd>
+                </div>
+              </dl>
+              <label class="mt-4 block">
+                <span class="flex items-center justify-between text-sm font-semibold text-slate-950">
+                  <span>Payout seasons</span>
+                  <span class="text-xs text-slate-500" x-text="`${capAdjustmentForm.payout_years} / ${capAdjustmentPayoutMax()}`"></span>
+                </span>
+                <input
+                  type="range"
+                  min="1"
+                  :max="capAdjustmentPayoutMax()"
+                  step="1"
+                  class="mt-3 w-full accent-indigo-600"
+                  x-model.number="capAdjustmentForm.payout_years"
+                  @input="recalculateCapAdjustmentValues(true)"
+                >
+              </label>
+              <div class="mt-3 text-xs text-slate-500" x-text="`Per season: ${capMoney(capAdjustmentPerYearBuyoutValue())}`"></div>
+            </div>
           </div>
-          <div class="rounded-md border border-slate-200">
-            <div class="flex items-center justify-between border-b border-slate-200 px-3 py-2">
-              <div class="text-sm font-semibold text-slate-950">Calculated impact</div>
-              <button type="button" class="text-xs font-semibold text-slate-600 hover:text-slate-950" @click="resetCapAdjustmentValues()">Reset</button>
+          <div class="overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
+            <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-cyan-50 text-cyan-700">
+                  <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                    <path d="M3.25 13.25a.75.75 0 0 1 0-1.5h2.19l3.22-6.45a.75.75 0 0 1 1.32-.05l2.16 3.6 1.03-1.03a.75.75 0 0 1 1.06 0l2.5 2.5a.75.75 0 0 1-1.06 1.06l-1.97-1.97-1.24 1.24a.75.75 0 0 1-1.17-.15L9.4 7.35l-2.82 5.49a.75.75 0 0 1-.67.41H3.25Z" />
+                  </svg>
+                </span>
+                <div class="text-sm font-semibold text-slate-950">Calculated impact</div>
+              </div>
+              <button type="button" class="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700" @click="resetCapAdjustmentValues()">
+                <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.731-.73h2.37a.75.75 0 0 0 0-1.5H3.57a.75.75 0 0 0-.75.75v4.18a.75.75 0 0 0 1.5 0v-2.37l.73.731a7 7 0 0 0 11.711-3.138.75.75 0 0 0-1.449-.389Zm1.868-8.014a.75.75 0 0 0-1.5 0v2.37l-.73-.731A7 7 0 0 0 3.239 8.187a.75.75 0 1 0 1.448.389 5.5 5.5 0 0 1 9.202-2.466l.731.73h-2.37a.75.75 0 0 0 0 1.5h4.18a.75.75 0 0 0 .75-.75V3.41Z" clip-rule="evenodd" />
+                </svg>
+                Reset
+              </button>
             </div>
             <div class="divide-y divide-slate-100">
               <template x-for="row in capAdjustmentCalculatedRows()" :key="row.key">
-                <label class="grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 px-3 py-2">
-                  <span class="text-xs font-semibold text-slate-700" x-text="row.label"></span>
+                <label class="grid grid-cols-[1rem_minmax(0,1fr)_8rem] items-center gap-3 px-4 py-2.5">
+                  <span class="relative flex h-full min-h-8 items-center justify-center">
+                    <span class="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-200" aria-hidden="true"></span>
+                    <span class="relative h-2.5 w-2.5 rounded-full bg-cyan-600 ring-4 ring-white" aria-hidden="true"></span>
+                  </span>
+                  <span class="text-sm font-medium text-slate-700" x-text="row.label"></span>
                   <input
                     type="text"
-                    class="block w-full rounded-md border-0 bg-white py-1.5 px-2 text-right text-xs text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                    class="block w-full rounded-md border-0 bg-white py-1.5 px-2 text-right text-xs font-semibold shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                    :class="Number(row.value || 0) < 0 ? 'text-red-700 ring-red-200 focus:ring-red-500' : 'text-slate-900'"
                     :value="row.value"
                     @input="setCapAdjustmentManualValue(row.key, $event.target.value)"
                   >
                 </label>
               </template>
-              <div x-show="capAdjustmentCalculatedRows().length === 0" class="px-3 py-4 text-sm text-slate-500">Select a player with contract seasons to calculate cap impact.</div>
+              <div x-show="capAdjustmentCalculatedRows().length === 0" class="px-4 py-5 text-sm text-slate-500">Select a player with contract seasons to calculate cap impact.</div>
             </div>
           </div>
           <div class="min-h-5 text-xs">
@@ -2773,14 +3042,17 @@
           </div>
         </div>
       </div>
-      <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
-        <button type="button" class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950" @click="capAdjustmentDrawerOpen = false">Cancel</button>
+      <div class="flex items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+        <button type="button" class="inline-flex h-10 items-center justify-center rounded-md px-5 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 transition hover:bg-slate-50 hover:text-slate-950" @click="capAdjustmentDrawerOpen = false">Cancel</button>
         <button
           type="button"
-          class="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-indigo-600 px-5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
           :disabled="savingCapSettings || !capAdjustmentForm.player_id"
           @click="saveCapAdjustment()"
         >
+          <svg x-show="!savingCapSettings" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+            <path fill-rule="evenodd" d="M10 2.75a.75.75 0 0 1 .69.456l1.414 3.314 3.594.318a.75.75 0 0 1 .42 1.303l-2.72 2.368.803 3.514a.75.75 0 0 1-1.1.804L10 12.981l-3.101 1.846a.75.75 0 0 1-1.1-.804l.803-3.514-2.72-2.368a.75.75 0 0 1 .42-1.303l3.594-.318L9.31 3.206A.75.75 0 0 1 10 2.75Z" clip-rule="evenodd" />
+          </svg>
           <span x-show="!savingCapSettings">Save</span>
           <span x-show="savingCapSettings">Saving...</span>
         </button>
