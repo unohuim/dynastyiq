@@ -1,7 +1,10 @@
 <?php
 
 use App\Models\Organization;
+use App\Models\PlatformLeague;
+use App\Models\PlatformTeam;
 use App\Models\Role;
+use App\Models\SocialAccount;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Socialite\Facades\Socialite;
@@ -135,4 +138,60 @@ it('connects allowed guilds and clears session after attach', function () {
         'organization_id' => $organization->id,
         'discord_guild_id' => '456',
     ]);
+});
+
+it('returns external fantrax league ids for discord user team links', function () {
+    $viewer = User::factory()->create();
+    $target = User::factory()->create();
+
+    SocialAccount::create([
+        'provider' => 'discord',
+        'provider_user_id' => 'viewer-discord-id',
+        'user_id' => $viewer->id,
+    ]);
+    SocialAccount::create([
+        'provider' => 'discord',
+        'provider_user_id' => 'target-discord-id',
+        'user_id' => $target->id,
+    ]);
+
+    $league = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => '2k8tsy4imo2wkl7j',
+        'name' => 'Shared Fantrax League',
+        'sport' => 'hockey',
+    ]);
+    $viewerTeam = PlatformTeam::create([
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'viewer-team',
+        'name' => 'Viewer Team',
+    ]);
+    $targetTeam = PlatformTeam::create([
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'target-team',
+        'name' => 'Target Team',
+    ]);
+
+    $viewer->platformLeagues()->attach($league->id, [
+        'team_id' => $viewerTeam->id,
+        'is_active' => true,
+        'is_visible' => true,
+        'extras' => json_encode(['provider' => 'fantrax']),
+        'synced_at' => now(),
+    ]);
+    $target->platformLeagues()->attach($league->id, [
+        'team_id' => $targetTeam->id,
+        'is_active' => true,
+        'is_visible' => true,
+        'extras' => json_encode(['provider' => 'fantrax']),
+        'synced_at' => now(),
+    ]);
+
+    $this->getJson('/api/discord/users/target-discord-id?viewer_discord_id=viewer-discord-id')
+        ->assertOk()
+        ->assertJsonPath('shared_count', 1)
+        ->assertJsonPath('teams.0.platform_league_id', $league->id)
+        ->assertJsonPath('teams.0.league_id', '2k8tsy4imo2wkl7j')
+        ->assertJsonPath('teams.0.team_id', 'target-team')
+        ->assertJsonPath('teams.0.team_name', 'Target Team');
 });

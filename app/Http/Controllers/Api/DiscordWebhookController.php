@@ -171,6 +171,7 @@ class DiscordWebhookController extends Controller
             ->whereIn('lut.platform_league_id', $viewerPlatformLeagueIds)
             ->select([
                 'pl.id as platform_league_id',
+                'pl.platform_league_id as league_id',
                 'pl.name as league_name',
                 'pt.platform_team_id as team_id',
                 'pt.name as team_name',
