@@ -533,6 +533,82 @@ describe('player triage page module', () => {
         expect(String(fetcher.mock.calls[0][0])).not.toContain('include_resolved');
     });
 
+    it('includes the typed inbox filter when the status segment reloads from the server', async () => {
+        const { createPlayerTriagePage } = await loadModules();
+        const fetcher = vi.fn(() => jsonResponse({ html: rootHtml('Matched Segment') }));
+        createPlayerTriagePage(document.querySelector('[data-player-triage-page]'), { fetcher });
+
+        const search = document.querySelector('input[name="search"]');
+        search.value = 'Daws';
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+
+        document.querySelector('input[name="triage_state"][value="all"]').checked = true;
+        document.querySelector('input[name="triage_state"][value="all"]').dispatchEvent(new Event('change'));
+        await Promise.resolve();
+
+        const url = String(fetcher.mock.calls[0][0]);
+        expect(url).toContain('search=Daws');
+        expect(url).toContain('triage_state=all');
+    });
+
+    it('reapplies the typed inbox filter after a status reload returns a new payload', async () => {
+        const { createPlayerTriagePage } = await loadModules();
+        const inboxPayload = {
+            identities: [
+                {
+                    id: 100,
+                    display_name: 'Nicolas Daws',
+                    provider: 'fantrax',
+                    provider_player_id: '059mt',
+                    provider_slug: '059mt',
+                    team: 'NJD',
+                    position: 'G',
+                    match_status: 'unmatched',
+                    match_confidence: null,
+                    recommendation: { status: 'matched', confidence: 95 },
+                    coverage: { active: false, label: null, matched: false },
+                    detail_url: 'http://app.test/admin/player-triage/identities/100/detail',
+                    href: 'http://app.test/admin/player-triage?identity=100',
+                },
+                {
+                    id: 101,
+                    display_name: 'Other Player',
+                    provider: 'fantrax',
+                    provider_player_id: 'other-101',
+                    provider_slug: 'other-101',
+                    team: 'NJD',
+                    position: 'G',
+                    match_status: 'unmatched',
+                    match_confidence: null,
+                    recommendation: { status: 'unmatched', confidence: null },
+                    coverage: { active: false, label: null, matched: false },
+                    detail_url: 'http://app.test/admin/player-triage/identities/101/detail',
+                    href: 'http://app.test/admin/player-triage?identity=101',
+                },
+            ],
+            meta: { loaded_count: 2, total_count: 2, selected_identity_id: 100 },
+        };
+        const fetcher = vi.fn(() => jsonResponse({
+            inbox: inboxPayload,
+            detail: detailPayload('Nicolas Daws'),
+        }));
+        createPlayerTriagePage(document.querySelector('[data-player-triage-page]'), { fetcher });
+
+        const search = document.querySelector('input[name="search"]');
+        search.value = 'Daws';
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        vi.advanceTimersByTime(300);
+
+        document.querySelector('input[name="triage_state"][value="all"]').checked = true;
+        document.querySelector('input[name="triage_state"][value="all"]').dispatchEvent(new Event('change'));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(document.querySelector('[data-player-triage-inbox]').textContent).toContain('Nicolas Daws');
+        expect(document.querySelector('[data-player-triage-inbox]').textContent).not.toContain('Other Player');
+    });
+
     it('shows an inbox loading skeleton while SelectField refreshes triage JSON', async () => {
         const { createPlayerTriagePage } = await loadModules();
         const fetcher = vi.fn(() => new Promise(() => {}));

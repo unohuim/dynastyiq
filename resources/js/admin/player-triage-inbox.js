@@ -51,18 +51,24 @@ export const createPlayerTriageInbox = (root, options = {}) => {
     let isLoading = false;
     let errorMessage = null;
 
+    const applyFilter = () => {
+        filtered = search === ''
+            ? identities
+            : identities.filter((identity) => searchableText(identity).includes(search));
+    };
+
     if (!mount) {
         return null;
     }
 
     const load = (payload) => {
         identities = Array.isArray(payload?.identities) ? payload.identities : [];
-        filtered = identities;
         loadedCount = Number(payload?.meta?.loaded_count ?? payload?.meta?.count ?? identities.length);
         totalCount = Number(payload?.meta?.total_count ?? loadedCount);
         selectedIdentityId = payload?.meta?.selected_identity_id ?? identities.find((identity) => identity.selected)?.id ?? null;
         isLoading = false;
         errorMessage = null;
+        applyFilter();
         render();
     };
 
@@ -70,9 +76,7 @@ export const createPlayerTriageInbox = (root, options = {}) => {
         search = value.trim().toLowerCase();
         isLoading = false;
         errorMessage = null;
-        filtered = search === ''
-            ? identities
-            : identities.filter((identity) => searchableText(identity).includes(search));
+        applyFilter();
         render();
     };
 

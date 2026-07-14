@@ -28,7 +28,7 @@ return [
         'alexander'   => ['Alexander', 'Alex'],
         'steven'      => ['Steven', 'Steve'],
         'william'     => ['William', 'Will', 'Bill', 'Billy'],
-        'nicholas'    => ['Nicholas', 'Nick', 'Nicky'],
+        'nicholas'    => ['Nicholas', 'Nicolas', 'Nick', 'Nicky', 'Nico'],
         'zachary'     => ['Zachary', 'Zach'],
         'john'        => ['John', 'Johnny', 'Jack'],
         'roderick'    => ['Roderick', 'Rod'],
