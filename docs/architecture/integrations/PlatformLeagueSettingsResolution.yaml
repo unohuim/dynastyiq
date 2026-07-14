@@ -22,9 +22,14 @@ rules:
   - Commissioner and league admin authority may edit shared platform_leagues.settings.
   - League admin authority includes league_user_roles commissioner/co_commissioner roles and provider assignment flags that mark a connected user as commissioner or admin.
   - When any connected commissioner or league admin authority exists for a platform league, non-admin managers must not edit league settings.
+  - When shared league settings exist, non-admin managers may still persist explicitly allowed manager-planning overlays such as cap_adjustments_by_team.
   - When no connected commissioner or league admin authority exists, connected managers may edit only their own manager-local fallback settings.
   - UI payloads must receive resolved settings instead of reading platform_leagues.settings directly when user-specific fallback behavior matters.
   - Existing shared settings may be used as the read base for unmanaged leagues until a manager-local row exists, but manager writes must still target platform_league_user_settings.
+  - Cap settings may include legacy salary_cap, season-specific cap_limits_by_season, team-scoped cap_adjustments_by_team, max_active_buyouts, and max_active_retentions.
+  - Season-specific cap ceilings override legacy salary_cap for matching seasons, while salary_cap remains a fallback for older leagues.
+  - Buyout and retention adjustments must persist generated values_by_season rather than recalculating exclusively from live contract data at read time.
+  - Manager-planning overlays must not mutate shared platform_leagues.settings.
 public_interface:
   - PlatformLeagueSettingsResolver::resolve
   - PlatformLeagueSettingsResolver::save

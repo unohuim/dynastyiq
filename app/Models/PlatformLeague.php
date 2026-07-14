@@ -94,6 +94,14 @@ class PlatformLeague extends Model
     }
 
     /**
+     * User-owned projected AAV assumptions for cap planning.
+     */
+    public function capContractProjections(): HasMany
+    {
+        return $this->hasMany(CapContractProjection::class, 'platform_league_id');
+    }
+
+    /**
      * User-local settings used while a league has no connected league admin.
      */
     public function userSettings(): HasMany

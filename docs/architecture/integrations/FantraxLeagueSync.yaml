@@ -61,9 +61,12 @@ rules:
   - Fantrax league stats views may show provider scoring categories that DynastyIQ cannot locally derive only when provider-earned stat rows supply those category values.
   - Manual league scoring mappings may target native stat fields or imported dictionary formulas and must override dictionary auto mappings while preserving support metadata for warnings.
   - Scheduled league refresh should use the same league sync path as the user-triggered top-level Leagues refresh action and should run on a four-hour cadence.
-  - Resolved platform league settings may provide custom_cap, salary_cap, and Fantrax contract code definitions from shared league-admin settings or manager-local fallback settings through PlatformLeagueSettingsResolver.
+  - Resolved platform league settings may provide custom_cap, salary_cap, cap_limits_by_season, cap_adjustments_by_team, max_active_buyouts, max_active_retentions, and Fantrax contract code definitions from shared league-admin settings or manager-local fallback settings through PlatformLeagueSettingsResolver.
   - Resolved custom_cap defaults to false and, when true, league Cap views must use persisted Fantrax roster salaries instead of CapWages cap hits.
-  - Resolved salary_cap may store a team salary cap in whole dollars, and league Cap views may use it to show cap space as salary cap minus non-minor roster cap hit while including IR players.
+  - Resolved salary_cap may store a legacy team salary cap in whole dollars, and league Cap views may use it only as fallback when a season-specific ceiling is not configured.
+  - Resolved cap_limits_by_season may store season-specific floor and ceiling values in whole dollars for league Cap views.
+  - Resolved cap_adjustments_by_team may store team-scoped buyout and retention charges with persisted season values so future contract corrections do not rewrite saved planning assumptions.
+  - League Cap views may show cap space as season ceiling minus non-minor roster cap hit minus team buyout and retention charges while including IR players.
   - Fantrax custom salary seasons turn over on July 1; before July 1, the current season starts in the previous calendar year, and on or after July 1, the current season starts in the current calendar year.
   - Resolved fantrax_contract_code_definitions may store meanings for detected Fantrax contract code prefixes, while raw provider contract labels remain preserved on roster membership metadata.
   - Fantrax roster display eligibility must derive from observed Fantrax slot usage for the platform player across current memberships, falling back to fantrax_players.position only when no real position slots are observed.

@@ -57,6 +57,14 @@ class PlatformTeam extends Model
     }
 
     /**
+     * User-owned projected AAV assumptions for this fantasy team.
+     */
+    public function capContractProjections(): HasMany
+    {
+        return $this->hasMany(CapContractProjection::class, 'platform_team_id');
+    }
+
+    /**
      * Limit to a specific league.
      */
     public function scopeInLeague(Builder $query, PlatformLeague|int $league): Builder

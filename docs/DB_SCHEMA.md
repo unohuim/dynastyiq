@@ -28,6 +28,7 @@ Migrations remain the **sole source of truth**.
 - analytics_visitors
 - cache
 - cache_locks
+- cap_contract_projections
 - capwages_players
 - contract_seasons
 - contracts
@@ -250,6 +251,39 @@ Migrations remain the **sole source of truth**.
 
 - PK: `id`
 - Unique: `uq_analytics_identity_link_user` on `(analytics_visitor_id, user_id)`
+
+---
+
+## cap_contract_projections
+
+**Organization-owned:** No; user-owned planning data
+**Purpose:** User-owned projected AAV assumptions for rostered players with expired real contracts.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| platform_team_id | bigint | No | FK -> platform_teams.id (CASCADE) |
+| user_id | bigint | No | FK -> users.id (CASCADE) |
+| player_id | bigint | No | FK -> players.id (CASCADE) |
+| season_key | unsigned integer | No | NHL season key, e.g. `20262027` |
+| projected_aav | unsigned bigint | No | Projected AAV in whole dollars |
+| source | string(24) | No | Projection source; see docs/ENUMS.md |
+| basis | string(48) | No | Projection basis; see docs/ENUMS.md |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, platform_team_id, user_id, player_id, season_key)`
+- Index: `(platform_league_id, user_id, platform_team_id)`
+- Implicit (FK index): `platform_league_id`
+- Implicit (FK index): `platform_team_id`
+- Implicit (FK index): `user_id`
+- Implicit (FK index): `player_id`
 
 ---
 
@@ -2170,7 +2204,7 @@ Migrations remain the **sole source of truth**.
 | name | string | No | League name |
 | sport | string | Yes | Sport key |
 | logo_url | string | Yes | Provider league logo URL when exposed |
-| settings | json | Yes | Shared platform league settings managed by commissioner or league admin authority, including `custom_cap`, `salary_cap`, and league-scoped Fantrax contract code definitions for custom salary leagues |
+| settings | json | Yes | Shared platform league settings managed by commissioner or league admin authority, including `custom_cap`, legacy `salary_cap`, `cap_limits_by_season`, `cap_adjustments_by_team`, active buyout/retention limits, and league-scoped Fantrax contract code definitions for custom salary leagues |
 | scoring_settings | json | Yes | Provider scoring metadata, including normalized scoring type, category rows/manual mappings fallback, and raw provider scoring payload |
 | synced_at | timestamp | Yes | Last sync timestamp |
 | created_at | timestamp | Yes | Laravel timestamp |

@@ -1338,6 +1338,46 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### Cap Contract Projection Source
+
+**Name:** Cap contract projection source
+**Storage location(s):** `cap_contract_projections.source` (string column)
+**Allowed values currently emitted:**
+
+- `system`
+- `user`
+
+**Semantic meaning:**
+
+- `system`: Projection is based on an application-generated planning default.
+- `user`: Projection was edited and persisted by the current user.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
+
+### Cap Contract Projection Basis
+
+**Name:** Cap contract projection basis
+**Storage location(s):** `cap_contract_projections.basis` (string column)
+**Allowed values currently emitted:**
+
+- `last_aav`
+- `manual`
+
+**Semantic meaning:**
+
+- `last_aav`: Projection default was derived from the player's last expired AAV.
+- `manual`: Projection value was directly entered by the user.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:

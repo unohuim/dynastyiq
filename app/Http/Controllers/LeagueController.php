@@ -13,6 +13,7 @@ use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
 use App\Models\FantasyScoringCategoryMapping;
 use App\Models\IntegrationSecret;
+use App\Models\CapContractProjection;
 use App\Models\PlatformTeam;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
@@ -145,6 +146,7 @@ final class LeagueController extends Controller
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => $activeLeague ? route('leagues.scoring-settings.update', $activeLeague->id) : '',
             'capSettingsUpdateUrl' => $activeLeague ? route('leagues.cap-settings.update', $activeLeague->id) : '',
+            'capProjectionsUpdateUrl' => $activeLeague ? route('leagues.cap-projections.update', $activeLeague->id) : '',
             'leagueStatsPayloadUrl' => $activeLeague ? route('leagues.stats.payload', $activeLeague->id) : '',
             'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
             'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
@@ -153,6 +155,10 @@ final class LeagueController extends Controller
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload(
@@ -198,6 +204,7 @@ final class LeagueController extends Controller
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $league->id),
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $league->id),
+            'capProjectionsUpdateUrl' => route('leagues.cap-projections.update', $league->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
             'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
@@ -206,6 +213,10 @@ final class LeagueController extends Controller
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -252,6 +263,10 @@ final class LeagueController extends Controller
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -415,19 +430,90 @@ final class LeagueController extends Controller
         $validated = $request->validate([
             'custom_cap' => ['required', 'boolean'],
             'salary_cap' => ['nullable', 'string', 'max:32'],
+            'cap_limits_by_season' => ['nullable', 'array'],
+            'cap_adjustments_by_team' => ['nullable', 'array'],
+            'max_active_buyouts' => ['nullable', 'integer', 'min:0', 'max:99'],
+            'max_active_retentions' => ['nullable', 'integer', 'min:0', 'max:99'],
             'contract_code_definitions' => ['nullable', 'array'],
             'contract_code_definitions.*.label' => ['nullable', 'string', 'max:80'],
             'contract_code_definitions.*.type' => ['nullable', 'string', 'max:80'],
             'contract_code_definitions.*.suffix_years_remaining' => ['nullable', 'boolean'],
         ]);
         $resolved = $settingsResolver->resolve($league, $user);
-        abort_unless($resolved['can_edit'], 403);
+
+        if (! $resolved['can_edit']) {
+            abort_unless(
+                array_key_exists('cap_adjustments_by_team', $validated)
+                    || array_key_exists('cap_limits_by_season', $validated),
+                403,
+            );
+
+            $planningSettings = [];
+
+            if (array_key_exists('cap_adjustments_by_team', $validated)) {
+                $planningSettings['cap_adjustments_by_team'] = $this->normalizeCapAdjustmentsByTeam(
+                    $validated['cap_adjustments_by_team'] ?? [],
+                );
+            }
+
+            if (array_key_exists('cap_limits_by_season', $validated)) {
+                $planningSettings['cap_limits_by_season'] = $this->normalizeCapLimitsBySeason(
+                    $validated['cap_limits_by_season'] ?? [],
+                );
+            }
+
+            $resolved = $settingsResolver->saveManagerPlanning($league, $user, $planningSettings);
+            $settings = $resolved['settings'];
+
+            return response()->json([
+                'message' => 'Personal cap planning saved.',
+                'customCap' => $settings['custom_cap'],
+                'salaryCap' => $settings['salary_cap'] ?? null,
+                'capLimitsBySeason' => $settings['cap_limits_by_season'] ?? [],
+                'capAdjustmentsByTeam' => $settings['cap_adjustments_by_team'] ?? [],
+                'maxActiveBuyouts' => $settings['max_active_buyouts'] ?? null,
+                'maxActiveRetentions' => $settings['max_active_retentions'] ?? null,
+                'leagueSettingsSource' => $resolved['source'],
+                'canEditLeagueSettings' => $resolved['can_edit'],
+                'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                    $league,
+                    $settings['fantrax_contract_code_definitions'] ?? [],
+                ),
+                'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                    $settings['fantrax_contract_code_definitions'] ?? [],
+                ),
+            ]);
+        }
 
         $settings = $settingsResolver->mergeDefaults($resolved['settings']);
         $settings['custom_cap'] = (bool) $validated['custom_cap'];
 
         if (array_key_exists('salary_cap', $validated)) {
             $settings['salary_cap'] = $this->normalizeSalaryCap($validated['salary_cap']);
+        }
+
+        if (array_key_exists('cap_limits_by_season', $validated)) {
+            $settings['cap_limits_by_season'] = $this->normalizeCapLimitsBySeason(
+                $validated['cap_limits_by_season'] ?? [],
+            );
+        }
+
+        if (array_key_exists('cap_adjustments_by_team', $validated)) {
+            $settings['cap_adjustments_by_team'] = $this->normalizeCapAdjustmentsByTeam(
+                $validated['cap_adjustments_by_team'] ?? [],
+            );
+        }
+
+        if (array_key_exists('max_active_buyouts', $validated)) {
+            $settings['max_active_buyouts'] = $validated['max_active_buyouts'] !== null
+                ? (int) $validated['max_active_buyouts']
+                : null;
+        }
+
+        if (array_key_exists('max_active_retentions', $validated)) {
+            $settings['max_active_retentions'] = $validated['max_active_retentions'] !== null
+                ? (int) $validated['max_active_retentions']
+                : null;
         }
 
         if (array_key_exists('contract_code_definitions', $validated)) {
@@ -445,6 +531,10 @@ final class LeagueController extends Controller
                 : ($settings['custom_cap'] ? 'Custom Fantrax cap enabled.' : 'Custom Fantrax cap disabled.'),
             'customCap' => $settings['custom_cap'],
             'salaryCap' => $settings['salary_cap'] ?? null,
+            'capLimitsBySeason' => $settings['cap_limits_by_season'] ?? [],
+            'capAdjustmentsByTeam' => $settings['cap_adjustments_by_team'] ?? [],
+            'maxActiveBuyouts' => $settings['max_active_buyouts'] ?? null,
+            'maxActiveRetentions' => $settings['max_active_retentions'] ?? null,
             'leagueSettingsSource' => $resolved['source'],
             'canEditLeagueSettings' => $resolved['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -454,6 +544,98 @@ final class LeagueController extends Controller
             'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
                 $settings['fantrax_contract_code_definitions'] ?? [],
             ),
+        ]);
+    }
+
+    /**
+     * Persist user-owned projected AAV assumptions for expired-contract players.
+     */
+    public function updateCapProjections(Request $request, string $leagueId): JsonResponse
+    {
+        $user = $request->user();
+        $leagueAccess = app(FantasyLeagueAccess::class);
+
+        if (! $leagueAccess->canViewLeagues($user)) {
+            return response()->json([
+                'message' => 'Connect a fantasy provider before updating cap projections.',
+            ], 409);
+        }
+
+        $league = $leagueAccess->activeLeaguesForUser($user)
+            ->where('platform_leagues.id', $leagueId)
+            ->firstOrFail();
+
+        $validated = $request->validate([
+            'platform_team_id' => ['required', 'integer', Rule::exists('platform_teams', 'id')],
+            'projections' => ['required', 'array'],
+            'projections.*.player_id' => ['required', 'integer', Rule::exists('players', 'id')],
+            'projections.*.season_key' => ['required', 'integer', 'min:20002001', 'max:21002101'],
+            'projections.*.projected_aav' => ['nullable', 'string', 'max:32'],
+        ]);
+
+        $team = $league->teams()
+            ->whereKey((int) $validated['platform_team_id'])
+            ->firstOrFail();
+        $players = $team->roster()
+            ->with(['contracts.seasons'])
+            ->get()
+            ->keyBy('id');
+        $currentSeasonKey = self::currentNhlSeasonKey();
+
+        foreach ($validated['projections'] as $projection) {
+            $playerId = (int) $projection['player_id'];
+            $seasonKey = (int) $projection['season_key'];
+            $player = $players->get($playerId);
+
+            if (! $player || ! self::playerCanProjectExpiredContract($player, $seasonKey, $currentSeasonKey)) {
+                continue;
+            }
+
+            $amount = $this->normalizeCapLimitAmount($projection['projected_aav'] ?? null);
+            $projectionSeasonKeys = self::projectionSeasonKeys()
+                ->filter(
+                    static fn (int $projectionSeasonKey): bool => self::playerCanProjectExpiredContract(
+                        $player,
+                        $projectionSeasonKey,
+                        $currentSeasonKey,
+                    ),
+                );
+
+            if ($amount === null) {
+                CapContractProjection::query()
+                    ->where('platform_league_id', (int) $league->id)
+                    ->where('platform_team_id', (int) $team->id)
+                    ->where('user_id', (int) $user->id)
+                    ->where('player_id', $playerId)
+                    ->whereIn('season_key', $projectionSeasonKeys->all())
+                    ->delete();
+                continue;
+            }
+
+            foreach ($projectionSeasonKeys as $projectionSeasonKey) {
+                CapContractProjection::query()->updateOrCreate(
+                    [
+                        'platform_league_id' => (int) $league->id,
+                        'platform_team_id' => (int) $team->id,
+                        'user_id' => (int) $user->id,
+                        'player_id' => $playerId,
+                        'season_key' => $projectionSeasonKey,
+                    ],
+                    [
+                        'projected_aav' => $amount,
+                        'source' => 'user',
+                        'basis' => 'manual',
+                    ],
+                );
+            }
+        }
+
+        $team->load(['roster.contracts.seasons']);
+
+        return response()->json([
+            'message' => 'Cap projections saved.',
+            'platformTeamId' => (int) $team->id,
+            'projections' => self::capProjectionPayloadForTeam($league, $team, $user),
         ]);
     }
 
@@ -999,12 +1181,17 @@ final class LeagueController extends Controller
             'searchPlayers' => [],
             'scoringSettingsUpdateUrl' => route('leagues.scoring-settings.update', $activeLeague->id),
             'capSettingsUpdateUrl' => route('leagues.cap-settings.update', $activeLeague->id),
+            'capProjectionsUpdateUrl' => route('leagues.cap-projections.update', $activeLeague->id),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $activeLeague->id),
             'playersPayloadUrl' => route('leagues.players.payload', $activeLeague->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $activeLeague->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $activeLeague->id),
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -1100,6 +1287,348 @@ final class LeagueController extends Controller
         }
 
         return $amount > 0 ? (int) round($amount) : null;
+    }
+
+    /**
+     * Normalize a season cap limit; plain small numbers are entered as millions.
+     */
+    private function normalizeCapLimitAmount(mixed $value): ?int
+    {
+        $raw = trim((string) $value);
+
+        if ($raw === '') {
+            return null;
+        }
+
+        $normalized = preg_replace('/[^0-9.]/', '', $raw);
+
+        if ($normalized === null || $normalized === '' || ! is_numeric($normalized)) {
+            return null;
+        }
+
+        $amount = (float) $normalized;
+        $usesMillionsSuffix = str_ends_with(strtolower($raw), 'm');
+
+        if ($usesMillionsSuffix || $amount < 10000) {
+            $amount *= 1000000;
+        }
+
+        return $amount > 0 ? (int) round($amount) : null;
+    }
+
+    /**
+     * Current NHL cap season key, turning over on July 1.
+     */
+    private static function currentNhlSeasonKey(): int
+    {
+        $now = now();
+        $startYear = (int) $now->month >= 7 ? (int) $now->year : (int) $now->year - 1;
+
+        return ($startYear * 10000) + $startYear + 1;
+    }
+
+    /**
+     * Projection-generated season keys, capped to three current/future seasons.
+     *
+     * @return Collection<int,int>
+     */
+    private static function projectionSeasonKeys(): Collection
+    {
+        $currentSeasonKey = self::currentNhlSeasonKey();
+
+        return collect(range(0, 2))
+            ->map(static function (int $offset) use ($currentSeasonKey): int {
+                $startYear = intdiv($currentSeasonKey, 10000) + $offset;
+
+                return ($startYear * 10000) + $startYear + 1;
+            });
+    }
+
+    /**
+     * Determine whether a player is eligible for projected AAV planning.
+     */
+    private static function playerCanProjectExpiredContract(Player $player, int $seasonKey, int $currentSeasonKey): bool
+    {
+        $summary = self::expiredContractProjectionBasis($player, $currentSeasonKey);
+
+        if ($summary === null) {
+            return false;
+        }
+
+        return $seasonKey >= $currentSeasonKey && $seasonKey > (int) $summary['last_season_key'];
+    }
+
+    /**
+     * Find the last expired contract AAV basis for a player with no active/future seasons.
+     *
+     * @return array{last_season_key:int,last_aav:int}|null
+     */
+    private static function expiredContractProjectionBasis(Player $player, int $currentSeasonKey): ?array
+    {
+        $seasons = $player->contracts
+            ->flatMap(static fn ($contract) => $contract->seasons)
+            ->filter(static fn ($season): bool => is_numeric($season->season_key))
+            ->sortBy('season_key')
+            ->values();
+
+        if ($seasons->isEmpty()) {
+            return null;
+        }
+
+        $hasCurrentOrFutureSeason = $seasons->contains(
+            static fn ($season): bool => (int) $season->season_key >= $currentSeasonKey,
+        );
+
+        if ($hasCurrentOrFutureSeason) {
+            return null;
+        }
+
+        $lastSeason = $seasons->last();
+        $lastAav = is_numeric($lastSeason->aav)
+            ? (int) $lastSeason->aav
+            : (is_numeric($lastSeason->cap_hit) ? (int) $lastSeason->cap_hit : 0);
+
+        if ((int) $lastSeason->season_key <= 0 || $lastAav <= 0) {
+            return null;
+        }
+
+        return [
+            'last_season_key' => (int) $lastSeason->season_key,
+            'last_aav' => $lastAav,
+        ];
+    }
+
+    /**
+     * Build user-owned projection values for a platform team.
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    private static function capProjectionPayloadForTeam($league, PlatformTeam $team, $user): array
+    {
+        $currentSeasonKey = self::currentNhlSeasonKey();
+        $seasonKeys = self::projectionSeasonKeys();
+        $saved = CapContractProjection::query()
+            ->where('platform_league_id', (int) $league->id)
+            ->where('platform_team_id', (int) $team->id)
+            ->where('user_id', (int) $user->id)
+            ->get()
+            ->groupBy('player_id');
+        $payload = [];
+
+        foreach ($team->roster as $player) {
+            if (! $player instanceof Player) {
+                continue;
+            }
+
+            $basis = self::expiredContractProjectionBasis($player, $currentSeasonKey);
+
+            if ($basis === null) {
+                continue;
+            }
+
+            $playerSaved = $saved->get((int) $player->id, collect())->keyBy('season_key');
+            $seasons = [];
+
+            foreach ($seasonKeys as $seasonKey) {
+                if ($seasonKey <= (int) $basis['last_season_key']) {
+                    continue;
+                }
+
+                $row = $playerSaved->get($seasonKey);
+
+                if (! $row) {
+                    $row = CapContractProjection::query()->create([
+                        'platform_league_id' => (int) $league->id,
+                        'platform_team_id' => (int) $team->id,
+                        'user_id' => (int) $user->id,
+                        'player_id' => (int) $player->id,
+                        'season_key' => $seasonKey,
+                        'projected_aav' => (int) $basis['last_aav'],
+                        'source' => 'system',
+                        'basis' => 'last_aav',
+                    ]);
+                } elseif ((string) $row->source === 'system' && (int) $row->projected_aav !== (int) $basis['last_aav']) {
+                    $row->forceFill([
+                        'projected_aav' => (int) $basis['last_aav'],
+                        'basis' => 'last_aav',
+                    ])->save();
+                }
+
+                $projectedAav = (int) $row->projected_aav;
+                $source = (string) $row->source;
+                $basisKey = (string) $row->basis;
+
+                $seasons[(string) $seasonKey] = [
+                    'season_key' => $seasonKey,
+                    'label' => self::seasonKeyLabel($seasonKey),
+                    'projected_aav' => $projectedAav,
+                    'projected_aav_label' => self::compactMoneyLabel($projectedAav),
+                    'source' => $source,
+                    'basis' => $basisKey,
+                ];
+            }
+
+            if ($seasons !== []) {
+                $payload[(string) $player->id] = [
+                    'player_id' => (int) $player->id,
+                    'last_season_key' => (int) $basis['last_season_key'],
+                    'last_aav' => (int) $basis['last_aav'],
+                    'last_aav_label' => self::compactMoneyLabel((int) $basis['last_aav']),
+                    'seasons' => $seasons,
+                ];
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
+     * Format an NHL season key as a short season label.
+     */
+    private static function seasonKeyLabel(int $seasonKey): string
+    {
+        $value = (string) $seasonKey;
+
+        if (strlen($value) < 8) {
+            return $value;
+        }
+
+        return substr($value, 0, 4) . '-' . substr($value, 6, 2);
+    }
+
+    /**
+     * Normalize season-specific cap floors and ceilings.
+     *
+     * @param array<mixed,mixed> $limits
+     * @return array<string,array{floor:int|null,ceiling:int|null}>
+     */
+    private function normalizeCapLimitsBySeason(array $limits): array
+    {
+        $normalized = [];
+
+        foreach ($limits as $seasonKey => $values) {
+            $seasonKey = $this->normalizeSeasonKey($seasonKey);
+
+            if ($seasonKey === null || ! is_array($values)) {
+                continue;
+            }
+
+            $floor = $this->normalizeCapLimitAmount($values['floor'] ?? null);
+            $ceiling = $this->normalizeCapLimitAmount($values['ceiling'] ?? null);
+
+            if ($floor === null && $ceiling === null) {
+                continue;
+            }
+
+            $normalized[$seasonKey] = [
+                'floor' => $floor,
+                'ceiling' => $ceiling,
+            ];
+        }
+
+        ksort($normalized);
+
+        return $normalized;
+    }
+
+    /**
+     * Normalize team-scoped cap adjustments for buyouts and retentions.
+     *
+     * @param array<mixed,mixed> $adjustmentsByTeam
+     * @return array<string,array<int,array<string,mixed>>>
+     */
+    private function normalizeCapAdjustmentsByTeam(array $adjustmentsByTeam): array
+    {
+        $normalized = [];
+
+        foreach ($adjustmentsByTeam as $teamId => $adjustments) {
+            $teamId = trim((string) $teamId);
+
+            if ($teamId === '' || ! is_array($adjustments)) {
+                continue;
+            }
+
+            foreach ($adjustments as $adjustment) {
+                if (! is_array($adjustment)) {
+                    continue;
+                }
+
+                $type = strtolower(trim((string) ($adjustment['type'] ?? '')));
+
+                if (! in_array($type, ['buyout', 'retention'], true)) {
+                    continue;
+                }
+
+                $values = $this->normalizeAdjustmentValuesBySeason(
+                    is_array($adjustment['values_by_season'] ?? null)
+                        ? $adjustment['values_by_season']
+                        : [],
+                );
+
+                if ($values === []) {
+                    continue;
+                }
+
+                $id = trim((string) ($adjustment['id'] ?? ''));
+                $playerId = $adjustment['player_id'] ?? null;
+
+                $normalized[$teamId][] = [
+                    'id' => $id !== '' ? $id : (string) Str::uuid(),
+                    'type' => $type,
+                    'player_id' => is_numeric($playerId) ? (int) $playerId : null,
+                    'player_name' => trim((string) ($adjustment['player_name'] ?? '')),
+                    'player_position' => trim((string) ($adjustment['player_position'] ?? '')),
+                    'avatar_url' => trim((string) ($adjustment['avatar_url'] ?? '')),
+                    'team_abbrev' => trim((string) ($adjustment['team_abbrev'] ?? '')),
+                    'percent' => max(0, min(100, (float) ($adjustment['percent'] ?? 0))),
+                    'start_season' => $this->normalizeSeasonKey($adjustment['start_season'] ?? null),
+                    'end_season' => $this->normalizeSeasonKey($adjustment['end_season'] ?? null),
+                    'values_by_season' => $values,
+                ];
+            }
+        }
+
+        ksort($normalized);
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<mixed,mixed> $values
+     * @return array<string,int>
+     */
+    private function normalizeAdjustmentValuesBySeason(array $values): array
+    {
+        $normalized = [];
+
+        foreach ($values as $seasonKey => $value) {
+            $seasonKey = $this->normalizeSeasonKey($seasonKey);
+            $amount = $this->normalizeSalaryCap($value);
+
+            if ($seasonKey === null || $amount === null) {
+                continue;
+            }
+
+            $normalized[$seasonKey] = $amount;
+        }
+
+        ksort($normalized);
+
+        return $normalized;
+    }
+
+    /**
+     * Normalize a season key like 20262027.
+     */
+    private function normalizeSeasonKey(mixed $value): ?string
+    {
+        $raw = preg_replace('/[^0-9]/', '', (string) $value);
+
+        if ($raw === null || strlen($raw) !== 8) {
+            return null;
+        }
+
+        return $raw;
     }
 
     /**
@@ -1284,7 +1813,10 @@ final class LeagueController extends Controller
                 'users' => static function ($q): void {
                     $q->wherePivot('is_active', true)
                         ->select('users.id')
-                        ->with(['socialAccounts:id,user_id,avatar']);
+                        ->with(['socialAccounts' => static function ($query): void {
+                            $query->select('id', 'user_id', 'avatar')
+                                ->where('provider', 'discord');
+                        }]);
                 },
             ])
             ->orderBy('name')
@@ -1292,15 +1824,8 @@ final class LeagueController extends Controller
             ->map(static function ($team) use ($authId): array {
                 $defaultAvatar = config('ui.default_team_avatar')
                     ?: 'https://ui-avatars.com/api/?name=' . urlencode($team->name) . '&background=E5E7EB&color=111827&size=64';
-                $ownerAvatar = $defaultAvatar;
-
-                foreach ($team->users as $user) {
-                    $avatar = optional($user->socialAccounts->first())->avatar;
-                    if (filled($avatar)) {
-                        $ownerAvatar = (string) $avatar;
-                        break;
-                    }
-                }
+                $ownerAvatars = self::ownerAvatarUrls($team->users);
+                $ownerAvatar = $ownerAvatars[0] ?? $defaultAvatar;
 
                 $ownerIds = $team->users->pluck('id')->map(static fn ($id): int => (int) $id)->values()->all();
 
@@ -1308,6 +1833,7 @@ final class LeagueController extends Controller
                     'id' => (string) $team->platform_team_id,
                     'name' => (string) $team->name,
                     'owner_avatar_url' => $ownerAvatar,
+                    'owner_avatar_urls' => $ownerAvatars,
                     'owned_by_me' => $authId ? in_array((int) $authId, $ownerIds, true) : false,
                     'owner_user_ids' => $ownerIds,
                     'players' => [],
@@ -1315,6 +1841,27 @@ final class LeagueController extends Controller
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * Build ordered Discord avatar URLs for active team owners.
+     *
+     * @param iterable<int,\App\Models\User> $users
+     * @return array<int,string>
+     */
+    private static function ownerAvatarUrls(iterable $users): array
+    {
+        $avatars = [];
+
+        foreach ($users as $user) {
+            $avatar = optional($user->socialAccounts->first())->avatar;
+
+            if (filled($avatar)) {
+                $avatars[] = (string) $avatar;
+            }
+        }
+
+        return array_values(array_unique($avatars));
     }
 
     /**
@@ -1359,7 +1906,10 @@ final class LeagueController extends Controller
                 'users' => static function ($q): void {
                     $q->wherePivot('is_active', true)
                         ->select('users.id')
-                        ->with(['socialAccounts:id,user_id,avatar']);
+                        ->with(['socialAccounts' => static function ($query): void {
+                            $query->select('id', 'user_id', 'avatar')
+                                ->where('provider', 'discord');
+                        }]);
                 },
             ])
             ->orderBy('name')
@@ -1377,19 +1927,13 @@ final class LeagueController extends Controller
         $providerStatsByPlayerId = app(PlatformLeaguePlayerStatService::class)->statsForLeagueByPlayerId($league);
 
         $teamRows = $teams
-            ->map(static function ($t) use ($authId, $slotOrder, $rosterSlots, $fantraxEligibility, $fantraxContractDefinitions, $providerStatsByPlayerId, $league): array {
+            ->map(static function ($t) use ($authId, $slotOrder, $rosterSlots, $fantraxEligibility, $fantraxContractDefinitions, $providerStatsByPlayerId, $league, $user): array {
                 // default avatar per TEAM name
                 $defaultAvatar = config('ui.default_team_avatar')
                     ?: 'https://ui-avatars.com/api/?name=' . urlencode($t->name) . '&background=E5E7EB&color=111827&size=64';
 
-                $ownerAvatar = $defaultAvatar;
-                foreach ($t->users as $u) {
-                    $avatar = optional($u->socialAccounts->first())->avatar;
-                    if (filled($avatar)) {
-                        $ownerAvatar = (string) $avatar;
-                        break;
-                    }
-                }
+                $ownerAvatars = self::ownerAvatarUrls($t->users);
+                $ownerAvatar = $ownerAvatars[0] ?? $defaultAvatar;
 
                 $ownerIds = $t->users->pluck('id')->map(static fn ($v) => (int) $v)->values()->all();
                 $ownedByMe = $authId ? in_array((int) $authId, $ownerIds, true) : false;
@@ -1500,11 +2044,16 @@ final class LeagueController extends Controller
                     ->all();
 
                 return [
+                    'platform_team_record_id' => (int) $t->id,
                     'id'                => (string) $t->platform_team_id,
                     'name'              => (string) $t->name,
                     'owner_avatar_url'  => $ownerAvatar,
+                    'owner_avatar_urls' => $ownerAvatars,
                     'owned_by_me'       => $ownedByMe,
                     'owner_user_ids'    => $ownerIds,
+                    'cap_contract_projections' => $user
+                        ? self::capProjectionPayloadForTeam($league, $t, $user)
+                        : [],
                     'players'           => $players,
                 ];
             })
@@ -1527,20 +2076,26 @@ final class LeagueController extends Controller
             ->all();
 
         $teams = [[
+            'platform_team_record_id' => null,
             'id' => '__all_players__',
             'name' => 'All Players',
             'owner_avatar_url' => null,
+            'owner_avatar_urls' => [],
             'owned_by_me' => false,
             'owner_user_ids' => [],
+            'cap_contract_projections' => [],
             'players' => $allPlayers,
         ], ...$teamRows];
 
         $teams[] = [
+            'platform_team_record_id' => null,
             'id' => '__free_agents__',
             'name' => 'Free Agents',
             'owner_avatar_url' => null,
+            'owner_avatar_urls' => [],
             'owned_by_me' => false,
             'owner_user_ids' => [],
+            'cap_contract_projections' => [],
             'players' => $freeAgents,
         ];
 
@@ -2654,6 +3209,7 @@ final class LeagueController extends Controller
                         ->whereColumn('platform_roster_memberships.player_id', 'players.id');
                 });
             })
+            ->with(['contracts.seasons'])
             ->orderBy('full_name')
             ->orderBy('last_name')
             ->orderBy('first_name')
@@ -2684,6 +3240,7 @@ final class LeagueController extends Controller
                     'roster_sort_order' => self::fallbackRosterSlotOrder($position),
                     'roster_group_sort_order' => 0,
                     'roster_status_sort_order' => 80,
+                    'contract' => self::playerContractPayload($player),
                 ];
             })
             ->values()

@@ -260,10 +260,10 @@ SyncFantraxDraftStateJob::dispatch($platformLeague->id);
 - `database/migrations/*_create_platform_league_user_settings_table.php`
 
 **Purpose:**
-Resolve league settings from shared commissioner/league-admin authority or manager-local fallback settings before a league admin is connected.
+Resolve league settings from shared commissioner/league-admin authority, manager-local fallback settings before a league admin is connected, and approved manager-planning overlays such as team buyout/retention adjustments.
 
 **When to Use:**
-Reading or saving fantasy platform league settings that managers may need before commissioner authority exists.
+Reading or saving fantasy platform league settings that managers may need before commissioner authority exists, or resolving Cap tab planning settings that may be shared by league authority while preserving manager-local planning overlays.
 
 **When Not to Use:**
 Provider raw payload sync, NHL imports, or scoring category row persistence.
@@ -2447,6 +2447,25 @@ title: "Fantasy Hockey Draft Strategy"
 slug: "fantasy-hockey-draft-strategy"
 ---
 ```
+
+---
+
+### Cap Contract Projections
+
+**Name:** Cap Contract Projections
+**Type:** Cap Planning Persistence Pattern
+**Location:**
+- `docs/architecture/integrations/CapContractProjections.yaml`
+- `app/Models/CapContractProjection.php`
+- `database/migrations/*_create_cap_contract_projections_table.php`
+
+**Purpose:**
+Store user-owned projected AAV assumptions for rostered players whose real contracts have expired.
+
+**Public Interface:**
+- `CapContractProjection`
+- `cap_contract_projections`
+- `leagues.cap-projections.update`
 
 ---
 

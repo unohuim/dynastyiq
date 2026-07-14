@@ -12,6 +12,16 @@ use Illuminate\Support\Facades\DB;
 final class PlatformLeagueSettingsResolver
 {
     /**
+     * Manager-local planning keys that may overlay shared league settings.
+     *
+     * @var array<int,string>
+     */
+    private const MANAGER_PLANNING_KEYS = [
+        'cap_limits_by_season',
+        'cap_adjustments_by_team',
+    ];
+
+    /**
      * Default platform league settings.
      *
      * @return array<string,mixed>
@@ -21,6 +31,10 @@ final class PlatformLeagueSettingsResolver
         return [
             'custom_cap' => false,
             'salary_cap' => null,
+            'cap_limits_by_season' => [],
+            'cap_adjustments_by_team' => [],
+            'max_active_buyouts' => null,
+            'max_active_retentions' => null,
             'fantrax_contract_code_definitions' => [],
         ];
     }
@@ -45,19 +59,20 @@ final class PlatformLeagueSettingsResolver
         }
 
         if ($hasLeagueAdmin) {
+            $localSettings = $this->managerLocalSettings($league, $user);
+
             return [
-                'settings' => $this->mergeDefaults($league->settings),
+                'settings' => $this->mergeDefaults(
+                    $league->settings,
+                    $this->managerPlanningOverrides($localSettings),
+                ),
                 'source' => 'league_admin',
                 'can_edit' => false,
                 'has_league_admin' => true,
             ];
         }
 
-        $localSettings = PlatformLeagueUserSetting::query()
-            ->where('platform_league_id', $league->id)
-            ->where('user_id', $user->id)
-            ->first()
-            ?->settings;
+        $localSettings = $this->managerLocalSettings($league, $user);
 
         return [
             'settings' => $this->mergeDefaults($league->settings, is_array($localSettings) ? $localSettings : []),
@@ -95,6 +110,30 @@ final class PlatformLeagueSettingsResolver
             ],
             [
                 'settings' => $this->mergeDefaults($settings),
+            ],
+        );
+
+        return $this->resolve($league, $user);
+    }
+
+    /**
+     * Persist manager-owned planning fields without changing shared league settings.
+     *
+     * @param array<string,mixed> $settings
+     * @return array{settings:array<string,mixed>,source:string,can_edit:bool,has_league_admin:bool}
+     */
+    public function saveManagerPlanning(PlatformLeague $league, User $user, array $settings): array
+    {
+        $existing = $this->managerLocalSettings($league, $user);
+        $planningSettings = array_intersect_key($settings, array_flip(self::MANAGER_PLANNING_KEYS));
+
+        PlatformLeagueUserSetting::query()->updateOrCreate(
+            [
+                'platform_league_id' => $league->id,
+                'user_id' => $user->id,
+            ],
+            [
+                'settings' => array_replace(is_array($existing) ? $existing : [], $planningSettings),
             ],
         );
 
@@ -192,5 +231,36 @@ final class PlatformLeagueSettingsResolver
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * Return a manager's local settings for the platform league.
+     *
+     * @return array<string,mixed>
+     */
+    private function managerLocalSettings(PlatformLeague $league, ?User $user): array
+    {
+        if (! $user) {
+            return [];
+        }
+
+        $settings = PlatformLeagueUserSetting::query()
+            ->where('platform_league_id', $league->id)
+            ->where('user_id', $user->id)
+            ->first()
+            ?->settings;
+
+        return is_array($settings) ? $settings : [];
+    }
+
+    /**
+     * Keep manager planning overlays scoped to explicitly allowed keys.
+     *
+     * @param array<string,mixed> $settings
+     * @return array<string,mixed>
+     */
+    private function managerPlanningOverrides(array $settings): array
+    {
+        return array_intersect_key($settings, array_flip(self::MANAGER_PLANNING_KEYS));
     }
 }

@@ -43,17 +43,48 @@
       selectedLeagueStatsPerspective: @js($selectedLeagueStatsPerspective ?? $leagueStatsFallbackSlug),
       playersPayloadUrl: @js($playersPayloadUrl ?? ''),
       playersFreeAgentsPayloadUrl: @js($playersFreeAgentsPayloadUrl ?? ''),
+      capProjectionsUpdateUrl: @js($capProjectionsUpdateUrl ?? ''),
       isScoringFullyMapped: @js((bool) ($isScoringFullyMapped ?? false)),
       canShowLeagueStats: @js((bool) ($canShowLeagueStats ?? false)),
       customCap: @js((bool) ($customCap ?? false)),
       salaryCap: @js($salaryCap ?? null),
       salaryCapInput: @js(($salaryCap ?? null) !== null ? (string) $salaryCap : ''),
+      capLimitsBySeason: @js((object) ($capLimitsBySeason ?? [])),
+      capLimitDrafts: @js((object) ($capLimitsBySeason ?? [])),
+      capAdjustmentsByTeam: @js((object) ($capAdjustmentsByTeam ?? [])),
+      maxActiveBuyouts: @js($maxActiveBuyouts ?? null),
+      maxActiveRetentions: @js($maxActiveRetentions ?? null),
+      maxActiveBuyoutsInput: @js(($maxActiveBuyouts ?? null) !== null ? (string) $maxActiveBuyouts : ''),
+      maxActiveRetentionsInput: @js(($maxActiveRetentions ?? null) !== null ? (string) $maxActiveRetentions : ''),
       leagueSettingsSource: @js($leagueSettingsSource),
       canEditLeagueSettings: @js($canEditLeagueSettings),
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
       fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
       activeLeagueTab: 'draft',
       playerSearch: '',
+      capView: 'sheet',
+      capSettingsDrawerOpen: false,
+      capAdjustmentDrawerOpen: false,
+      capAdjustmentMode: 'create',
+      capAdjustmentEditingId: '',
+      capAdjustmentPlayerQuery: '',
+      capAdjustmentPlayerOpen: false,
+      capAdjustmentForm: {
+        type: 'buyout',
+        player_id: '',
+        player_name: '',
+        player_position: '',
+        avatar_url: '',
+        team_abbrev: '',
+        percent: 50,
+        start_season: '',
+        end_season: '',
+        values_by_season: {},
+      },
+      capAdjustmentOverrides: {},
+      capShowLimitRows: false,
+      capShowSummaryRows: false,
+      savingCapProjection: false,
       capSortKey: '',
       capSortDirection: 'desc',
       playersPayloadLoaded: false,
@@ -198,9 +229,70 @@
       },
 
       init(){
+        const state = this.readLeagueUiState();
+        this.activeLeagueTab = this.validLeagueTab(state.activeTab);
+        this.capView = this.validCapView(state.capView);
+        this.capShowLimitRows = state.capShowLimitRows === undefined ? false : Boolean(state.capShowLimitRows);
+        this.capShowSummaryRows = Number(state.capSummaryRowsVersion || 0) >= 2
+          ? Boolean(state.capShowSummaryRows)
+          : false;
+        if (Number(state.capSummaryRowsVersion || 0) < 2) {
+          this.writeLeagueUiState({
+            capShowSummaryRows: false,
+            capSummaryRowsVersion: 2,
+          });
+        }
+
         window.addEventListener('diq:stats-page-ready', () => {
           if (this.activeLeagueTab === 'players') this.loadLeagueStats();
         }, { once: true });
+
+        if (['players', 'cap'].includes(this.activeLeagueTab)) {
+          this.$nextTick(() => this.openLeagueTab(this.activeLeagueTab, false));
+        }
+      },
+      leagueUiStateKey(){
+        return `diq:league-ui:${@js((string) $league->id)}`;
+      },
+      readLeagueUiState(){
+        try {
+          return JSON.parse(window.localStorage?.getItem(this.leagueUiStateKey()) || '{}') || {};
+        } catch (error) {
+          return {};
+        }
+      },
+      writeLeagueUiState(patch){
+        try {
+          const current = this.readLeagueUiState();
+          window.localStorage?.setItem(this.leagueUiStateKey(), JSON.stringify({
+            ...current,
+            ...patch,
+            updatedAt: new Date().toISOString(),
+          }));
+        } catch (error) {
+          // localStorage can be unavailable in private browsing or strict contexts.
+        }
+      },
+      validLeagueTab(tab){
+        return ['overview', 'draft', 'players', 'cap'].includes(String(tab || '')) ? String(tab) : 'draft';
+      },
+      validCapView(view){
+        return ['sheet', 'adjustments', 'limits'].includes(String(view || '')) ? String(view) : 'sheet';
+      },
+      setCapView(view){
+        this.capView = this.validCapView(view);
+        this.writeLeagueUiState({ capView: this.capView });
+      },
+      toggleCapLimitRows(){
+        this.capShowLimitRows = !this.capShowLimitRows;
+        this.writeLeagueUiState({ capShowLimitRows: this.capShowLimitRows });
+      },
+      toggleCapSummaryRows(){
+        this.capShowSummaryRows = !this.capShowSummaryRows;
+        this.writeLeagueUiState({
+          capShowSummaryRows: this.capShowSummaryRows,
+          capSummaryRowsVersion: 2,
+        });
       },
 
       // pick my team as default when possible
@@ -266,10 +358,14 @@
         this.playerSearch = '';
         this.teamListOpen = false;
       },
-      async openLeagueTab(tab){
-        this.activeLeagueTab = tab;
+      async openLeagueTab(tab, persist = true){
+        this.activeLeagueTab = this.validLeagueTab(tab);
 
-        if (tab === 'players') {
+        if (persist) {
+          this.writeLeagueUiState({ activeTab: this.activeLeagueTab });
+        }
+
+        if (this.activeLeagueTab === 'players') {
           if (this.canShowLeagueStats) {
             this.$nextTick(() => this.loadLeagueStats());
             return;
@@ -279,7 +375,7 @@
           return;
         }
 
-        if (tab === 'cap') {
+        if (this.activeLeagueTab === 'cap') {
           await this.loadPlayersPayload(false, false);
         }
       },
@@ -343,6 +439,13 @@
           this.customCap = Boolean(payload.customCap ?? this.customCap);
           this.salaryCap = payload.salaryCap ?? this.salaryCap;
           this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+          this.capLimitsBySeason = { ...(payload.capLimitsBySeason ?? this.capLimitsBySeason) };
+          this.capLimitDrafts = { ...this.capLimitsBySeason };
+          this.capAdjustmentsByTeam = { ...(payload.capAdjustmentsByTeam ?? this.capAdjustmentsByTeam) };
+          this.maxActiveBuyouts = payload.maxActiveBuyouts ?? this.maxActiveBuyouts;
+          this.maxActiveRetentions = payload.maxActiveRetentions ?? this.maxActiveRetentions;
+          this.maxActiveBuyoutsInput = this.maxActiveBuyouts !== null && this.maxActiveBuyouts !== undefined ? String(this.maxActiveBuyouts) : '';
+          this.maxActiveRetentionsInput = this.maxActiveRetentions !== null && this.maxActiveRetentions !== undefined ? String(this.maxActiveRetentions) : '';
           this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
           this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
@@ -401,6 +504,7 @@
             id: '__all_players__',
             name: 'All Players',
             owner_avatar_url: null,
+            owner_avatar_urls: [],
             owned_by_me: false,
             owner_user_ids: [],
             players: allPlayers,
@@ -410,6 +514,7 @@
             id: '__free_agents__',
             name: 'Free Agents',
             owner_avatar_url: null,
+            owner_avatar_urls: [],
             owned_by_me: false,
             owner_user_ids: [],
             players: freeAgents,
@@ -536,6 +641,16 @@
         event.target.value = this.capTeamId;
         this.capTeamLoading = false;
       },
+      teamOwnerAvatarUrls(team){
+        if (Array.isArray(team?.owner_avatar_urls) && team.owner_avatar_urls.length > 0) {
+          return team.owner_avatar_urls.filter(Boolean).slice(0, 3);
+        }
+
+        return team?.owner_avatar_url ? [team.owner_avatar_url] : [];
+      },
+      hasTeamOwnerAvatars(team){
+        return this.teamOwnerAvatarUrls(team).length > 0;
+      },
       get capSeasonColumns(){
         const seasons = new Map();
         const currentSeasonKey = this.currentCapSeasonKey();
@@ -570,6 +685,44 @@
               label: season?.label || String(key),
               sort,
             });
+          });
+        });
+
+        Object.keys(this.capLimitsBySeason || {}).forEach(key => {
+          const sort = Number(key || 0);
+
+          if (sort > 0 && sort >= currentSeasonKey) {
+            seasons.set(String(key), {
+              key: String(key),
+              label: this.capSeasonLabel(key),
+              sort,
+            });
+          }
+        });
+
+        Object.keys(this.capAdjustmentTotals()).forEach(key => {
+          const sort = Number(key || 0);
+
+          if (sort > 0 && sort >= currentSeasonKey) {
+            seasons.set(String(key), {
+              key: String(key),
+              label: this.capSeasonLabel(key),
+              sort,
+            });
+          }
+        });
+
+        Object.values(this.capTeam?.cap_contract_projections || {}).forEach(playerProjection => {
+          Object.keys(playerProjection?.seasons || {}).forEach(key => {
+            const sort = Number(key || 0);
+
+            if (sort > 0 && sort >= currentSeasonKey) {
+              seasons.set(String(key), {
+                key: String(key),
+                label: this.capSeasonLabel(key),
+                sort,
+              });
+            }
           });
         });
 
@@ -637,6 +790,27 @@
 
             const season = this.capSeasonForPlayer(player, column.key);
             const value = Number(season?.cap_hit || 0);
+            const projection = this.capProjectionForPlayer(player, column.key);
+            const projectedValue = season ? 0 : Number(projection?.projected_aav || 0);
+
+            return sum
+              + (Number.isFinite(value) ? value : 0)
+              + (Number.isFinite(projectedValue) ? projectedValue : 0);
+          }, 0);
+        });
+
+        return totals;
+      },
+      get capProjectionTotals(){
+        const totals = {};
+
+        this.capSeasonColumns.forEach(column => {
+          totals[column.key] = this.capPlayers.reduce((sum, player) => {
+            if (player?.roster_group === 'minor') return sum;
+            if (this.capSeasonForPlayer(player, column.key)) return sum;
+
+            const projection = this.capProjectionForPlayer(player, column.key);
+            const value = Number(projection?.projected_aav || 0);
 
             return sum + (Number.isFinite(value) ? value : 0);
           }, 0);
@@ -645,13 +819,15 @@
         return totals;
       },
       get capSpaceTotals(){
-        const salaryCap = Number(this.salaryCap || 0);
         const totals = {};
+        const adjustments = this.capAdjustmentTotals();
 
         this.capSeasonColumns.forEach(column => {
+          const ceiling = this.capCeilingForSeason(column.key);
           const capHit = Number(this.capTotals[column.key] || 0);
+          const adjustmentHit = Number(adjustments[column.key] || 0);
 
-          totals[column.key] = Number.isFinite(salaryCap) && salaryCap > 0 ? salaryCap - capHit : null;
+          totals[column.key] = Number.isFinite(ceiling) && ceiling > 0 ? ceiling - capHit - adjustmentHit : null;
         });
 
         return totals;
@@ -711,31 +887,61 @@
 
         return (player?.contract?.seasons || []).find(season => String(season?.season_key ?? season?.label ?? '') === String(key)) || null;
       },
-      capCustomSeasonOffset(key){
-        const currentSeasonKey = Number(this.currentCapSeasonKey());
-        const seasonKey = Number(key || 0);
+      capProjectionForPlayer(player, key){
+        if (this.customCap || !player?.id || this.capSeasonForPlayer(player, key)) return null;
 
-        if (!Number.isFinite(currentSeasonKey) || !Number.isFinite(seasonKey) || seasonKey <= 0) return -1;
-
-        return Math.floor(seasonKey / 10000) - Math.floor(currentSeasonKey / 10000);
+        return this.capTeam?.cap_contract_projections?.[String(player.id)]?.seasons?.[String(key)] || null;
       },
-      capSortValue(player, key, positionOrder){
-        if (key === 'player') return String(player?.name || '').toLowerCase();
-        if (key === 'position') return Number(positionOrder[player?.cap_position_key] || 90);
-        if (key === 'age') return Number(player?.age || 0);
-        if (key.startsWith('season:')) {
-          const seasonKey = key.slice(7);
-          const season = this.capSeasonForPlayer(player, seasonKey);
+      capProjectionEditValue(player, key){
+        const projection = this.capProjectionForPlayer(player, key);
+        const value = Number(projection?.projected_aav || 0);
 
-          return Number(season?.cap_hit || 0);
-        }
+        if (!Number.isFinite(value) || value <= 0) return '';
+
+        return String(value / 1000000).replace(/\.0+$/, '');
+      },
+      isFirstCapProjectionSeason(player, key){
+        const seasons = this.capTeam?.cap_contract_projections?.[String(player?.id || '')]?.seasons || {};
+        const keys = Object.keys(seasons)
+          .map(value => Number(value || 0))
+          .filter(value => Number.isFinite(value) && value > 0)
+          .sort((a, b) => a - b);
+
+        return keys.length > 0 && keys[0] === Number(key || 0);
+      },
+      normalizedCapExpiryStatus(player){
+        const status = String(player?.contract?.expiry_status || '').trim().toUpperCase();
+
+        if (status.includes('RFA')) return 'RFA';
+        if (status.includes('UFA')) return 'UFA';
 
         return '';
+      },
+      isExpiredContractProjectionCandidate(player){
+        const status = this.normalizedCapExpiryStatus(player);
+        const lastSeasonKey = Number(player?.contract?.last_season_key || 0);
+        const currentSeasonKey = Number(this.currentCapSeasonKey());
+
+        if (!['UFA', 'RFA'].includes(status) || !lastSeasonKey || lastSeasonKey >= currentSeasonKey) return false;
+
+        return !(player?.contract?.seasons || []).some(season => Number(season?.season_key || 0) >= currentSeasonKey);
+      },
+      capExpiryStatusBadge(player){
+        const status = this.normalizedCapExpiryStatus(player);
+        if (!['UFA', 'RFA'].includes(status)) return null;
+        if (!this.capTeam?.cap_contract_projections?.[String(player?.id || '')] && !this.isExpiredContractProjectionCandidate(player)) return null;
+
+        return {
+          label: status,
+          className: status === 'RFA'
+            ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+            : 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+        };
       },
       capExpiryBadge(player, key){
         if (this.customCap) return null;
 
-        const status = String(player?.contract?.expiry_status || '').trim().toUpperCase();
+        const status = this.normalizedCapExpiryStatus(player);
 
         if (!['RFA', 'UFA'].includes(status)) return null;
 
@@ -754,9 +960,70 @@
         return {
           label: status,
           className: status === 'RFA'
-            ? 'bg-blue-50 text-blue-700 ring-blue-200'
-            : 'bg-green-50 text-green-700 ring-green-200',
+            ? 'bg-indigo-50 text-indigo-700 ring-indigo-200'
+            : 'bg-emerald-50 text-emerald-700 ring-emerald-200',
         };
+      },
+      async saveCapProjection(player, key, value){
+        if (!this.capProjectionsUpdateUrl || this.savingCapProjection || !this.capTeam?.platform_team_record_id || !player?.id) return;
+
+        this.savingCapProjection = true;
+        this.capSettingsMessage = '';
+        this.capSettingsError = '';
+
+        try {
+          const response = await fetch(this.capProjectionsUpdateUrl, {
+            method: 'PUT',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+            body: JSON.stringify({
+              platform_team_id: this.capTeam.platform_team_record_id,
+              projections: [{
+                player_id: player.id,
+                season_key: Number(key),
+                projected_aav: value,
+              }],
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not save cap projection.');
+          }
+
+          this.capTeam.cap_contract_projections = { ...(payload.projections || {}) };
+          this.capSettingsMessage = payload.message || 'Cap projections saved.';
+        } catch (error) {
+          this.capSettingsError = error?.message || 'Could not save cap projection.';
+        } finally {
+          this.savingCapProjection = false;
+        }
+      },
+      capCustomSeasonOffset(key){
+        const currentSeasonKey = Number(this.currentCapSeasonKey());
+        const seasonKey = Number(key || 0);
+
+        if (!Number.isFinite(currentSeasonKey) || !Number.isFinite(seasonKey) || seasonKey <= 0) return -1;
+
+        return Math.floor(seasonKey / 10000) - Math.floor(currentSeasonKey / 10000);
+      },
+      capSortValue(player, key, positionOrder){
+        if (key === 'player') return String(player?.name || '').toLowerCase();
+        if (key === 'position') return Number(positionOrder[player?.cap_position_key] || 90);
+        if (key === 'age') return Number(player?.age || 0);
+        if (key.startsWith('season:')) {
+          const seasonKey = key.slice(7);
+          const season = this.capSeasonForPlayer(player, seasonKey);
+          const projection = this.capProjectionForPlayer(player, seasonKey);
+
+          return Number(season?.cap_hit || projection?.projected_aav || 0);
+        }
+
+        return '';
       },
       setCapSort(key){
         if (this.capSortKey === key) {
@@ -813,6 +1080,414 @@
 
         return `${sign}$${(Math.abs(number) / 1000000).toFixed(2)}M`;
       },
+      applyCapSettingsPayload(payload){
+        this.customCap = Boolean(payload.customCap ?? this.customCap);
+        this.salaryCap = payload.salaryCap ?? this.salaryCap;
+        this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
+        this.capLimitsBySeason = { ...(payload.capLimitsBySeason ?? this.capLimitsBySeason) };
+        this.capLimitDrafts = { ...this.capLimitsBySeason };
+        this.capAdjustmentsByTeam = { ...(payload.capAdjustmentsByTeam ?? this.capAdjustmentsByTeam) };
+        this.maxActiveBuyouts = payload.maxActiveBuyouts ?? this.maxActiveBuyouts;
+        this.maxActiveRetentions = payload.maxActiveRetentions ?? this.maxActiveRetentions;
+        this.maxActiveBuyoutsInput = this.maxActiveBuyouts !== null && this.maxActiveBuyouts !== undefined ? String(this.maxActiveBuyouts) : '';
+        this.maxActiveRetentionsInput = this.maxActiveRetentions !== null && this.maxActiveRetentions !== undefined ? String(this.maxActiveRetentions) : '';
+        this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
+        this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
+        this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
+        this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
+      },
+      async saveCapSettingsPayload(extraPayload, successMessage = 'Cap settings saved.'){
+        if (!this.capSettingsUpdateUrl || this.savingCapSettings) return false;
+
+        this.savingCapSettings = true;
+        this.capSettingsMessage = '';
+        this.capSettingsError = '';
+
+        try {
+          const response = await fetch(this.capSettingsUpdateUrl, {
+            method: 'PUT',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'XMLHttpRequest',
+              'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '',
+            },
+            body: JSON.stringify({
+              custom_cap: this.customCap,
+              ...extraPayload,
+            }),
+          });
+          const payload = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(payload.message || 'Could not save cap settings.');
+          }
+
+          this.applyCapSettingsPayload(payload);
+          this.capSettingsMessage = successMessage;
+
+          return true;
+        } catch (error) {
+          this.capSettingsError = error?.message || 'Could not save cap settings.';
+
+          return false;
+        } finally {
+          this.savingCapSettings = false;
+        }
+      },
+      capSeasonKeys(count = 10){
+        const current = Number(this.currentCapSeasonKey());
+        const startYear = Math.floor(current / 10000);
+
+        return Array.from({ length: count }, (_, index) => {
+          const year = startYear + index;
+
+          return String((year * 10000) + year + 1);
+        });
+      },
+      get capLimitRows(){
+        return this.capSeasonKeys(10).map(key => ({
+          key,
+          label: this.capSeasonLabel(key),
+          floor: this.capLimitDrafts?.[key]?.floor ?? null,
+          ceiling: this.capLimitDrafts?.[key]?.ceiling ?? null,
+        }));
+      },
+      setCapLimitValue(seasonKey, field, value){
+        const key = String(seasonKey || '');
+        const existing = this.capLimitDrafts?.[key] ?? {};
+
+        this.capLimitDrafts = {
+          ...this.capLimitDrafts,
+          [key]: {
+            ...existing,
+            [field]: value,
+          },
+        };
+      },
+      syncCapLimitInputs(){
+        const next = { ...(this.capLimitDrafts || {}) };
+
+        this.$root?.querySelectorAll('[data-cap-limit-season][data-cap-limit-field]')?.forEach(input => {
+          const key = String(input.dataset.capLimitSeason || '');
+          const field = String(input.dataset.capLimitField || '');
+
+          if (!key || !['floor', 'ceiling'].includes(field)) return;
+
+          next[key] = {
+            ...(next[key] || {}),
+            [field]: input.value,
+          };
+        });
+
+        this.capLimitDrafts = next;
+
+        return next;
+      },
+      async saveCapLimits(){
+        const syncedLimits = this.syncCapLimitInputs();
+
+        const saved = await this.saveCapSettingsPayload({
+          salary_cap: this.salaryCapInput,
+          cap_limits_by_season: syncedLimits,
+        }, 'Cap limits saved.');
+
+        if (saved) {
+          this.capLimitDrafts = { ...this.capLimitsBySeason };
+        }
+      },
+      async saveCapRuleLimits(){
+        const buyouts = String(this.maxActiveBuyoutsInput || '').trim();
+        const retentions = String(this.maxActiveRetentionsInput || '').trim();
+
+        await this.saveCapSettingsPayload({
+          max_active_buyouts: buyouts === '' ? null : Number(buyouts),
+          max_active_retentions: retentions === '' ? null : Number(retentions),
+        }, 'Cap options saved.');
+      },
+      capLimitForSeason(seasonKey, field){
+        const value = this.capLimitsBySeason?.[String(seasonKey)]?.[field] ?? null;
+
+        return Number(value || 0) > 0 ? Number(value) : null;
+      },
+      capCeilingForSeason(seasonKey){
+        return this.capLimitForSeason(seasonKey, 'ceiling') ?? (Number(this.salaryCap || 0) > 0 ? Number(this.salaryCap) : null);
+      },
+      capFloorForSeason(seasonKey){
+        return this.capLimitForSeason(seasonKey, 'floor');
+      },
+      get capTeamAdjustments(){
+        const teamId = String(this.capTeamId || '');
+        const rows = this.capAdjustmentsByTeam?.[teamId] ?? [];
+
+        return Array.isArray(rows) ? rows : [];
+      },
+      capAdjustmentCount(type){
+        return this.capTeamAdjustments.filter(row => String(row?.type || '') === type).length;
+      },
+      capAdjustmentLimit(type){
+        return type === 'buyout' ? this.maxActiveBuyouts : this.maxActiveRetentions;
+      },
+      capAdjustmentUsageLabel(type){
+        const limit = this.capAdjustmentLimit(type);
+        const count = this.capAdjustmentCount(type);
+        const label = type === 'buyout' ? 'Buyouts' : 'Retentions';
+
+        return `${label}: ${count}${limit !== null && limit !== undefined && limit !== '' ? ` / ${limit}` : ''}`;
+      },
+      capAdjustmentUsageClass(type){
+        const limit = Number(this.capAdjustmentLimit(type));
+
+        if (!Number.isFinite(limit) || limit <= 0) return 'text-slate-600 ring-slate-200';
+
+        return this.capAdjustmentCount(type) > limit
+          ? 'text-red-700 ring-red-200'
+          : 'text-slate-600 ring-slate-200';
+      },
+      capAdjustmentTotals(){
+        const totals = {};
+
+        this.capTeamAdjustments.forEach(adjustment => {
+          Object.entries(adjustment?.values_by_season || {}).forEach(([seasonKey, value]) => {
+            totals[seasonKey] = Number(totals[seasonKey] || 0) + Number(value || 0);
+          });
+        });
+
+        return totals;
+      },
+      capAdjustmentValue(adjustment, seasonKey){
+        return Number(adjustment?.values_by_season?.[String(seasonKey)] || 0);
+      },
+      capAdjustmentTypeLabel(type){
+        return String(type || '') === 'retention' ? 'Retention' : 'Buyout';
+      },
+      capAdjustmentPlayerLabel(player){
+        const name = String(player?.name || player?.player_name || '').trim();
+        const position = String(player?.position || player?.player_position || '').trim();
+
+        return position ? `${name}, ${position}` : name;
+      },
+      capAdjustmentInitials(player){
+        return this.playerInitials({
+          name: player?.name || player?.player_name || '',
+          first_name: player?.first_name || '',
+          last_name: player?.last_name || '',
+        });
+      },
+      playerHasCurrentOrFutureContract(player){
+        const currentSeason = Number(this.currentCapSeasonKey());
+
+        return (player?.contract?.seasons || []).some(season => {
+          const seasonKey = Number(season?.season_key || 0);
+          const capHit = Number(season?.cap_hit || season?.aav || 0);
+
+          return seasonKey >= currentSeason && capHit > 0;
+        });
+      },
+      capAdjustmentPlayerCandidates(){
+        const selectedTeamId = String(this.capTeamId || '');
+        const query = String(this.capAdjustmentPlayerQuery || '').toLowerCase().trim();
+        const selectedRosterIds = new Set((this.capTeam?.players || [])
+          .map(player => String(player?.id || ''))
+          .filter(Boolean));
+        const otherTeamPlayers = this.realTeams()
+          .filter(team => String(team?.id || '') !== selectedTeamId)
+          .flatMap(team => Array.isArray(team?.players) ? team.players : []);
+        const playersById = new Map();
+
+        [...otherTeamPlayers, ...(this.freeAgents || [])]
+          .filter(player => player?.type !== 'empty')
+          .filter(player => !selectedRosterIds.has(String(player?.id || '')))
+          .filter(player => this.playerHasCurrentOrFutureContract(player))
+          .forEach(player => {
+            const id = String(player?.id || '');
+            if (id) playersById.set(id, player);
+          });
+
+        const players = Array.from(playersById.values());
+
+        if (!query) return players.slice(0, 40);
+
+        return players.filter(player => [
+          player?.name,
+          player?.team_abbrev,
+          player?.position,
+        ].filter(Boolean).some(value => String(value).toLowerCase().includes(query))).slice(0, 40);
+      },
+      capPlayerById(playerId){
+        const id = Number(playerId || 0);
+
+        return this.realTeams()
+          .flatMap(team => Array.isArray(team?.players) ? team.players : [])
+          .concat(this.freeAgents || [])
+          .find(player => Number(player?.id || 0) === id) || null;
+      },
+      openCapAdjustmentDrawer(adjustment = null){
+        if (adjustment) {
+          this.capAdjustmentMode = 'edit';
+          this.capAdjustmentEditingId = String(adjustment.id || '');
+          this.capAdjustmentForm = {
+            type: String(adjustment.type || 'buyout'),
+            player_id: String(adjustment.player_id || ''),
+            player_name: String(adjustment.player_name || ''),
+            player_position: String(adjustment.player_position || ''),
+            avatar_url: String(adjustment.avatar_url || ''),
+            team_abbrev: String(adjustment.team_abbrev || ''),
+            percent: Number(adjustment.percent || 50),
+            start_season: String(adjustment.start_season || ''),
+            end_season: String(adjustment.end_season || ''),
+            values_by_season: { ...(adjustment.values_by_season || {}) },
+          };
+          this.capAdjustmentOverrides = Object.fromEntries(Object.keys(this.capAdjustmentForm.values_by_season || {}).map(key => [key, true]));
+          this.capAdjustmentPlayerQuery = this.capAdjustmentForm.player_name;
+        } else {
+          const firstSeason = this.capSeasonKeys(1)[0] || '';
+          this.capAdjustmentMode = 'create';
+          this.capAdjustmentEditingId = '';
+          this.capAdjustmentForm = {
+            type: 'buyout',
+            player_id: '',
+            player_name: '',
+            player_position: '',
+            avatar_url: '',
+            team_abbrev: '',
+            percent: 50,
+            start_season: firstSeason,
+            end_season: '',
+            values_by_season: {},
+          };
+          this.capAdjustmentOverrides = {};
+          this.capAdjustmentPlayerQuery = '';
+        }
+
+        this.capAdjustmentPlayerOpen = false;
+        this.capAdjustmentDrawerOpen = true;
+        this.loadFreeAgentsPayload();
+        this.recalculateCapAdjustmentValues(false);
+      },
+      selectCapAdjustmentPlayer(player){
+        this.capAdjustmentForm.player_id = String(player?.id || '');
+        this.capAdjustmentForm.player_name = String(player?.name || '');
+        this.capAdjustmentForm.player_position = String(player?.position || '');
+        this.capAdjustmentForm.avatar_url = String(player?.avatar_url || '');
+        this.capAdjustmentForm.team_abbrev = String(player?.team_abbrev || '');
+        this.capAdjustmentPlayerQuery = this.capAdjustmentForm.player_name;
+        this.capAdjustmentPlayerOpen = false;
+        this.recalculateCapAdjustmentValues(false);
+      },
+      capAdjustmentSeasonOptions(){
+        const keys = new Set(this.capSeasonKeys(10));
+        const player = this.capPlayerById(this.capAdjustmentForm.player_id);
+
+        (player?.contract?.seasons || []).forEach(season => {
+          const key = String(season?.season_key || '');
+          if (key) keys.add(key);
+        });
+
+        return Array.from(keys).sort().map(key => ({
+          key,
+          label: this.capSeasonLabel(key),
+        }));
+      },
+      capAdjustmentCalculatedRows(){
+        return this.capAdjustmentSeasonOptions()
+          .filter(option => Number(this.capAdjustmentForm.values_by_season?.[option.key] || 0) > 0)
+          .map(option => ({
+            ...option,
+            value: this.capAdjustmentForm.values_by_season?.[option.key] ?? '',
+          }));
+      },
+      setCapAdjustmentManualValue(seasonKey, value){
+        this.capAdjustmentOverrides = {
+          ...this.capAdjustmentOverrides,
+          [seasonKey]: true,
+        };
+        this.capAdjustmentForm.values_by_season = {
+          ...this.capAdjustmentForm.values_by_season,
+          [seasonKey]: value,
+        };
+      },
+      recalculateCapAdjustmentValues(clearOverrides = true){
+        const player = this.capPlayerById(this.capAdjustmentForm.player_id);
+        const percent = Number(this.capAdjustmentForm.percent || 0) / 100;
+        const start = Number(this.capAdjustmentForm.start_season || 0);
+        const end = Number(this.capAdjustmentForm.end_season || 0);
+        const values = clearOverrides ? {} : { ...(this.capAdjustmentForm.values_by_season || {}) };
+        const overrides = clearOverrides ? {} : this.capAdjustmentOverrides;
+
+        if (!player || !Number.isFinite(percent) || percent <= 0) {
+          this.capAdjustmentForm.values_by_season = values;
+          this.capAdjustmentOverrides = overrides;
+          return;
+        }
+
+        (player?.contract?.seasons || []).forEach(season => {
+          const key = String(season?.season_key || '');
+          const numericKey = Number(key || 0);
+          const capHit = Number(season?.cap_hit || season?.aav || 0);
+
+          if (!key || capHit <= 0) return;
+          if (start && numericKey < start) return;
+          if (end && numericKey > end) return;
+          if (overrides[key]) return;
+
+          values[key] = Math.round(capHit * percent);
+        });
+
+        this.capAdjustmentForm.values_by_season = values;
+        this.capAdjustmentOverrides = overrides;
+      },
+      resetCapAdjustmentValues(){
+        this.recalculateCapAdjustmentValues(true);
+      },
+      async saveCapAdjustment(){
+        const teamId = String(this.capTeamId || '');
+        if (!teamId) return;
+
+        this.recalculateCapAdjustmentValues(false);
+
+        const existing = [...this.capTeamAdjustments];
+        const row = {
+          id: this.capAdjustmentEditingId || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type: this.capAdjustmentForm.type,
+          player_id: this.capAdjustmentForm.player_id ? Number(this.capAdjustmentForm.player_id) : null,
+          player_name: this.capAdjustmentForm.player_name,
+          player_position: this.capAdjustmentForm.player_position,
+          avatar_url: this.capAdjustmentForm.avatar_url,
+          team_abbrev: this.capAdjustmentForm.team_abbrev,
+          percent: Number(this.capAdjustmentForm.percent || 0),
+          start_season: this.capAdjustmentForm.start_season || null,
+          end_season: this.capAdjustmentForm.end_season || null,
+          values_by_season: { ...(this.capAdjustmentForm.values_by_season || {}) },
+        };
+        const nextRows = this.capAdjustmentMode === 'edit'
+          ? existing.map(adjustment => String(adjustment.id) === String(row.id) ? row : adjustment)
+          : [...existing, row];
+        const nextAdjustments = {
+          ...this.capAdjustmentsByTeam,
+          [teamId]: nextRows,
+        };
+        const saved = await this.saveCapSettingsPayload({
+          cap_adjustments_by_team: nextAdjustments,
+        }, 'Buyouts and retentions saved.');
+
+        if (saved) {
+          this.capAdjustmentDrawerOpen = false;
+        }
+      },
+      async deleteCapAdjustment(adjustment){
+        const teamId = String(this.capTeamId || '');
+        if (!teamId) return;
+
+        const nextAdjustments = {
+          ...this.capAdjustmentsByTeam,
+          [teamId]: this.capTeamAdjustments.filter(row => String(row.id) !== String(adjustment?.id || '')),
+        };
+
+        await this.saveCapSettingsPayload({
+          cap_adjustments_by_team: nextAdjustments,
+        }, 'Buyout or retention removed.');
+      },
       async toggleCustomCap(){
         if (!this.capSettingsUpdateUrl || this.savingCapSettings) return;
 
@@ -840,13 +1515,7 @@
             throw new Error(payload.message || 'Could not save cap settings.');
           }
 
-          this.customCap = Boolean(payload.customCap ?? next);
-          this.salaryCap = payload.salaryCap ?? this.salaryCap;
-          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
-          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
-          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
-          this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
-          this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
+          this.applyCapSettingsPayload(payload);
           this.capSettingsMessage = payload.message || 'Cap settings saved.';
           this.playersPayloadLoaded = false;
           await this.loadPlayersPayload(true, false);
@@ -916,13 +1585,7 @@
             throw new Error(payload.message || 'Could not save contract codes.');
           }
 
-          this.customCap = Boolean(payload.customCap ?? this.customCap);
-          this.salaryCap = payload.salaryCap ?? this.salaryCap;
-          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
-          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
-          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
-          this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
-          this.fantraxContractCodeDefinitions = { ...(payload.fantraxContractCodeDefinitions ?? this.fantraxContractCodeDefinitions) };
+          this.applyCapSettingsPayload(payload);
           this.capSettingsMessage = 'Contract codes saved.';
           this.playersPayloadLoaded = false;
           await this.loadPlayersPayload(true, false);
@@ -960,11 +1623,7 @@
             throw new Error(payload.message || 'Could not save salary cap.');
           }
 
-          this.customCap = Boolean(payload.customCap ?? this.customCap);
-          this.salaryCap = payload.salaryCap ?? null;
-          this.salaryCapInput = this.salaryCap ? String(this.salaryCap) : '';
-          this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
-          this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
+          this.applyCapSettingsPayload(payload);
           this.capSettingsMessage = 'Salary cap saved.';
         } catch (error) {
           this.capSettingsError = error?.message || 'Could not save salary cap.';
@@ -1178,7 +1837,7 @@
         type="button"
         class="border-b-2 py-3 text-sm font-semibold transition"
         :class="activeLeagueTab === 'draft' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
-        @click="activeLeagueTab = 'draft'"
+        @click="openLeagueTab('draft')"
       >
         Draft
       </button>
@@ -1257,10 +1916,21 @@
             <div class="relative z-50" @click.stop>
               <label for="team-combobox" class="block text-sm font-medium text-slate-900 sr-only">Team</label>
               <div class="flex items-center gap-2">
-                <img x-show="current?.owner_avatar_url" :src="current?.owner_avatar_url" alt=""
-                     class="h-8 w-8 rounded-full object-cover ring-1 ring-slate-200">
+                <template x-if="hasTeamOwnerAvatars(current)">
+                  <div class="isolate flex -space-x-2 overflow-hidden">
+                    <template x-for="(avatar, index) in teamOwnerAvatarUrls(current)" :key="`selected-team-owner-${index}-${avatar}`">
+                      <img
+                        :src="avatar"
+                        alt=""
+                        class="relative h-8 w-8 rounded-full object-cover ring-2 ring-white"
+                        :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
+                        loading="lazy"
+                      >
+                    </template>
+                  </div>
+                </template>
                 <span
-                  x-show="!current?.owner_avatar_url"
+                  x-show="!hasTeamOwnerAvatars(current)"
                   class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
                   x-text="current?.id === '__free_agents__' ? 'FA' : (current?.id === '__all_players__' ? 'ALL' : 'TM')"
                 ></span>
@@ -1291,10 +1961,20 @@
                       <button type="button"
                               class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-slate-900 hover:bg-indigo-600 hover:text-white"
                               @click="select(o.idx)">
-                        <template x-if="o.t.owner_avatar_url">
-                          <img :src="o.t.owner_avatar_url" class="h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-black/5" alt="">
+                        <template x-if="hasTeamOwnerAvatars(o.t)">
+                          <div class="isolate flex -space-x-1.5 overflow-hidden">
+                            <template x-for="(avatar, index) in teamOwnerAvatarUrls(o.t)" :key="`team-owner-${o.t.id}-${index}-${avatar}`">
+                              <img
+                                :src="avatar"
+                                class="relative h-6 w-6 shrink-0 rounded-full object-cover ring-2 ring-white"
+                                :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
+                                alt=""
+                                loading="lazy"
+                              >
+                            </template>
+                          </div>
                         </template>
-                        <template x-if="!o.t.owner_avatar_url">
+                        <template x-if="!hasTeamOwnerAvatars(o.t)">
                           <span
                             class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600 ring-1 ring-black/5"
                             x-text="o.t.id === '__free_agents__' ? 'FA' : (o.t.id === '__all_players__' ? 'ALL' : 'TM')"
@@ -1408,7 +2088,7 @@
     </div>
     </div>
 
-    <div x-show="activeLeagueTab === 'cap'" class="px-6 pb-6">
+    <div x-show="activeLeagueTab === 'cap'" class="px-6 pb-12">
       <div x-show="playersPayloadLoading" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div class="animate-pulse space-y-4">
           <div class="h-8 w-56 rounded-md bg-slate-200"></div>
@@ -1428,6 +2108,11 @@
               <p class="mt-1 truncate text-xs text-slate-500" x-text="capTeam ? `${capTeam.name} ${customCap ? 'Fantrax salary outlook' : 'contract outlook'}` : 'No fantasy team is linked for this league.'"></p>
             </div>
             <div x-show="capTeam" class="flex flex-wrap items-center justify-end gap-3">
+              <div class="inline-flex rounded-md bg-slate-100 p-0.5">
+                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'sheet' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('sheet')">Sheet</button>
+                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'adjustments' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('adjustments')">Buyouts &amp; Retentions</button>
+                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'limits' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('limits')">Limits</button>
+              </div>
               <label class="block">
                 <span class="sr-only">Cap team</span>
                 <select
@@ -1448,6 +2133,16 @@
                 </div>
                 <div x-show="capTeamLoading" class="mt-1 text-[11px] text-slate-500">Loading...</div>
               </div>
+              <button
+                type="button"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                @click="capSettingsDrawerOpen = true"
+                aria-label="Cap options"
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.53 1.53 0 0 1-2.29.95c-1.37-.84-2.94.73-2.1 2.1.54.89.06 2.05-.95 2.29-1.56.38-1.56 2.6 0 2.98 1.01.24 1.49 1.4.95 2.29-.84 1.37.73 2.94 2.1 2.1.89-.54 2.05-.06 2.29.95.38 1.56 2.6 1.56 2.98 0 .24-1.01 1.4-1.49 2.29-.95 1.37.84 2.94-.73 2.1-2.1-.54-.89-.06-2.05.95-2.29 1.56-.38 1.56-2.6 0-2.98a1.53 1.53 0 0 1-.95-2.29c.84-1.37-.73-2.94-2.1-2.1-.89.54-2.05.06-2.29-.95ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clip-rule="evenodd" />
+                </svg>
+              </button>
             </div>
           </div>
           <div x-show="capTeamError" class="border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700" x-text="capTeamError"></div>
@@ -1464,16 +2159,32 @@
             <div class="px-4 py-8 text-sm text-slate-500" x-text="customCap ? 'No Fantrax salary data is available for your roster yet.' : 'No contract data is available for your roster yet.'"></div>
           </template>
 
-          <div x-show="capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto pb-12 pr-2">
+          <div x-show="capView === 'sheet' && capTeam && capPlayers.length > 0 && capSeasonColumns.length > 0 && (!customCap || hasCustomCapSalaryData)" class="max-h-[calc(100vh-20rem)] min-h-[20rem] overflow-auto pb-12 pr-2">
             <table class="min-w-max divide-y divide-slate-200 text-sm">
               <thead class="sticky top-0 z-20 bg-slate-50">
-                <tr class="bg-sky-50">
+                <tr
+                  id="cap-summary-total-row"
+                  x-show="capShowSummaryRows"
+                  x-transition:enter="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:enter-start="opacity-0"
+                  x-transition:enter-end="opacity-100"
+                  x-transition:leave="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:leave-start="opacity-100"
+                  x-transition:leave-end="opacity-0"
+                  class="bg-sky-50"
+                >
                   <th
                     scope="row"
-                    :colspan="3 + (customCap ? 1 : 0)"
+                    :colspan="4 + (customCap ? 1 : 0)"
                     class="sticky left-0 z-10 bg-sky-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-sky-700"
-                    x-text="customCap ? 'Total custom cap' : 'Total cap hit'"
-                  ></th>
+                  >
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-sky-900" :aria-expanded="capShowLimitRows.toString()" aria-controls="cap-summary-projections-row cap-summary-ceiling-row cap-summary-floor-row" @click="toggleCapLimitRows()">
+                      <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="capShowLimitRows ? 'rotate-90' : ''" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M7.22 14.78a.75.75 0 0 1 0-1.06L10.94 10 7.22 6.28a.75.75 0 1 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0Z" clip-rule="evenodd" />
+                      </svg>
+                      <span x-text="customCap ? 'Projected custom cap' : 'Projected cap hit'"></span>
+                    </button>
+                  </th>
                   <template x-for="(column, index) in capSeasonColumns" :key="`header-total-${column.key}`">
                     <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
                       <span
@@ -1484,13 +2195,130 @@
                   </template>
                   <td class="w-3 px-0 py-1" aria-hidden="true"></td>
                 </tr>
+                <tr
+                  id="cap-summary-projections-row"
+                  x-show="capShowSummaryRows && capShowLimitRows && !customCap"
+                  x-transition:enter="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:enter-start="opacity-0"
+                  x-transition:enter-end="opacity-100"
+                  x-transition:leave="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:leave-start="opacity-100"
+                  x-transition:leave-end="opacity-0"
+                  class="bg-violet-50"
+                >
+                  <th
+                    scope="row"
+                    :colspan="4 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-violet-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-violet-700"
+                  >
+                    Projections
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-projections-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                        x-text="capMoney(capProjectionTotals[column.key])"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
+                <tr
+                  id="cap-summary-ceiling-row"
+                  x-show="capShowSummaryRows && capShowLimitRows"
+                  x-transition:enter="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:enter-start="opacity-0"
+                  x-transition:enter-end="opacity-100"
+                  x-transition:leave="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:leave-start="opacity-100"
+                  x-transition:leave-end="opacity-0"
+                  class="bg-slate-50"
+                >
+                  <th
+                    scope="row"
+                    :colspan="4 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-slate-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600"
+                  >
+                    Cap ceiling
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-ceiling-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                        x-text="capMoney(capCeilingForSeason(column.key))"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
+                <tr
+                  id="cap-summary-floor-row"
+                  x-show="capShowSummaryRows && capShowLimitRows"
+                  x-transition:enter="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:enter-start="opacity-0"
+                  x-transition:enter-end="opacity-100"
+                  x-transition:leave="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:leave-start="opacity-100"
+                  x-transition:leave-end="opacity-0"
+                  class="bg-slate-50"
+                >
+                  <th
+                    scope="row"
+                    :colspan="4 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-slate-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-600"
+                  >
+                    Cap floor
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-floor-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                        x-text="capMoney(capFloorForSeason(column.key))"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
+                <tr
+                  id="cap-summary-adjustments-row"
+                  x-show="capShowSummaryRows"
+                  x-transition:enter="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:enter-start="opacity-0"
+                  x-transition:enter-end="opacity-100"
+                  x-transition:leave="transition-opacity duration-300 ease-out motion-reduce:transition-none"
+                  x-transition:leave-start="opacity-100"
+                  x-transition:leave-end="opacity-0"
+                  class="bg-amber-50"
+                >
+                  <th
+                    scope="row"
+                    :colspan="4 + (customCap ? 1 : 0)"
+                    class="sticky left-0 z-10 bg-amber-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-amber-700"
+                  >
+                    Buyouts &amp; retentions
+                  </th>
+                  <template x-for="(column, index) in capSeasonColumns" :key="`header-adjustments-${column.key}`">
+                    <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
+                      <span
+                        class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                        x-text="capMoney(capAdjustmentTotals()[column.key])"
+                      ></span>
+                    </td>
+                  </template>
+                  <td class="w-3 px-0 py-1" aria-hidden="true"></td>
+                </tr>
                 <tr class="bg-emerald-50">
                   <th
                     scope="row"
-                    :colspan="3 + (customCap ? 1 : 0)"
+                    :colspan="4 + (customCap ? 1 : 0)"
                     class="sticky left-0 z-10 bg-emerald-50 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-emerald-700"
                   >
-                    Cap space
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-emerald-900" :aria-expanded="capShowSummaryRows.toString()" aria-controls="cap-summary-total-row cap-summary-projections-row cap-summary-ceiling-row cap-summary-floor-row cap-summary-adjustments-row" @click="toggleCapSummaryRows()">
+                      <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 transition-transform duration-300 ease-out motion-reduce:transition-none" :class="capShowSummaryRows ? 'rotate-90' : ''" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M7.22 14.78a.75.75 0 0 1 0-1.06L10.94 10 7.22 6.28a.75.75 0 1 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0Z" clip-rule="evenodd" />
+                      </svg>
+                      <span>Cap space</span>
+                    </button>
                   </th>
                   <template x-for="(column, index) in capSeasonColumns" :key="`header-space-${column.key}`">
                     <td class="px-1 py-1 text-right" :class="index === 0 ? 'w-24 pl-5' : 'w-16'">
@@ -1509,6 +2337,7 @@
                       Player <span class="text-slate-400" x-text="capSortIndicator('player')"></span>
                     </button>
                   </th>
+                  <th scope="col" class="w-7 px-0 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500" aria-label="Free agent status"></th>
                   <th scope="col" class="w-12 px-1.5 py-1.5 pl-4 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                     <button type="button" class="inline-flex items-center gap-1 hover:text-slate-800" @click="setCapSort('position')">
                       Pos <span class="text-slate-400" x-text="capSortIndicator('position')"></span>
@@ -1536,7 +2365,7 @@
                   <tr>
                     <td
                       x-show="row.type === 'group'"
-                      :colspan="4 + capSeasonColumns.length + (customCap ? 1 : 0)"
+                      :colspan="5 + capSeasonColumns.length + (customCap ? 1 : 0)"
                       class="bg-slate-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500"
                       x-text="row.label"
                     ></td>
@@ -1549,12 +2378,23 @@
                           <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="playerInitials(row.player)"></span>
                         </template>
                         <div class="min-w-0">
-                          <div class="truncate text-xs font-medium text-slate-900" x-text="row.player.name"></div>
+                          <div class="flex min-w-0 items-center gap-1.5">
+                            <span class="truncate text-xs font-medium text-slate-900" x-text="row.player.name"></span>
+                          </div>
                           <div class="text-[11px] text-slate-500">
                             <span x-text="row.player.team_abbrev || '-'"></span>
                           </div>
                         </div>
                       </div>
+                    </td>
+                    <td x-show="row.type === 'player'" class="px-0 py-1 text-center">
+                      <template x-if="capExpiryStatusBadge(row.player)">
+                        <span
+                          class="inline-flex h-4 shrink-0 items-center rounded px-1 text-[9px] font-bold ring-1"
+                          :class="capExpiryStatusBadge(row.player).className"
+                          x-text="capExpiryStatusBadge(row.player).label"
+                        ></span>
+                      </template>
                     </td>
                     <td x-show="row.type === 'player'" class="px-1.5 py-1 pl-4 text-xs font-medium text-slate-700" x-text="capPositionLabel(row.player)"></td>
                     <td x-show="row.type === 'player'" class="px-1 py-1 text-right text-xs font-medium text-slate-700" x-text="row.player.age ?? '-'"></td>
@@ -1574,14 +2414,34 @@
                             x-text="capSeasonForPlayer(row.player, column.key)?.cap_hit_label"
                           ></span>
                         </template>
-                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capExpiryBadge(row.player, column.key)">
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capProjectionForPlayer(row.player, column.key) && isFirstCapProjectionSeason(row.player, column.key)">
+                          <div class="inline-flex items-center gap-1">
+                            <span class="text-[10px] font-semibold text-slate-500">$</span>
+                            <input
+                              type="text"
+                              inputmode="decimal"
+                              class="h-6 w-14 rounded border-0 bg-slate-50 px-1 text-right text-[10px] font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-400 transition-colors focus:bg-white focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:opacity-60"
+                              :value="capProjectionEditValue(row.player, column.key)"
+                              :disabled="savingCapProjection"
+                              :aria-label="`Projected AAV for ${row.player.name} in ${column.label}`"
+                              @change="saveCapProjection(row.player, column.key, $event.target.value)"
+                            >
+                          </div>
+                        </template>
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && capProjectionForPlayer(row.player, column.key) && !isFirstCapProjectionSeason(row.player, column.key)">
+                          <span
+                            class="inline-flex h-5 min-w-14 items-center justify-center rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 ring-1 ring-slate-200"
+                            x-text="capProjectionForPlayer(row.player, column.key)?.projected_aav_label"
+                          ></span>
+                        </template>
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && !capProjectionForPlayer(row.player, column.key) && capExpiryBadge(row.player, column.key)">
                           <span
                             class="inline-flex h-5 min-w-14 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1"
                             :class="capExpiryBadge(row.player, column.key).className"
                             x-text="capExpiryBadge(row.player, column.key).label"
                           ></span>
                         </template>
-                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && !capExpiryBadge(row.player, column.key)">
+                        <template x-if="!(capSeasonForPlayer(row.player, column.key)?.cap_hit_label && capSeasonForPlayer(row.player, column.key)?.cap_hit_label !== '-') && !capProjectionForPlayer(row.player, column.key) && !capExpiryBadge(row.player, column.key)">
                           <div class="text-xs font-semibold text-slate-400">-</div>
                         </template>
                       </td>
@@ -1590,10 +2450,118 @@
                   </tr>
                 </template>
                 <tr aria-hidden="true">
-                  <td :colspan="4 + capSeasonColumns.length + (customCap ? 1 : 0)" class="h-12 border-0 p-0"></td>
+                  <td :colspan="5 + capSeasonColumns.length + (customCap ? 1 : 0)" class="h-12 border-0 p-0"></td>
                 </tr>
               </tbody>
             </table>
+          </div>
+          <div x-show="capView === 'adjustments' && capTeam" class="p-4">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-wrap gap-2">
+                <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-semibold ring-1" :class="capAdjustmentUsageClass('buyout')" x-text="capAdjustmentUsageLabel('buyout')"></span>
+                <span class="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-xs font-semibold ring-1" :class="capAdjustmentUsageClass('retention')" x-text="capAdjustmentUsageLabel('retention')"></span>
+              </div>
+              <button
+                type="button"
+                class="inline-flex h-8 items-center justify-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                @click="openCapAdjustmentDrawer()"
+              >
+                + Add
+              </button>
+            </div>
+            <div class="overflow-auto rounded-md border border-slate-200">
+              <table class="min-w-max divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50">
+                  <tr>
+                    <th scope="col" class="w-56 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">Player</th>
+                    <th scope="col" class="w-24 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">Type</th>
+                    <th scope="col" class="w-16 px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">%</th>
+                    <template x-for="column in capSeasonColumns" :key="`adjustment-head-${column.key}`">
+                      <th scope="col" class="w-20 px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500" x-text="column.label"></th>
+                    </template>
+                    <th scope="col" class="w-24 px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 bg-white">
+                  <template x-for="adjustment in capTeamAdjustments" :key="adjustment.id">
+                    <tr>
+                      <td class="px-3 py-2">
+                        <div class="flex min-w-56 items-center gap-2">
+                          <template x-if="adjustment.avatar_url">
+                            <img :src="adjustment.avatar_url" alt="" class="h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
+                          </template>
+                          <template x-if="!adjustment.avatar_url">
+                            <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="capAdjustmentInitials(adjustment)"></span>
+                          </template>
+                          <div class="min-w-0">
+                            <div class="truncate text-xs font-medium text-slate-900" x-text="capAdjustmentPlayerLabel(adjustment) || 'Manual adjustment'"></div>
+                            <div class="text-[11px] text-slate-500" x-text="adjustment.team_abbrev || '-'"></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="px-3 py-2 text-xs text-slate-600" x-text="capAdjustmentTypeLabel(adjustment.type)"></td>
+                      <td class="px-3 py-2 text-right text-xs text-slate-600" x-text="`${Number(adjustment.percent || 0)}%`"></td>
+                      <template x-for="column in capSeasonColumns" :key="`${adjustment.id}-${column.key}`">
+                        <td class="px-3 py-2 text-right text-xs font-semibold text-slate-700" x-text="capMoney(capAdjustmentValue(adjustment, column.key))"></td>
+                      </template>
+                      <td class="px-3 py-2 text-right">
+                        <button type="button" class="text-xs font-semibold text-slate-600 hover:text-slate-950" @click="openCapAdjustmentDrawer(adjustment)">Edit</button>
+                        <button type="button" class="ml-3 text-xs font-semibold text-red-600 hover:text-red-700" @click="deleteCapAdjustment(adjustment)">Delete</button>
+                      </td>
+                    </tr>
+                  </template>
+                  <tr x-show="capTeamAdjustments.length === 0">
+                    <td :colspan="4 + capSeasonColumns.length" class="px-3 py-8 text-center text-sm text-slate-500">No buyouts or retentions added.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="mt-3 min-h-5 text-xs">
+              <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+              <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+            </div>
+          </div>
+          <div x-show="capView === 'limits' && capTeam" class="flex max-h-[calc(100vh-22rem)] min-h-[22rem] flex-col">
+            <div class="min-h-0 flex-1 overflow-auto p-4 pb-6">
+              <div class="rounded-md border border-slate-200">
+                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead class="bg-slate-50">
+                    <tr>
+                      <th scope="col" class="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-slate-500">Season</th>
+                      <th scope="col" class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">Floor</th>
+                      <th scope="col" class="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-slate-500">Ceiling</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100 bg-white">
+                    <template x-for="row in capLimitRows" :key="row.key">
+                      <tr>
+                        <td class="px-3 py-2 text-xs font-semibold text-slate-900" x-text="row.label"></td>
+                        <td class="px-3 py-2">
+                          <input type="text" class="ml-auto block w-32 rounded-md border-0 bg-white py-1.5 px-2 text-right text-xs text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600" :value="row.floor ?? ''" :data-cap-limit-season="row.key" data-cap-limit-field="floor" @input="setCapLimitValue(row.key, 'floor', $event.target.value)" placeholder="Floor">
+                        </td>
+                        <td class="px-3 py-2">
+                          <input type="text" class="ml-auto block w-32 rounded-md border-0 bg-white py-1.5 px-2 text-right text-xs text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600" :value="row.ceiling ?? ''" :data-cap-limit-season="row.key" data-cap-limit-field="ceiling" @input="setCapLimitValue(row.key, 'ceiling', $event.target.value)" placeholder="Ceiling">
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="sticky bottom-0 z-10 flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <div class="min-h-5 text-xs">
+                <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+                <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+              </div>
+              <button
+                type="button"
+                class="inline-flex h-8 items-center justify-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                :disabled="savingCapSettings"
+                @click="saveCapLimits()"
+              >
+                Save limits
+              </button>
+            </div>
           </div>
         </section>
       </div>
@@ -1613,6 +2581,211 @@
       ])
     </div>
     </div>
+
+    <x-ui.slide-over show="capSettingsDrawerOpen" close-action="capSettingsDrawerOpen = false" title-id="cap-options-title" max-width="max-w-lg">
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+        <div>
+          <h2 id="cap-options-title" class="text-sm font-semibold text-slate-950">Cap options</h2>
+          <p class="mt-1 text-xs text-slate-500">League buyout and retention counters.</p>
+        </div>
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+          @click="capSettingsDrawerOpen = false"
+          aria-label="Close cap options"
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 1 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+          </svg>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-6">
+        <div class="space-y-4">
+          <label class="block">
+            <span class="text-sm font-semibold text-slate-950">Buyouts allowed</span>
+            <input
+              type="number"
+              min="0"
+              class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500"
+              x-model="maxActiveBuyoutsInput"
+              :disabled="savingCapSettings || !canEditLeagueSettings"
+            >
+          </label>
+          <label class="block">
+            <span class="text-sm font-semibold text-slate-950">Retentions allowed</span>
+            <input
+              type="number"
+              min="0"
+              class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:bg-slate-50 disabled:text-slate-500"
+              x-model="maxActiveRetentionsInput"
+              :disabled="savingCapSettings || !canEditLeagueSettings"
+            >
+          </label>
+          <div class="min-h-5 text-xs">
+            <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+            <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+          </div>
+        </div>
+      </div>
+      <div class="border-t border-slate-200 px-6 py-4">
+        <button
+          type="button"
+          class="inline-flex w-full items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="savingCapSettings || !canEditLeagueSettings"
+          @click="saveCapRuleLimits()"
+        >
+          <span x-show="!savingCapSettings">Save options</span>
+          <span x-show="savingCapSettings">Saving...</span>
+        </button>
+      </div>
+    </x-ui.slide-over>
+
+    <x-ui.slide-over show="capAdjustmentDrawerOpen" close-action="capAdjustmentDrawerOpen = false" title-id="cap-adjustment-title" max-width="max-w-2xl">
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
+        <div>
+          <h2 id="cap-adjustment-title" class="text-sm font-semibold text-slate-950" x-text="capAdjustmentMode === 'edit' ? 'Edit buyout or retention' : 'Add buyout or retention'"></h2>
+          <p class="mt-1 text-xs text-slate-500" x-text="capTeam ? capTeam.name : ''"></p>
+        </div>
+        <button
+          type="button"
+          class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+          @click="capAdjustmentDrawerOpen = false"
+          aria-label="Close buyout or retention"
+        >
+          <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 1 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+          </svg>
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto p-6">
+        <div class="space-y-5">
+          <div class="relative" @click.outside="capAdjustmentPlayerOpen = false">
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-950">Player</span>
+              <input
+                type="text"
+                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                x-model="capAdjustmentPlayerQuery"
+                @focus="capAdjustmentPlayerOpen = true"
+                @input="capAdjustmentPlayerOpen = true"
+                placeholder="Search roster players"
+                autocomplete="off"
+              >
+            </label>
+            <div
+              x-show="capAdjustmentPlayerOpen"
+              x-cloak
+              class="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-md bg-white py-1 text-sm shadow-lg ring-1 ring-black/5"
+            >
+              <template x-for="player in capAdjustmentPlayerCandidates()" :key="player.id">
+                <button
+                  type="button"
+                  class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-slate-50"
+                  @click="selectCapAdjustmentPlayer(player)"
+                >
+                  <span class="flex min-w-0 items-center gap-2">
+                    <template x-if="player.avatar_url">
+                      <img :src="player.avatar_url" alt="" class="h-6 w-6 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
+                    </template>
+                    <template x-if="!player.avatar_url">
+                      <span class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="capAdjustmentInitials(player)"></span>
+                    </template>
+                    <span class="truncate font-medium text-slate-900" x-text="capAdjustmentPlayerLabel(player)"></span>
+                  </span>
+                  <span class="shrink-0 text-xs text-slate-500" x-text="`${player.team_abbrev || '-'} ${player.contract?.current_aav_label || ''}`"></span>
+                </button>
+              </template>
+              <div x-show="capAdjustmentPlayerCandidates().length === 0" class="px-3 py-3 text-sm text-slate-500">No contract-backed roster players found.</div>
+            </div>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-950">Type</span>
+              <select
+                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                x-model="capAdjustmentForm.type"
+              >
+                <option value="buyout">Buyout</option>
+                <option value="retention">Retention</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-950">% of cap hit</span>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                x-model.number="capAdjustmentForm.percent"
+                @input="recalculateCapAdjustmentValues(false)"
+              >
+            </label>
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-950">Start season</span>
+              <select
+                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                x-model="capAdjustmentForm.start_season"
+                @change="recalculateCapAdjustmentValues(false)"
+              >
+                <template x-for="season in capAdjustmentSeasonOptions()" :key="`start-${season.key}`">
+                  <option :value="season.key" x-text="season.label"></option>
+                </template>
+              </select>
+            </label>
+            <label class="block">
+              <span class="text-sm font-semibold text-slate-950">End season</span>
+              <select
+                class="mt-2 block w-full rounded-md border-0 bg-white py-2 pl-3 pr-9 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                x-model="capAdjustmentForm.end_season"
+                @change="recalculateCapAdjustmentValues(false)"
+              >
+                <option value="">Contract end</option>
+                <template x-for="season in capAdjustmentSeasonOptions()" :key="`end-${season.key}`">
+                  <option :value="season.key" x-text="season.label"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <div class="rounded-md border border-slate-200">
+            <div class="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+              <div class="text-sm font-semibold text-slate-950">Calculated impact</div>
+              <button type="button" class="text-xs font-semibold text-slate-600 hover:text-slate-950" @click="resetCapAdjustmentValues()">Reset</button>
+            </div>
+            <div class="divide-y divide-slate-100">
+              <template x-for="row in capAdjustmentCalculatedRows()" :key="row.key">
+                <label class="grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 px-3 py-2">
+                  <span class="text-xs font-semibold text-slate-700" x-text="row.label"></span>
+                  <input
+                    type="text"
+                    class="block w-full rounded-md border-0 bg-white py-1.5 px-2 text-right text-xs text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
+                    :value="row.value"
+                    @input="setCapAdjustmentManualValue(row.key, $event.target.value)"
+                  >
+                </label>
+              </template>
+              <div x-show="capAdjustmentCalculatedRows().length === 0" class="px-3 py-4 text-sm text-slate-500">Select a player with contract seasons to calculate cap impact.</div>
+            </div>
+          </div>
+          <div class="min-h-5 text-xs">
+            <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
+            <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-4">
+        <button type="button" class="inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950" @click="capAdjustmentDrawerOpen = false">Cancel</button>
+        <button
+          type="button"
+          class="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          :disabled="savingCapSettings || !capAdjustmentForm.player_id"
+          @click="saveCapAdjustment()"
+        >
+          <span x-show="!savingCapSettings">Save</span>
+          <span x-show="savingCapSettings">Saving...</span>
+        </button>
+      </div>
+    </x-ui.slide-over>
 
     @if ($canEditLeagueSettings)
     <x-ui.slide-over show="settingsOpen" close-action="settingsOpen = false" title-id="league-options-title" max-width="max-w-2xl">
@@ -1777,51 +2950,6 @@
                 </button>
               </div>
             </form>
-          </div>
-        </section>
-        <section class="mt-4 rounded-lg border border-slate-200 bg-white">
-          <div class="border-b border-slate-200 px-4 py-3">
-            <div class="text-sm font-semibold text-slate-950">Cap settings</div>
-            <div class="mt-1 text-xs text-slate-500">Configure league-wide cap values used in the Cap tab.</div>
-          </div>
-          <div class="p-4">
-            <div class="mb-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              <span x-show="leagueSettingsSource === 'manager_local'">These settings are only for your DynastyIQ view until a commissioner or league admin connects.</span>
-              <span x-show="leagueSettingsSource === 'league_admin'">These settings are shared league settings managed by a commissioner or league admin.</span>
-              <span x-show="leagueSettingsSource === 'league_default'">These settings use DynastyIQ defaults until a league value is saved.</span>
-            </div>
-            <div class="rounded-md border border-slate-200 p-3">
-              <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <label class="block">
-                  <span class="text-sm font-semibold text-slate-950">Team salary cap</span>
-                  <span class="mt-1 block text-xs text-slate-500">Used to calculate cap space in the Cap tab.</span>
-                  <input
-                    type="text"
-                    class="mt-2 block w-full rounded-md border-0 bg-white py-2 px-3 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600"
-                    x-model="salaryCapInput"
-                    placeholder="95500000 or 95.5M"
-                    :disabled="savingCapSettings"
-                    @keydown.enter.prevent="saveSalaryCap()"
-                  >
-                </label>
-                <button
-                  type="button"
-                  class="inline-flex h-9 items-center justify-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
-                  :disabled="savingCapSettings"
-                  @click="saveSalaryCap()"
-                >
-                  <span x-show="!savingCapSettings">Save cap</span>
-                  <span x-show="savingCapSettings">Saving...</span>
-                </button>
-              </div>
-              <div class="mt-2 text-xs text-slate-500">
-                Current cap: <span class="font-semibold text-slate-700" x-text="capMoney(salaryCap)"></span>
-              </div>
-              <div class="mt-2 min-h-4 text-xs">
-                <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
-                <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
-              </div>
-            </div>
           </div>
         </section>
         @if ($league->platform === 'fantrax')
