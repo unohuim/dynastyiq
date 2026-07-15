@@ -349,15 +349,17 @@ final class LeagueController extends Controller
             return null;
         }
 
-        $team = PlatformTeam::query()
-            ->select('platform_teams.id', 'platform_teams.extras')
-            ->join('league_user_teams', 'league_user_teams.team_id', '=', 'platform_teams.id')
-            ->where('platform_teams.platform_league_id', $league->id)
-            ->where('league_user_teams.platform_league_id', $league->id)
-            ->where('league_user_teams.user_id', $user->id)
-            ->where('league_user_teams.is_active', true)
-            ->orderBy('league_user_teams.sort_order')
-            ->first();
+        $teamId = DB::table('league_user_teams')
+            ->where('platform_league_id', $league->id)
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->value('team_id');
+        $team = $teamId
+            ? PlatformTeam::query()
+                ->where('platform_league_id', $league->id)
+                ->find($teamId)
+            : null;
 
         $division = $team instanceof PlatformTeam
             ? $this->fantraxScopeDivisionFromTeam($team)
@@ -2027,6 +2029,8 @@ final class LeagueController extends Controller
                     'owner_avatar_urls' => $ownerAvatars,
                     'owned_by_me' => $authId ? in_array((int) $authId, $ownerIds, true) : false,
                     'owner_user_ids' => $ownerIds,
+                    'fantrax_division' => data_get($team->extras, 'fantrax.division'),
+                    'fantrax_pool' => data_get($team->extras, 'fantrax.pool'),
                     'players' => [],
                 ];
             })
@@ -2243,6 +2247,8 @@ final class LeagueController extends Controller
                     'owner_avatar_urls' => $ownerAvatars,
                     'owned_by_me'       => $ownedByMe,
                     'owner_user_ids'    => $ownerIds,
+                    'fantrax_division'  => data_get($t->extras, 'fantrax.division'),
+                    'fantrax_pool'      => data_get($t->extras, 'fantrax.pool'),
                     'cap_contract_projections' => $user
                         ? self::capProjectionPayloadForTeam($league, $t, $user)
                         : [],

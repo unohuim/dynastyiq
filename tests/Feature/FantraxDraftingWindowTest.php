@@ -1022,6 +1022,7 @@ it('scopes division scoped league teams and roster players to the viewer divisio
 
     expect($teams->pluck('name')->all())->toContain('Gretzky Team')
         ->and($teams->pluck('name')->all())->not->toContain('Orr Team')
+        ->and($teams->firstWhere('name', 'Gretzky Team')['fantrax_division'] ?? null)->toBe('Gretzky')
         ->and($players->pluck('name')->all())->toContain('Gretzky Roster')
         ->and($players->pluck('name')->all())->not->toContain('Orr Roster');
 });
