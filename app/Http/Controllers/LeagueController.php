@@ -2324,37 +2324,49 @@ final class LeagueController extends Controller
      */
     private static function playerContractPayload(Player $player): ?array
     {
-        $contract = $player->contracts
-            ->sortByDesc(static function ($contract): int {
+        $contracts = $player->contracts
+            ->filter(static fn ($contract): bool => $contract->seasons->isNotEmpty())
+            ->sortBy(static function ($contract): int {
                 return (int) ($contract->seasons->max('season_key') ?? 0);
-            })
-            ->first();
+            });
 
-        if (! $contract) {
+        if ($contracts->isEmpty()) {
             return null;
         }
 
-        $seasons = $contract->seasons
-            ->sortBy('season_key')
-            ->map(static function ($season): array {
+        $seasonsByKey = collect();
+
+        foreach ($contracts as $contract) {
+            foreach ($contract->seasons->sortBy('season_key') as $season) {
+                $seasonKey = $season->season_key !== null ? (int) $season->season_key : null;
+
+                if ($seasonKey === null) {
+                    continue;
+                }
+
                 $aav = is_numeric($season->aav) ? (int) $season->aav : null;
                 $capHit = is_numeric($season->cap_hit) ? (int) $season->cap_hit : null;
 
-                return [
-                    'season_key' => $season->season_key !== null ? (int) $season->season_key : null,
+                $seasonsByKey->put($seasonKey, [
+                    'season_key' => $seasonKey,
                     'label' => (string) ($season->label ?? ''),
                     'aav' => $aav,
                     'aav_label' => self::compactMoneyLabel($aav),
                     'cap_hit' => $capHit,
                     'cap_hit_label' => self::compactMoneyLabel($capHit),
-                ];
-            })
+                ]);
+            }
+        }
+
+        $seasons = $seasonsByKey
+            ->sortKeys()
             ->values();
 
         if ($seasons->isEmpty()) {
             return null;
         }
 
+        $contract = $contracts->last();
         $currentSeason = $seasons->first(static fn (array $season): bool => ($season['cap_hit'] ?? 0) > 0)
             ?? $seasons->first();
         $lastSeason = $seasons->last();
