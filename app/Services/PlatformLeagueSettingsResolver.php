@@ -35,6 +35,8 @@ final class PlatformLeagueSettingsResolver
             'cap_adjustments_by_team' => [],
             'max_active_buyouts' => null,
             'max_active_retentions' => null,
+            'buyout_extra_payout_year' => false,
+            'retention_extra_payout_year' => false,
             'fantrax_contract_code_definitions' => [],
         ];
     }

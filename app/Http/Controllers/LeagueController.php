@@ -159,6 +159,8 @@ final class LeagueController extends Controller
             'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
             'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
             'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $activeLeague ? $this->fantraxContractCodesPayload(
@@ -217,6 +219,8 @@ final class LeagueController extends Controller
             'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
             'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
             'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -267,6 +271,8 @@ final class LeagueController extends Controller
             'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
             'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
             'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -434,6 +440,8 @@ final class LeagueController extends Controller
             'cap_adjustments_by_team' => ['nullable', 'array'],
             'max_active_buyouts' => ['nullable', 'integer', 'min:0', 'max:99'],
             'max_active_retentions' => ['nullable', 'integer', 'min:0', 'max:99'],
+            'buyout_extra_payout_year' => ['nullable', 'boolean'],
+            'retention_extra_payout_year' => ['nullable', 'boolean'],
             'contract_code_definitions' => ['nullable', 'array'],
             'contract_code_definitions.*.label' => ['nullable', 'string', 'max:80'],
             'contract_code_definitions.*.type' => ['nullable', 'string', 'max:80'],
@@ -473,6 +481,8 @@ final class LeagueController extends Controller
                 'capAdjustmentsByTeam' => $settings['cap_adjustments_by_team'] ?? [],
                 'maxActiveBuyouts' => $settings['max_active_buyouts'] ?? null,
                 'maxActiveRetentions' => $settings['max_active_retentions'] ?? null,
+                'buyoutExtraPayoutYear' => (bool) ($settings['buyout_extra_payout_year'] ?? false),
+                'retentionExtraPayoutYear' => (bool) ($settings['retention_extra_payout_year'] ?? false),
                 'leagueSettingsSource' => $resolved['source'],
                 'canEditLeagueSettings' => $resolved['can_edit'],
                 'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -516,6 +526,14 @@ final class LeagueController extends Controller
                 : null;
         }
 
+        if (array_key_exists('buyout_extra_payout_year', $validated)) {
+            $settings['buyout_extra_payout_year'] = (bool) $validated['buyout_extra_payout_year'];
+        }
+
+        if (array_key_exists('retention_extra_payout_year', $validated)) {
+            $settings['retention_extra_payout_year'] = (bool) $validated['retention_extra_payout_year'];
+        }
+
         if (array_key_exists('contract_code_definitions', $validated)) {
             $settings['fantrax_contract_code_definitions'] = $this->normalizeFantraxContractCodeDefinitions(
                 $validated['contract_code_definitions'] ?? [],
@@ -535,6 +553,8 @@ final class LeagueController extends Controller
             'capAdjustmentsByTeam' => $settings['cap_adjustments_by_team'] ?? [],
             'maxActiveBuyouts' => $settings['max_active_buyouts'] ?? null,
             'maxActiveRetentions' => $settings['max_active_retentions'] ?? null,
+            'buyoutExtraPayoutYear' => (bool) ($settings['buyout_extra_payout_year'] ?? false),
+            'retentionExtraPayoutYear' => (bool) ($settings['retention_extra_payout_year'] ?? false),
             'leagueSettingsSource' => $resolved['source'],
             'canEditLeagueSettings' => $resolved['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(
@@ -1192,6 +1212,8 @@ final class LeagueController extends Controller
             'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
             'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
             'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
             'leagueSettingsSource' => $leagueSettings['source'],
             'canEditLeagueSettings' => $leagueSettings['can_edit'],
             'fantraxContractCodes' => $this->fantraxContractCodesPayload(

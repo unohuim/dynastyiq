@@ -56,6 +56,8 @@
       maxActiveRetentions: @js($maxActiveRetentions ?? null),
       maxActiveBuyoutsInput: @js(($maxActiveBuyouts ?? null) !== null ? (string) $maxActiveBuyouts : ''),
       maxActiveRetentionsInput: @js(($maxActiveRetentions ?? null) !== null ? (string) $maxActiveRetentions : ''),
+      buyoutExtraPayoutYear: @js((bool) ($buyoutExtraPayoutYear ?? false)),
+      retentionExtraPayoutYear: @js((bool) ($retentionExtraPayoutYear ?? false)),
       leagueSettingsSource: @js($leagueSettingsSource),
       canEditLeagueSettings: @js($canEditLeagueSettings),
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
@@ -447,6 +449,8 @@
           this.maxActiveRetentions = payload.maxActiveRetentions ?? this.maxActiveRetentions;
           this.maxActiveBuyoutsInput = this.maxActiveBuyouts !== null && this.maxActiveBuyouts !== undefined ? String(this.maxActiveBuyouts) : '';
           this.maxActiveRetentionsInput = this.maxActiveRetentions !== null && this.maxActiveRetentions !== undefined ? String(this.maxActiveRetentions) : '';
+          this.buyoutExtraPayoutYear = Boolean(payload.buyoutExtraPayoutYear ?? this.buyoutExtraPayoutYear);
+          this.retentionExtraPayoutYear = Boolean(payload.retentionExtraPayoutYear ?? this.retentionExtraPayoutYear);
           this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
           this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
           this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
@@ -1092,6 +1096,8 @@
         this.maxActiveRetentions = payload.maxActiveRetentions ?? this.maxActiveRetentions;
         this.maxActiveBuyoutsInput = this.maxActiveBuyouts !== null && this.maxActiveBuyouts !== undefined ? String(this.maxActiveBuyouts) : '';
         this.maxActiveRetentionsInput = this.maxActiveRetentions !== null && this.maxActiveRetentions !== undefined ? String(this.maxActiveRetentions) : '';
+        this.buyoutExtraPayoutYear = Boolean(payload.buyoutExtraPayoutYear ?? this.buyoutExtraPayoutYear);
+        this.retentionExtraPayoutYear = Boolean(payload.retentionExtraPayoutYear ?? this.retentionExtraPayoutYear);
         this.leagueSettingsSource = payload.leagueSettingsSource ?? this.leagueSettingsSource;
         this.canEditLeagueSettings = Boolean(payload.canEditLeagueSettings ?? this.canEditLeagueSettings);
         this.fantraxContractCodes = payload.fantraxContractCodes ?? this.fantraxContractCodes;
@@ -1204,6 +1210,8 @@
         await this.saveCapSettingsPayload({
           max_active_buyouts: buyouts === '' ? null : Number(buyouts),
           max_active_retentions: retentions === '' ? null : Number(retentions),
+          buyout_extra_payout_year: Boolean(this.buyoutExtraPayoutYear),
+          retention_extra_payout_year: Boolean(this.retentionExtraPayoutYear),
         }, 'Cap options saved.');
       },
       capLimitForSeason(seasonKey, field){
@@ -1294,12 +1302,43 @@
       playerHasCurrentOrFutureContract(player){
         const currentSeason = Number(this.currentCapSeasonKey());
 
+        if (this.customCap) {
+          return this.capSeasonKeys(10).some(key => {
+            const season = this.capAdjustmentSeasonBasisForPlayer(player, key);
+
+            return Number(season?.season_key || 0) >= currentSeason && Number(season?.cap_hit || 0) > 0;
+          });
+        }
+
         return (player?.contract?.seasons || []).some(season => {
           const seasonKey = Number(season?.season_key || 0);
           const capHit = Number(season?.cap_hit || 0);
 
           return seasonKey >= currentSeason && capHit > 0;
         });
+      },
+      capAdjustmentSeasonBasisForPlayer(player, key){
+        if (!player || !key) return null;
+
+        const season = this.customCap
+          ? this.capSeasonForPlayer(player, key)
+          : (player?.contract?.seasons || []).find(row => String(row?.season_key ?? row?.label ?? '') === String(key));
+        const capHit = Number(season?.cap_hit || 0);
+
+        if (!Number.isFinite(capHit) || capHit <= 0) return null;
+
+        return {
+          key: String(season?.season_key || key),
+          season_key: Number(season?.season_key || key),
+          label: season?.label || this.capSeasonLabel(key),
+          cap_hit: capHit,
+          cap_hit_label: season?.cap_hit_label || this.capMoney(capHit),
+        };
+      },
+      capAdjustmentCurrentCapLabel(player){
+        const season = this.capAdjustmentSeasonBasisForPlayer(player, String(this.currentCapSeasonKey()));
+
+        return season?.cap_hit_label || player?.contract?.current_cap_hit_label || '-';
       },
       capAdjustmentPlayerCandidates(){
         const selectedTeamId = String(this.capTeamId || '');
@@ -1420,37 +1459,69 @@
           if (key) keys.add(key);
         });
 
+        Object.keys(this.capAdjustmentForm.values_by_season || {}).forEach(key => {
+          if (key) keys.add(key);
+        });
+
         return Array.from(keys).sort().map(key => ({
           key,
           label: this.capSeasonLabel(key),
         }));
       },
+      nextCapSeasonKey(key){
+        const seasonKey = Number(key || 0);
+
+        if (!Number.isFinite(seasonKey) || seasonKey <= 0) return '';
+
+        const startYear = Math.floor(seasonKey / 10000) + 1;
+
+        return String((startYear * 10000) + startYear + 1);
+      },
       capAdjustmentRemainingSeasonRows(){
         const player = this.capAdjustmentSelectedPlayer();
         const currentSeason = Number(this.currentCapSeasonKey());
+        const sourceRows = this.customCap
+          ? this.capSeasonKeys(10).map(key => this.capAdjustmentSeasonBasisForPlayer(player, key))
+          : (player?.contract?.seasons || []).map(season => this.capAdjustmentSeasonBasisForPlayer(player, String(season?.season_key || '')));
 
-        return (player?.contract?.seasons || [])
-          .map(season => {
-            const key = String(season?.season_key || '');
-            const seasonKey = Number(key || 0);
-            const capHit = Number(season?.cap_hit || 0);
-
-            return {
-              key,
-              season_key: seasonKey,
-              label: season?.label || this.capSeasonLabel(key),
-              cap_hit: Number.isFinite(capHit) ? capHit : 0,
-              cap_hit_label: season?.cap_hit_label || this.capMoney(capHit),
-            };
-          })
+        return sourceRows
+          .filter(Boolean)
           .filter(row => row.key && row.season_key >= currentSeason && row.cap_hit > 0)
           .sort((a, b) => a.season_key - b.season_key);
       },
+      capAdjustmentPayoutSeasonRows(){
+        const rows = this.capAdjustmentRemainingSeasonRows();
+
+        const usesExtraYear = this.capAdjustmentForm.type === 'buyout'
+          ? this.buyoutExtraPayoutYear
+          : this.retentionExtraPayoutYear;
+
+        if (!usesExtraYear || rows.length === 0) {
+          return rows;
+        }
+
+        const last = rows[rows.length - 1];
+        const key = this.nextCapSeasonKey(last.key);
+
+        if (!key || rows.some(row => String(row.key) === key)) return rows;
+
+        return [
+          ...rows,
+          {
+            key,
+            season_key: Number(key),
+            label: this.capSeasonLabel(key),
+            cap_hit: Number(last.cap_hit || 0),
+            cap_hit_label: last.cap_hit_label || this.capMoney(last.cap_hit || 0),
+            synthetic: true,
+          },
+        ];
+      },
       capAdjustmentPayoutMax(){
-        return Math.max(1, this.capAdjustmentRemainingSeasonRows().length);
+        return Math.max(1, this.capAdjustmentPayoutSeasonRows().length);
       },
       capAdjustmentContractEndLabel(){
-        const rows = this.capAdjustmentRemainingSeasonRows();
+        const rows = this.capAdjustmentPayoutSeasonRows();
         const last = rows.length ? rows[rows.length - 1] : null;
 
         return last?.label || '-';
@@ -1527,7 +1598,7 @@
         const direction = this.capAdjustmentForm.type === 'retention' && rawPercent < 0 ? -1 : 1;
         const values = clearOverrides ? {} : { ...(this.capAdjustmentForm.values_by_season || {}) };
         const overrides = clearOverrides ? {} : this.capAdjustmentOverrides;
-        const seasons = this.capAdjustmentRemainingSeasonRows();
+        const seasons = this.capAdjustmentPayoutSeasonRows();
 
         if (!player || !Number.isFinite(percent) || percent <= 0 || seasons.length === 0) {
           this.capAdjustmentForm.values_by_season = values;
@@ -2749,6 +2820,30 @@
               :disabled="savingCapSettings || !canEditLeagueSettings"
             >
           </label>
+          <label class="flex items-start justify-between gap-4 rounded-md border border-slate-200 p-3">
+            <span class="min-w-0">
+              <span class="block text-sm font-semibold text-slate-950">Buyouts add one payout year</span>
+              <span class="mt-1 block text-xs text-slate-500">Spread buyout impact across one season beyond the remaining contract term.</span>
+            </span>
+            <input
+              type="checkbox"
+              class="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+              x-model="buyoutExtraPayoutYear"
+              :disabled="savingCapSettings || !canEditLeagueSettings"
+            >
+          </label>
+          <label class="flex items-start justify-between gap-4 rounded-md border border-slate-200 p-3">
+            <span class="min-w-0">
+              <span class="block text-sm font-semibold text-slate-950">Retentions add one payout year</span>
+              <span class="mt-1 block text-xs text-slate-500">Apply retained salary for one season beyond the remaining contract term.</span>
+            </span>
+            <input
+              type="checkbox"
+              class="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
+              x-model="retentionExtraPayoutYear"
+              :disabled="savingCapSettings || !canEditLeagueSettings"
+            >
+          </label>
           <div class="min-h-5 text-xs">
             <span x-show="capSettingsMessage" class="text-emerald-700" x-text="capSettingsMessage"></span>
             <span x-show="capSettingsError" class="text-red-600" x-text="capSettingsError"></span>
@@ -2819,13 +2914,13 @@
                           <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
                             <path d="M3.25 13.25a.75.75 0 0 1 0-1.5h2.19l3.22-6.45a.75.75 0 0 1 1.32-.05l2.16 3.6 1.03-1.03a.75.75 0 0 1 1.06 0l2.5 2.5a.75.75 0 0 1-1.06 1.06l-1.97-1.97-1.24 1.24a.75.75 0 0 1-1.17-.15L9.4 7.35l-2.82 5.49a.75.75 0 0 1-.67.41H3.25Z" />
                           </svg>
-                          <span x-text="`Cap hit: ${capAdjustmentSelectedPlayer()?.contract?.current_cap_hit_label || '-'}`"></span>
+                          <span x-text="`Cap hit: ${capAdjustmentCurrentCapLabel(capAdjustmentSelectedPlayer())}`"></span>
                         </span>
                         <span class="inline-flex items-center gap-1.5 rounded-md bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-100">
                           <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
                             <path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2ZM3.5 8.5v6.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V8.5h-13Z" clip-rule="evenodd" />
                           </svg>
-                          <span x-text="`${capAdjustmentRemainingSeasonRows().length} season${capAdjustmentRemainingSeasonRows().length === 1 ? '' : 's'}`"></span>
+                          <span x-text="`${capAdjustmentPayoutSeasonRows().length} season${capAdjustmentPayoutSeasonRows().length === 1 ? '' : 's'}`"></span>
                         </span>
                         <span class="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
                           <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
@@ -2854,7 +2949,7 @@
                   </div>
                   <div>
                     <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Current</dt>
-                    <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capAdjustmentSelectedPlayer()?.contract?.current_cap_hit_label || '-'"></dd>
+                    <dd class="mt-1 text-sm font-semibold text-slate-950" x-text="capAdjustmentCurrentCapLabel(capAdjustmentSelectedPlayer())"></dd>
                   </div>
                   <div>
                     <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Ends</dt>
@@ -2897,7 +2992,7 @@
                     </template>
                     <span class="truncate font-medium text-slate-900" x-text="capAdjustmentPlayerLabel(player)"></span>
                   </span>
-                  <span class="shrink-0 text-xs text-slate-500" x-text="`${player.team_abbrev || '-'} ${player.contract?.current_cap_hit_label || ''}`"></span>
+                  <span class="shrink-0 text-xs text-slate-500" x-text="`${player.team_abbrev || '-'} ${capAdjustmentCurrentCapLabel(player)}`"></span>
                 </button>
               </template>
               <div x-show="capAdjustmentPlayerCandidates().length === 0" class="px-3 py-3 text-sm text-slate-500">No contract-backed players found.</div>
