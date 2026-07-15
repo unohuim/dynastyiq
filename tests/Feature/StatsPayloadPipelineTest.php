@@ -912,6 +912,83 @@ it('computes formula columns from assembled row stats', function (): void {
     expect($rows->first()['HOCKEY_SKATING:OSG3'])->toBe(16);
 });
 
+it('computes formula columns from on-ice dependency stats', function (): void {
+    $player = Player::create([
+        'nhl_id' => 9191,
+        'first_name' => 'Fenwick',
+        'last_name' => 'Skater',
+        'full_name' => 'Fenwick Skater',
+        'dob' => '2000-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'TOR',
+        'is_goalie' => false,
+        'head_shot_url' => 'https://example.test/fenwick.png',
+    ]);
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026020001,
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'game_date' => '2026-10-01',
+        'game_dow' => 'Thu',
+        'game_month' => 'Oct',
+        'home_team_id' => 1,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 2,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_player_game_strength_summaries')->insert([
+        'nhl_game_id' => 2026020001,
+        'player_id' => $player->id,
+        'nhl_player_id' => 9191,
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'strength' => 'EV',
+        'toi' => 600,
+        'ff' => 14,
+        'fa' => 9,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $columns = [[
+        'key' => 'HOCKEY_SKATING:FEN',
+        'label' => 'Fen',
+        'formula' => 'ff - fa',
+        'required_schema_columns' => ['ff', 'fa'],
+        'fantasy_scoring_category' => true,
+        'fantasy_weight' => 1,
+        'is_supported' => true,
+    ], [
+        'key' => 'fantasy_pts',
+        'label' => 'FP',
+        'computed_fantasy_points' => true,
+    ]];
+
+    $rows = app(StatsPayloadAssembler::class)->assembleRowsFromCollection(collect([
+        ($this->statsRow)($player, [
+            'gp' => 1,
+            'ff' => 0,
+            'fa' => 0,
+        ]),
+    ]), $columns, 'total', true, 'season', [
+        'season_id' => '20262027',
+        'game_type' => 2,
+    ]);
+
+    $rows = app(StatsPayloadAssembler::class)->appendOnIceRows($rows, $columns, [
+        'season_id' => '20262027',
+        'game_type' => 2,
+    ]);
+
+    expect($rows->first()['HOCKEY_SKATING:FEN'])->toBe(5)
+        ->and($rows->first()['fantasy_pts'])->toBe(5);
+});
+
 it('applies fantrax goalie settings with goalie filters and goalie columns', function (): void {
     $league = PlatformLeague::create([
         'platform' => 'fantrax',
@@ -1130,6 +1207,7 @@ it('aggregates league team payload rows across pro roster players', function ():
                 'fantasy_team_avatar_url' => 'https://example.test/team.png',
                 'fantasy_team_is_user_team' => true,
                 'roster_group' => 'active',
+                'roster_status' => 'active',
                 'contract_value_num' => 1.0,
                 'g' => 2,
                 'fantasy_pts_pg' => 1.0,
@@ -1146,6 +1224,19 @@ it('aggregates league team payload rows across pro roster players', function ():
                 'g' => 3,
                 'fantasy_pts_pg' => 3.0,
                 'stats' => ['contract_value_num' => 2.0, 'g' => 3, 'fantasy_pts_pg' => 3.0],
+            ],
+            [
+                'name' => 'Goalie One',
+                'fantasy_team_id' => 'team-1',
+                'fantasy_team_name' => 'Division Team',
+                'fantasy_team_avatar_url' => 'https://example.test/team.png',
+                'fantasy_team_is_user_team' => true,
+                'roster_group' => 'active',
+                'roster_status' => 'active',
+                'is_goalie' => true,
+                'wins' => 4,
+                'sv' => 120,
+                'stats' => ['wins' => 4, 'sv' => 120],
             ],
             [
                 'name' => 'Minor Player',
@@ -1165,7 +1256,20 @@ it('aggregates league team payload rows across pro roster players', function ():
                 'fantasy_pts_pg' => 20.0,
             ],
         ],
-        'settings' => ['ownerColumn' => true, 'leaguePlatform' => 'fantrax'],
+        'settings' => [
+            'ownerColumn' => true,
+            'leaguePlatform' => 'fantrax',
+            'columnGroups' => [
+                'skater' => [
+                    ['key' => 'g', 'label' => 'G'],
+                    ['key' => 'fantasy_pts_pg', 'label' => 'FP/G'],
+                ],
+                'goalie' => [
+                    ['key' => 'wins', 'label' => 'W'],
+                    ['key' => 'sv', 'label' => 'SV'],
+                ],
+            ],
+        ],
         'meta' => [],
     ];
 
@@ -1179,15 +1283,32 @@ it('aggregates league team payload rows across pro roster players', function ():
         ['contract_value_num', 'Cap'],
         ['g', 'G'],
         ['fantasy_pts_pg', 'FP/G'],
+        ['wins', 'W'],
+        ['sv', 'SV'],
     ]);
 
     expect($result['settings']['resource'])->toBe('teams')
         ->and($result['settings']['teamAggregate'])->toBeTrue()
         ->and($result['data'])->toHaveCount(1)
-        ->and($result['data'][0]['player_count'])->toBe(2)
+        ->and($result['data'][0]['player_count'])->toBe(3)
         ->and($result['data'][0]['contract_value_num'])->toBe(3.0)
         ->and($result['data'][0]['g'])->toBe(5.0)
         ->and($result['data'][0]['fantasy_pts_pg'])->toBe(2.0)
+        ->and($result['data'][0]['wins'])->toBe(4.0)
+        ->and($result['data'][0]['sv'])->toBe(120.0)
         ->and($result['data'][0]['__team_average']['contract_value_num'])->toBe(1.5)
-        ->and($result['data'][0]['__team_average']['g'])->toBe(2.5);
+        ->and($result['data'][0]['__team_average']['g'])->toBe(2.5)
+        ->and($result['data'][0]['__team_average']['wins'])->toBe(4.0);
+
+    $startersResult = $method->invoke($controller, $payload, true);
+
+    expect($startersResult['settings']['teamAggregateStartersOnly'])->toBeTrue()
+        ->and($startersResult['meta']['teamAggregateStartersOnly'])->toBeTrue()
+        ->and($startersResult['data'])->toHaveCount(1)
+        ->and($startersResult['data'][0]['player_count'])->toBe(2)
+        ->and($startersResult['data'][0]['contract_value_num'])->toBe(1.0)
+        ->and($startersResult['data'][0]['g'])->toBe(2.0)
+        ->and($startersResult['data'][0]['fantasy_pts_pg'])->toBe(1.0)
+        ->and($startersResult['data'][0]['wins'])->toBe(4.0)
+        ->and($startersResult['data'][0]['sv'])->toBe(120.0);
 });

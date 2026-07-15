@@ -72,6 +72,9 @@ export class StatsPayloadClient {
     if (state.selectedPosTypes.includes('G') || state.selectedPos.includes('G')) {
       params.set('column_group', 'goalie');
     }
+    if (this.resource === 'teams' && state.teamAggregateStartersOnly === true) {
+      params.set('starters', '1');
+    }
 
     state.selectedLeagues.forEach((value) => params.append('league[]', value));
     Object.entries(state.numericFilters || {}).forEach(([key, value]) => {

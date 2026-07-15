@@ -180,6 +180,20 @@ const isRankableStatKey = (key) => {
     return normalized !== "" && !NON_RANKED_STAT_KEYS.has(normalized);
 };
 
+const rankMapKey = (key) => String(key ?? "").toLowerCase();
+
+const statRankValueForKey = (row, key) => {
+    const originalValue = statValueForKey(row, key);
+    if (originalValue !== undefined && originalValue !== null && originalValue !== "") {
+        return originalValue;
+    }
+
+    const normalized = rankMapKey(key);
+    return normalized === String(key ?? "")
+        ? originalValue
+        : statValueForKey(row, normalized);
+};
+
 const buildCompetitionRankMaps = (rows, headings) => {
     const rankMaps = new Map();
     const sourceRows = Array.isArray(rows) ? rows : [];
@@ -191,7 +205,7 @@ const buildCompetitionRankMaps = (rows, headings) => {
         const values = sourceRows
             .map((row, index) => ({
                 index,
-                value: numericStatValue(statValueForKey(row, key)),
+                value: numericStatValue(statRankValueForKey(row, key)),
             }))
             .filter((entry) => entry.value !== null)
             .sort((a, b) => b.value - a.value);
@@ -210,7 +224,7 @@ const buildCompetitionRankMaps = (rows, headings) => {
             previousRank = rank;
         });
 
-        rankMaps.set(key, ranks);
+        rankMaps.set(rankMapKey(key), ranks);
     });
 
     return rankMaps;
@@ -227,6 +241,25 @@ const teamAggregateRankRows = (rows, useAverages) => {
             ...(row?.__team_average && typeof row.__team_average === "object" ? row.__team_average : {}),
         },
     }));
+};
+
+const TEAM_RANK_SUM_KEY = "__rank_sum";
+const TEAM_RANK_SUM_HEADING = { key: TEAM_RANK_SUM_KEY, label: "Sum" };
+const TEAM_RANK_SUM_EXCLUDED_KEYS = new Set(["gp"]);
+
+const teamRankSumHeadings = (headings = []) => {
+    const stats = Array.isArray(headings) ? headings : [];
+    const capIndex = stats.findIndex((heading) => isCapKey(heading?.key));
+
+    if (capIndex === -1) {
+        return [TEAM_RANK_SUM_HEADING, ...stats];
+    }
+
+    return [
+        ...stats.slice(0, capIndex + 1),
+        TEAM_RANK_SUM_HEADING,
+        ...stats.slice(capIndex + 1),
+    ];
 };
 
 const playerInitials = (name = "") => String(name)
@@ -482,13 +515,21 @@ const renderLeagueOwnerStatsDesktop = (
         && !isProspectMode
         && hasSelectedFantasyTeam()
         && !hasExplicitPositionFilter();
-    const shouldAutoSkaterOnly = () => isRosterSlotLeague
+    const shouldAutoSkaterOnly = () => !isTeamAggregate
+        && isRosterSlotLeague
         && !isProspectMode
         && !hasSelectedFantasyTeam()
         && !hasExplicitPositionFilter();
-    const visibleStats = () => shouldSplitSelectedTeamRoster() || shouldAutoSkaterOnly()
+    const baseVisibleStats = () => !isTeamAggregate && (shouldSplitSelectedTeamRoster() || shouldAutoSkaterOnly())
         ? skaterStats
         : stats;
+    const visibleStats = () => {
+        const headings = baseVisibleStats();
+
+        return isTeamAggregate && state.showRanks
+            ? teamRankSumHeadings(headings)
+            : headings;
+    };
     const rosterSlotHeadingKey = () => left.find((heading) =>
         ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
     )?.key ?? "pos_type";
@@ -503,11 +544,69 @@ const renderLeagueOwnerStatsDesktop = (
 
         return isRosterSlotSortActive() ? rosterSlotHeadingKey() : settings.sortKey;
     };
+    const teamAggregateSortValue = (row) => {
+        const key = activeSortKey();
+        const normalizedKey = String(key ?? "").toLowerCase();
+
+        if (isTeamAggregate && normalizedKey === TEAM_RANK_SUM_KEY) {
+            return teamRankSum(row);
+        }
+
+        if (
+            isTeamAggregate
+            && state.showAverages
+            && row?.__team_average
+            && Object.prototype.hasOwnProperty.call(row.__team_average, key)
+        ) {
+            return row.__team_average[key];
+        }
+
+        if (
+            isTeamAggregate
+            && state.showAverages
+            && row?.__team_average
+            && normalizedKey !== String(key ?? "")
+            && Object.prototype.hasOwnProperty.call(row.__team_average, normalizedKey)
+        ) {
+            return row.__team_average[normalizedKey];
+        }
+
+        return statValueForKey(row, key);
+    };
+    const sortTeamAggregateRows = (rows) => {
+        if (!isTeamAggregate || !activeSortKey()) return rows;
+
+        const direction = settings.sortDirection === "asc" ? "asc" : "desc";
+
+        return [...rows].sort((a, b) => {
+            const aValue = teamAggregateSortValue(a);
+            const bValue = teamAggregateSortValue(b);
+
+            if (aValue < bValue) return direction === "asc" ? -1 : 1;
+            if (aValue > bValue) return direction === "asc" ? 1 : -1;
+            return 0;
+        });
+    };
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
-    const statGridCols = visibleStats().map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
-    const goalieStatGridCols = goalieStats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || statGridCols;
+    const statGridCols = () => visibleStats().map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
+    const goalieStatGridCols = () => goalieStats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || statGridCols();
     const rankHeadings = uniqueHeadings([...stats, ...skaterStats, ...goalieStats]);
     let rankMaps = buildCompetitionRankMaps(teamAggregateRankRows(data, isTeamAggregate && state.showAverages), rankHeadings);
+    const teamRankSum = (row, headings = baseVisibleStats()) => {
+        const sourceIndex = Number(row?.__rankSourceIndex);
+        if (!Number.isInteger(sourceIndex)) return null;
+
+        const ranks = (Array.isArray(headings) ? headings : [])
+            .map((heading) => String(heading?.key ?? ""))
+            .filter((key) => isRankableStatKey(key) && !TEAM_RANK_SUM_EXCLUDED_KEYS.has(key.toLowerCase()))
+            .map((key) => rankMaps.get(rankMapKey(key))?.get(sourceIndex))
+            .filter((rank) => Number.isFinite(Number(rank)))
+            .map((rank) => Number(rank));
+
+        if (ranks.length === 0) return null;
+
+        return ranks.reduce((sum, rank) => sum + rank, 0);
+    };
 
     const leagues = Array.from(
         new Set(
@@ -661,6 +760,14 @@ const renderLeagueOwnerStatsDesktop = (
             ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
         ranksButton.setAttribute("aria-pressed", state.showRanks ? "true" : "false");
+        if (isTeamAggregate && state.showRanks && activeSortKey() !== TEAM_RANK_SUM_KEY) {
+            onSortChange?.({
+                sortKey: TEAM_RANK_SUM_KEY,
+                sortDirection: "asc",
+                leagueUserSortActive: true,
+            });
+            return;
+        }
         renderRows();
     });
     controls.appendChild(ranksButton);
@@ -685,6 +792,22 @@ const renderLeagueOwnerStatsDesktop = (
             renderRows();
         });
         controls.appendChild(averagesButton);
+
+        const startersButton = document.createElement("button");
+        startersButton.type = "button";
+        const syncStartersButton = () => {
+            startersButton.className = settings.teamAggregateStartersOnly === true
+                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+            startersButton.setAttribute("aria-pressed", settings.teamAggregateStartersOnly === true ? "true" : "false");
+        };
+        startersButton.textContent = "Starters";
+        startersButton.title = "Aggregate only active roster slots";
+        syncStartersButton();
+        startersButton.addEventListener("click", () => {
+            settings.onTeamAggregateStartersChange?.(settings.teamAggregateStartersOnly !== true);
+        });
+        controls.appendChild(startersButton);
     }
 
     let leagueSelect = null;
@@ -760,7 +883,7 @@ const renderLeagueOwnerStatsDesktop = (
     statsHeaderPane.className = "min-w-max";
     const statsHeader = document.createElement("div");
     statsHeader.className = "grid h-9 bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
-    statsHeader.style.gridTemplateColumns = statGridCols;
+    statsHeader.style.gridTemplateColumns = statGridCols();
 
     const ownerHeader = document.createElement("div");
     ownerHeader.className = "flex h-9 items-center justify-end bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700";
@@ -805,9 +928,14 @@ const renderLeagueOwnerStatsDesktop = (
                 }
 
                 const same = settings.sortKey === key && settings.leagueUserSortActive === true;
+                const defaultDirection = isTeamAggregate && String(key ?? "").toLowerCase() === TEAM_RANK_SUM_KEY
+                    ? "asc"
+                    : "desc";
                 onSortChange?.({
                     sortKey: key,
-                    sortDirection: same && settings.sortDirection === "desc" ? "asc" : "desc",
+                    sortDirection: same
+                        ? (settings.sortDirection === "desc" ? "asc" : "desc")
+                        : defaultDirection,
                     leagueUserSortActive: true,
                 });
             });
@@ -834,11 +962,14 @@ const renderLeagueOwnerStatsDesktop = (
             "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis"
         ));
     });
-    let activeStatsHeaderGroup = "";
+    let activeStatsHeaderSignature = "";
     const renderStatsHeader = (headerStats, headerGridCols, group = "") => {
-        if (activeStatsHeaderGroup === group) return;
+        const signature = `${group}:${headerGridCols}:${(Array.isArray(headerStats) ? headerStats : [])
+            .map((heading) => String(heading?.key ?? ""))
+            .join("|")}`;
+        if (activeStatsHeaderSignature === signature) return;
 
-        activeStatsHeaderGroup = group;
+        activeStatsHeaderSignature = signature;
         statsHeader.innerHTML = "";
         statsHeader.style.gridTemplateColumns = headerGridCols;
         headerStats.forEach((heading) => {
@@ -849,7 +980,7 @@ const renderLeagueOwnerStatsDesktop = (
         });
         syncHeaderHorizontalScroll();
     };
-    renderStatsHeader(visibleStats(), statGridCols, shouldSplitSelectedTeamRoster() ? "skater" : "default");
+    renderStatsHeader(visibleStats(), statGridCols(), shouldSplitSelectedTeamRoster() ? "skater" : "default");
 
     const buildPosShape = (raw, rawType) => {
         const v = displayPosition(raw);
@@ -917,8 +1048,12 @@ const renderLeagueOwnerStatsDesktop = (
             __rankSourceIndex: entry.sourceIndex,
         }));
 
-        return isRosterSlotSortActive()
-            ? sortByRosterOrder(rowsWithRankSource)
+        if (isRosterSlotSortActive()) {
+            return sortByRosterOrder(rowsWithRankSource);
+        }
+
+        return isTeamAggregate
+            ? sortTeamAggregateRows(rowsWithRankSource)
             : rowsWithRankSource;
     };
 
@@ -989,6 +1124,8 @@ const renderLeagueOwnerStatsDesktop = (
     };
 
     const statCellValue = (row, key) => {
+        const normalizedKey = String(key ?? "").toLowerCase();
+
         if (
             isTeamAggregate
             && state.showAverages
@@ -998,12 +1135,31 @@ const renderLeagueOwnerStatsDesktop = (
             return row.__team_average[key];
         }
 
+        if (
+            isTeamAggregate
+            && state.showAverages
+            && row?.__team_average
+            && normalizedKey !== String(key ?? "")
+            && Object.prototype.hasOwnProperty.call(row.__team_average, normalizedKey)
+        ) {
+            return row.__team_average[normalizedKey];
+        }
+
         return statValueForKey(row, key);
     };
 
     const renderStatCell = (row, heading, rowGroup = "") => {
         const key = heading?.key;
         const cell = document.createElement("div");
+        if (isTeamAggregate && state.showRanks && key === TEAM_RANK_SUM_KEY) {
+            const rankSum = teamRankSum(row);
+            const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-700 font-semibold";
+            cell.className = common;
+            cell.textContent = rankSum === null ? "-" : String(rankSum);
+
+            return cell;
+        }
+
         const rawVal = statCellValue(row, key, rowGroup);
         const val = formatStatValue(key, rawVal);
         const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
@@ -1011,7 +1167,7 @@ const renderLeagueOwnerStatsDesktop = (
 
         if (state.showRanks && isRankableStatKey(key)) {
             const sourceIndex = Number(row?.__rankSourceIndex);
-            const rank = Number.isInteger(sourceIndex) ? rankMaps.get(String(key))?.get(sourceIndex) : null;
+            const rank = Number.isInteger(sourceIndex) ? rankMaps.get(rankMapKey(key))?.get(sourceIndex) : null;
             cell.textContent = rank ? String(rank) : "-";
 
             return cell;
@@ -1048,7 +1204,7 @@ const renderLeagueOwnerStatsDesktop = (
 
             const statsRow = document.createElement("div");
             statsRow.className = `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
-            statsRow.style.gridTemplateColumns = statGridCols;
+            statsRow.style.gridTemplateColumns = statGridCols();
             statsBody.appendChild(statsRow);
 
             const ownerRow = document.createElement("div");
@@ -1071,7 +1227,7 @@ const renderLeagueOwnerStatsDesktop = (
 
             const statsRow = document.createElement("div");
             statsRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${rowClass}`;
-            statsRow.style.gridTemplateColumns = goalieStatGridCols;
+            statsRow.style.gridTemplateColumns = goalieStatGridCols();
             goalieStats.forEach((heading) => {
                 const cell = document.createElement("div");
                 cell.className = "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
@@ -1086,7 +1242,7 @@ const renderLeagueOwnerStatsDesktop = (
         };
 
         const rows = applyFilters(data);
-        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols, rowGroup = "") => {
+        const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols(), rowGroup = "") => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
 
             const leftRow = document.createElement("div");
@@ -1132,7 +1288,7 @@ const renderLeagueOwnerStatsDesktop = (
             const goalieRows = sortGoalieRosterRows(rows.filter((row) => rowIsGoalie(row)));
 
             skaterRows.forEach((row, idx) => {
-                renderPlayerRow(row, rowIndex, skaterStats, statGridCols);
+                renderPlayerRow(row, rowIndex, skaterStats, statGridCols());
                 rowIndex += 1;
             });
 
@@ -1141,7 +1297,7 @@ const renderLeagueOwnerStatsDesktop = (
             }
 
             goalieRows.forEach((row) => {
-                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols, "goalie");
+                renderPlayerRow(row, rowIndex, goalieStats, goalieStatGridCols(), "goalie");
                 rowIndex += 1;
             });
         } else {
@@ -1161,16 +1317,16 @@ const renderLeagueOwnerStatsDesktop = (
 
         const updateActiveStatsHeader = () => {
             if (!shouldSplitSelectedTeamRoster() || !goalieHeaderRow) {
-                renderStatsHeader(visibleStats(), statGridCols, shouldSplitSelectedTeamRoster() ? "skater" : "default");
+                renderStatsHeader(visibleStats(), statGridCols(), shouldSplitSelectedTeamRoster() ? "skater" : "default");
                 return;
             }
 
             const headerBottom = statsHeader.getBoundingClientRect().bottom;
             const goalieTop = goalieHeaderRow.getBoundingClientRect().top;
             if (goalieTop <= headerBottom + 1) {
-                renderStatsHeader(goalieStats, goalieStatGridCols, "goalie");
+                renderStatsHeader(goalieStats, goalieStatGridCols(), "goalie");
             } else {
-                renderStatsHeader(skaterStats, statGridCols, "skater");
+                renderStatsHeader(skaterStats, statGridCols(), "skater");
             }
         };
 

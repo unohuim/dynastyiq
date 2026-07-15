@@ -163,14 +163,17 @@ final class StatsPayloadAssembler
             return $rows;
         }
 
-        return $rows->map(function (array $row) use ($onIceRows): array {
+        return $rows->map(function (array $row) use ($columns, $onIceRows): array {
             $nhlPlayerId = (int) ($row['nhl_player_id'] ?? 0);
 
             if ($nhlPlayerId === 0 || ! $onIceRows->has($nhlPlayerId)) {
                 return $row;
             }
 
-            return array_merge($row, $this->nativeOnIceAliases($onIceRows->get($nhlPlayerId)));
+            $row = array_merge($row, $this->nativeOnIceAliases($onIceRows->get($nhlPlayerId)));
+            $row = $this->withFormulaColumns($row, $columns);
+
+            return $this->withComputedFantasyPoints($row, $columns);
         });
     }
 
@@ -695,9 +698,14 @@ final class StatsPayloadAssembler
      */
     private function columnRequestsOnIceStats(array $column, array $onIceKeys): bool
     {
-        $key = (string) ($column['key'] ?? '');
+        $candidateKeys = collect([(string) ($column['key'] ?? '')])
+            ->merge(is_array($column['required_schema_columns'] ?? null) ? $column['required_schema_columns'] : [])
+            ->merge($this->formulaIdentifiers((string) ($column['formula'] ?? '')))
+            ->map(static fn (mixed $key): string => trim(strtolower((string) $key)))
+            ->filter(static fn (string $key): bool => $key !== '')
+            ->unique();
 
-        if (! in_array($key, $onIceKeys, true)) {
+        if ($candidateKeys->intersect($onIceKeys)->isEmpty()) {
             return false;
         }
 
@@ -713,6 +721,23 @@ final class StatsPayloadAssembler
         ));
 
         return ! str_contains($group, 'GOALIE');
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function formulaIdentifiers(string $formula): array
+    {
+        if ($formula === '') {
+            return [];
+        }
+
+        preg_match_all('/\b[a-z][a-z0-9_]*\b/i', $formula, $matches);
+
+        return array_values(array_unique(array_map(
+            static fn (string $key): string => strtolower($key),
+            $matches[0] ?? [],
+        )));
     }
 
     /**

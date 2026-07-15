@@ -336,7 +336,7 @@ class StatsController extends BaseController
         $mark('meta_filters_ms');
 
         if ($resource === 'teams') {
-            $payload = $this->teamAggregateLeaguePayload($payload);
+            $payload = $this->teamAggregateLeaguePayload($payload, $request->boolean('starters'));
         }
         $mark('resource_transform_ms');
 
@@ -709,9 +709,9 @@ class StatsController extends BaseController
      * @param array<string,mixed> $payload
      * @return array<string,mixed>
      */
-    private function teamAggregateLeaguePayload(array $payload): array
+    private function teamAggregateLeaguePayload(array $payload, bool $startersOnly = false): array
     {
-        $headings = collect($payload['headings'] ?? [])
+        $baseHeadings = collect($payload['headings'] ?? [])
             ->filter(fn (mixed $heading): bool => is_array($heading))
             ->map(function (array $heading): array {
                 $key = strtolower((string) ($heading['key'] ?? ''));
@@ -726,6 +726,17 @@ class StatsController extends BaseController
 
                 return $heading;
             })
+            ->values();
+
+        $columnGroups = data_get($payload, 'settings.columnGroups', []);
+        $groupHeadings = collect([
+            ...(is_array($columnGroups['skater'] ?? null) ? $columnGroups['skater'] : []),
+            ...(is_array($columnGroups['goalie'] ?? null) ? $columnGroups['goalie'] : []),
+        ])->filter(fn (mixed $heading): bool => is_array($heading));
+
+        $headings = $baseHeadings
+            ->merge($groupHeadings)
+            ->unique(static fn (array $heading): string => strtolower((string) ($heading['key'] ?? '')))
             ->filter(function (array $heading): bool {
                 $key = strtolower((string) ($heading['key'] ?? ''));
 
@@ -760,6 +771,16 @@ class StatsController extends BaseController
             }
 
             if (strtolower((string) ($row['roster_group'] ?? '')) === 'minor') {
+                continue;
+            }
+
+            if (
+                $startersOnly
+                && (
+                    strtolower((string) ($row['roster_group'] ?? '')) !== 'active'
+                    || strtolower((string) ($row['roster_status'] ?? '')) !== 'active'
+                )
+            ) {
                 continue;
             }
 
@@ -837,9 +858,11 @@ class StatsController extends BaseController
         $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
         $payload['settings']['resource'] = 'teams';
         $payload['settings']['teamAggregate'] = true;
+        $payload['settings']['teamAggregateStartersOnly'] = $startersOnly;
         $payload['settings']['ownerColumn'] = true;
         $payload['meta'] = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
         $payload['meta']['resource'] = 'teams';
+        $payload['meta']['teamAggregateStartersOnly'] = $startersOnly;
 
         return $payload;
     }

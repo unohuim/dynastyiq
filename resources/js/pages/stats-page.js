@@ -78,6 +78,7 @@ export class StatsPageShell {
       numericFilters: {},
       dirtyNumericFilters: {},
       leagueAutoSkaterFilter: false,
+      teamAggregateStartersOnly: Boolean(settings.teamAggregateStartersOnly ?? meta.teamAggregateStartersOnly ?? false),
       loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
@@ -157,10 +158,16 @@ export class StatsPageShell {
   }
 
   activeHeadings() {
+    if (this.resource === 'teams' || this.settings.teamAggregate === true) {
+      return this.payload.headings;
+    }
+
     return this.columnGroupAdapter.activeHeadings(this.payload, this.settings, this.state);
   }
 
   syncColumnGroupSort() {
+    if (this.resource === 'teams' || this.settings.teamAggregate === true) return;
+
     this.columnGroupAdapter.syncSort(this.settings, this.payload, this.state);
   }
 
@@ -273,6 +280,11 @@ export class StatsPageShell {
     if (!this.supportsDateRange()) {
       this.state.period = 'season';
     }
+    if (this.resource === 'teams' || settings.teamAggregate === true) {
+      this.state.teamAggregateStartersOnly = Boolean(
+        settings.teamAggregateStartersOnly ?? meta.teamAggregateStartersOnly ?? this.state.teamAggregateStartersOnly,
+      );
+    }
 
     this.state.slice = settings.slice || this.state.slice;
     this.settings = {
@@ -321,6 +333,11 @@ export class StatsPageShell {
     this.settings.displayKey = sortKey;
     this.settings.leagueUserSortActive = leagueUserSortActive;
     this.renderContent();
+  };
+
+  onTeamAggregateStartersChange = (enabled) => {
+    this.state.teamAggregateStartersOnly = enabled === true;
+    this.fetchPayload({ force: true });
   };
 
   setPerspective(value) {
@@ -782,13 +799,18 @@ export class StatsPageShell {
       selectedPos: [...this.state.selectedPos],
       selectedPosTypes: [...this.state.selectedPosTypes],
       leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,
+      teamAggregateStartersOnly: this.state.teamAggregateStartersOnly,
+      onTeamAggregateStartersChange: this.onTeamAggregateStartersChange,
       onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
     };
     const activeHeadings = leagueRosterHeadings(
       this.prospectHeadings(this.activeHeadings(), renderSettings),
       renderSettings,
     );
-    const sorted = sortData(this.locallyFilteredRows(), this.settings.sortKey, this.settings.sortDirection);
+    const rows = this.locallyFilteredRows();
+    const sorted = renderSettings.teamAggregate === true
+      ? rows
+      : sortData(rows, this.settings.sortKey, this.settings.sortDirection);
 
     if (this.state.isMobile) {
       StatsMobile({

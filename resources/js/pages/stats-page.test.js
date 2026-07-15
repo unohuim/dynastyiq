@@ -1075,31 +1075,40 @@ describe('stats page prospect controls', () => {
         headings: [
           { key: 'name', label: 'Team' },
           { key: 'contract_value_num', label: 'Cap' },
+          { key: 'gp', label: 'GP' },
+          { key: 'A', label: 'A' },
           { key: 'g', label: 'G' },
+          { key: 'wins', label: 'W' },
           { key: 'fantasy_pts_pg', label: 'FP/G' },
         ],
         data: [
           {
-            name: 'Total Heavy Team',
-            avatar_url: 'https://example.test/team.png',
-            contract_value_num: 4,
-            g: 10,
-            fantasy_pts_pg: 3.5,
-            stats: { contract_value_num: 4, g: 10, fantasy_pts_pg: 3.5 },
-            __team_average: { contract_value_num: 2, g: 1, fantasy_pts_pg: 3.5 },
-            fantasy_team_name: 'Total Heavy Team',
-            fantasy_team_is_user_team: true,
-          },
-          {
             name: 'Average Leader Team',
             avatar_url: 'https://example.test/team-two.png',
             contract_value_num: 2,
+            gp: 10,
+            a: 30,
             g: 2,
+            wins: 8,
             fantasy_pts_pg: 4.5,
-            stats: { contract_value_num: 2, g: 2, fantasy_pts_pg: 4.5 },
-            __team_average: { contract_value_num: 1, g: 2, fantasy_pts_pg: 4.5 },
+            stats: { contract_value_num: 2, gp: 10, a: 30, g: 2, wins: 8, fantasy_pts_pg: 4.5 },
+            __team_average: { contract_value_num: 1, gp: 5, a: 4, g: 2, wins: 4, fantasy_pts_pg: 4.5 },
             fantasy_team_name: 'Average Leader Team',
             fantasy_team_is_user_team: false,
+          },
+          {
+            name: 'Total Heavy Team',
+            avatar_url: 'https://example.test/team.png',
+            contract_value_num: 4,
+            gp: 100,
+            a: 20,
+            g: 10,
+            wins: 2,
+            fantasy_pts_pg: 3.5,
+            stats: { contract_value_num: 4, gp: 100, a: 20, g: 10, wins: 2, fantasy_pts_pg: 3.5 },
+            __team_average: { contract_value_num: 2, gp: 50, a: 1, g: 1, wins: 1, fantasy_pts_pg: 3.5 },
+            fantasy_team_name: 'Total Heavy Team',
+            fantasy_team_is_user_team: true,
           },
         ],
         settings: {
@@ -1108,6 +1117,12 @@ describe('stats page prospect controls', () => {
           resource: 'teams',
           teamAggregate: true,
           canSlice: false,
+          sortKey: 'g',
+          sortDirection: 'desc',
+          columnGroups: {
+            skater: [{ key: 'gp', label: 'GP' }, { key: 'A', label: 'A' }, { key: 'g', label: 'G' }, { key: 'fantasy_pts_pg', label: 'FP/G' }],
+            goalie: [{ key: 'wins', label: 'W' }],
+          },
         },
         meta: {
           availableSeasons: [20252026],
@@ -1125,6 +1140,7 @@ describe('stats page prospect controls', () => {
 
     expect(document.body.textContent).toContain('Ranks');
     expect(document.body.textContent).toContain('Averages');
+    expect(document.body.textContent).toContain('Starters');
     expect(document.body.textContent).not.toContain('Fantrax League');
     expect(document.body.textContent).not.toContain('P/GP');
     expect(document.body.textContent).not.toContain('Per 60');
@@ -1132,6 +1148,10 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).not.toContain('All Players');
     expect(document.body.textContent).not.toContain('Free Agents');
     expect(document.body.textContent).toContain('$4.00');
+    expect(document.body.textContent).toContain('8');
+    expect(document.body.textContent.indexOf('Total Heavy Team')).toBeLessThan(
+      document.body.textContent.indexOf('Average Leader Team'),
+    );
 
     const averagesButton = [...document.querySelectorAll('button')]
       .find((button) => button.textContent === 'Averages');
@@ -1140,15 +1160,40 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('$2.00');
     expect(document.body.textContent).toContain('1.00');
     expect(document.body.textContent).toContain('3.50');
+    expect(document.body.textContent.indexOf('Average Leader Team')).toBeLessThan(
+      document.body.textContent.indexOf('Total Heavy Team'),
+    );
 
     const ranksButton = [...document.querySelectorAll('button')]
       .find((button) => button.textContent === 'Ranks');
     ranksButton?.click();
 
+    expect(shell.settings.sortKey).toBe('__rank_sum');
+    expect(shell.settings.sortDirection).toBe('asc');
+
     const exactCells = [...document.querySelectorAll('div')]
       .map((node) => node.textContent.trim());
+    expect(exactCells).toContain('Sum');
+    expect(document.body.textContent.indexOf('Cap')).toBeLessThan(document.body.textContent.indexOf('Sum'));
+    expect(document.body.textContent.indexOf('Sum')).toBeLessThan(document.body.textContent.indexOf('GP'));
+    expect(exactCells).toContain('4');
+    expect(exactCells).toContain('8');
     expect(exactCells).toContain('1');
     expect(exactCells).toContain('2');
+    expect(exactCells).not.toContain('30');
+    expect(document.body.textContent.indexOf('Average Leader Team')).toBeLessThan(
+      document.body.textContent.indexOf('Total Heavy Team'),
+    );
+
+    const sumHeader = [...document.querySelectorAll('div')]
+      .find((node) => node.textContent.trim() === 'Sum');
+    sumHeader?.click();
+
+    expect(shell.settings.sortKey).toBe('__rank_sum');
+    expect(shell.settings.sortDirection).toBe('desc');
+    expect(document.body.textContent.indexOf('Total Heavy Team')).toBeLessThan(
+      document.body.textContent.indexOf('Average Leader Team'),
+    );
 
     const goalsHeader = [...document.querySelectorAll('div')]
       .find((node) => node.textContent.trim() === 'G');
@@ -1156,6 +1201,32 @@ describe('stats page prospect controls', () => {
 
     expect(document.body.textContent).toContain('Total Heavy Team');
     expect(document.body.textContent).toContain('Average Leader Team');
+
+    shell.payloadClient.fetchPayload = vi.fn().mockResolvedValue({
+      stale: false,
+      payload: {
+        ...shell.payload,
+        settings: {
+          ...shell.payload.settings,
+          teamAggregateStartersOnly: true,
+        },
+        meta: {
+          ...shell.payload.meta,
+          teamAggregateStartersOnly: true,
+        },
+      },
+    });
+
+    const startersButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Starters');
+    startersButton?.click();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    const startersParams = shell.payloadClient.fetchPayload.mock.calls[0][0];
+    expect(startersParams.get('resource')).toBe('teams');
+    expect(startersParams.get('starters')).toBe('1');
   });
 
   it('shows mobile league roster GP from games played aliases over nested zeroes', async () => {
