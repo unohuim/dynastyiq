@@ -1,212 +1,175 @@
 ---
-pr_id: 13
-pr_name: pr13
+pr_id: 14
+pr_name: pr14
 status: Active
-created: 2026-07-10
-last_updated: 2026-07-10
+created: 2026-07-15
+last_updated: 2026-07-15
 ---
 
-# Platform League Scoring Categories As First-Class Records
+# Fantrax League Shape And Draft Scope
 
 ## Source
 
-Fantrax scoring-category alignment work exposed that provider scoring categories are currently persisted inside `platform_leagues.scoring_settings.categories` JSON. Fantrax can send both rich category rows and shorthand scoring rows for the same category, such as `Big Points 3` and `BP3`, which makes deduplication and manual alignment fragile when category identity is only embedded in a JSON array.
+Fantrax response documentation work compared real `getLeagueInfo`, `getTeamRosters`, `getDraftPicks`, `getDraftResults`, and `getPlayerIds` payloads across:
 
-The category dictionary import now recognizes many provider-specific Fantrax labels and formulas, and League Options needs to show exactly which provider categories are supported, unsupported, or manually mapped.
+- Super Duper League.
+- Champions League of Hockey.
+- FHL Tiered Dynasty.
+
+That review showed DynastyIQ has enough provider data to represent very different Fantrax league shapes, but current sync code only persists part of that meaning.
 
 ## Objective
 
-Move platform league scoring categories from opaque league JSON into queryable child records, with deterministic provider identity, deduplication, dictionary alignment, manual mapping persistence, and stale-row cleanup during sync.
+Persist and expose Fantrax league shape so users, managers, and commissioners see the league they actually play in:
 
-The resulting source of truth should be:
+- Standard single-pool leagues.
+- Multi-division leagues without duplicate players.
+- Division-scoped duplicate-player leagues.
+- Flat drafts.
+- Division-scoped drafts.
+- Salary-cap leagues with or without custom Fantrax salary/contract metadata.
 
-- `platform_league_scoring_categories` for normalized category rows.
-- `fantasy_scoring_category_mappings` for provider dictionary definitions.
-- Raw provider scoring payload retained only for audit/debug context.
+The first implementation should prioritize correctness for FHL-style division-scoped drafts and player pools.
 
-## Current DynastyIQ Context
-
-Current league scoring state is stored under:
-
-- `platform_leagues.scoring_settings.categories`
-- `platform_leagues.scoring_settings.manual_mappings`
-- `platform_leagues.scoring_settings.raw_payload`
-
-Current code paths include:
+## Changed Code Paths
 
 - `app/Services/SyncFantraxLeague.php`
-- `app/Services/FantraxScoringCategoryMapper.php`
-- `app/Services/YahooFantasyLeagueService.php`
+- `app/Services/SyncFantraxDraftState.php`
 - `app/Http/Controllers/LeagueController.php`
-- `app/Support/Stats/LeagueStatsPerspectiveFactory.php`
+- `app/Http/Controllers/CommunityLeagues.php`
 - `resources/views/leagues/_panel.blade.php`
+- `tests/Feature/FantraxDraftingWindowTest.php`
 
-Current dictionary source:
+## Changed Documentation
 
-- `app/Models/FantasyScoringCategoryMapping.php`
-- `docs/import-templates/fantrax_category_alignment.csv`
-
-## Problems To Solve
-
-- Duplicate provider categories can persist inside league JSON arrays.
-- JSON arrays cannot enforce uniqueness for category identity.
-- League Options cannot query category rows directly.
-- Unsupported provider categories cannot be audited across all connected leagues with SQL.
-- Manual mappings are keyed to JSON row IDs instead of durable category records.
-- Provider sync replaces a JSON blob, but cannot upsert/delete individual scoring categories deterministically.
-
-## Proposed Schema
-
-Add `platform_league_scoring_categories`.
-
-Candidate columns:
-
-- `id`
-- `platform_league_id`
-- `platform`
-- `provider_category_id`
-- `provider_group`
-- `provider_code`
-- `provider_short_label`
-- `provider_label`
-- `normalized_group`
-- `normalized_short_label`
-- `normalized_label`
-- `value`
-- `position_values`
-- `dictionary_mapping_id`
-- `auto_mapping_key`
-- `manual_mapping_key`
-- `stat_key`
-- `alignment_status`
-- `formula`
-- `required_schema_columns`
-- `is_supported`
-- `support_message`
-- `raw_payload`
-- `sort_order`
-- `created_at`
-- `updated_at`
-
-Relationships:
-
-- `PlatformLeague` has many `PlatformLeagueScoringCategory`.
-- `PlatformLeagueScoringCategory` belongs to `PlatformLeague`.
-- `PlatformLeagueScoringCategory` optionally belongs to `FantasyScoringCategoryMapping`.
-
-## Identity And Dedupe Rules
-
-Provider category sync must normalize group names before identity comparison:
-
-- `SKATING` maps to `HOCKEY_SKATING`.
-- `GOALIE` maps to `HOCKEY_GOALIE`.
-
-Provider category sync must prefer rich category labels over shorthand aliases:
-
-- `Big Points 3` over `BP3`
-- `Net Faceoffs Won` over `NFOW`
-- `Old School Grit 3` over `OSG3`
-- `Special Teams Points 2` over `STP2`
-- `Goalie Points 4` over `GPT4`
-
-Recommended uniqueness:
-
-- Unique category identity per league using normalized provider identity.
-- A second uniqueness guard for provider category IDs when present.
-
-## Sync Behavior
-
-Fantrax sync should:
-
-1. Fetch league info.
-2. Normalize rich scoring rows and shorthand scoring rows into a single category collection.
-3. Enrich each category from `fantasy_scoring_category_mappings`.
-4. Preserve existing manual mapping keys by stable category identity.
-5. Upsert normalized category rows.
-6. Delete category rows for the league that are no longer present in the provider payload.
-7. Persist scoring-system metadata such as provider scoring type, season year, and scoring dates alongside the normalized category rows.
-8. Store raw provider scoring payload for audit/debug context only.
-
-The sync should not depend on JSON category rows as the source of truth after migration.
-
-Yahoo sync should follow the same platform-neutral row model, even if its provider payload is simpler.
-
-Fantrax points leagues may compute `Fantasy Pts` and `Fantasy Pts/G` at read time from persisted scoring category weights and supported DynastyIQ stat/formula mappings. Fantrax rotisserie/category leagues must remain category-column views and must not sum category values into a single fantasy-point total.
-
-## Manual Mapping Behavior
-
-Manual scoring alignment should persist on category rows:
-
-- `manual_mapping_key`
-
-Manual mappings may target:
-
-- `stat:<key>`
-- `dictionary:<platform>:<provider_label>`
-- `custom:<future_formula_id>`
-
-Legacy JSON manual mappings should be backfilled onto matching category rows.
-
-## Read Path
-
-League Options should read scoring alignment categories from `platform_league_scoring_categories`.
-
-Affected paths:
-
-- `LeagueController::scoringCategoriesPayload()`
-- `LeagueController::scoringAlignmentCategoriesPayload()`
-- `LeagueController::updateScoringSettings()`
-- `LeagueStatsPerspectiveFactory`
-
-Temporary fallback to `platform_leagues.scoring_settings.categories` is allowed only for leagues that have not been backfilled yet.
-
-## Backfill
-
-Create a backfill path that reads existing JSON category rows and inserts normalized category records.
-
-Backfill must dedupe existing duplicate rows, preferring richer/dictionary-recognized rows over shorthand rows.
-
-Backfill should preserve:
-
-- provider label
-- provider short label
-- value
-- position values
-- dictionary metadata
-- support status
-- manual mappings
-- raw payload
-
-## Documentation Updates
-
-Update:
-
-- `docs/architecture/integrations/FantraxLeagueSync.yaml`
-- `docs/architecture/integrations/PlatformCategoryMappingImport.yaml`
-- `docs/DB_SCHEMA.md`
 - `docs/ENUMS.md`
+- `docs/architecture/integrations/FantraxLeagueSync.yaml`
+- `docs/architecture/integrations/FantraxDraftStateSync.yaml`
+- `docs/architecture/integrations/PlatformLeagueRosterSlots.yaml`
+- `docs/architecture/application/DraftCentralDraftModel.yaml`
 - `docs/ARCHITECTURE_INVENTORY.md`
 
-Enum storage references should move from JSON category paths to table columns where applicable.
+## Implemented
 
-## Testing Scope
+### League Shape Persistence
 
-Add focused Pest coverage for:
+Fantrax league sync now normalizes provider league shape into `platform_leagues.settings.league_shape`:
 
-- Fantrax rich and shorthand rows dedupe into one persisted category.
-- Manual mappings survive a provider sync.
-- Stale category rows are deleted during sync.
-- Dictionary alignment metadata is persisted on category rows.
-- Unsupported category metadata is preserved for League Options warnings.
-- League Options payload reads from category rows.
-- JSON fallback works only for leagues without persisted category rows.
+- `duplicate_player_type`
+- `player_pool_scope`
+- `team_count`
+- `division_count`
+- `divisions`
+- `team_divisions`
+- `scoring_type`
+- `roster_period_count`
+- `scoring_period_count`
+- `custom_salary_detected`
+- `contract_codes_detected`
+- `draft_shape`
 
-No tests, migrations, imports, queue jobs, sync jobs, or seeders should be run by Codex unless explicitly instructed.
+No schema change was added. The current implementation intentionally uses existing settings JSON and existing roster slot tables.
+
+### Team Division Context
+
+Fantrax team sync now preserves division/pool metadata in `platform_teams.extras.fantrax` when present in `getLeagueInfo`.
+
+### Player Pool And Eligibility
+
+Fantrax player eligibility parsing now supports both:
+
+- flat `playerInfo.{fantraxId}`
+- division-grouped `playerInfo.{division}.{fantraxId}`
+
+Rules implemented:
+
+- `duplicatePlayerType: NONE` keeps player pool scope as league-wide even when divisions exist.
+- `duplicatePlayerType: ACROSS_DIVISIONS` marks player pool and draft scope as division-scoped.
+- Roster display can use flattened eligibility, while league shape preserves pool scope.
+
+### Draft Scope
+
+Fantrax draft sync now:
+
+- preserves `division` from draft result rows in the raw payload and LeagueController row payload.
+- includes `division` in `provider_pick_key` when present.
+- avoids global `overall_pick` for division-scoped rows where the provider pick number repeats by division.
+- preserves flat or division-keyed `draftOrder` in `drafts.settings.provider_draft_order`.
+- stores provider draft state in `drafts.settings.provider_draft_state`.
+- marks rows without a provider player id as pending.
+- emits pick-made events only when a row transitions from no provider player id to a provider player id.
+- uses provider pick key as the final pending-slot ordering tie-breaker so division-scoped repeated pick numbers remain deterministic.
+
+### Roster Slot Settings
+
+Fantrax league sync now upserts `platform_league_roster_slots` from `getLeagueInfo.rosterInfo.positionConstraints`.
+
+### UI Payload
+
+League and community pages now receive compact league-shape payloads. The league panel displays small structure badges for:
+
+- player pool scope.
+- draft shape.
+- division count.
+- Fantrax salary source.
+
+Draft Central backend payload now includes `division` and stable ordering for rows where `overall_pick` is null.
+
+For division-scoped Fantrax leagues, normal user-facing league reads now default to the viewer's own Fantrax division or pool. Commissioner/admin reads retain all-division visibility.
+
+## Tests Added
+
+Focused Pest coverage was added in `tests/Feature/FantraxDraftingWindowTest.php` for:
+
+- `duplicatePlayerType: NONE` with divisions remaining league-scoped.
+- division-grouped `playerInfo` eligibility in duplicate-player leagues.
+- Fantrax roster slot settings upserted from `rosterInfo.positionConstraints`.
+- division-scoped draft rows generating unique provider pick keys.
+- division-keyed `draftOrder` preserved.
+- pending FHL-style draft slots without provider player ids staying pending and not dispatching pick events.
+- picked division-scoped slots dispatching when a provider player id appears.
+- Draft Central rows scoped to the viewer's Fantrax division.
+- league team and roster payload rows scoped to the viewer's Fantrax division.
+
+## Verification Required
+
+Codex performed syntax checks only:
+
+- `php -l app/Services/SyncFantraxLeague.php`
+- `php -l app/Services/SyncFantraxDraftState.php`
+- `php -l app/Http/Controllers/LeagueController.php`
+- `php -l app/Http/Controllers/CommunityLeagues.php`
+- `php -l tests/Feature/FantraxDraftingWindowTest.php`
+
+Human-run verification still required:
+
+- Run the targeted Pest file and any broader suite the human wants.
+- Run real Fantrax sync checks for SDL, CLH, and FHL-style leagues.
+- Confirm `platform_leagues.settings.league_shape` after sync.
+- Confirm `drafts.settings.provider_draft_order` for flat and division-keyed drafts.
+- Confirm FHL-style pending draft slots do not create pick-made events.
+- Confirm drafted rows transition from pending to picked when provider player ids appear.
+
+## Outstanding Decisions
+
+- Decide whether PR14 should visibly group/label Draft Central rows by division. Backend payload support exists, but the visible UI grouping is not implemented.
+- Decide whether Fantrax response documentation/sample files belong in PR14 or should remain separate documentation work.
+
+## Suggested Human Test Commands
+
+Run only if you want to verify this PR locally:
+
+```bash
+php artisan test tests/Feature/FantraxDraftingWindowTest.php
+```
+
+Broader test commands should be chosen by the human based on PR scope.
 
 ## Out Of Scope
 
-- Reworking the stats payload architecture.
-- Replacing `fantasy_scoring_category_mappings`.
-- Building custom formula authoring UI.
-- Removing `platform_leagues.scoring_settings` entirely in the first pass.
-- Running production backfills or provider syncs.
+- Rebuilding Draft Central UI from scratch.
+- Implementing future draft asset persistence.
+- Building provider-earned Fantrax fantasy stat totals.
+- Changing NHL game/stat import logic.
+- Direct production data repair.
+- Running Fantrax imports or sync jobs.

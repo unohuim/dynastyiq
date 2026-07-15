@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Events\FantraxTeamCreated;
 use App\Models\Draft;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
@@ -54,6 +53,8 @@ final class SyncFantraxLeague
 
         $leaguePlayerEligibilityByFantraxId = self::leaguePlayerEligibilityByFantraxId($leagueInfo);
         $this->syncLeagueSettings($league, $leagueInfo);
+        $leagueShape = $this->fantraxLeagueShape($leagueInfo);
+        $leagueTeamsByProviderId = $this->fantraxTeamsByProviderId($leagueInfo);
 
         //team rosters
         try {
@@ -66,6 +67,7 @@ final class SyncFantraxLeague
 
         $now = now();
         $teamRosters = is_array($respTeamRosters) ? ($respTeamRosters['rosters'] ?? []) : [];
+        $this->syncFantraxRosterSlots($league, $leagueInfo, $now);
         self::rememberLeagueRosterDiagnostics($league, $now, [
             'stage' => 'response_received',
             'response_keys' => is_array($respTeamRosters) ? array_keys($respTeamRosters) : [],
@@ -87,21 +89,23 @@ final class SyncFantraxLeague
                 continue;
             }
 
+            $teamId = (string) ($teamId ?? '');
+
             $rows[] = [
                 'platform_league_id' => $league->id,
-                'platform_team_id' => (string) ($teamId ?? ''),
+                'platform_team_id' => $teamId,
                 'name' => (string) ($team['teamName'] ?? 'Unnamed Team'),
                 'short_name' => $team['shortName'] ?? null,
                 'logo_url' => self::teamLogoUrl($team),
+                'fantrax_team_context' => $leagueTeamsByProviderId[$teamId] ?? [],
                 'synced_at' => $now,
                 'updated_at' => $now,
             ];
         }
 
-        $teamIdMap = []; // [fantrax_team_key => platform_teams.id]
-        $created = [];
+        $teamIdMap = [];
 
-        DB::transaction(static function () use ($rows, &$created, &$teamIdMap): void {
+        DB::transaction(static function () use ($rows, &$teamIdMap): void {
             foreach ($rows as $row) {
                 $values = [
                     'name'       => $row['name'] ?? null,
@@ -113,21 +117,29 @@ final class SyncFantraxLeague
                     $values['logo_url'] = $row['logo_url'];
                 }
 
-                $platformTeam = PlatformTeam::query()->updateOrCreate(
-                    [
-                        'platform_league_id' => $row['platform_league_id'],
-                        'platform_team_id'   => $row['platform_team_id'],
-                    ],
-                    $values
-                );
+                $platformTeam = PlatformTeam::query()->firstOrNew([
+                    'platform_league_id' => $row['platform_league_id'],
+                    'platform_team_id'   => $row['platform_team_id'],
+                ]);
+                $extras = is_array($platformTeam->extras) ? $platformTeam->extras : [];
+                $fantraxContext = is_array($row['fantrax_team_context'] ?? null) ? $row['fantrax_team_context'] : [];
+
+                if ($fantraxContext !== []) {
+                    $values['extras'] = array_merge($extras, [
+                        'fantrax' => array_merge(
+                            is_array($extras['fantrax'] ?? null) ? $extras['fantrax'] : [],
+                            $fantraxContext,
+                        ),
+                    ]);
+                }
+
+                $platformTeam->fill($values);
+                $platformTeam->save();
 
                 $teamIdMap[(string) $row['platform_team_id']] = (int) $platformTeam->id;
-
-                // if ($platformTeam->wasRecentlyCreated) {
-                //     $created[] = [$platformTeam->platform_league_id, (string) $platformTeam->id];
-                // }
             }
         });
+        $this->mergeFantraxRosterShapeDetections($league, $teamRosters, $leagueShape);
 
         $rosterTeamKeys = array_map('strval', array_keys($teamRosters));
         $dbTeamKeys = array_map('strval', array_keys($teamIdMap));
@@ -138,12 +150,6 @@ final class SyncFantraxLeague
             'unmatched_roster_team_keys' => array_values(array_diff($rosterTeamKeys, $dbTeamKeys)),
             'unmatched_db_team_keys' => array_values(array_diff($dbTeamKeys, $rosterTeamKeys)),
         ]);
-
-        // DB::afterCommit(static function () use ($created): void {
-        //     foreach ($created as [$leagueId, $teamId]) {
-        //         event(new FantraxTeamCreated($leagueId, $teamId));
-        //     }
-        // });
 
         foreach ($teamRosters as $fantraxTeamKey => $team) {
             if (! is_array($team)) {
@@ -534,6 +540,7 @@ final class SyncFantraxLeague
             return;
         }
 
+        $leagueShape = $this->fantraxLeagueShape($leagueInfo);
         $existingSettings = array_replace(
             ['custom_cap' => false],
             is_array($league->settings) ? $league->settings : [],
@@ -550,6 +557,7 @@ final class SyncFantraxLeague
             $league->forceFill([
                 'settings' => array_merge($existingSettings, [
                     'fantrax_league_info_keys' => array_keys($leagueInfo),
+                    'league_shape' => $leagueShape,
                 ]),
             ])->save();
 
@@ -571,6 +579,7 @@ final class SyncFantraxLeague
         $league->forceFill([
             'settings' => array_merge($existingSettings, [
                 'fantrax_league_info_keys' => array_keys($leagueInfo),
+                'league_shape' => $leagueShape,
             ]),
             'scoring_settings' => [
                 'type' => $this->nullableScoringString(data_get($leagueInfo, 'scoringSystem.type')),
@@ -582,6 +591,273 @@ final class SyncFantraxLeague
                 'raw_payload' => $rawScoringPayload,
             ],
         ])->save();
+    }
+
+    /**
+     * Build the provider league-shape payload persisted on platform_leagues.settings.
+     *
+     * @param array<string,mixed> $leagueInfo
+     *
+     * @return array<string,mixed>
+     */
+    private function fantraxLeagueShape(array $leagueInfo): array
+    {
+        $duplicatePlayerType = strtoupper(trim((string) data_get($leagueInfo, 'poolSettings.duplicatePlayerType')));
+        $teamsByProviderId = $this->fantraxTeamsByProviderId($leagueInfo);
+        $divisions = collect($teamsByProviderId)
+            ->pluck('division')
+            ->filter(static fn (mixed $value): bool => trim((string) $value) !== '')
+            ->map(static fn (mixed $value): string => (string) $value)
+            ->unique()
+            ->values()
+            ->all();
+        $teamDivisions = collect($teamsByProviderId)
+            ->mapWithKeys(static function (array $team, string $teamId): array {
+                $division = trim((string) ($team['division'] ?? ''));
+
+                return $division !== '' ? [$teamId => $division] : [];
+            })
+            ->all();
+        $playerPoolScope = match ($duplicatePlayerType) {
+            'NONE' => 'league',
+            'ACROSS_DIVISIONS' => 'division',
+            default => 'unknown',
+        };
+
+        return [
+            'duplicate_player_type' => $duplicatePlayerType !== '' ? $duplicatePlayerType : null,
+            'player_pool_scope' => $playerPoolScope,
+            'team_count' => count($teamsByProviderId),
+            'division_count' => count($divisions),
+            'divisions' => $divisions,
+            'team_divisions' => $teamDivisions,
+            'scoring_type' => $this->nullableScoringString(data_get($leagueInfo, 'scoringSystem.type')),
+            'roster_period_count' => $this->countArray(data_get($leagueInfo, 'rosterPeriods')),
+            'scoring_period_count' => $this->countArray(data_get($leagueInfo, 'scoringPeriods')),
+            'custom_salary_detected' => false,
+            'contract_codes_detected' => [],
+            'draft_shape' => $playerPoolScope === 'division' ? 'division_scoped' : 'flat',
+        ];
+    }
+
+    /**
+     * Extract Fantrax team metadata from all observed getLeagueInfo team shapes.
+     *
+     * @param array<string,mixed> $leagueInfo
+     *
+     * @return array<string,array<string,mixed>>
+     */
+    private function fantraxTeamsByProviderId(array $leagueInfo): array
+    {
+        $teams = [];
+        $teamInfo = $leagueInfo['teamInfo']
+            ?? $leagueInfo['team_info']
+            ?? data_get($leagueInfo, 'league.teamInfo')
+            ?? [];
+
+        if (is_array($teamInfo)) {
+            foreach ($teamInfo as $key => $team) {
+                if (! is_array($team)) {
+                    continue;
+                }
+
+                $teamId = trim((string) ($team['id'] ?? $team['teamId'] ?? $team['team_id'] ?? $key));
+
+                if ($teamId === '') {
+                    continue;
+                }
+
+                $teams[$teamId] = $this->fantraxTeamContext($team);
+            }
+        }
+
+        foreach ($leagueInfo as $key => $team) {
+            if (! is_array($team) || ! $this->looksLikeFantraxTeam($team, (string) $key)) {
+                continue;
+            }
+
+            $teamId = trim((string) ($team['id'] ?? $team['teamId'] ?? $team['team_id'] ?? $key));
+
+            if ($teamId === '') {
+                continue;
+            }
+
+            $teams[$teamId] = array_merge($teams[$teamId] ?? [], $this->fantraxTeamContext($team));
+        }
+
+        return $teams;
+    }
+
+    /**
+     * @param array<string,mixed> $team
+     *
+     * @return array<string,mixed>
+     */
+    private function fantraxTeamContext(array $team): array
+    {
+        return array_filter([
+            'division' => $this->nullableString($team['division'] ?? $team['divisionName'] ?? $team['division_name'] ?? null),
+            'pool' => $this->nullableString($team['pool'] ?? $team['poolName'] ?? $team['pool_name'] ?? null),
+            'raw_team_info' => $team,
+        ], static fn (mixed $value): bool => $value !== null && $value !== '' && $value !== []);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function looksLikeFantraxTeam(array $payload, string $key): bool
+    {
+        if (in_array($key, ['teamInfo', 'team_info'], true)) {
+            return false;
+        }
+
+        return isset($payload['id'], $payload['name'])
+            || isset($payload['teamId'], $payload['teamName'])
+            || isset($payload['division'], $payload['name']);
+    }
+
+    /**
+     * Upsert provider roster slot settings from Fantrax position constraints.
+     *
+     * @param array<string,mixed> $leagueInfo
+     */
+    private function syncFantraxRosterSlots(PlatformLeague $league, array $leagueInfo, CarbonInterface $now): void
+    {
+        $constraints = data_get($leagueInfo, 'rosterInfo.positionConstraints')
+            ?? data_get($leagueInfo, 'league.rosterInfo.positionConstraints')
+            ?? [];
+
+        if (! is_array($constraints) || $constraints === []) {
+            return;
+        }
+
+        $rows = [];
+        $sortOrder = 1;
+
+        foreach ($constraints as $slot => $constraint) {
+            if (! is_array($constraint)) {
+                $constraint = ['maxActive' => $constraint];
+            }
+
+            $slot = strtoupper(trim((string) $slot));
+
+            if ($slot === '') {
+                continue;
+            }
+
+            $rows[] = [
+                'platform_league_id' => $league->id,
+                'slot' => $slot,
+                'slot_type' => $this->rosterSlotType($slot),
+                'position_type' => $slot === 'G' ? 'goalie' : 'skater',
+                'count' => $this->integerSetting(
+                    $constraint['maxActive']
+                    ?? $constraint['count']
+                    ?? $constraint['max']
+                    ?? null,
+                ) ?? 0,
+                'sort_order' => $sortOrder++,
+                'raw_payload' => json_encode($constraint),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        if ($rows === []) {
+            return;
+        }
+
+        DB::table('platform_league_roster_slots')->upsert(
+            $rows,
+            ['platform_league_id', 'slot'],
+            ['slot_type', 'position_type', 'count', 'sort_order', 'raw_payload', 'updated_at'],
+        );
+    }
+
+    /**
+     * Merge getTeamRosters salary/contract clues into persisted Fantrax league shape.
+     *
+     * @param array<string,mixed> $teamRosters
+     * @param array<string,mixed> $leagueShape
+     */
+    private function mergeFantraxRosterShapeDetections(
+        PlatformLeague $league,
+        array $teamRosters,
+        array $leagueShape,
+    ): void {
+        $contractCodes = [];
+        $customSalaryDetected = false;
+
+        foreach ($teamRosters as $team) {
+            if (! is_array($team)) {
+                continue;
+            }
+
+            foreach (self::rosterItems($team) as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+
+                $customSalaryDetected = $customSalaryDetected || is_numeric($item['salary'] ?? null);
+                $contractCode = data_get($item, 'contract.smallId') ?? data_get($item, 'contract.name');
+
+                if (trim((string) $contractCode) !== '') {
+                    $contractCodes[] = trim((string) $contractCode);
+                }
+            }
+        }
+
+        $settings = is_array($league->settings) ? $league->settings : [];
+        $settings['league_shape'] = array_merge($leagueShape, [
+            'custom_salary_detected' => $customSalaryDetected,
+            'contract_codes_detected' => array_values(array_unique($contractCodes)),
+        ]);
+
+        $league->forceFill(['settings' => $settings])->save();
+    }
+
+    /**
+     * Count a provider array only when it is present as an array.
+     */
+    private function countArray(mixed $value): int
+    {
+        return is_array($value) ? count($value) : 0;
+    }
+
+    /**
+     * Normalize an optional provider string to null when empty.
+     */
+    private function nullableString(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        return $value !== '' ? $value : null;
+    }
+
+    /**
+     * Normalize optional provider integer settings.
+     */
+    private function integerSetting(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (int) $value : null;
+    }
+
+    /**
+     * Map Fantrax roster constraint slots to the platform slot-type enum.
+     */
+    private function rosterSlotType(string $slot): string
+    {
+        return match (strtoupper(trim($slot))) {
+            'BEN', 'BN', 'RES' => 'bench',
+            'IR', 'IR+', 'IL' => 'injured',
+            'MIN', 'MINORS', 'NA' => 'minor',
+            'F', 'SKT', 'UTIL' => 'utility',
+            default => 'starter',
+        };
     }
 
     /**
@@ -924,27 +1200,60 @@ final class SyncFantraxLeague
 
         $eligibility = [];
 
+        self::collectFantraxPlayerEligibility($playerInfo, $eligibility);
+
+        return $eligibility;
+    }
+
+    /**
+     * Collect eligibility from flat and division-grouped Fantrax playerInfo payloads.
+     *
+     * @param array<string,mixed> $playerInfo
+     * @param array<string,array<int,string>> $eligibility
+     */
+    private static function collectFantraxPlayerEligibility(array $playerInfo, array &$eligibility): void
+    {
         foreach ($playerInfo as $key => $info) {
             if (! is_array($info)) {
                 continue;
             }
 
-            $fantraxId = (string) ($info['id'] ?? $info['playerId'] ?? $info['player_id'] ?? $key);
-            $positions = self::normalizeEligiblePositions(
-                $info['eligiblePos']
-                    ?? $info['eligiblePositions']
-                    ?? $info['eligibility']
-                    ?? null,
-            );
+            if (self::looksLikeFantraxPlayerInfo($info)) {
+                $fantraxId = (string) ($info['id'] ?? $info['playerId'] ?? $info['player_id'] ?? $key);
+                $positions = self::normalizeEligiblePositions(
+                    $info['eligiblePos']
+                        ?? $info['eligiblePositions']
+                        ?? $info['eligibility']
+                        ?? null,
+                );
 
-            if ($fantraxId === '' || $positions === []) {
+                if ($fantraxId === '' || $positions === []) {
+                    continue;
+                }
+
+                $eligibility[$fantraxId] = array_values(array_unique(array_merge(
+                    $eligibility[$fantraxId] ?? [],
+                    $positions,
+                )));
+
                 continue;
             }
 
-            $eligibility[$fantraxId] = $positions;
+            self::collectFantraxPlayerEligibility($info, $eligibility);
         }
+    }
 
-        return $eligibility;
+    /**
+     * @param array<string,mixed> $info
+     */
+    private static function looksLikeFantraxPlayerInfo(array $info): bool
+    {
+        return array_key_exists('eligiblePos', $info)
+            || array_key_exists('eligiblePositions', $info)
+            || array_key_exists('eligibility', $info)
+            || array_key_exists('status', $info)
+            || array_key_exists('playerId', $info)
+            || array_key_exists('player_id', $info);
     }
 
     /**

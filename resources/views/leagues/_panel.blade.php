@@ -38,6 +38,7 @@
       scoringSettingsUpdateUrl: @js($scoringSettingsUpdateUrl ?? ''),
       capSettingsUpdateUrl: @js($capSettingsUpdateUrl ?? ''),
       teamLogoSyncUrl: @js($teamLogoSyncUrl ?? ''),
+      leagueShape: @js($leagueShape ?? []),
       leagueStatsPayloadUrl: @js($leagueStatsPayloadUrl ?? ''),
       leagueStatsPerspectives: @js($leagueStatsPerspectives ?? []),
       selectedLeagueStatsPerspective: @js($selectedLeagueStatsPerspective ?? $leagueStatsFallbackSlug),
@@ -282,6 +283,36 @@
       validCapView(view){
         return ['sheet', 'adjustments', 'limits'].includes(String(view || '')) ? String(view) : 'sheet';
       },
+      leaguePoolLabel(){
+        const scope = String(this.leagueShape?.player_pool_scope || '').trim();
+        if (scope === 'division') return 'Division player pools';
+        if (scope === 'league') return 'League-wide player pool';
+        return '';
+      },
+      leagueDraftShapeLabel(){
+        const shape = String(this.leagueShape?.draft_shape || '').trim();
+        if (shape === 'division_scoped') return 'Division draft';
+        if (shape === 'flat') return 'Flat draft';
+        return '';
+      },
+      leagueShapeDivisionLabel(){
+        const count = Number(this.leagueShape?.division_count || 0);
+        if (count <= 0) return '';
+        return `${count} ${count === 1 ? 'division' : 'divisions'}`;
+      },
+      leagueShapeSalaryLabel(){
+        const source = String(this.leagueShape?.salary_source || '').trim();
+        if (source === 'fantrax') return 'Fantrax salaries';
+        return '';
+      },
+      hasLeagueShapeSummary(){
+        return [
+          this.leaguePoolLabel(),
+          this.leagueDraftShapeLabel(),
+          this.leagueShapeDivisionLabel(),
+          this.leagueShapeSalaryLabel(),
+        ].some(Boolean);
+      },
       setCapView(view){
         this.capView = this.validCapView(view);
         this.writeLeagueUiState({ capView: this.capView });
@@ -436,6 +467,7 @@
           }
 
           this.teams = payload.teams ?? [];
+          this.leagueShape = payload.leagueShape ?? this.leagueShape;
           this.searchPlayers = [];
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.isScoringFullyMapped = Boolean(payload.isScoringFullyMapped ?? this.isScoringFullyMapped);
@@ -2000,6 +2032,20 @@
                 <span>Head-to-Head</span>
               </div>
               <h2 class="mt-2 truncate text-3xl font-semibold tracking-tight text-white">{{ $league->name }}</h2>
+              <div x-show="hasLeagueShapeSummary()" class="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-100">
+                <template x-if="leaguePoolLabel()">
+                  <span class="rounded-md bg-white/10 px-2 py-1 ring-1 ring-white/15" x-text="leaguePoolLabel()"></span>
+                </template>
+                <template x-if="leagueDraftShapeLabel()">
+                  <span class="rounded-md bg-white/10 px-2 py-1 ring-1 ring-white/15" x-text="leagueDraftShapeLabel()"></span>
+                </template>
+                <template x-if="leagueShapeDivisionLabel()">
+                  <span class="rounded-md bg-white/10 px-2 py-1 ring-1 ring-white/15" x-text="leagueShapeDivisionLabel()"></span>
+                </template>
+                <template x-if="leagueShapeSalaryLabel()">
+                  <span class="rounded-md bg-white/10 px-2 py-1 ring-1 ring-white/15" x-text="leagueShapeSalaryLabel()"></span>
+                </template>
+              </div>
               <div class="mt-4 inline-flex max-w-full items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-xs font-semibold text-blue-50 ring-1 ring-white/10">
                 @if (! empty($ownedTeamForHeader['owner_avatar_url']))
                   <img src="{{ $ownedTeamForHeader['owner_avatar_url'] }}" alt="" class="h-5 w-5 rounded-full object-cover ring-1 ring-white/20">

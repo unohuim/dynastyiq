@@ -22,6 +22,7 @@ rules:
   - Platform roster memberships store the current player slot, while platform league roster slots define the league slot metadata and display order.
   - Unknown membership slots must render after configured slots using a stable fallback order.
   - Provider-specific parsing must remain inside provider sync services before data enters this model.
+  - Fantrax sync must upsert slot rows from getLeagueInfo.rosterInfo.positionConstraints and preserve the raw provider constraint payload on each slot row.
 public_interface:
   - PlatformLeagueRosterSlot
   - PlatformLeague::rosterSlots()

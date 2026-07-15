@@ -1,0 +1,175 @@
+
+object
+{1}
+leagues
+[10]
+0
+{5}
+leagueName
+:
+"Champions League of Hockey"
+teamName
+:
+"Northumberland Nitro"
+leagueId
+:
+"jig9u78tmo2xp2xh"
+teamId
+:
+"iq5tnq8cmo2xp2y0"
+sport
+:
+"NHL"
+1
+{5}
+leagueName
+:
+"Crazy Joe "
+teamName
+:
+"McLeody To Morrow"
+leagueId
+:
+"49e4u899mogbs16e"
+teamId
+:
+"wk0r2t3emogbs16r"
+sport
+:
+"NHL"
+2
+{5}
+leagueName
+:
+"DPR Dynasty League - Diamond"
+teamName
+:
+"Good Will Bunting"
+leagueId
+:
+"tb1cxti4mohtxdxw"
+teamId
+:
+"1ncccxkemohtxdy7"
+sport
+:
+"NHL"
+3
+{5}
+leagueName
+:
+"Dynasty League 38"
+teamName
+:
+"Anaheim Ducks"
+leagueId
+:
+"nr031j52mo2yrub3"
+teamId
+:
+"ml2wdbf9mo2yruds"
+sport
+:
+"NHL"
+4
+{5}
+leagueName
+:
+"DynastyLeague37"
+teamName
+:
+"Seattle Kraken"
+leagueId
+:
+"2k8tsy4imo2wkl7j"
+teamId
+:
+"bxhhrcztmo2wkl7u"
+sport
+:
+"NHL"
+5
+{5}
+leagueName
+:
+"FHL Tiered Dynasty"
+teamName
+:
+"JAG- Suter McGavin"
+leagueId
+:
+"49wwcp3imohhymt9"
+teamId
+:
+"xi8zgs91mohhymtp"
+sport
+:
+"NHL"
+6
+{5}
+leagueName
+:
+"KKUPDL"
+teamName
+:
+"Doan Stop Believin"
+leagueId
+:
+"9bzjwovdmohkvwiv"
+teamId
+:
+"mpygr4yhmohkvwjc"
+sport
+:
+"NHL"
+7
+{5}
+leagueName
+:
+"PGHL 26-27"
+teamName
+:
+"Broberg Back Mountain"
+leagueId
+:
+"8l3i49cdmo3dkuu4"
+teamId
+:
+"gmmebxhymo3dkuui"
+sport
+:
+"NHL"
+8
+{5}
+leagueName
+:
+"Rob's Tester League"
+teamName
+:
+"Rob's Team"
+leagueId
+:
+"5r597wdwmr3kbpap"
+teamId
+:
+"z39mzyxqmr3kbppl"
+sport
+:
+"NHL"
+9
+{5}
+leagueName
+:
+"Super Duper League"
+teamName
+:
+"Tokyo Killer Tardigrades"
+leagueId
+:
+"uf1sdl47mo6nzpr6"
+teamId
+:
+"3p7cwizlmo6nzpre"
+sport
+:
+"NHL"

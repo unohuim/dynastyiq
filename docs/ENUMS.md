@@ -614,6 +614,56 @@ Do not introduce new enum values without updating this document.
 
 - The value is provider-sourced and string-backed. Add newly observed Fantrax scoring system types here before using them in branching logic.
 
+### Fantrax Duplicate Player Type
+
+**Name:** Fantrax duplicate player type
+**Storage location(s):** `platform_leagues.settings.league_shape.duplicate_player_type`, raw provider fallback `getLeagueInfo.poolSettings.duplicatePlayerType`
+**Allowed values currently observed:**
+
+- `NONE`
+- `ACROSS_DIVISIONS`
+
+**Semantic meaning:**
+
+- `NONE`: Fantrax players are unique across the whole league player universe.
+- `ACROSS_DIVISIONS`: Fantrax players may be duplicated across division-scoped player pools.
+
+**Notes:**
+
+- The value is provider-sourced and string-backed. Unknown values must be retained for diagnostics but must not silently enable division-scoped availability.
+
+### Fantrax Player Pool Scope
+
+**Name:** Fantrax player pool scope
+**Storage location(s):** `platform_leagues.settings.league_shape.player_pool_scope`
+**Allowed values currently emitted:**
+
+- `league`
+- `division`
+- `unknown`
+
+**Semantic meaning:**
+
+- `league`: Player availability is league-wide.
+- `division`: Player availability is scoped by Fantrax division/pool labels.
+- `unknown`: Fantrax did not expose enough setup data to derive player-pool scope safely.
+
+### Fantrax Draft Shape
+
+**Name:** Fantrax draft shape
+**Storage location(s):** `platform_leagues.settings.league_shape.draft_shape`, `drafts.settings.draft_shape`
+**Allowed values currently emitted:**
+
+- `flat`
+- `division_scoped`
+- `unknown`
+
+**Semantic meaning:**
+
+- `flat`: Draft pick rows are league-wide and provider pick numbers may be treated as global within the draft.
+- `division_scoped`: Draft rows include division/pool context and provider pick numbers may repeat across divisions.
+- `unknown`: Draft shape could not be derived from the observed provider payload.
+
 ---
 
 ### Platform League Player Stat Scope

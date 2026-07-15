@@ -1,9 +1,9 @@
 ---
-pr_id: 14
-pr_name: pr14
+pr_id: 15
+pr_name: pr15
 status: Backlog
 created: 2026-07-01
-last_updated: 2026-07-10
+last_updated: 2026-07-15
 ---
 
 # External Advanced Hockey Stats Integration

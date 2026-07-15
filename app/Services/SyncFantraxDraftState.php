@@ -130,6 +130,7 @@ final class SyncFantraxDraftState
         $newDraftPicks = [];
         $draftAt = $this->draftAt($draftResults);
         $externalDraftId = $this->neutralExternalDraftId($league, $draftResults, $draftAt);
+        $draftShape = $this->draftShape($draftResults, $rows);
         $teamIds = collect($rows)
             ->pluck('fantrax_team_id')
             ->filter()
@@ -159,6 +160,13 @@ final class SyncFantraxDraftState
                 'starts_at' => $draftAt,
                 'settings' => [
                     'provider' => 'fantrax',
+                    'draft_shape' => $draftShape,
+                    'provider_draft_order' => $this->providerDraftOrder($draftResults),
+                    'provider_draft_state' => $this->stringValue($this->firstValue($draftResults, [
+                        'draftState',
+                        'draft_state',
+                        'status',
+                    ])) ?: null,
                 ],
             ]
         );
@@ -217,6 +225,7 @@ final class SyncFantraxDraftState
             ->orderBy('overall_pick')
             ->orderBy('round')
             ->orderBy('pick_in_round')
+            ->orderBy('provider_pick_key')
             ->first();
 
         if ((string) $draft->status === 'complete') {
@@ -301,13 +310,34 @@ final class SyncFantraxDraftState
                     'overall',
                 ])) ?? ($pickInRound !== null ? $pick : null);
                 $round = $this->integerValue($this->firstValue($item, ['round', 'roundNum', 'round_number']));
+                $division = $this->stringValue($this->firstValue($item, [
+                    'division',
+                    'divisionName',
+                    'division_name',
+                    'pool',
+                    'poolName',
+                    'pool_name',
+                ])) ?: null;
+                $providerPlayerId = $this->stringValue($this->firstValue($item, [
+                    'fantraxPlayerId',
+                    'fantrax_player_id',
+                    'playerId',
+                    'player_id',
+                    'id',
+                    'player.id',
+                ]));
+
+                if ($division !== null) {
+                    $overallPick = null;
+                }
 
                 return [
-                    'provider_pick_key' => $this->providerPickKey($overallPick, $round, $pickInRound, $pick, $item),
+                    'provider_pick_key' => $this->providerPickKey($division, $overallPick, $round, $pickInRound, $pick, $item),
                     'overall_pick' => $overallPick,
                     'round' => $round,
                     'pick' => $pick,
                     'pick_in_round' => $pickInRound,
+                    'division' => $division,
                     'fantrax_team_id' => $this->stringValue($this->firstValue($item, [
                         'teamId',
                         'team_id',
@@ -317,15 +347,10 @@ final class SyncFantraxDraftState
                         'franchise_id',
                         'team.id',
                     ])) ?: null,
-                    'fantrax_player_id' => $this->stringValue($this->firstValue($item, [
-                        'fantraxPlayerId',
-                        'fantrax_player_id',
-                        'playerId',
-                        'player_id',
-                        'id',
-                        'player.id',
-                    ])),
-                    'drafted_at' => $this->dateValue($this->firstValue($item, ['time', 'draftedAt', 'drafted_at'])),
+                    'fantrax_player_id' => $providerPlayerId,
+                    'drafted_at' => $providerPlayerId !== ''
+                        ? $this->dateValue($this->firstValue($item, ['time', 'draftedAt', 'drafted_at']))
+                        : null,
                     'payload_hash' => $this->payloadHash($item),
                     'raw_payload' => $item,
                 ];
@@ -333,6 +358,7 @@ final class SyncFantraxDraftState
             ->filter(static fn (array $row): bool => $row['provider_pick_key'] !== '')
             ->sortBy([
                 ['overall_pick', 'asc'],
+                ['division', 'asc'],
                 ['round', 'asc'],
                 ['pick', 'asc'],
                 ['provider_pick_key', 'asc'],
@@ -363,21 +389,68 @@ final class SyncFantraxDraftState
             || $this->resultItems($draftResults) !== [];
     }
 
-    private function providerPickKey(?int $overallPick, ?int $round, ?int $pickInRound, ?int $pick, array $item): string
+    private function providerPickKey(
+        ?string $division,
+        ?int $overallPick,
+        ?int $round,
+        ?int $pickInRound,
+        ?int $pick,
+        array $item
+    ): string
     {
+        $prefix = $division !== null && trim($division) !== ''
+            ? 'division:' . $this->providerKeyPart($division) . ':'
+            : '';
+
         if ($overallPick !== null) {
-            return 'overall:' . $overallPick;
+            return $prefix . 'overall:' . $overallPick;
         }
 
         if ($round !== null && $pickInRound !== null) {
-            return 'round:' . $round . ':pick-in-round:' . $pickInRound;
+            return $prefix . 'round:' . $round . ':pick-in-round:' . $pickInRound;
         }
 
         if ($round !== null && $pick !== null) {
-            return 'round:' . $round . ':pick:' . $pick;
+            return $prefix . 'round:' . $round . ':pick:' . $pick;
         }
 
-        return 'hash:' . $this->payloadHash($item);
+        return $prefix . 'hash:' . $this->payloadHash($item);
+    }
+
+    /**
+     * Keep provider key components stable and inside provider_pick_key length limits.
+     */
+    private function providerKeyPart(string $value): string
+    {
+        $original = trim($value);
+        $value = strtolower($original);
+        $value = preg_replace('/[^a-z0-9]+/', '-', $value) ?: '';
+        $value = trim($value, '-');
+
+        return $value !== '' ? substr($value, 0, 40) : substr(sha1($original), 0, 12);
+    }
+
+    /**
+     * @param array<string,mixed> $draftResults
+     * @param array<int,array<string,mixed>> $rows
+     */
+    private function draftShape(array $draftResults, array $rows): string
+    {
+        if (collect($rows)->contains(static fn (array $row): bool => trim((string) ($row['division'] ?? '')) !== '')) {
+            return 'division_scoped';
+        }
+
+        return $this->providerDraftOrder($draftResults) !== null ? 'flat' : 'unknown';
+    }
+
+    /**
+     * Preserve provider draft order exactly as Fantrax sends it.
+     */
+    private function providerDraftOrder(array $draftResults): mixed
+    {
+        return $draftResults['draftOrder']
+            ?? $draftResults['draft_order']
+            ?? data_get($draftResults, 'draft.draftOrder');
     }
 
     private function draftAt(array $draftResults): ?CarbonImmutable
@@ -396,6 +469,28 @@ final class SyncFantraxDraftState
 
     private function status(array $draftResults, array $draftPickInfo, CarbonImmutable $now): string
     {
+        $providerState = strtolower($this->stringValue($this->firstValue($draftResults, [
+            'draftState',
+            'draft_state',
+            'status',
+        ])));
+
+        if (in_array($providerState, ['completed', 'complete'], true)) {
+            return 'complete';
+        }
+
+        if (in_array($providerState, ['live', 'in_progress', 'in-progress', 'drafting'], true)) {
+            return 'live';
+        }
+
+        if ($providerState === 'paused') {
+            return 'paused';
+        }
+
+        if (in_array($providerState, ['scheduled', 'pending'], true)) {
+            return 'scheduled';
+        }
+
         $draftAt = $this->draftAt($draftResults);
 
         if (! $draftAt instanceof CarbonImmutable) {

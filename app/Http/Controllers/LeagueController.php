@@ -120,9 +120,10 @@ final class LeagueController extends Controller
             ? $leagues->firstWhere('id', $activeLeagueId)
             : $leagues->first();
 
-        $teams = $activeLeague ? $this->teamsMetaPayload($activeLeague) : [];
+        $activeLeagueScope = $activeLeague ? $this->viewerFantraxScope($activeLeague, $user) : null;
+        $teams = $activeLeague ? $this->teamsMetaPayload($activeLeague, $activeLeagueScope) : [];
         $drafting = $activeLeague
-            ? $this->draftingPayload($activeLeague)
+            ? $this->draftingPayload($activeLeague, $user, $activeLeagueScope)
             : app(FantraxDraftingWindow::class)->normalize([], []);
         $leagueStatsControls = $activeLeague
             ? $this->leagueStatsPerspectiveControls($user, $activeLeague)
@@ -153,6 +154,7 @@ final class LeagueController extends Controller
             'playersPayloadUrl' => $activeLeague ? route('leagues.players.payload', $activeLeague->id) : '',
             'playersFreeAgentsPayloadUrl' => $activeLeague ? route('leagues.players.free-agents.payload', $activeLeague->id) : '',
             'teamLogoSyncUrl' => $activeLeague ? route('leagues.team-logos.sync', $activeLeague->id) : '',
+            'leagueShape' => $activeLeague ? $this->leagueShapePayload($activeLeague) : [],
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
             'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
@@ -196,8 +198,8 @@ final class LeagueController extends Controller
 
         return view('leagues._panel', [
             'league' => $league,
-            'teams'  => $this->teamsMetaPayload($league),
-            'drafting' => $this->draftingPayload($league),
+            'teams'  => $this->teamsMetaPayload($league, $this->viewerFantraxScope($league, $user)),
+            'drafting' => $this->draftingPayload($league, $user),
             'scoringCategories' => $this->scoringCategoriesPayload($league),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($league),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($league),
@@ -213,6 +215,7 @@ final class LeagueController extends Controller
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
             'teamLogoSyncUrl' => route('leagues.team-logos.sync', $league->id),
+            'leagueShape' => $this->leagueShapePayload($league),
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
             'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
@@ -258,12 +261,13 @@ final class LeagueController extends Controller
         $leagueSettings = $this->resolvedLeagueSettings($league, $user);
 
         return response()->json([
-            'teams' => $this->teamsPayload($league, false, $user),
+            'teams' => $this->teamsPayload($league, false, $user, $this->viewerFantraxScope($league, $user)),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],
             'selectedLeagueStatsPerspective' => $leagueStatsControls['selected'],
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
+            'leagueShape' => $this->leagueShapePayload($league),
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
             'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
@@ -298,6 +302,127 @@ final class LeagueController extends Controller
             'perspectives' => $perspectives,
             'selected' => $this->selectedLeagueStatsPerspectiveFromList($perspectives),
         ];
+    }
+
+    /**
+     * Compact Fantrax league-shape payload for page and AJAX consumers.
+     *
+     * @return array<string,mixed>
+     */
+    private function leagueShapePayload($league): array
+    {
+        $shape = data_get($league, 'settings.league_shape', []);
+
+        if (! is_array($shape)) {
+            return [];
+        }
+
+        return [
+            'duplicate_player_type' => $shape['duplicate_player_type'] ?? null,
+            'player_pool_scope' => $shape['player_pool_scope'] ?? 'unknown',
+            'team_count' => (int) ($shape['team_count'] ?? 0),
+            'division_count' => (int) ($shape['division_count'] ?? 0),
+            'divisions' => array_values(is_array($shape['divisions'] ?? null) ? $shape['divisions'] : []),
+            'draft_shape' => $shape['draft_shape'] ?? 'unknown',
+            'salary_source' => ($shape['custom_salary_detected'] ?? false) ? 'fantrax' : 'none',
+        ];
+    }
+
+    /**
+     * Resolve the viewer's Fantrax player-pool scope for user-facing league reads.
+     *
+     * @return array{scope:string,division:string|null}|null
+     */
+    private function viewerFantraxScope($league, $user): ?array
+    {
+        if (! $league || ! $user || (string) ($league->platform ?? '') !== 'fantrax') {
+            return null;
+        }
+
+        $shape = data_get($league, 'settings.league_shape', []);
+
+        if (! is_array($shape) || ($shape['player_pool_scope'] ?? null) !== 'division') {
+            return null;
+        }
+
+        if ($this->canManageLeague($league, $user)) {
+            return null;
+        }
+
+        $team = PlatformTeam::query()
+            ->select('platform_teams.id', 'platform_teams.extras')
+            ->join('league_user_teams', 'league_user_teams.team_id', '=', 'platform_teams.id')
+            ->where('platform_teams.platform_league_id', $league->id)
+            ->where('league_user_teams.platform_league_id', $league->id)
+            ->where('league_user_teams.user_id', $user->id)
+            ->where('league_user_teams.is_active', true)
+            ->orderBy('league_user_teams.sort_order')
+            ->first();
+
+        $division = $team instanceof PlatformTeam
+            ? $this->fantraxScopeDivisionFromTeam($team)
+            : null;
+
+        if ($division === null) {
+            return null;
+        }
+
+        return [
+            'scope' => 'division',
+            'division' => $division,
+        ];
+    }
+
+    private function fantraxScopeDivisionFromTeam(PlatformTeam $team): ?string
+    {
+        $division = trim((string) (
+            data_get($team->extras, 'fantrax.division')
+            ?? data_get($team->extras, 'fantrax.pool')
+            ?? ''
+        ));
+
+        return $division !== '' ? $division : null;
+    }
+
+    /**
+     * @param array{scope:string,division:string|null}|null $scope
+     */
+    private function teamMatchesViewerFantraxScope(PlatformTeam $team, ?array $scope): bool
+    {
+        if (($scope['scope'] ?? null) !== 'division') {
+            return true;
+        }
+
+        return strcasecmp(
+            (string) ($scope['division'] ?? ''),
+            (string) ($this->fantraxScopeDivisionFromTeam($team) ?? '')
+        ) === 0;
+    }
+
+    /**
+     * @param array{scope:string,division:string|null}|null $scope
+     */
+    private function draftPickMatchesViewerFantraxScope(DraftPick $pick, ?array $scope): bool
+    {
+        if (($scope['scope'] ?? null) !== 'division') {
+            return true;
+        }
+
+        $rawPayload = is_array($pick->raw_payload) ? $pick->raw_payload : [];
+        $division = trim((string) (
+            $rawPayload['division']
+            ?? $rawPayload['divisionName']
+            ?? $rawPayload['division_name']
+            ?? $rawPayload['pool']
+            ?? $rawPayload['poolName']
+            ?? $rawPayload['pool_name']
+            ?? data_get($pick->platformTeam?->extras, 'fantrax.division')
+            ?? data_get($pick->platformTeam?->extras, 'fantrax.pool')
+            ?? ''
+        ));
+
+        return $division !== ''
+            && strcasecmp($division, (string) ($scope['division'] ?? '')) === 0;
     }
 
     /**
@@ -343,9 +468,13 @@ final class LeagueController extends Controller
             ->where('platform_leagues.id', $leagueId)
             ->firstOrFail();
 
+        $scope = $this->viewerFantraxScope($league, $user);
+        $freeAgents = $this->freeAgentsPayload($league, $scope);
+        $searchPlayers = $this->searchPlayersPayloadForScope($league, $user, $scope, $freeAgents);
+
         return response()->json([
-            'freeAgents' => $this->freeAgentsPayload($league),
-            'searchPlayers' => $this->searchPlayersPayload(),
+            'freeAgents' => $freeAgents,
+            'searchPlayers' => $searchPlayers,
         ]);
     }
 
@@ -1185,14 +1314,15 @@ final class LeagueController extends Controller
             ->first();
         abort_if($activeLeague === null, 404);
         $leagueSettings = $this->resolvedLeagueSettings($activeLeague, $user);
+        $activeLeagueScope = $this->viewerFantraxScope($activeLeague, $user);
 
         return view('leagues', [
             'leagues' => $leagues,
             'leagueOptions' => $leagueOptions,
             'activeLeagueId' => $activeLeague->id,
             'activeLeague' => $activeLeague,
-            'teams' => $this->teamsMetaPayload($activeLeague),
-            'drafting' => $this->draftingPayload($activeLeague),
+            'teams' => $this->teamsMetaPayload($activeLeague, $activeLeagueScope),
+            'drafting' => $this->draftingPayload($activeLeague, $user, $activeLeagueScope),
             'scoringCategories' => $this->scoringCategoriesPayload($activeLeague),
             'scoringAlignmentCategories' => $this->scoringAlignmentCategoriesPayload($activeLeague),
             'manualScoringMappings' => $this->manualScoringMappingsPayload($activeLeague),
@@ -1863,12 +1993,12 @@ final class LeagueController extends Controller
     /**
      * Build the team, avatar, ownership, and roster payload for a league.
      */
-    private function teamsMetaPayload($league): array
+    private function teamsMetaPayload($league, ?array $scope = null): array
     {
         $authId = auth()->id();
 
         return $league->teams()
-            ->select('id', 'platform_team_id', 'name')
+            ->select('id', 'platform_team_id', 'name', 'extras')
             ->with([
                 'users' => static function ($q): void {
                     $q->wherePivot('is_active', true)
@@ -1881,6 +2011,7 @@ final class LeagueController extends Controller
             ])
             ->orderBy('name')
             ->get()
+            ->filter(fn (PlatformTeam $team): bool => $this->teamMatchesViewerFantraxScope($team, $scope))
             ->map(static function ($team) use ($authId): array {
                 $defaultAvatar = config('ui.default_team_avatar')
                     ?: 'https://ui-avatars.com/api/?name=' . urlencode($team->name) . '&background=E5E7EB&color=111827&size=64';
@@ -1927,7 +2058,7 @@ final class LeagueController extends Controller
     /**
      * Build the team, avatar, ownership, and roster payload for a league.
      */
-    private function teamsPayload($league, bool $includeFreeAgents = true, $user = null): array
+    private function teamsPayload($league, bool $includeFreeAgents = true, $user = null, ?array $scope = null): array
     {
         $authId = auth()->id();
         $rosterSlots = $league->rosterSlots()
@@ -1938,7 +2069,7 @@ final class LeagueController extends Controller
             ->all();
 
         $teams = $league->teams()
-            ->select('id', 'platform_team_id', 'name')
+            ->select('id', 'platform_team_id', 'name', 'extras')
             ->with([
                 'roster' => static function ($q): void {
                     $q->select(
@@ -1973,7 +2104,8 @@ final class LeagueController extends Controller
                 },
             ])
             ->orderBy('name')
-            ->get();
+            ->get()
+            ->filter(fn (PlatformTeam $team): bool => $this->teamMatchesViewerFantraxScope($team, $scope));
 
         $fantraxEligibility = $league->platform === 'fantrax'
             ? self::fantraxEligibilityByPlatformPlayerId($teams->pluck('roster')->flatten())
@@ -2124,7 +2256,7 @@ final class LeagueController extends Controller
             return $teamRows;
         }
 
-        $freeAgents = $this->freeAgentsPayload($league);
+        $freeAgents = $this->freeAgentsPayload($league, $scope);
         $allPlayers = collect($teamRows)
             ->pluck('players')
             ->flatten(1)
@@ -2165,14 +2297,16 @@ final class LeagueController extends Controller
     /**
      * Build the selected league draft panel from canonical draft state.
      */
-    private function draftingPayload($league): array
+    private function draftingPayload($league, $user = null, ?array $scope = null): array
     {
+        $scope ??= $this->viewerFantraxScope($league, $user ?? auth()->user());
         $draft = $league->drafts()
             ->with(['picks' => static fn ($query) => $query
                 ->with(['player', 'platformTeam'])
                 ->orderBy('overall_pick')
                 ->orderBy('round')
-                ->orderBy('pick_in_round')])
+                ->orderBy('pick_in_round')
+                ->orderBy('provider_pick_key')])
             ->latest('updated_at')
             ->first();
 
@@ -2185,7 +2319,7 @@ final class LeagueController extends Controller
         }
 
         return $this->withDraftCentralMeta(
-            $this->canonicalDraftingPayload($draft, (int) $league->id),
+            $this->canonicalDraftingPayload($draft, (int) $league->id, $scope),
             $league,
             $draft,
         );
@@ -2196,11 +2330,20 @@ final class LeagueController extends Controller
      *
      * @return array<string,mixed>
      */
-    private function canonicalDraftingPayload(Draft $draft, int $leagueId): array
+    private function canonicalDraftingPayload(Draft $draft, int $leagueId, ?array $scope = null): array
     {
         $picks = $draft->picks instanceof Collection
             ? $draft->picks
-            : $draft->picks()->with(['player', 'platformTeam'])->orderBy('overall_pick')->get();
+            : $draft->picks()
+                ->with(['player', 'platformTeam'])
+                ->orderBy('overall_pick')
+                ->orderBy('round')
+                ->orderBy('pick_in_round')
+                ->orderBy('provider_pick_key')
+                ->get();
+        $picks = $picks
+            ->filter(fn (DraftPick $pick): bool => $this->draftPickMatchesViewerFantraxScope($pick, $scope))
+            ->values();
         $providerPlayerIds = $picks
             ->pluck('provider_player_id')
             ->filter()
@@ -2232,6 +2375,7 @@ final class LeagueController extends Controller
                 $providerTeamId = $pick->provider_team_id ? (string) $pick->provider_team_id : '';
                 $mappedTeam = $providerTeamId !== '' ? ($teamMap[$providerTeamId] ?? []) : [];
                 $hasPlayer = $providerPlayerId !== '' || $playerId !== null;
+                $rawPayload = is_array($pick->raw_payload) ? $pick->raw_payload : [];
 
                 return [
                     'player_name' => $hasPlayer
@@ -2262,6 +2406,7 @@ final class LeagueController extends Controller
                     'pick' => $pick->pick !== null ? (int) $pick->pick : null,
                     'pick_in_round' => $pick->pick_in_round !== null ? (int) $pick->pick_in_round : null,
                     'overall_pick' => $pick->overall_pick !== null ? (int) $pick->overall_pick : null,
+                    'division' => (string) ($rawPayload['division'] ?? ''),
                     'picked_at' => $pick->picked_at?->toIso8601String(),
                     'is_next_pick' => (string) $pick->status === 'on_clock',
                 ];
@@ -2893,11 +3038,12 @@ final class LeagueController extends Controller
     private function draftPanelHtml($league, $user): string
     {
         $league = $league->fresh();
+        $scope = $this->viewerFantraxScope($league, $user);
 
         return view('leagues._draft-panel', [
             'league' => $league,
-            'teams' => $this->teamsMetaPayload($league),
-            'drafting' => $this->draftingPayload($league),
+            'teams' => $this->teamsMetaPayload($league, $scope),
+            'drafting' => $this->draftingPayload($league, $user, $scope),
             'canManageLeague' => $this->canManageLeague($league, $user),
             'playersPayloadUrl' => route('leagues.players.payload', $league->id),
             'playersFreeAgentsPayloadUrl' => route('leagues.players.free-agents.payload', $league->id),
@@ -3251,9 +3397,13 @@ final class LeagueController extends Controller
     /**
      * Build free-agent player rows for the selected platform league.
      */
-    private function freeAgentsPayload($league): array
+    private function freeAgentsPayload($league, ?array $scope = null): array
     {
-        $teamIds = $league->teams()
+        $teamIdsQuery = $league->teams()
+            ->select('id', 'extras');
+        $teamIds = $teamIdsQuery
+            ->get()
+            ->filter(fn (PlatformTeam $team): bool => $this->teamMatchesViewerFantraxScope($team, $scope))
             ->pluck('id')
             ->map(static fn ($id): int => (int) $id)
             ->all();
@@ -3315,6 +3465,33 @@ final class LeagueController extends Controller
                     'contract' => self::playerContractPayload($player),
                 ];
             })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build searchable rows for the viewer's scoped league context.
+     *
+     * @param array{scope:string,division:string|null}|null $scope
+     * @param array<int,array<string,mixed>> $freeAgents
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function searchPlayersPayloadForScope($league, $user, ?array $scope, array $freeAgents): array
+    {
+        if (($scope['scope'] ?? null) !== 'division') {
+            return $this->searchPlayersPayload();
+        }
+
+        $rosteredPlayers = collect($this->teamsPayload($league, false, $user, $scope))
+            ->pluck('players')
+            ->flatten(1)
+            ->reject(static fn (array $player): bool => (bool) ($player['league_roster_placeholder'] ?? false));
+
+        return $rosteredPlayers
+            ->concat($freeAgents)
+            ->unique(static fn (array $player): int => (int) $player['id'])
+            ->sortBy(static fn (array $player): string => (string) $player['name'])
             ->values()
             ->all();
     }

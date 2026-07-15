@@ -8,6 +8,8 @@ The Fantrax REST API provides access to data for fantasy leagues on Fantrax.
 
 The API is draft/beta documentation. Fantrax notes that the API has been built, and will continue to be built, based on user needs. A more complete document is expected in the future.
 
+Response semantics that affect DynastyIQ league setup, roster sync, draft sync, availability, community workflows, or UI behavior are documented under `docs/integrations/fantrax-responses/`. Before adding or changing Fantrax API consumption, consult `docs/integrations/fantrax-responses/source-map.md` so the code reads from the correct authoritative provider payload. When DynastyIQ consumes a Fantrax endpoint and a new meaningful response data point is discovered, the matching response semantics file and source map must be updated.
+
 ## API Usage
 
 ### General

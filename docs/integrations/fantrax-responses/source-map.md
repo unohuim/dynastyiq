@@ -1,0 +1,35 @@
+# Fantrax Data Source Map
+
+This file maps Fantrax-specific data needs to the Fantrax endpoint or response section DynastyIQ should use.
+
+Use this before wiring a Fantrax feature so the code reads from the right provider payload and does not infer authority from a convenient but weaker endpoint.
+
+| Fantrax Need | Primary Source | Secondary / Fallback Source | Do Not Use | DynastyIQ Notes |
+| --- | --- | --- | --- | --- |
+| Fantrax user-owned league discovery | `getLeagues` / `fantrax.user_leagues` | None observed. | `getLeagueInfo`, `getTeamRosters` | Requires `userSecretId`. Bootstraps `platform_leagues`, `platform_teams`, and `league_user_teams`. |
+| Fantrax league display name | `getLeagueInfo.leagueName` | `getLeagues.leagues[].leagueName` during connection bootstrap. | Team names | Provider league id remains stable identity; names are display values. |
+| Fantrax league team map | `getLeagueInfo.teamInfo` and `getLeagueInfo` top-level team map entries | `getTeamRosters.rosters` when roster payload includes team ids/names. | `getLeagues` | `getLeagues` only returns teams owned by the connected user, not the whole league. |
+| Fantrax league division / player-pool map | `getLeagueInfo.teamInfo` or top-level team map `division` plus `poolSettings.duplicatePlayerType` | `getLeagueInfo.playerInfo` division-group keys for player-pool clues. | `getLeagues` | Required for `ACROSS_DIVISIONS` leagues. Division text alone can also be scheduling/standings structure, as CLH shows with `duplicatePlayerType = NONE`. |
+| Fantrax duplicate-player behavior | `getLeagueInfo.poolSettings.duplicatePlayerType` | None observed. | Roster counts or standings | `NONE` means league-wide player universe. `ACROSS_DIVISIONS` means division-scoped player pools. Unknown values require review. |
+| Fantrax current roster membership | `getTeamRosters` / `fantrax.team_rosters` | None observed. | `getLeagueInfo.playerInfo.status`, `getLeagues` | Roster membership authority belongs to roster endpoint rows, not player-pool status. |
+| Fantrax roster item status | `getTeamRosters.rosters.*.rosterItems.*.status` | None observed. | `getLeagueInfo.playerInfo.status` | Maps roster grouping such as active, reserve, and minors. |
+| Fantrax roster slot assignment | `getTeamRosters.rosters.*.rosterItems.*.position` | Provider slot metadata from `getLeagueInfo.rosterInfo` for constraints/order. | Player base position alone | Slot assignment is lineup/roster placement, not necessarily full eligibility. |
+| Fantrax league-specific player eligibility | `getLeagueInfo.playerInfo.*.eligiblePos` | `getTeamRosters` roster item position when playerInfo is missing. | Global Fantrax player import, NHL position only | Eligibility is league-specific and may include synthetic slots like `Skt`. |
+| Fantrax player-pool availability | `getLeagueInfo.playerInfo.*.status` scoped by `poolSettings.duplicatePlayerType` | Derived current roster membership only when playerInfo is missing. | Global Fantrax player import | `FA`/`T` are availability signals, not active/bench/minors roster status. In `ACROSS_DIVISIONS`, scope by pool. |
+| Fantrax roster constraints | `getLeagueInfo.rosterInfo.positionConstraints` | None observed. | Current roster membership counts | Defines league slot limits and display/validation hints. |
+| Fantrax roster period calendar | `getLeagueInfo.rosterPeriods` | None observed. | `scoringPeriods` | Roster periods are daily lineup periods and must not be merged with scoring periods. |
+| Fantrax scoring period calendar | `getLeagueInfo.scoringPeriods` | `matchups[].period` for period numbers only. | `rosterPeriods` | Scoring periods are matchup periods and may differ from roster periods. |
+| Fantrax matchup schedule | `getLeagueInfo.matchups` | `getStandings` only for current standings context, not matchups. | Roster endpoint | Matchups can include TBD sides. |
+| Fantrax scoring setup | `getLeagueInfo.scoringCategorySettings[].configs[]` | `getLeagueInfo.scoringSystem.scoringCategories` | NHL stats, provider-earned stat rows | Rich configs are preferred because they expose provider ids, names, groups, positions, and points. |
+| Fantrax shorthand scoring category reconciliation | `getLeagueInfo.scoringSystem.scoringCategories` | `scoringCategorySettings` for authoritative rich rows. | Manual labels alone | Use to reconcile shorthand labels and position-specific values. Do not prefer it over rich configs. |
+| Fantrax scoring system type | `getLeagueInfo.scoringSystem.type` | None observed. | Category count or UI labels | Points/category behavior must come from provider scoring type, not guessed from stat names. |
+| Fantrax provider-earned player fantasy totals | Verified future Fantrax player stats endpoint when configured. | None currently verified. | DynastyIQ NHL source-of-truth season stats | Do not infer Fantrax earned fantasy totals from NHL stats when provider-earned rows are needed. |
+| Fantrax future draft assets | `getDraftPicks.futureDraftPicks` / `fantrax.draft_picks` | None observed. | `getDraftResults`, roster endpoint | Future draft assets preserve current owner and original owner; they are not roster memberships and not made-pick results. |
+| Fantrax current draft order / queue | `getDraftPicks.currentDraftPicks` / `fantrax.draft_picks` | `getDraftResults` only after correlating made picks. | Future asset rows, roster endpoint | Current draft rows expose round, pick, and team id; use as draft-order/status context, not player-selection truth. |
+| Fantrax draft results / made picks | `getDraftResults` / `fantrax.draft_results` | Persisted Fantrax draft mirror payload when present. | `getDraftPicks` | Authoritative source for completed drafted-player rows. |
+| Fantrax draft setup context | `getLeagueInfo.draftType` and `getLeagueInfo.draftSettings` | Draft endpoints when they expose richer settings. | `getLeagues` | Setup context only; not live draft state by itself. |
+| Fantrax standings | `getStandings` / `fantrax.standings` | None observed. | `getLeagueInfo.matchups`, roster endpoint | Standings are display/competition context, not roster truth or user ownership. |
+| Fantrax team logos | Authenticated browser payloads or explicitly discovered logo-like fields from inspected endpoints. | Existing persisted logo URL when provider refresh omits logo fields. | `getLeagues` | `getLeagues` sample does not expose logo URLs. Do not derive logo URL from team id. |
+| Fantrax league logos | Authenticated browser payloads or explicitly discovered logo-like fields from inspected endpoints. | Existing persisted logo URL when provider refresh omits logo fields. | `getLeagues` | `getLeagues` sample does not expose logo URLs. |
+| Fantrax player broad identity pool | `getPlayerIds` / `fantrax.players` | `getAdp` when supplementing names/metadata after verification. | Roster endpoint alone | Player ids are provider identities, not league-specific roster or availability truth. |
+| Fantrax player market / ADP context | `getAdp` / `fantrax.adp` | None observed. | Roster endpoint | ADP is draft-market context, not roster membership truth. |

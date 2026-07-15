@@ -28,6 +28,9 @@ rules:
   - Notification settings that are draft-specific should be attached to the draft rather than hidden inside league metadata.
   - Draft pick notifications must use draft_picks as the idempotency and payload source; provider-specific draft pick tables are raw/audit inputs only.
   - Fantrax draft cache tables must not drive Draft Central UI, polling eligibility, current-pick selection, queue removal, or Discord notifications.
+  - Division-scoped provider drafts may store null draft_picks.overall_pick values because provider pick numbers can repeat by division and the canonical uniqueness guard is league-wide within a draft.
+  - Provider draft order shape must be retained in drafts.settings so Draft Central can distinguish flat provider drafts from division-scoped provider drafts.
+  - User-facing Draft Central reads for division-scoped provider drafts must default to the viewer's own Fantrax division or pool, while commissioner/admin reads may retain all-division visibility.
 public_interface:
   - Draft
   - DraftPick

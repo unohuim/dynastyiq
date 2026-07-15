@@ -194,10 +194,37 @@ class CommunityLeagues extends Controller
                 'l_id' => $league->id,
             ]),
         ];
+        $payload['league_shape'] = $platformLeague instanceof PlatformLeague
+            ? $this->leagueShapePayload($platformLeague)
+            : [];
 
         return view('communities.leagues.show', [
             'vm' => $payload,
         ]);
+    }
+
+    /**
+     * Compact Fantrax league-shape payload for community page consumers.
+     *
+     * @return array<string,mixed>
+     */
+    private function leagueShapePayload(PlatformLeague $league): array
+    {
+        $shape = data_get($league, 'settings.league_shape', []);
+
+        if (! is_array($shape)) {
+            return [];
+        }
+
+        return [
+            'duplicate_player_type' => $shape['duplicate_player_type'] ?? null,
+            'player_pool_scope' => $shape['player_pool_scope'] ?? 'unknown',
+            'team_count' => (int) ($shape['team_count'] ?? 0),
+            'division_count' => (int) ($shape['division_count'] ?? 0),
+            'divisions' => array_values(is_array($shape['divisions'] ?? null) ? $shape['divisions'] : []),
+            'draft_shape' => $shape['draft_shape'] ?? 'unknown',
+            'salary_source' => ($shape['custom_salary_detected'] ?? false) ? 'fantrax' : 'none',
+        ];
     }
 
     /**

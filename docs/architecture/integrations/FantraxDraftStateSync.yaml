@@ -42,6 +42,9 @@ rules:
   - Discord draft announcement text may be sent after the generated image attachment so Discord renders the text below the card.
   - Discord draft announcements may attach a temporary generated player-card image when runtime image support is available; temporary files must be deleted after the send attempt.
   - Draft pick toast broadcasts should target organization members through their private user channels.
+  - Fantrax draft sync must preserve provider draftOrder exactly in drafts.settings because it may be either a flat team-id array or a division-keyed object.
+  - Fantrax draft rows with a provider division must include the division in provider_pick_key and must not treat repeated provider pick numbers as globally unique overall picks.
+  - Fantrax draft rows without a provider player id are pending slots, not made selections, and must not emit DraftPickMade events.
 public_interface:
   - SyncFantraxDraftState::sync
   - SyncFantraxDraftState::syncIfAvailable

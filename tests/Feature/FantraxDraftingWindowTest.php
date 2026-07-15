@@ -25,6 +25,7 @@ use App\Models\User;
 use App\Services\DraftPickCardRenderer;
 use App\Services\FantraxDraftingWindow;
 use App\Services\SyncFantraxDraftState;
+use App\Services\SyncFantraxLeague;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -455,6 +456,272 @@ it('detects a new fantrax draft selection when a canonical unmade pick receives 
     Event::assertDispatched(DraftPickMade::class);
 });
 
+it('persists fantrax league shape without treating normal divisions as duplicate player pools', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+
+    $player = Player::create([
+        'first_name' => 'League',
+        'last_name' => 'Skater',
+        'full_name' => 'League Skater',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'status' => 'active',
+    ]);
+    $platformLeague = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'clh-shape-league',
+        'name' => 'CLH Shape League',
+        'sport' => 'hockey',
+    ]);
+    PlayerExternalIdentity::create([
+        'player_id' => $player->id,
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fx-skater',
+        'provider_slug' => 'fx-skater',
+        'display_name' => 'League Skater',
+        'normalized_name' => 'league skater',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'match_confidence' => 100,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo?leagueId=clh-shape-league' => Http::response([
+            'poolSettings' => ['duplicatePlayerType' => 'NONE'],
+            'teamInfo' => [
+                ['id' => 'team-1', 'name' => 'Division One Team', 'division' => 'Division 1'],
+                ['id' => 'team-2', 'name' => 'Division Two Team', 'division' => 'Division 2'],
+            ],
+            'playerInfo' => [
+                'fx-skater' => ['eligiblePos' => 'C,F', 'status' => 'T'],
+            ],
+            'rosterInfo' => [
+                'positionConstraints' => [
+                    'C' => ['maxActive' => 4],
+                    'G' => ['maxActive' => 2],
+                    'Skt' => ['maxActive' => 1],
+                ],
+            ],
+            'rosterPeriods' => [['period' => 1], ['period' => 2]],
+            'scoringPeriods' => [['period' => 1]],
+            'scoringSystem' => ['type' => 'rotisserie'],
+        ], 200),
+        'https://fantrax.test/fxea/general/getTeamRosters?leagueId=clh-shape-league' => Http::response([
+            'rosters' => [
+                'team-1' => [
+                    'teamName' => 'Division One Team',
+                    'rosterItems' => [
+                        ['id' => 'fx-skater', 'position' => 'C', 'status' => 'ACTIVE'],
+                    ],
+                ],
+            ],
+        ], 200),
+    ]);
+
+    app(SyncFantraxLeague::class)->sync($platformLeague->id);
+    $platformLeague->refresh();
+
+    expect(data_get($platformLeague->settings, 'league_shape.player_pool_scope'))->toBe('league')
+        ->and(data_get($platformLeague->settings, 'league_shape.duplicate_player_type'))->toBe('NONE')
+        ->and(data_get($platformLeague->settings, 'league_shape.division_count'))->toBe(2)
+        ->and(data_get($platformLeague->settings, 'league_shape.scoring_type'))->toBe('rotisserie');
+
+    $teamExtras = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail()
+        ->extras;
+
+    expect(data_get($teamExtras, 'fantrax.division'))->toBe('Division 1');
+
+    $this->assertDatabaseHas('platform_league_roster_slots', [
+        'platform_league_id' => $platformLeague->id,
+        'slot' => 'C',
+        'slot_type' => 'starter',
+        'position_type' => 'skater',
+        'count' => 4,
+        'sort_order' => 1,
+    ]);
+    $this->assertDatabaseHas('platform_roster_memberships', [
+        'player_id' => $player->id,
+        'platform_player_id' => 'fx-skater',
+        'slot' => 'C',
+        'status' => 'active',
+    ]);
+});
+
+it('uses division grouped fantrax player info for roster eligibility in duplicate player leagues', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+
+    $player = Player::create([
+        'first_name' => 'Division',
+        'last_name' => 'Defender',
+        'full_name' => 'Division Defender',
+        'position' => 'D',
+        'pos_type' => 'D',
+        'status' => 'active',
+    ]);
+    $platformLeague = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'fhl-shape-league',
+        'name' => 'FHL Shape League',
+        'sport' => 'hockey',
+    ]);
+    PlayerExternalIdentity::create([
+        'player_id' => $player->id,
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fx-defender',
+        'provider_slug' => 'fx-defender',
+        'display_name' => 'Division Defender',
+        'normalized_name' => 'division defender',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'match_confidence' => 100,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo?leagueId=fhl-shape-league' => Http::response([
+            'poolSettings' => ['duplicatePlayerType' => 'ACROSS_DIVISIONS'],
+            'teamInfo' => [
+                ['id' => 'team-1', 'name' => 'Gretzky Team', 'division' => 'Gretzky'],
+            ],
+            'playerInfo' => [
+                'Gretzky' => [
+                    'fx-defender' => ['eligiblePos' => 'D,Skt', 'status' => 'FA'],
+                ],
+            ],
+            'rosterInfo' => [
+                'positionConstraints' => [
+                    'D' => ['maxActive' => 6],
+                ],
+            ],
+            'scoringSystem' => ['type' => 'points'],
+        ], 200),
+        'https://fantrax.test/fxea/general/getTeamRosters?leagueId=fhl-shape-league' => Http::response([
+            'rosters' => [
+                'team-1' => [
+                    'teamName' => 'Gretzky Team',
+                    'rosterItems' => [
+                        ['id' => 'fx-defender', 'position' => 'D', 'status' => 'ACTIVE', 'salary' => 850, 'contract' => ['smallId' => 'P4']],
+                    ],
+                ],
+            ],
+        ], 200),
+    ]);
+
+    app(SyncFantraxLeague::class)->sync($platformLeague->id);
+    $platformLeague->refresh();
+
+    expect(data_get($platformLeague->settings, 'league_shape.player_pool_scope'))->toBe('division')
+        ->and(data_get($platformLeague->settings, 'league_shape.draft_shape'))->toBe('division_scoped')
+        ->and(data_get($platformLeague->settings, 'league_shape.custom_salary_detected'))->toBeTrue()
+        ->and(data_get($platformLeague->settings, 'league_shape.contract_codes_detected'))->toBe(['P4']);
+
+    $membership = DB::table('platform_roster_memberships')
+        ->where('player_id', $player->id)
+        ->where('platform_player_id', 'fx-defender')
+        ->first();
+
+    expect($membership)->not->toBeNull()
+        ->and(json_decode((string) $membership->eligibility, true))->toBe(['D', 'SKT']);
+});
+
+it('preserves division scoped fantrax draft slots without dispatching pick events for pending rows', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'division-draft-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'division-draft-league')->firstOrFail();
+    $service = app(SyncFantraxDraftState::class);
+
+    Event::fake([DraftPickMade::class]);
+
+    $result = $service->syncPayloads(
+        $platformLeague,
+        [
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftOrder' => [
+                'Gretzky' => ['team-1', 'team-2'],
+                'Orr' => ['team-3', 'team-4'],
+            ],
+            'draftPicks' => [
+                ['division' => 'Gretzky', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+                ['division' => 'Orr', 'teamId' => 'team-3', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'team-1']]],
+        CarbonImmutable::parse('2026-09-21 20:00:00')
+    );
+
+    $draft = Draft::query()->where('platform_league_id', $platformLeague->id)->firstOrFail();
+
+    expect($result['new_picks'])->toBe([])
+        ->and($draft->settings['draft_shape'] ?? null)->toBe('division_scoped')
+        ->and($draft->settings['provider_draft_order']['Gretzky'] ?? null)->toBe(['team-1', 'team-2'])
+        ->and(DraftPick::query()->where('provider_pick_key', 'division:gretzky:round:1:pick-in-round:1')->exists())->toBeTrue()
+        ->and(DraftPick::query()->where('provider_pick_key', 'division:orr:round:1:pick-in-round:1')->exists())->toBeTrue()
+        ->and(DraftPick::query()->whereNotNull('overall_pick')->exists())->toBeFalse()
+        ->and(DraftPick::query()->whereNotNull('picked_at')->exists())->toBeFalse();
+
+    Event::assertNotDispatched(DraftPickMade::class);
+});
+
+it('dispatches a pick event when a division scoped pending fantrax slot receives a player id', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'division-delta-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'division-delta-league')->firstOrFail();
+    $service = app(SyncFantraxDraftState::class);
+
+    Event::fake([DraftPickMade::class]);
+
+    $service->syncPayloads(
+        $platformLeague,
+        [
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => [
+                ['division' => 'Gretzky', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'team-1']]],
+        CarbonImmutable::parse('2026-09-21 20:00:00')
+    );
+
+    Event::assertNotDispatched(DraftPickMade::class);
+
+    $result = $service->syncPayloads(
+        $platformLeague,
+        [
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => [
+                [
+                    'division' => 'Gretzky',
+                    'teamId' => 'team-1',
+                    'playerId' => 'division-player-1',
+                    'round' => 1,
+                    'pick' => 1,
+                    'pickInRound' => 1,
+                    'time' => 1782662499000,
+                ],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'team-2']]],
+        CarbonImmutable::parse('2026-09-21 20:01:00')
+    );
+
+    $pick = DraftPick::query()
+        ->where('provider_pick_key', 'division:gretzky:round:1:pick-in-round:1')
+        ->firstOrFail();
+
+    expect($result['new_picks'])->toHaveCount(1)
+        ->and($pick->provider_player_id)->toBe('division-player-1')
+        ->and($pick->status)->toBe('picked')
+        ->and($pick->picked_at?->toIso8601String())->toBe('2026-06-28T16:01:39+00:00');
+
+    Event::assertDispatched(DraftPickMade::class);
+});
+
 it('removes drafted players from draft queues when fantrax sync resolves a picked player', function (): void {
     [$user] = ($this->createCommunityLeague)([
         'platform_league_id' => 'draft-queue-prune-league',
@@ -590,6 +857,161 @@ it('loads league draft panel from persisted draft payloads when available', func
         ->assertSee('Persisted Team');
 
     Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
+});
+
+it('scopes division scoped draft central rows to the viewer division', function (): void {
+    [$user] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'division-visible-draft-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'division-visible-draft-league')->firstOrFail();
+    $platformLeague->forceFill([
+        'settings' => [
+            'league_shape' => [
+                'player_pool_scope' => 'division',
+                'draft_shape' => 'division_scoped',
+            ],
+        ],
+    ])->save();
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:division-visible-draft-league:current',
+        'status' => 'live',
+        'settings' => ['provider' => 'fantrax', 'draft_shape' => 'division_scoped'],
+    ]);
+    $gretzkyTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $gretzkyTeam->forceFill([
+        'name' => 'Gretzky Team',
+        'extras' => ['fantrax' => ['division' => 'Gretzky']],
+    ])->save();
+    $orrTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Orr Team',
+        'extras' => ['fantrax' => ['division' => 'Orr']],
+    ]);
+    $gretzkyPlayer = Player::create([
+        'first_name' => 'Gretzky',
+        'last_name' => 'Pick',
+        'full_name' => 'Gretzky Pick',
+        'position' => 'C',
+    ]);
+    $orrPlayer = Player::create([
+        'first_name' => 'Orr',
+        'last_name' => 'Pick',
+        'full_name' => 'Orr Pick',
+        'position' => 'D',
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'division:gretzky:round:1:pick-in-round:1',
+        'overall_pick' => null,
+        'platform_team_id' => $gretzkyTeam->id,
+        'provider_team_id' => 'team-1',
+        'player_id' => $gretzkyPlayer->id,
+        'provider_player_id' => 'gretzky-player',
+        'raw_payload' => ['division' => 'Gretzky'],
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'division:orr:round:1:pick-in-round:1',
+        'overall_pick' => null,
+        'platform_team_id' => $orrTeam->id,
+        'provider_team_id' => 'team-2',
+        'player_id' => $orrPlayer->id,
+        'provider_player_id' => 'orr-player',
+        'raw_payload' => ['division' => 'Orr'],
+    ]);
+    Bus::fake();
+
+    $this->actingAs($user)
+        ->get("/leagues/{$platformLeague->id}")
+        ->assertOk()
+        ->assertSee('Gretzky Pick')
+        ->assertDontSee('Orr Pick')
+        ->assertDontSee('Orr Team');
+
+    Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
+});
+
+it('scopes division scoped league teams and roster players to the viewer division', function (): void {
+    [$user] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'division-visible-players-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'division-visible-players-league')->firstOrFail();
+    $platformLeague->forceFill([
+        'settings' => [
+            'league_shape' => [
+                'player_pool_scope' => 'division',
+                'draft_shape' => 'division_scoped',
+            ],
+        ],
+    ])->save();
+    $gretzkyTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $gretzkyTeam->forceFill([
+        'name' => 'Gretzky Team',
+        'extras' => ['fantrax' => ['division' => 'Gretzky']],
+    ])->save();
+    $orrTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Orr Team',
+        'extras' => ['fantrax' => ['division' => 'Orr']],
+    ]);
+    $gretzkyPlayer = Player::create([
+        'first_name' => 'Gretzky',
+        'last_name' => 'Roster',
+        'full_name' => 'Gretzky Roster',
+        'position' => 'C',
+        'pos_type' => 'F',
+    ]);
+    $orrPlayer = Player::create([
+        'first_name' => 'Orr',
+        'last_name' => 'Roster',
+        'full_name' => 'Orr Roster',
+        'position' => 'D',
+        'pos_type' => 'D',
+    ]);
+    DB::table('platform_roster_memberships')->insert([
+        [
+            'platform_team_id' => $gretzkyTeam->id,
+            'player_id' => $gretzkyPlayer->id,
+            'platform' => 'fantrax',
+            'platform_player_id' => 'gretzky-roster',
+            'slot' => 'C',
+            'status' => 'active',
+            'eligibility' => json_encode(['C']),
+            'starts_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'platform_team_id' => $orrTeam->id,
+            'player_id' => $orrPlayer->id,
+            'platform' => 'fantrax',
+            'platform_player_id' => 'orr-roster',
+            'slot' => 'D',
+            'status' => 'active',
+            'eligibility' => json_encode(['D']),
+            'starts_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $response = $this->actingAs($user)
+        ->getJson(route('leagues.players.payload', $platformLeague->id))
+        ->assertOk();
+
+    $teams = collect($response->json('teams'));
+    $players = $teams->pluck('players')->flatten(1);
+
+    expect($teams->pluck('name')->all())->toContain('Gretzky Team')
+        ->and($teams->pluck('name')->all())->not->toContain('Orr Team')
+        ->and($players->pluck('name')->all())->toContain('Gretzky Roster')
+        ->and($players->pluck('name')->all())->not->toContain('Orr Roster');
 });
 
 it('shows draft creation empty state when no canonical draft exists', function (): void {

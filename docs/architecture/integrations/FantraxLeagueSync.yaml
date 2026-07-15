@@ -74,6 +74,12 @@ rules:
   - Linking a Fantrax provider identity to a canonical player must update the staged Fantrax player row and queue roster syncs instead of directly guessing roster memberships.
   - User-triggered league sync jobs may broadcast LeagueSyncStatusUpdated events to the requesting user's private channel for transient Leagues UI feedback.
   - Fantrax enum-like values must remain documented in docs/ENUMS.md.
+  - Fantrax league sync must persist provider league shape metadata under platform_leagues.settings.league_shape when getLeagueInfo exposes player-pool, team, period, salary, contract, or draft-shape clues.
+  - Fantrax league shape must derive player_pool_scope from poolSettings.duplicatePlayerType; unknown duplicate-player values must remain diagnostic and must not be treated as division-scoped availability.
+  - Fantrax team division or pool labels must be preserved on platform_teams.extras when getLeagueInfo exposes them through top-level team entries or teamInfo entries.
+  - Fantrax playerInfo parsing must support both flat player maps and division-grouped maps, and division-grouped availability must retain pool context when duplicate players are scoped across divisions.
+  - Fantrax roster slot settings must be upserted to platform_league_roster_slots from getLeagueInfo.rosterInfo.positionConstraints during league sync.
+  - User-facing league reads in division-scoped Fantrax leagues must default to the viewer's own Fantrax division or pool, while commissioner/admin reads may retain all-division visibility.
 public_interface:
   - leagues.resync
   - leagues.team-logos.sync

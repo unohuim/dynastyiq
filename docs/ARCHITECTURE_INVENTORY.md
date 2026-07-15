@@ -228,6 +228,8 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 
 **Purpose:**
 Fetch Fantrax draft payloads and mirror them into canonical Draft Central tables.
+Division-scoped draft rows include provider division context in their provider pick key, and pending rows without a provider player id do not emit pick-made events.
+User-facing division-scoped Draft Central reads default normal users to their own Fantrax division or pool while commissioner/admin reads may retain all-division visibility.
 
 **When to Use:**
 Polling Fantrax draft payloads, comparing latest provider draft rows against canonical draft picks, and emitting events when a previously unmade canonical pick receives a Fantrax player id.
@@ -1458,6 +1460,9 @@ Fantrax public API does not currently expose individual fantasy stat totals, so 
 Fantrax player stat sync is non-blocking, and league stats views may display provider scoring categories that DynastyIQ cannot locally derive only when provider-earned stat rows supply those values.
 Provider scoring category sync normalizes shorthand group names, upserts current rows, and deletes stale rows no longer present in the provider payload.
 Scheduled league refresh uses the same league sync path as the user-triggered top-level Leagues refresh action and runs on a four-hour cadence.
+Fantrax league shape metadata is persisted under platform league settings, including duplicate-player behavior, player-pool scope, team division labels, period counts, draft shape, and salary/contract detection.
+Team division or pool labels are preserved on platform team extras when Fantrax exposes them through either `teamInfo` or top-level team map entries.
+Division-scoped Fantrax league reads default normal users to their own Fantrax division or pool while commissioner/admin reads may retain all-division visibility.
 
 **When to Use:**
 Syncing Fantrax leagues, updating rosters, resolving Fantrax player identity, or rendering league availability.
@@ -1572,6 +1577,7 @@ $drafting = app(FantraxDraftingWindow::class)->normalize($leagueInfo, $draftResu
 
 **Purpose:**
 Store platform-neutral draft configuration, pick order, pick selections, and notification settings for Draft Central.
+Provider draft order shape is retained in draft settings, and division-scoped mirrored drafts may leave overall pick empty because provider pick numbers can repeat by division.
 
 **When to Use:**
 Building Draft Central UI/API payloads, mirroring provider draft data, or running DynastyIQ-managed drafts.
@@ -1669,6 +1675,7 @@ $state = app(PlatformState::class);
 
 **Purpose:**
 Store provider-neutral roster slot order and counts for platform leagues so roster displays can follow league settings.
+Fantrax league sync upserts these rows from `getLeagueInfo.rosterInfo.positionConstraints` and stores the raw provider constraint payload on each slot row.
 
 **When to Use:**
 Importing league roster position settings from external fantasy providers or sorting platform roster memberships for display.
