@@ -37,7 +37,7 @@
     $draftRounds = collect($draftRounds ?? []);
 @endphp
 
-<div class="min-h-0">
+<div class="h-full min-h-0">
     @if (! empty($drafting['error_text']))
         <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             {{ $drafting['error_text'] }}
@@ -100,7 +100,7 @@
                 </div>
             </div>
 
-            <div class="overflow-hidden" :style="`height: ${Math.max(220, draftPanelHeight - 88)}px`">
+            <div class="min-h-0 flex-1 overflow-hidden">
                 @foreach ($draftRounds as $roundIndex => $round)
                     <ol
                         x-cloak

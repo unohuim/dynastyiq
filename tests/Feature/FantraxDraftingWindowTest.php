@@ -1880,6 +1880,68 @@ it('renders the desktop drafting window on the community league show page', func
         ->assertSee('https://example.test/discord-avatar.png');
 });
 
+it('prefers the canonical fantrax mirror draft over a newer manual draft in draft central', function (): void {
+    [$user, $organization, $league] = ($this->createCommunityLeague)([
+        'organization_slug' => 'fantrax-mirror-priority-community',
+    ]);
+    $platformLeague = $league->primaryPlatformLeague();
+    $platformTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague?->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $mirrorDraft = ($this->createDraft)($platformLeague, [
+        'source_type' => 'platform_mirror',
+        'status' => 'live',
+        'updated_at' => now()->subMinute(),
+    ]);
+    ($this->createDraftPick)($mirrorDraft, [
+        'provider_pick_key' => 'overall:1',
+        'overall_pick' => 1,
+        'round' => 1,
+        'pick' => 1,
+        'pick_in_round' => 1,
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => $platformTeam->platform_team_id,
+        'provider_player_id' => 'mirror-player-1',
+        'status' => 'picked',
+    ]);
+    ($this->createDraftPick)($mirrorDraft, [
+        'provider_pick_key' => 'overall:2',
+        'overall_pick' => 2,
+        'round' => 2,
+        'pick' => 2,
+        'pick_in_round' => 1,
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => $platformTeam->platform_team_id,
+        'provider_player_id' => 'mirror-player-2',
+        'status' => 'picked',
+    ]);
+    $manualDraft = ($this->createDraft)($platformLeague, [
+        'source_type' => 'hybrid',
+        'external_draft_id' => 'dynastyiq:test-manual-draft',
+        'name' => 'Manual Draft',
+        'status' => 'scheduled',
+        'updated_at' => now(),
+    ]);
+    ($this->createDraftPick)($manualDraft, [
+        'provider_pick_key' => 'manual:round:1:pick:1',
+        'overall_pick' => 1,
+        'round' => 1,
+        'pick' => 1,
+        'pick_in_round' => 1,
+        'platform_team_id' => $platformTeam->id,
+        'provider_team_id' => $platformTeam->platform_team_id,
+        'status' => 'pending',
+    ]);
+
+    $this->actingAs($user)
+        ->get("/communities/{$organization->id}/leagues/{$league->id}")
+        ->assertOk()
+        ->assertSee('Round 1')
+        ->assertSee('Round 2')
+        ->assertDontSee('Manual Draft');
+});
+
 it('renders the latest-season league where the drafted player played the most games', function (): void {
     [$user, $organization, $league] = ($this->createCommunityLeague)([
         'organization_slug' => 'most-games-community',

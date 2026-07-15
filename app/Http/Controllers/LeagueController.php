@@ -2258,13 +2258,17 @@ final class LeagueController extends Controller
     private function draftingPayload($league, $user = null, ?array $scope = null): array
     {
         $scope ??= $this->viewerFantraxScope($league, $user ?? auth()->user());
-        $draft = $league->drafts()
+        $draftQuery = $league->drafts()
             ->with(['picks' => static fn ($query) => $query
                 ->with(['player', 'platformTeam'])
                 ->orderBy('overall_pick')
                 ->orderBy('round')
                 ->orderBy('pick_in_round')
-                ->orderBy('provider_pick_key')])
+                ->orderBy('provider_pick_key')]);
+        $draft = (string) ($league->platform ?? '') === 'fantrax'
+            ? (clone $draftQuery)->where('source_type', 'platform_mirror')->latest('updated_at')->first()
+            : null;
+        $draft ??= $draftQuery
             ->latest('updated_at')
             ->first();
 
