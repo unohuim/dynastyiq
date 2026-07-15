@@ -19,6 +19,7 @@ use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
+use App\Support\FantraxViewerScope;
 use App\Services\ConnectFantraxUser;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantasyLeagueAccess;
@@ -335,55 +336,12 @@ final class LeagueController extends Controller
      */
     private function viewerFantraxScope($league, $user): ?array
     {
-        if (! $league || ! $user || (string) ($league->platform ?? '') !== 'fantrax') {
-            return null;
-        }
-
-        $shape = data_get($league, 'settings.league_shape', []);
-
-        if (! is_array($shape) || ($shape['player_pool_scope'] ?? null) !== 'division') {
-            return null;
-        }
-
-        if ($this->canManageLeague($league, $user)) {
-            return null;
-        }
-
-        $teamId = DB::table('league_user_teams')
-            ->where('platform_league_id', $league->id)
-            ->where('user_id', $user->id)
-            ->where('is_active', true)
-            ->orderBy('sort_order')
-            ->value('team_id');
-        $team = $teamId
-            ? PlatformTeam::query()
-                ->where('platform_league_id', $league->id)
-                ->find($teamId)
-            : null;
-
-        $division = $team instanceof PlatformTeam
-            ? $this->fantraxScopeDivisionFromTeam($team)
-            : null;
-
-        if ($division === null) {
-            return null;
-        }
-
-        return [
-            'scope' => 'division',
-            'division' => $division,
-        ];
+        return app(FantraxViewerScope::class)->resolve($league, $user);
     }
 
     private function fantraxScopeDivisionFromTeam(PlatformTeam $team): ?string
     {
-        $division = trim((string) (
-            data_get($team->extras, 'fantrax.division')
-            ?? data_get($team->extras, 'fantrax.pool')
-            ?? ''
-        ));
-
-        return $division !== '' ? $division : null;
+        return app(FantraxViewerScope::class)->divisionFromTeam($team);
     }
 
     /**
@@ -391,14 +349,7 @@ final class LeagueController extends Controller
      */
     private function teamMatchesViewerFantraxScope(PlatformTeam $team, ?array $scope): bool
     {
-        if (($scope['scope'] ?? null) !== 'division') {
-            return true;
-        }
-
-        return strcasecmp(
-            (string) ($scope['division'] ?? ''),
-            (string) ($this->fantraxScopeDivisionFromTeam($team) ?? '')
-        ) === 0;
+        return app(FantraxViewerScope::class)->teamMatches($team, $scope);
     }
 
     /**
@@ -2203,6 +2154,7 @@ final class LeagueController extends Controller
                     });
                 $slotCounts = $players
                     ->where('roster_group', 'active')
+                    ->where('roster_status', 'active')
                     ->countBy('roster_slot');
                 $placeholders = $rosterSlots
                     ->map(static function ($slotSetting) use ($slotCounts): array {
@@ -2366,7 +2318,7 @@ final class LeagueController extends Controller
             ->all();
         $providerPlayerMap = $this->fantraxDraftPlayerMap($providerPlayerIds);
         $canonicalPlayerMap = $this->canonicalDraftPlayerMap($canonicalPlayerIds);
-        $teamMap = $this->fantraxDraftTeamMap($leagueId);
+        $teamMap = $this->fantraxDraftTeamMap($leagueId, $scope);
 
         $rows = $picks
             ->map(function (DraftPick $pick) use ($providerPlayerMap, $canonicalPlayerMap, $teamMap): array {
@@ -2412,6 +2364,7 @@ final class LeagueController extends Controller
                     'pick' => $pick->pick !== null ? (int) $pick->pick : null,
                     'pick_in_round' => $pick->pick_in_round !== null ? (int) $pick->pick_in_round : null,
                     'overall_pick' => $pick->overall_pick !== null ? (int) $pick->overall_pick : null,
+                    'provider_pick_key' => (string) $pick->provider_pick_key,
                     'division' => (string) ($rawPayload['division'] ?? ''),
                     'picked_at' => $pick->picked_at?->toIso8601String(),
                     'is_next_pick' => (string) $pick->status === 'on_clock',
@@ -2905,6 +2858,7 @@ final class LeagueController extends Controller
         $matched = false;
         $payload['current_pick'] = [
             'id' => (int) $currentPick->id,
+            'provider_pick_key' => (string) $currentPick->provider_pick_key,
             'overall_pick' => $currentPick->overall_pick !== null ? (int) $currentPick->overall_pick : null,
             'round' => $currentPick->round !== null ? (int) $currentPick->round : null,
             'pick_in_round' => $currentPick->pick_in_round !== null ? (int) $currentPick->pick_in_round : null,
@@ -2946,6 +2900,10 @@ final class LeagueController extends Controller
      */
     private function draftPayloadRowMatchesPick(array $row, DraftPick $pick): bool
     {
+        if (trim((string) ($row['provider_pick_key'] ?? '')) !== '') {
+            return (string) $row['provider_pick_key'] === (string) $pick->provider_pick_key;
+        }
+
         if ($pick->overall_pick !== null && (int) ($row['overall_pick'] ?? 0) === (int) $pick->overall_pick) {
             return true;
         }
@@ -3362,7 +3320,7 @@ final class LeagueController extends Controller
      *
      * @return array<string,array{owner_avatar_url:string|null}>
      */
-    private function fantraxDraftTeamMap(?int $platformLeagueId): array
+    private function fantraxDraftTeamMap(?int $platformLeagueId, ?array $scope = null): array
     {
         if (! $platformLeagueId) {
             return [];
@@ -3378,7 +3336,8 @@ final class LeagueController extends Controller
                             ->where('provider', 'discord');
                     }]);
             }])
-            ->get(['id', 'platform_team_id', 'name'])
+            ->get(['id', 'platform_team_id', 'name', 'extras'])
+            ->filter(fn (PlatformTeam $team): bool => $this->teamMatchesViewerFantraxScope($team, $scope))
             ->mapWithKeys(static function (PlatformTeam $team): array {
                 $avatar = null;
 

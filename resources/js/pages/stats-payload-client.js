@@ -46,8 +46,9 @@ export const normalizeStatsPayload = (payload = {}) => {
 };
 
 export class StatsPayloadClient {
-  constructor({ apiUrl, fetcher = (window.fetch ? window.fetch.bind(window) : null) } = {}) {
+  constructor({ apiUrl, resource = 'players', fetcher = (window.fetch ? window.fetch.bind(window) : null) } = {}) {
     this.apiUrl = apiUrl;
+    this.resource = resource || 'players';
     this.fetcher = fetcher;
     this.requestSeq = 0;
     this.payloadCache = new Map();
@@ -58,7 +59,7 @@ export class StatsPayloadClient {
     const period = supportsDateRange ? state.period : 'season';
 
     params.set('perspective', state.perspective);
-    params.set('resource', 'players');
+    params.set('resource', this.resource);
     params.set('period', period);
     params.set('slice', canSlice ? state.slice : 'total');
 

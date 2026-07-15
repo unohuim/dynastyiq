@@ -7,6 +7,7 @@ location:
   - app/Services/PlatformLeagueScoringCategoryService.php
   - app/Services/PlatformLeaguePlayerStatService.php
   - app/Services/FantraxLogoSyncService.php
+  - app/Support/FantraxViewerScope.php
   - app/Support/FantraxLogoBrowserProfile.php
   - app/Services/ImportFantraxLeagues.php
   - app/Services/ImportFantraxPlayers.php
@@ -79,7 +80,8 @@ rules:
   - Fantrax team division or pool labels must be preserved on platform_teams.extras when getLeagueInfo exposes them through top-level team entries or teamInfo entries.
   - Fantrax playerInfo parsing must support both flat player maps and division-grouped maps, and division-grouped availability must retain pool context when duplicate players are scoped across divisions.
   - Fantrax roster slot settings must be upserted to platform_league_roster_slots from getLeagueInfo.rosterInfo.positionConstraints during league sync.
-  - User-facing league reads in division-scoped Fantrax leagues must default to the viewer's own Fantrax division or pool, while commissioner/admin reads may retain all-division visibility.
+  - User-facing league reads in division-scoped Fantrax leagues must default to the viewer's own Fantrax division or pool, including commissioner users in the /leagues experience; all-division views belong in a separate explicit management surface.
+  - Fantrax viewer division scope must be resolved through FantraxViewerScope when applied across league controllers, stats ownership hydration, or other /leagues read payloads.
 public_interface:
   - leagues.resync
   - leagues.team-logos.sync
@@ -97,6 +99,7 @@ public_interface:
   - PlatformLeagueScoringCategoryService
   - PlatformLeaguePlayerStatService
   - FantraxLogoSyncService
+  - FantraxViewerScope
   - fantrax:inspect-logos
   - FantraxLogoBrowserProfile
   - PlatformLeague

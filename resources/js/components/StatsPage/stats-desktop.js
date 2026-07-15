@@ -29,7 +29,7 @@ const displayPosition = (raw) => {
 
 // Cap helpers
 const isCapKey = (k = "") =>
-    ["aav", "contract_value", "contract_value_num"].includes(
+    ["aav", "cap_hit", "contract_value", "contract_value_num"].includes(
         String(k).toLowerCase()
     );
 
@@ -63,6 +63,19 @@ const formatDesktopNumber = (value) => {
     }
 
     return value ?? "";
+};
+
+const formatDesktopAverage = (value) => {
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+        return value ?? "";
+    }
+
+    return new Intl.NumberFormat("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(numeric);
 };
 
 const NON_RANKED_STAT_KEYS = new Set([
@@ -201,6 +214,19 @@ const buildCompetitionRankMaps = (rows, headings) => {
     });
 
     return rankMaps;
+};
+
+const teamAggregateRankRows = (rows, useAverages) => {
+    if (!useAverages) return rows;
+
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+        ...row,
+        ...(row?.__team_average && typeof row.__team_average === "object" ? row.__team_average : {}),
+        stats: {
+            ...(row?.stats && typeof row.stats === "object" ? row.stats : {}),
+            ...(row?.__team_average && typeof row.__team_average === "object" ? row.__team_average : {}),
+        },
+    }));
 };
 
 const playerInitials = (name = "") => String(name)
@@ -428,10 +454,12 @@ const renderLeagueOwnerStatsDesktop = (
         fantasyTeamFilter: typeof prev.fantasyTeamFilter === "string" ? prev.fantasyTeamFilter : "",
         leagueFilter: typeof prev.leagueFilter === "string" ? prev.leagueFilter : "",
         showRanks: prev.showRanks === true,
+        showAverages: prev.showAverages === true,
     };
     desktopState.set(container, state);
 
     const isRosterSlotLeague = ["fantrax", "yahoo"].includes(settings?.leaguePlatform);
+    const isTeamAggregate = settings?.teamAggregate === true || settings?.resource === "teams";
     const isGoalieFilterActive = settings?.goalieFilterActive === true;
     const isProspectMode = isLeagueProspectMode(settings);
     const isFreeAgentFantasyFilter = () => state.fantasyTeamFilter.trim() === "__free_agents";
@@ -464,6 +492,11 @@ const renderLeagueOwnerStatsDesktop = (
     const rosterSlotHeadingKey = () => left.find((heading) =>
         ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase())
     )?.key ?? "pos_type";
+    const isRosterSlotSortKey = () => {
+        const activeKey = String(settings.sortKey ?? "").toLowerCase();
+
+        return ["type", "pos_type"].includes(activeKey) && activeKey === String(rosterSlotHeadingKey()).toLowerCase();
+    };
     const isDefaultProspectSort = () => isProspectMode && settings.leagueUserSortActive !== true;
     const activeSortKey = () => {
         if (isDefaultProspectSort()) return rosterSlotHeadingKey();
@@ -473,7 +506,8 @@ const renderLeagueOwnerStatsDesktop = (
     const leftGridCols = left.map((heading) => headingWidth(heading?.key, settings)).join(" ");
     const statGridCols = visibleStats().map((heading) => headingWidth(heading?.key, settings)).join(" ") || "72px";
     const goalieStatGridCols = goalieStats.map((heading) => headingWidth(heading?.key, settings)).join(" ") || statGridCols;
-    const rankMaps = buildCompetitionRankMaps(data, uniqueHeadings([...stats, ...skaterStats, ...goalieStats]));
+    const rankHeadings = uniqueHeadings([...stats, ...skaterStats, ...goalieStats]);
+    let rankMaps = buildCompetitionRankMaps(teamAggregateRankRows(data, isTeamAggregate && state.showAverages), rankHeadings);
 
     const leagues = Array.from(
         new Set(
@@ -500,13 +534,14 @@ const renderLeagueOwnerStatsDesktop = (
         return a.name.localeCompare(b.name);
     });
     const userFantasyTeam = fantasyTeams.find((team) => team.isUserTeam) || null;
-    if (prev.leagueFantasyTeamInitialized !== true && state.fantasyTeamFilter === "" && userFantasyTeam) {
+    if (!isTeamAggregate && prev.leagueFantasyTeamInitialized !== true && state.fantasyTeamFilter === "" && userFantasyTeam) {
         state.fantasyTeamFilter = userFantasyTeam.name;
     }
     state.leagueFantasyTeamInitialized = true;
     desktopState.set(container, state);
 
     const notifyFantasyTeamFilterChange = () => {
+        if (isTeamAggregate) return;
         if (typeof settings?.onLeagueFantasyTeamFilterChange !== "function") return;
 
         settings.onLeagueFantasyTeamFilterChange({
@@ -523,81 +558,91 @@ const renderLeagueOwnerStatsDesktop = (
     const controls = document.createElement("div");
     controls.className = "sticky top-0 z-50 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
 
-    const nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.placeholder = "Filter by name…";
-    nameInput.value = state.nameFilter;
-    nameInput.className =
-        "flex-1 max-w-md rounded-md border border-gray-300 px-3 py-2 text-sm " +
-        "focus:outline-none focus:ring-2 focus:ring-indigo-500";
-    controls.appendChild(nameInput);
+    let nameInput = null;
+    if (!isTeamAggregate) {
+        nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.placeholder = "Filter by name…";
+        nameInput.value = state.nameFilter;
+        nameInput.className =
+            "flex-1 max-w-md rounded-md border border-gray-300 px-3 py-2 text-sm " +
+            "focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        controls.appendChild(nameInput);
+    } else {
+        const spacer = document.createElement("div");
+        spacer.className = "flex-1";
+        controls.appendChild(spacer);
+    }
 
-    const fantasyTeamPicker = document.createElement("div");
-    fantasyTeamPicker.className = "relative z-50 w-56";
-    const fantasyTeamButton = document.createElement("button");
-    fantasyTeamButton.type = "button";
-    fantasyTeamButton.className =
-        "flex h-10 w-full items-center gap-2 rounded-md border border-gray-300 bg-white px-2 text-left text-sm " +
-        "focus:outline-none focus:ring-2 focus:ring-indigo-500";
-    const selectedFantasyTeam = () => fantasyTeams.find((team) => team.name === state.fantasyTeamFilter) || null;
-    const renderFantasyTeamButton = () => {
-        const selected = selectedFantasyTeam();
-        fantasyTeamButton.innerHTML = "";
+    let fantasyTeamPicker = null;
+    if (!isTeamAggregate) {
+        fantasyTeamPicker = document.createElement("div");
+        fantasyTeamPicker.className = "relative z-50 w-56";
+        const fantasyTeamButton = document.createElement("button");
+        fantasyTeamButton.type = "button";
+        fantasyTeamButton.className =
+            "flex h-10 w-full items-center gap-2 rounded-md border border-gray-300 bg-white px-2 text-left text-sm " +
+            "focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        const selectedFantasyTeam = () => fantasyTeams.find((team) => team.name === state.fantasyTeamFilter) || null;
+        const renderFantasyTeamButton = () => {
+            const selected = selectedFantasyTeam();
+            fantasyTeamButton.innerHTML = "";
 
-        if (selected?.avatarUrl) {
-            fantasyTeamButton.appendChild(buildOwnerAvatar(selected.avatarUrl, selected.name));
-        }
+            if (selected?.avatarUrl) {
+                fantasyTeamButton.appendChild(buildOwnerAvatar(selected.avatarUrl, selected.name));
+            }
 
-        const label = document.createElement("span");
-        label.className = "min-w-0 flex-1 truncate";
-        label.textContent = isFreeAgentFantasyFilter()
-            ? "Free Agents"
-            : (selected?.name || "All Players");
-        fantasyTeamButton.appendChild(label);
-        fantasyTeamButton.appendChild(buildDropdownButtonChevron());
-    };
-    const fantasyTeamMenu = document.createElement("div");
-    fantasyTeamMenu.className =
-        "absolute left-0 top-11 z-50 hidden max-h-72 w-full overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg";
-    const addFantasyTeamOption = (team) => {
-        const option = document.createElement("button");
-        option.type = "button";
-        option.className = "flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-gray-50";
+            const label = document.createElement("span");
+            label.className = "min-w-0 flex-1 truncate";
+            label.textContent = isFreeAgentFantasyFilter()
+                ? "Free Agents"
+                : (selected?.name || "All Players");
+            fantasyTeamButton.appendChild(label);
+            fantasyTeamButton.appendChild(buildDropdownButtonChevron());
+        };
+        const fantasyTeamMenu = document.createElement("div");
+        fantasyTeamMenu.className =
+            "absolute left-0 top-11 z-50 hidden max-h-72 w-full overflow-y-auto rounded-md border border-gray-200 bg-white py-1 text-sm shadow-lg";
+        const addFantasyTeamOption = (team) => {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.className = "flex w-full items-center gap-2 px-2 py-2 text-left hover:bg-gray-50";
 
-        if (team.avatarUrl) {
-            option.appendChild(buildOwnerAvatar(team.avatarUrl, team.name));
-        } else {
-            const spacer = document.createElement("span");
-            spacer.className = "h-7 w-7 shrink-0";
-            option.appendChild(spacer);
-        }
+            if (team.avatarUrl) {
+                option.appendChild(buildOwnerAvatar(team.avatarUrl, team.name));
+            } else {
+                const spacer = document.createElement("span");
+                spacer.className = "h-7 w-7 shrink-0";
+                option.appendChild(spacer);
+            }
 
-        const label = document.createElement("span");
-        label.className = "min-w-0 truncate";
-        label.textContent = team.label || team.name || "All Players";
-        option.appendChild(label);
-        option.addEventListener("click", () => {
-            state.fantasyTeamFilter = team.value ?? team.name ?? "";
-            desktopState.set(container, state);
-            fantasyTeamMenu.classList.add("hidden");
-            renderFantasyTeamButton();
-            syncOwnerPaneVisibility();
-            syncRosterSlotHeader();
-            notifyFantasyTeamFilterChange();
-            renderRows();
+            const label = document.createElement("span");
+            label.className = "min-w-0 truncate";
+            label.textContent = team.label || team.name || "All Players";
+            option.appendChild(label);
+            option.addEventListener("click", () => {
+                state.fantasyTeamFilter = team.value ?? team.name ?? "";
+                desktopState.set(container, state);
+                fantasyTeamMenu.classList.add("hidden");
+                renderFantasyTeamButton();
+                syncOwnerPaneVisibility();
+                syncRosterSlotHeader();
+                notifyFantasyTeamFilterChange();
+                renderRows();
+            });
+            fantasyTeamMenu.appendChild(option);
+        };
+        addFantasyTeamOption({ name: "", value: "", label: "All Players", avatarUrl: "" });
+        addFantasyTeamOption({ name: "Free Agents", value: "__free_agents", label: "Free Agents", avatarUrl: "" });
+        fantasyTeams.forEach(addFantasyTeamOption);
+        fantasyTeamButton.addEventListener("click", () => {
+            fantasyTeamMenu.classList.toggle("hidden");
         });
-        fantasyTeamMenu.appendChild(option);
-    };
-    addFantasyTeamOption({ name: "", value: "", label: "All Players", avatarUrl: "" });
-    addFantasyTeamOption({ name: "Free Agents", value: "__free_agents", label: "Free Agents", avatarUrl: "" });
-    fantasyTeams.forEach(addFantasyTeamOption);
-    fantasyTeamButton.addEventListener("click", () => {
-        fantasyTeamMenu.classList.toggle("hidden");
-    });
-    renderFantasyTeamButton();
-    fantasyTeamPicker.appendChild(fantasyTeamButton);
-    fantasyTeamPicker.appendChild(fantasyTeamMenu);
-    controls.appendChild(fantasyTeamPicker);
+        renderFantasyTeamButton();
+        fantasyTeamPicker.appendChild(fantasyTeamButton);
+        fantasyTeamPicker.appendChild(fantasyTeamMenu);
+        controls.appendChild(fantasyTeamPicker);
+    }
 
     const ranksButton = document.createElement("button");
     ranksButton.type = "button";
@@ -605,7 +650,9 @@ const renderLeagueOwnerStatsDesktop = (
         ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
         : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
     ranksButton.textContent = "Ranks";
-    ranksButton.title = "Show stat ranks among all players in this view";
+    ranksButton.title = isTeamAggregate
+        ? "Show stat ranks among all teams in this view"
+        : "Show stat ranks among all players in this view";
     ranksButton.setAttribute("aria-pressed", state.showRanks ? "true" : "false");
     ranksButton.addEventListener("click", () => {
         state.showRanks = !state.showRanks;
@@ -617,6 +664,28 @@ const renderLeagueOwnerStatsDesktop = (
         renderRows();
     });
     controls.appendChild(ranksButton);
+
+    if (isTeamAggregate) {
+        const averagesButton = document.createElement("button");
+        averagesButton.type = "button";
+        const syncAveragesButton = () => {
+            averagesButton.className = state.showAverages
+                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+            averagesButton.setAttribute("aria-pressed", state.showAverages ? "true" : "false");
+        };
+        averagesButton.textContent = "Averages";
+        averagesButton.title = "Show team averages instead of totals";
+        syncAveragesButton();
+        averagesButton.addEventListener("click", () => {
+            state.showAverages = !state.showAverages;
+            desktopState.set(container, state);
+            rankMaps = buildCompetitionRankMaps(teamAggregateRankRows(data, state.showAverages), rankHeadings);
+            syncAveragesButton();
+            renderRows();
+        });
+        controls.appendChild(averagesButton);
+    }
 
     let leagueSelect = null;
     if (leagues.length > 0) {
@@ -643,13 +712,15 @@ const renderLeagueOwnerStatsDesktop = (
     const table = document.createElement("div");
     table.className = "grid min-w-0";
     const syncOwnerPaneVisibility = () => {
-        const columns = hasSelectedFantasyTeam()
+        const columns = isTeamAggregate
+            ? "minmax(0, 418px) minmax(0, 1fr)"
+            : hasSelectedFantasyTeam()
             ? "minmax(0, 418px) minmax(0, 1fr)"
             : "minmax(0, 418px) minmax(0, 1fr) 190px";
         table.style.gridTemplateColumns = columns;
         headerTable.style.gridTemplateColumns = columns;
-        ownerPane.classList.toggle("hidden", hasSelectedFantasyTeam());
-        ownerHeader.classList.toggle("hidden", hasSelectedFantasyTeam());
+        ownerPane.classList.toggle("hidden", isTeamAggregate || hasSelectedFantasyTeam());
+        ownerHeader.classList.toggle("hidden", isTeamAggregate || hasSelectedFantasyTeam());
     };
 
     const leftPane = document.createElement("div");
@@ -835,6 +906,7 @@ const renderLeagueOwnerStatsDesktop = (
 
             const canShowRosterOnly = !isRosterOnly
                 || hasSelectedFantasyTeam()
+                || isRosterSlotSortKey()
                 || (isGoalieFilterActive && isGoalie && !isRosterPlaceholder);
 
             return canShowRosterOnly && hitName && hitFantasyTeam && hitLeague && hitAutoSkaterOnly;
@@ -917,6 +989,15 @@ const renderLeagueOwnerStatsDesktop = (
     };
 
     const statCellValue = (row, key) => {
+        if (
+            isTeamAggregate
+            && state.showAverages
+            && row?.__team_average
+            && Object.prototype.hasOwnProperty.call(row.__team_average, key)
+        ) {
+            return row.__team_average[key];
+        }
+
         return statValueForKey(row, key);
     };
 
@@ -936,7 +1017,9 @@ const renderLeagueOwnerStatsDesktop = (
             return cell;
         }
 
-        cell.textContent = isCapKey(key) ? formatCap(rawVal) : formatDesktopNumber(val);
+        cell.textContent = isCapKey(key)
+            ? formatCap(rawVal)
+            : (isTeamAggregate && state.showAverages ? formatDesktopAverage(val) : formatDesktopNumber(val));
 
         return cell;
     };
@@ -1111,7 +1194,7 @@ const renderLeagueOwnerStatsDesktop = (
         syncHeaderHorizontalScroll();
     };
 
-    nameInput.addEventListener("input", () => {
+    nameInput?.addEventListener("input", () => {
         state.nameFilter = nameInput.value || "";
         desktopState.set(container, state);
         renderRows();

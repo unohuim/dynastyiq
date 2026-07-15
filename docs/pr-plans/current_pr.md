@@ -36,9 +36,17 @@ The first implementation should prioritize correctness for FHL-style division-sc
 - `app/Services/SyncFantraxLeague.php`
 - `app/Services/SyncFantraxDraftState.php`
 - `app/Http/Controllers/LeagueController.php`
+- `app/Http/Controllers/StatsController.php`
+- `app/Support/FantraxViewerScope.php`
+- `app/Support/Stats/LeagueStatsOwnershipHydrator.php`
 - `app/Http/Controllers/CommunityLeagues.php`
 - `resources/views/leagues/_panel.blade.php`
+- `resources/js/pages/stats-payload-client.js`
+- `resources/js/pages/stats-page.js`
+- `resources/js/components/StatsPage/stats-desktop.js`
+- `resources/js/pages/stats-page.test.js`
 - `tests/Feature/FantraxDraftingWindowTest.php`
+- `tests/Feature/StatsPayloadPipelineTest.php`
 
 ## Changed Documentation
 
@@ -115,7 +123,11 @@ League and community pages now receive compact league-shape payloads. The league
 
 Draft Central backend payload now includes `division` and stable ordering for rows where `overall_pick` is null.
 
-For division-scoped Fantrax leagues, normal user-facing league reads now default to the viewer's own Fantrax division or pool. Commissioner/admin reads retain all-division visibility.
+For division-scoped Fantrax leagues, `/leagues/*` user-facing reads now default to the viewer's own Fantrax division or pool, including commissioner users. All-division views belong in a separate explicit management URI.
+
+League stats payload ownership hydration now uses the same viewer Fantrax division scope, so League/Players fantasy-team dropdowns are derived only from the viewer's own division or pool.
+
+League stats now also support a `Teams` tab next to `Players`. The tab reuses the league stats payload endpoint with `resource=teams`, aggregates stat columns across each scoped fantasy team's non-minor pro players, keeps rate-style stats as averages, and exposes an `Averages` toggle for average-per-player display. The Teams table omits player-only fields such as NHL team, age, roster slot, and contract term, while preserving Cap.
 
 ## Tests Added
 
@@ -130,6 +142,9 @@ Focused Pest coverage was added in `tests/Feature/FantraxDraftingWindowTest.php`
 - picked division-scoped slots dispatching when a provider player id appears.
 - Draft Central rows scoped to the viewer's Fantrax division.
 - league team and roster payload rows scoped to the viewer's Fantrax division.
+- League stats ownership hydration scoped to the viewer's Fantrax division.
+- League team aggregate payload rows across pro roster players.
+- League Teams tab controls and average display behavior.
 
 ## Verification Required
 
@@ -138,8 +153,13 @@ Codex performed syntax checks only:
 - `php -l app/Services/SyncFantraxLeague.php`
 - `php -l app/Services/SyncFantraxDraftState.php`
 - `php -l app/Http/Controllers/LeagueController.php`
+- `php -l app/Http/Controllers/StatsController.php`
+- `php -l app/Support/FantraxViewerScope.php`
+- `php -l app/Support/Stats/LeagueStatsOwnershipHydrator.php`
 - `php -l app/Http/Controllers/CommunityLeagues.php`
 - `php -l tests/Feature/FantraxDraftingWindowTest.php`
+- `php -l tests/Feature/StatsPayloadPipelineTest.php`
+- JS syntax checks for the touched stats page modules.
 
 Human-run verification still required:
 

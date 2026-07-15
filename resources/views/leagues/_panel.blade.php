@@ -115,6 +115,9 @@
       leagueStatsLoading: false,
       leagueStatsError: '',
       leagueStatsShell: null,
+      leagueTeamStatsLoading: false,
+      leagueTeamStatsError: '',
+      leagueTeamStatsShell: null,
 
       scoringAlignmentStatusLabel(category){
         const status = String(category?.alignment_status ?? '').replaceAll('_', ' ');
@@ -249,9 +252,10 @@
 
         window.addEventListener('diq:stats-page-ready', () => {
           if (this.activeLeagueTab === 'players') this.loadLeagueStats();
+          if (this.activeLeagueTab === 'teams') this.loadLeagueTeamStats();
         }, { once: true });
 
-        if (['players', 'cap'].includes(this.activeLeagueTab)) {
+        if (['players', 'teams', 'cap'].includes(this.activeLeagueTab)) {
           this.$nextTick(() => this.openLeagueTab(this.activeLeagueTab, false));
         }
       },
@@ -278,10 +282,16 @@
         }
       },
       validLeagueTab(tab){
-        return ['overview', 'draft', 'players', 'cap'].includes(String(tab || '')) ? String(tab) : 'draft';
+        return ['overview', 'draft', 'players', 'teams', 'cap'].includes(String(tab || '')) ? String(tab) : 'draft';
       },
       validCapView(view){
         return ['sheet', 'adjustments', 'limits'].includes(String(view || '')) ? String(view) : 'sheet';
+      },
+      reloadMountedLeagueStats(){
+        this.$nextTick(() => {
+          if (this.leagueStatsShell || this.activeLeagueTab === 'players') this.loadLeagueStats(true);
+          if (this.leagueTeamStatsShell || this.activeLeagueTab === 'teams') this.loadLeagueTeamStats(true);
+        });
       },
       leaguePoolLabel(){
         const scope = String(this.leagueShape?.player_pool_scope || '').trim();
@@ -402,6 +412,16 @@
         if (this.activeLeagueTab === 'players') {
           if (this.canShowLeagueStats) {
             this.$nextTick(() => this.loadLeagueStats());
+            return;
+          }
+
+          await this.loadPlayersPayload();
+          return;
+        }
+
+        if (this.activeLeagueTab === 'teams') {
+          if (this.canShowLeagueStats) {
+            this.$nextTick(() => this.loadLeagueTeamStats());
             return;
           }
 
@@ -1739,7 +1759,7 @@
           this.capSettingsMessage = payload.message || 'Cap settings saved.';
           this.playersPayloadLoaded = false;
           await this.loadPlayersPayload(true, false);
-          this.$nextTick(() => this.loadLeagueStats(true));
+          this.reloadMountedLeagueStats();
         } catch (error) {
           this.customCap = previous;
           this.capSettingsError = error?.message || 'Could not save cap settings.';
@@ -1809,7 +1829,7 @@
           this.capSettingsMessage = 'Contract codes saved.';
           this.playersPayloadLoaded = false;
           await this.loadPlayersPayload(true, false);
-          this.$nextTick(() => this.loadLeagueStats(true));
+          this.reloadMountedLeagueStats();
         } catch (error) {
           this.capSettingsError = error?.message || 'Could not save contract codes.';
         } finally {
@@ -1885,7 +1905,7 @@
           this.canShowLeagueStats = Boolean(payload.canShowLeagueStats ?? this.canShowLeagueStats);
           this.leagueStatsPayloadUrl = payload.leagueStatsPayloadUrl ?? this.leagueStatsPayloadUrl;
           this.scoringAlignmentMessage = payload.message || 'Scoring category alignment saved.';
-          this.$nextTick(() => this.loadLeagueStats(true));
+          this.reloadMountedLeagueStats();
         } catch (error) {
           this.scoringAlignmentError = error?.message || 'Could not save scoring alignment.';
         } finally {
@@ -1991,6 +2011,67 @@
         } finally {
           this.leagueStatsLoading = false;
         }
+      },
+      async loadLeagueTeamStats(force = false){
+        if (!this.canShowLeagueStats) {
+          console.warn('[DIQ] League team stats skipped: canShowLeagueStats=false');
+          return;
+        }
+        if (!this.leagueStatsPayloadUrl) {
+          console.warn('[DIQ] League team stats skipped: leagueStatsPayloadUrl missing');
+          return;
+        }
+        if (this.leagueTeamStatsLoading) {
+          console.warn('[DIQ] League team stats skipped: already loading');
+          return;
+        }
+        if (this.leagueTeamStatsShell && !force) {
+          console.warn('[DIQ] League team stats skipped: shell already mounted');
+          return;
+        }
+
+        const mount = window.DIQ?.mountStatsPage;
+        if (typeof mount !== 'function') {
+          console.warn('[DIQ] League team stats skipped: window.DIQ.mountStatsPage missing');
+          return;
+        }
+
+        this.leagueTeamStatsLoading = true;
+        this.leagueTeamStatsError = '';
+
+        const container = this.$refs.leagueTeamStats;
+        if (!container) {
+          console.warn('[DIQ] League team stats skipped: leagueTeamStats ref missing');
+          this.leagueTeamStatsLoading = false;
+          return;
+        }
+
+        try {
+          delete container.dataset.statsMounted;
+          this.leagueTeamStatsShell = mount(container, {
+            initialPayload: {},
+            initialLoading: true,
+            apiUrl: this.leagueStatsPayloadUrl,
+            resource: 'teams',
+            perspectives: this.leagueStatsPerspectives?.length
+              ? this.leagueStatsPerspectives
+              : [
+                {
+                  slug: @js($leagueStatsFallbackSlug),
+                  name: @js($leagueStatsFallbackName),
+                },
+              ],
+            selectedPerspective: this.selectedLeagueStatsPerspective || @js($leagueStatsFallbackSlug),
+            mobileBreakpoint: @js(config('viewports.mobile', 640)),
+            syncUrl: false,
+          });
+
+          await this.leagueTeamStatsShell?.fetchPayload?.({ force: true });
+        } catch (error) {
+          this.leagueTeamStatsError = error?.message || 'Could not load league team stats.';
+        } finally {
+          this.leagueTeamStatsLoading = false;
+        }
       }
     }"
     x-cloak
@@ -2082,6 +2163,14 @@
         @click="openLeagueTab('players')"
       >
         Players
+      </button>
+      <button
+        type="button"
+        class="border-b-2 py-3 text-sm font-semibold transition"
+        :class="activeLeagueTab === 'teams' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+        @click="openLeagueTab('teams')"
+      >
+        Teams
       </button>
       <button
         type="button"
@@ -2320,6 +2409,11 @@
       <div x-show="leagueStatsError" class="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueStatsError"></div>
       <div x-ref="leagueStats" class="min-h-[24rem]"></div>
     </div>
+    </div>
+
+    <div x-show="activeLeagueTab === 'teams'" class="h-full overflow-y-auto px-6 pb-6">
+      <div x-show="leagueTeamStatsError" class="mt-6 rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700" x-text="leagueTeamStatsError"></div>
+      <div x-ref="leagueTeamStats" class="mt-6 min-h-[24rem]"></div>
     </div>
 
     <div x-show="activeLeagueTab === 'cap'" class="px-6 pb-12">

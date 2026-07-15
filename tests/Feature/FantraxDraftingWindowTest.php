@@ -14,6 +14,7 @@ use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
 use App\Models\League;
+use App\Models\LeagueUserRole;
 use App\Models\Organization;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
@@ -884,6 +885,11 @@ it('scopes division scoped draft central rows to the viewer division', function 
             ],
         ],
     ])->save();
+    LeagueUserRole::create([
+        'league_id' => $league->id,
+        'user_id' => $user->id,
+        'role' => 'commissioner',
+    ]);
     $draft = ($this->createDraft)($platformLeague, [
         'external_draft_id' => 'fantrax:division-visible-draft-league:current',
         'status' => 'live',
@@ -924,7 +930,7 @@ it('scopes division scoped draft central rows to the viewer division', function 
         'provider_player_id' => 'gretzky-player',
         'raw_payload' => ['division' => 'Gretzky'],
     ]);
-    ($this->createDraftPick)($draft, [
+    $orrPick = ($this->createDraftPick)($draft, [
         'provider_pick_key' => 'division:orr:round:1:pick-in-round:1',
         'overall_pick' => null,
         'platform_team_id' => $orrTeam->id,
@@ -933,12 +939,14 @@ it('scopes division scoped draft central rows to the viewer division', function 
         'provider_player_id' => 'orr-player',
         'raw_payload' => ['division' => 'Orr'],
     ]);
+    $draft->forceFill(['current_draft_pick_id' => $orrPick->id])->save();
     Bus::fake();
 
     $this->actingAs($user)
         ->get("/leagues/{$platformLeague->id}")
         ->assertOk()
         ->assertSee('Gretzky Pick')
+        ->assertSee('Gretzky Team')
         ->assertDontSee('Orr Pick')
         ->assertDontSee('Orr Team');
 
@@ -958,6 +966,11 @@ it('scopes division scoped league teams and roster players to the viewer divisio
             ],
         ],
     ])->save();
+    LeagueUserRole::create([
+        'league_id' => $league->id,
+        'user_id' => $user->id,
+        'role' => 'commissioner',
+    ]);
     $gretzkyTeam = PlatformTeam::query()
         ->where('platform_league_id', $platformLeague->id)
         ->where('platform_team_id', 'team-1')

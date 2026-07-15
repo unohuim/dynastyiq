@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Perspective;
 use App\Services\FantasyLeagueAccess;
+use App\Support\FantraxViewerScope;
 use App\Services\PlatformLeaguePlayerStatService;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
@@ -124,7 +125,7 @@ class StatsController extends BaseController
             'season'        => 'nullable|string',
             'season_id'     => 'nullable|string',
             'slice'         => 'nullable|in:total,pgp,p60',
-            'resource'      => 'nullable|in:players,units',
+            'resource'      => 'nullable|in:players,units,teams',
             'period'        => 'nullable|in:season,range,lastWeek,thisWeek,past30days',
             'game_type'     => 'nullable|in:1,2,3',
             'from'          => 'nullable|date',
@@ -148,6 +149,7 @@ class StatsController extends BaseController
         $league = $leagueAccess->activeLeaguesForUser($user)
             ->where('platform_leagues.id', $leagueId)
             ->firstOrFail();
+        $viewerFantraxScope = app(FantraxViewerScope::class)->resolve($league, $user);
         $mark('league_lookup_ms');
 
         $leaguePerspectiveFactory = app(LeagueStatsPerspectiveFactory::class);
@@ -163,6 +165,7 @@ class StatsController extends BaseController
         $season = $context->season;
         $slice = $context->slice;
         $gameType = $context->gameType;
+        $resource = (string) $request->query('resource', 'players');
         $period = $context->period;
         $requestedColumnGroup = (string) ($context->columnGroup ?? '');
         $requestedPerspective = $context->requestedPerspective;
@@ -295,7 +298,13 @@ class StatsController extends BaseController
         $mark('platform_filter_ms');
 
         $ownershipTimings = $logStatsTiming ? [] : null;
-        $payload = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user?->id, $ownershipTimings);
+        $payload = app(LeagueStatsOwnershipHydrator::class)->hydrate(
+            $payload,
+            $league,
+            $user?->id,
+            $ownershipTimings,
+            $viewerFantraxScope,
+        );
         $payload = $this->dedupeLeagueProspectRows($payload);
         $mark('ownership_ms');
 
@@ -325,6 +334,11 @@ class StatsController extends BaseController
             }
         }
         $mark('meta_filters_ms');
+
+        if ($resource === 'teams') {
+            $payload = $this->teamAggregateLeaguePayload($payload);
+        }
+        $mark('resource_transform_ms');
 
         if ($logStatsTiming && $profileStart !== null) {
             $totalMs = round((hrtime(true) - $profileStart) / 1_000_000, 2);
@@ -425,7 +439,7 @@ class StatsController extends BaseController
             'season'        => 'nullable|string',
             'season_id'     => 'nullable|string',
             'slice'         => 'nullable|in:total,pgp,p60',
-            'resource'      => 'nullable|in:players,units',
+            'resource'      => 'nullable|in:players,units,teams',
             'period'        => 'nullable|in:season,range,lastWeek,thisWeek,past30days',
             'game_type'     => 'nullable|in:1,2,3',
             'from'          => 'nullable|date',
@@ -687,6 +701,171 @@ class StatsController extends BaseController
         $payload['data'] = array_values(array_merge($bestRows, $passthroughRows));
 
         return $payload;
+    }
+
+    /**
+     * Convert league player rows into fantasy-team aggregate rows.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     */
+    private function teamAggregateLeaguePayload(array $payload): array
+    {
+        $headings = collect($payload['headings'] ?? [])
+            ->filter(fn (mixed $heading): bool => is_array($heading))
+            ->map(function (array $heading): array {
+                $key = strtolower((string) ($heading['key'] ?? ''));
+
+                if (in_array($key, ['aav', 'cap_hit', 'contract_value', 'contract_value_num'], true)) {
+                    $heading['label'] = 'Cap';
+                }
+
+                if (in_array($key, ['name', 'player'], true)) {
+                    $heading['label'] = 'Team';
+                }
+
+                return $heading;
+            })
+            ->filter(function (array $heading): bool {
+                $key = strtolower((string) ($heading['key'] ?? ''));
+
+                return ! in_array($key, [
+                    'team',
+                    'league',
+                    'pos',
+                    'pos_type',
+                    'type',
+                    'age',
+                    'contract_last_year',
+                    'contract_last_year_num',
+                    'contract_type',
+                    'roster_slot',
+                    'slot',
+                ], true);
+            })
+            ->values();
+
+        $statHeadings = $headings
+            ->filter(function (array $heading): bool {
+                $key = strtolower((string) ($heading['key'] ?? ''));
+
+                return ! in_array($key, ['__rk', 'name', 'player'], true);
+            })
+            ->values();
+
+        $teams = [];
+        foreach (($payload['data'] ?? []) as $row) {
+            if (! is_array($row) || (bool) ($row['league_roster_placeholder'] ?? false)) {
+                continue;
+            }
+
+            if (strtolower((string) ($row['roster_group'] ?? '')) === 'minor') {
+                continue;
+            }
+
+            $teamId = trim((string) ($row['fantasy_team_id'] ?? ''));
+            $teamName = trim((string) ($row['fantasy_team_name'] ?? ''));
+            if ($teamId === '' || $teamName === '') {
+                continue;
+            }
+
+            $groupKey = $teamId !== '' ? $teamId : $teamName;
+            $teams[$groupKey] ??= [
+                'rows' => [],
+                'name' => $teamName,
+                'fantasy_team_id' => $teamId,
+                'fantasy_team_name' => $teamName,
+                'fantasy_team_avatar_url' => (string) ($row['fantasy_team_avatar_url'] ?? ''),
+                'fantasy_team_is_user_team' => (bool) ($row['fantasy_team_is_user_team'] ?? false),
+                'league' => (string) ($row['league'] ?? ''),
+            ];
+            $teams[$groupKey]['rows'][] = $row;
+        }
+
+        $teamRows = [];
+        foreach ($teams as $team) {
+            $rows = $team['rows'];
+            $teamRow = [
+                'name' => $team['name'],
+                'avatar_url' => $team['fantasy_team_avatar_url'],
+                'fantasy_team_id' => $team['fantasy_team_id'],
+                'fantasy_team_name' => $team['fantasy_team_name'],
+                'fantasy_team_avatar_url' => $team['fantasy_team_avatar_url'],
+                'fantasy_team_is_user_team' => $team['fantasy_team_is_user_team'],
+                'league' => $team['league'],
+                'player_count' => count($rows),
+                'league_team_aggregate' => true,
+                '__team_average' => [],
+                'stats' => [],
+            ];
+
+            foreach ($statHeadings as $heading) {
+                $key = (string) ($heading['key'] ?? '');
+                if ($key === '') {
+                    continue;
+                }
+
+                $values = collect($rows)
+                    ->map(fn (array $row): mixed => $row[$key] ?? data_get($row, "stats.$key"))
+                    ->filter(fn (mixed $value): bool => is_numeric($value))
+                    ->map(fn (mixed $value): float => (float) $value)
+                    ->values();
+                $sum = round((float) $values->sum(), 3);
+                $average = $values->isNotEmpty() ? round($sum / $values->count(), 2) : 0.0;
+                $value = $this->isTeamAverageOnlyStat((string) $key, (string) ($heading['label'] ?? ''))
+                    ? $average
+                    : $sum;
+
+                $teamRow[$key] = $value;
+                $teamRow['stats'][$key] = $value;
+                $teamRow['__team_average'][$key] = $average;
+            }
+
+            $teamRows[] = $teamRow;
+        }
+
+        usort($teamRows, static function (array $a, array $b): int {
+            if (($a['fantasy_team_is_user_team'] ?? false) !== ($b['fantasy_team_is_user_team'] ?? false)) {
+                return ($a['fantasy_team_is_user_team'] ?? false) ? -1 : 1;
+            }
+
+            return strcasecmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+        });
+
+        $payload['headings'] = $headings->all();
+        $payload['data'] = $teamRows;
+        $payload['settings'] = is_array($payload['settings'] ?? null) ? $payload['settings'] : [];
+        $payload['settings']['resource'] = 'teams';
+        $payload['settings']['teamAggregate'] = true;
+        $payload['settings']['ownerColumn'] = true;
+        $payload['meta'] = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
+        $payload['meta']['resource'] = 'teams';
+
+        return $payload;
+    }
+
+    private function isTeamAverageOnlyStat(string $key, string $label): bool
+    {
+        $normalizedKey = strtolower($key);
+        $normalizedLabel = strtolower($label);
+
+        return str_contains($normalizedKey, '_per_')
+            || str_contains($normalizedKey, 'per_gp')
+            || str_contains($normalizedKey, 'per_game')
+            || str_contains($normalizedLabel, '/g')
+            || str_contains($normalizedLabel, '/gp')
+            || str_contains($normalizedLabel, 'per game')
+            || in_array($normalizedKey, [
+                'gaa',
+                'sv_pct',
+                'save_pct',
+                'save_pctg',
+                'shooting_pct',
+                'shooting_pctg',
+                'ev_sv_pct',
+                'pp_sv_pct',
+                'pk_sv_pct',
+            ], true);
     }
 
     /**

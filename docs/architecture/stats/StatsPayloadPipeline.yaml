@@ -13,6 +13,7 @@ location:
   - app/Support/Stats/LeagueStatsOwnershipHydrator.php
   - app/Support/Stats/LeagueStatsPerspectiveFactory.php
   - app/Support/Stats/LeagueStatsPlayerUniverseFilter.php
+  - app/Support/FantraxViewerScope.php
   - app/Http/Controllers/StatsController.php
   - resources/js/pages/stats-payload-client.js
   - resources/js/pages/stats-filter-state.js
@@ -42,6 +43,7 @@ rules:
   - Schema caching must be keyed by the request context that can affect available filters, bounds, or columns.
   - League ownership hydration must remain a payload decoration step after platform player-universe filtering.
   - League ownership maps may use five-minute cache keys scoped by league, user, and platform while row decoration remains request-payload specific.
+  - Division-scoped Fantrax league stats payloads must hydrate fantasy ownership only for the viewer's own Fantrax division or pool, using the shared FantraxViewerScope resolver.
   - Synthetic league scoring perspectives and Fantrax goalie column groups must be built through a dedicated backend factory rather than page JavaScript.
   - Fantrax league scoring perspectives may add read-time computed Fantasy Pts and Fantasy Pts/G columns only when persisted league scoring metadata identifies the league as a points league.
   - Read-time fantasy point totals must use persisted provider scoring category weights and supported DynastyIQ stat/formula mappings; category or rotisserie leagues must continue to show category columns without a combined fantasy point total.
@@ -64,6 +66,7 @@ public_interface:
   - LeagueStatsOwnershipHydrator
   - LeagueStatsPerspectiveFactory
   - LeagueStatsPlayerUniverseFilter
+  - FantraxViewerScope
   - StatsController::leaguePayload()
   - StatsPayloadClient
   - StatsFilterState

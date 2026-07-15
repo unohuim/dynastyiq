@@ -826,6 +826,80 @@ describe('stats page prospect controls', () => {
       .toBeLessThan(document.body.textContent.indexOf('Slot First Player'));
   });
 
+  it('shows open roster slots when slot is selected for a fantasy team', async () => {
+    const shell = await createShell({
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+        defaultSort: 'gp',
+        sortKey: 'gp',
+        sortDirection: 'desc',
+      },
+    });
+    shell.payload.data = [
+      {
+        name: 'Rostered Forward',
+        team: 'NYR',
+        league: 'NHL',
+        pos_type: 'F',
+        gp: 80,
+        stats: { gp: 80 },
+        fantasy_team_name: 'Alpha Team',
+        fantasy_team_avatar_url: 'https://example.test/alpha.png',
+        roster_slot: 'C',
+        roster_sort_order: 1,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 0,
+      },
+      {
+        name: '',
+        team: null,
+        league: null,
+        pos_type: null,
+        gp: null,
+        stats: {},
+        fantasy_team_name: 'Alpha Team',
+        fantasy_team_avatar_url: 'https://example.test/alpha.png',
+        roster_slot: 'D',
+        roster_sort_order: 2,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 0,
+        league_roster_only: true,
+        league_roster_placeholder: true,
+      },
+      {
+        name: '',
+        team: null,
+        league: null,
+        pos_type: null,
+        gp: null,
+        stats: {},
+        fantasy_team_name: 'Alpha Team',
+        fantasy_team_avatar_url: 'https://example.test/alpha.png',
+        roster_slot: 'D',
+        roster_sort_order: 2,
+        roster_group_sort_order: 0,
+        roster_status_sort_order: 0,
+        league_roster_only: true,
+        league_roster_placeholder: true,
+      },
+    ];
+
+    shell.renderContent();
+    Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('All Players'))
+      ?.click();
+    Array.from(document.body.querySelectorAll('button'))
+      .find((button) => button.textContent.includes('Alpha Team'))
+      ?.click();
+
+    Array.from(document.body.querySelectorAll('div'))
+      .find((node) => node.textContent.trim() === 'Slot')
+      ?.click();
+
+    expect(document.body.textContent.match(/Open D/g)).toHaveLength(2);
+  });
+
   it('defaults league owner stats to the current user fantasy team and labels the global option all players', async () => {
     const shell = await createShell({
       settings: {
@@ -984,6 +1058,104 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('GP');
     expect(document.body.textContent).toContain('Loaded Goalie');
     expect(exactCellValues).toContain('30');
+  });
+
+  it('renders league team aggregates with ranks and averages controls only', async () => {
+    setViewport(1280);
+    const { StatsPageShell } = await loadStatsPage();
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const shell = new StatsPageShell(container, {
+      apiUrl: '/api/stats',
+      resource: 'teams',
+      selectedPerspective: 'fantrax-league-1',
+      perspectives: [{ slug: 'fantrax-league-1', name: 'Fantrax League' }],
+      syncUrl: false,
+      initialPayload: {
+        headings: [
+          { key: 'name', label: 'Team' },
+          { key: 'contract_value_num', label: 'Cap' },
+          { key: 'g', label: 'G' },
+          { key: 'fantasy_pts_pg', label: 'FP/G' },
+        ],
+        data: [
+          {
+            name: 'Total Heavy Team',
+            avatar_url: 'https://example.test/team.png',
+            contract_value_num: 4,
+            g: 10,
+            fantasy_pts_pg: 3.5,
+            stats: { contract_value_num: 4, g: 10, fantasy_pts_pg: 3.5 },
+            __team_average: { contract_value_num: 2, g: 1, fantasy_pts_pg: 3.5 },
+            fantasy_team_name: 'Total Heavy Team',
+            fantasy_team_is_user_team: true,
+          },
+          {
+            name: 'Average Leader Team',
+            avatar_url: 'https://example.test/team-two.png',
+            contract_value_num: 2,
+            g: 2,
+            fantasy_pts_pg: 4.5,
+            stats: { contract_value_num: 2, g: 2, fantasy_pts_pg: 4.5 },
+            __team_average: { contract_value_num: 1, g: 2, fantasy_pts_pg: 4.5 },
+            fantasy_team_name: 'Average Leader Team',
+            fantasy_team_is_user_team: false,
+          },
+        ],
+        settings: {
+          ownerColumn: true,
+          leaguePlatform: 'fantrax',
+          resource: 'teams',
+          teamAggregate: true,
+          canSlice: false,
+        },
+        meta: {
+          availableSeasons: [20252026],
+          availableGameTypes: [2],
+          season: 20252026,
+          game_type: 2,
+          canSlice: false,
+          supportsDateRange: false,
+          positionButtons: ['F', 'D', 'G'],
+        },
+      },
+    });
+
+    shell.render();
+
+    expect(document.body.textContent).toContain('Ranks');
+    expect(document.body.textContent).toContain('Averages');
+    expect(document.body.textContent).not.toContain('Fantrax League');
+    expect(document.body.textContent).not.toContain('P/GP');
+    expect(document.body.textContent).not.toContain('Per 60');
+    expect(document.body.textContent).not.toContain('Filter by name');
+    expect(document.body.textContent).not.toContain('All Players');
+    expect(document.body.textContent).not.toContain('Free Agents');
+    expect(document.body.textContent).toContain('$4.00');
+
+    const averagesButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Averages');
+    averagesButton?.click();
+
+    expect(document.body.textContent).toContain('$2.00');
+    expect(document.body.textContent).toContain('1.00');
+    expect(document.body.textContent).toContain('3.50');
+
+    const ranksButton = [...document.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Ranks');
+    ranksButton?.click();
+
+    const exactCells = [...document.querySelectorAll('div')]
+      .map((node) => node.textContent.trim());
+    expect(exactCells).toContain('1');
+    expect(exactCells).toContain('2');
+
+    const goalsHeader = [...document.querySelectorAll('div')]
+      .find((node) => node.textContent.trim() === 'G');
+    goalsHeader?.click();
+
+    expect(document.body.textContent).toContain('Total Heavy Team');
+    expect(document.body.textContent).toContain('Average Leader Team');
   });
 
   it('shows mobile league roster GP from games played aliases over nested zeroes', async () => {

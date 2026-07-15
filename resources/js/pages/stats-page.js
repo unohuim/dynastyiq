@@ -53,7 +53,8 @@ export class StatsPageShell {
     this.payload = normalizeStatsPayload(this.config.initialPayload || {});
     this.schemaAdapter = new StatsSchemaAdapter(this.payload);
     this.columnGroupAdapter = new StatsColumnGroupAdapter(IDENTITY_KEYS);
-    this.payloadClient = new StatsPayloadClient({ apiUrl: this.apiUrl });
+    this.resource = this.config.resource || this.payload?.settings?.resource || 'players';
+    this.payloadClient = new StatsPayloadClient({ apiUrl: this.apiUrl, resource: this.resource });
     this.perspectives = Array.isArray(this.config.perspectives) ? this.config.perspectives : [];
     this.connectedLeagues = Array.isArray(this.config.connectedLeagues) ? this.config.connectedLeagues : [];
     this.defaultPerspective = this.perspectives.find((perspective) => perspective?.slug === 'skaters')?.slug
@@ -388,6 +389,8 @@ export class StatsPageShell {
   }
 
   onLeagueFantasyTeamFilterChange = ({ teamSpecific = false } = {}) => {
+    if (this.resource === 'teams' || this.settings.teamAggregate === true) return;
+
     const shouldAutoSkaters = !teamSpecific;
     const hasAutoSkaters = this.state.leagueAutoSkaterFilter === true
       && this.state.selectedPosTypes.length === 2
@@ -428,6 +431,10 @@ export class StatsPageShell {
 
   renderControls() {
     this.controlsEl.innerHTML = '';
+
+    if (this.resource === 'teams' || this.settings.teamAggregate === true) {
+      return;
+    }
 
     if (this.state.isMobile) {
       this.controlsEl.appendChild(this.renderMobileControls());
@@ -770,6 +777,8 @@ export class StatsPageShell {
     const renderSettings = {
       ...this.settings,
       leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
+      resource: this.settings.resource || this.resource,
+      teamAggregate: this.settings.teamAggregate === true || this.resource === 'teams',
       selectedPos: [...this.state.selectedPos],
       selectedPosTypes: [...this.state.selectedPosTypes],
       leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,

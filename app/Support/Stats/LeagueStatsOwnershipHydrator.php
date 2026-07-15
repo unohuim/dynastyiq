@@ -7,6 +7,7 @@ namespace App\Support\Stats;
 use App\Models\NhlSeasonStat;
 use App\Models\PlatformLeague;
 use App\Models\Player;
+use App\Support\FantraxViewerScope;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -19,10 +20,16 @@ final class LeagueStatsOwnershipHydrator
     /**
      * @param array<string,mixed> $payload
      * @param array<string,float>|null $timings
+     * @param array{scope:string,division:string|null}|null $viewerScope
      * @return array<string,mixed>
      */
-    public function hydrate(array $payload, PlatformLeague $league, ?int $userId = null, ?array &$timings = null): array
-    {
+    public function hydrate(
+        array $payload,
+        PlatformLeague $league,
+        ?int $userId = null,
+        ?array &$timings = null,
+        ?array $viewerScope = null
+    ): array {
         $last = hrtime(true);
         $mark = static function (string $key) use (&$timings, &$last): void {
             if ($timings === null) {
@@ -34,7 +41,7 @@ final class LeagueStatsOwnershipHydrator
             $last = $now;
         };
 
-        $ownership = $this->leagueOwnership($league, $userId);
+        $ownership = $this->leagueOwnership($league, $userId, $viewerScope);
         $mark('ownership_map_ms');
 
         $ownershipByPlayerId = $ownership['by_player_id'];
@@ -118,25 +125,35 @@ final class LeagueStatsOwnershipHydrator
     /**
      * Return current fantasy owner metadata keyed by local and NHL player ids.
      *
+     * @param array{scope:string,division:string|null}|null $viewerScope
      * @return array{by_player_id:array<string,array<string,mixed>>,by_nhl_id:array<string,array<string,mixed>>,roster_rows:array<int,array<string,mixed>>}
      */
-    private function leagueOwnership(PlatformLeague $league, ?int $userId = null): array
+    private function leagueOwnership(PlatformLeague $league, ?int $userId = null, ?array $viewerScope = null): array
     {
         $platform = (string) ($league->platform ?? '');
         $settingsHash = md5((string) json_encode($league->settings ?? []));
-        $cacheKey = sprintf('stats_ownership:%s:%s:%s:%s', $league->id, $userId ?? 'guest', $platform, $settingsHash);
+        $scopeHash = md5((string) json_encode($viewerScope ?? []));
+        $cacheKey = sprintf(
+            'stats_ownership:%s:%s:%s:%s:%s',
+            $league->id,
+            $userId ?? 'guest',
+            $platform,
+            $settingsHash,
+            $scopeHash,
+        );
 
         return Cache::remember(
             $cacheKey,
             now()->addSeconds(self::OWNERSHIP_CACHE_TTL_SECONDS),
-            fn (): array => $this->buildLeagueOwnership($league, $userId),
+            fn (): array => $this->buildLeagueOwnership($league, $userId, $viewerScope),
         );
     }
 
     /**
+     * @param array{scope:string,division:string|null}|null $viewerScope
      * @return array{by_player_id:array<string,array<string,mixed>>,by_nhl_id:array<string,array<string,mixed>>,roster_rows:array<int,array<string,mixed>>}
      */
-    private function buildLeagueOwnership(PlatformLeague $league, ?int $userId = null): array
+    private function buildLeagueOwnership(PlatformLeague $league, ?int $userId = null, ?array $viewerScope = null): array
     {
         $platform = (string) ($league->platform ?? '');
         $usesProviderSlotOrder = $platform === 'yahoo';
@@ -151,8 +168,9 @@ final class LeagueStatsOwnershipHydrator
             ->pluck('sort_order', 'slot')
             ->map(static fn ($value): int => (int) $value)
             ->all();
+        $fantraxViewerScope = app(FantraxViewerScope::class);
         $teams = $league->teams()
-            ->select('id', 'platform_team_id', 'name')
+            ->select('id', 'platform_team_id', 'name', 'extras')
             ->with([
                 'roster:id,nhl_id,full_name,first_name,last_name,position,pos_type,dob,team_abbrev,head_shot_url,is_goalie,is_prospect,status',
                 'users' => static function ($query): void {
@@ -161,7 +179,8 @@ final class LeagueStatsOwnershipHydrator
                         ->with(['socialAccounts:id,user_id,avatar']);
                 },
             ])
-            ->get();
+            ->get()
+            ->filter(fn ($team): bool => $fantraxViewerScope->teamMatches($team, $viewerScope));
 
         $byPlayerId = [];
         $byNhlId = [];
@@ -223,7 +242,9 @@ final class LeagueStatsOwnershipHydrator
                         default => 90,
                     },
                 ], $customCapPayload);
-                $teamSlotCounts[$displaySlot] = ($teamSlotCounts[$displaySlot] ?? 0) + 1;
+                if ($rosterStatus === 'active') {
+                    $teamSlotCounts[$displaySlot] = ($teamSlotCounts[$displaySlot] ?? 0) + 1;
+                }
 
                 $byPlayerId[(string) $player->id] = $rosterPayload;
 

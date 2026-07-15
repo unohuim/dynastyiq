@@ -11,6 +11,7 @@ use App\Models\PlatformTeam;
 use App\Models\Player;
 use App\Models\User;
 use App\Services\PlatformLeaguePlayerStatService;
+use App\Support\FantraxViewerScope;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
@@ -384,6 +385,82 @@ it('decorates existing payload rows with fantasy ownership metadata', function (
         ->and($hydrated['data'][0]['roster_slot'])->toBe('C');
 });
 
+it('scopes fantrax league ownership hydration to the viewer division', function (): void {
+    [$user, $league, $team, $player] = ($this->createRosterFixture)([
+        'platform_league_id' => 'division-stats-league',
+        'team_name' => 'Gretzky Team',
+    ]);
+    $league->forceFill([
+        'settings' => [
+            'league_shape' => [
+                'player_pool_scope' => 'division',
+            ],
+        ],
+    ])->save();
+    $team->forceFill([
+        'extras' => ['fantrax' => ['division' => 'Gretzky']],
+    ])->save();
+    $orrTeam = PlatformTeam::create([
+        'platform_league_id' => $league->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Orr Team',
+        'extras' => ['fantrax' => ['division' => 'Orr']],
+    ]);
+    $orrPlayer = Player::create([
+        'nhl_id' => 9002,
+        'first_name' => 'Other',
+        'last_name' => 'Division',
+        'full_name' => 'Other Division',
+        'dob' => '2001-01-01',
+        'position' => 'D',
+        'pos_type' => 'D',
+        'team_abbrev' => 'BOS',
+    ]);
+    $orrTeam->roster()->attach($orrPlayer->id, [
+        'platform' => 'fantrax',
+        'platform_player_id' => 'platform-player-2',
+        'slot' => 'D',
+        'status' => 'active',
+        'eligibility' => json_encode(['D'], JSON_THROW_ON_ERROR),
+        'starts_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $payload = [
+        'headings' => [],
+        'data' => [
+            [
+                'name' => 'Roster Player',
+                'player_id' => $player->id,
+                'nhl_player_id' => $player->nhl_id,
+            ],
+            [
+                'name' => 'Other Division',
+                'player_id' => $orrPlayer->id,
+                'nhl_player_id' => $orrPlayer->nhl_id,
+            ],
+        ],
+        'meta' => ['season' => '20252026', 'game_type' => 2],
+        'settings' => [],
+    ];
+    $scope = app(FantraxViewerScope::class)->resolve($league->fresh(), $user);
+    $timings = null;
+
+    $hydrated = app(LeagueStatsOwnershipHydrator::class)->hydrate(
+        $payload,
+        $league->fresh(),
+        $user->id,
+        $timings,
+        $scope,
+    );
+
+    $rows = collect($hydrated['data'])->keyBy('player_id');
+
+    expect($scope)->toMatchArray(['scope' => 'division', 'division' => 'Gretzky'])
+        ->and($rows[$player->id]['fantasy_team_name'])->toBe('Gretzky Team')
+        ->and($rows[$orrPlayer->id]['fantasy_team_name'])->toBeNull();
+});
+
 it('appends roster only rows missing from the payload', function (): void {
     [$user, $league, , $player] = ($this->createRosterFixture)();
     NhlSeasonStat::create([
@@ -407,6 +484,84 @@ it('appends roster only rows missing from the payload', function (): void {
         ->and($hydrated['data'][0]['league_roster_only'])->toBeTrue()
         ->and($hydrated['data'][0]['gp'])->toBe(12)
         ->and($hydrated['data'][0]['g'])->toBe(5.0);
+});
+
+it('does not count reserve or injured players against configured active roster slot placeholders', function (): void {
+    [$user, $league, $team] = ($this->createRosterFixture)([
+        'slot' => 'D',
+        'status' => 'active',
+        'eligibility' => ['D'],
+    ]);
+    DB::table('platform_league_roster_slots')->insert([
+        'platform_league_id' => $league->id,
+        'slot' => 'D',
+        'slot_type' => 'starter',
+        'position_type' => 'skater',
+        'count' => 6,
+        'sort_order' => 60,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    foreach (range(2, 4) as $index) {
+        $player = Player::create([
+            'nhl_id' => 9100 + $index,
+            'first_name' => 'Active',
+            'last_name' => "Defense {$index}",
+            'full_name' => "Active Defense {$index}",
+            'dob' => '2001-01-01',
+            'position' => 'D',
+            'pos_type' => 'D',
+            'team_abbrev' => 'TOR',
+        ]);
+        $team->roster()->attach($player->id, [
+            'platform' => 'fantrax',
+            'platform_player_id' => "active-d-{$index}",
+            'slot' => 'D',
+            'status' => 'active',
+            'eligibility' => json_encode(['D'], JSON_THROW_ON_ERROR),
+            'starts_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    foreach (['bench', 'ir'] as $index => $status) {
+        $player = Player::create([
+            'nhl_id' => 9200 + $index,
+            'first_name' => ucfirst($status),
+            'last_name' => 'Defense',
+            'full_name' => ucfirst($status) . ' Defense',
+            'dob' => '2001-01-01',
+            'position' => 'D',
+            'pos_type' => 'D',
+            'team_abbrev' => 'TOR',
+        ]);
+        $team->roster()->attach($player->id, [
+            'platform' => 'fantrax',
+            'platform_player_id' => "{$status}-d",
+            'slot' => 'D',
+            'status' => $status,
+            'eligibility' => json_encode(['D'], JSON_THROW_ON_ERROR),
+            'starts_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    $payload = [
+        'headings' => [],
+        'data' => [],
+        'meta' => ['season' => '20252026', 'game_type' => 2],
+        'settings' => [],
+    ];
+
+    $hydrated = app(LeagueStatsOwnershipHydrator::class)->hydrate($payload, $league, $user->id);
+    $openDefenseSlots = collect($hydrated['data'])
+        ->where('league_roster_placeholder', true)
+        ->where('roster_slot', 'D');
+
+    expect($openDefenseSlots)->toHaveCount(2);
 });
 
 it('hydrates rostered goalie rows already present in the payload from season stats', function (): void {
@@ -950,4 +1105,89 @@ it('passes goalie column group requests through fantrax league payload settings'
         ->assertJsonPath('meta.pos_type', ['G'])
         ->assertJsonPath('settings.filters.pos_type.value', ['G'])
         ->assertJsonPath('settings.columns.0.key', 'wins');
+});
+
+it('aggregates league team payload rows across pro roster players', function (): void {
+    $controller = app(\App\Http\Controllers\StatsController::class);
+    $method = new ReflectionMethod($controller, 'teamAggregateLeaguePayload');
+    $method->setAccessible(true);
+
+    $payload = [
+        'headings' => [
+            ['key' => 'name', 'label' => 'Player'],
+            ['key' => 'team', 'label' => 'Team'],
+            ['key' => 'age', 'label' => 'Age'],
+            ['key' => 'contract_value_num', 'label' => 'Cap'],
+            ['key' => 'contract_last_year', 'label' => 'Term'],
+            ['key' => 'g', 'label' => 'G'],
+            ['key' => 'fantasy_pts_pg', 'label' => 'FP/G'],
+        ],
+        'data' => [
+            [
+                'name' => 'Player One',
+                'fantasy_team_id' => 'team-1',
+                'fantasy_team_name' => 'Division Team',
+                'fantasy_team_avatar_url' => 'https://example.test/team.png',
+                'fantasy_team_is_user_team' => true,
+                'roster_group' => 'active',
+                'contract_value_num' => 1.0,
+                'g' => 2,
+                'fantasy_pts_pg' => 1.0,
+                'stats' => ['contract_value_num' => 1.0, 'g' => 2, 'fantasy_pts_pg' => 1.0],
+            ],
+            [
+                'name' => 'Player Two',
+                'fantasy_team_id' => 'team-1',
+                'fantasy_team_name' => 'Division Team',
+                'fantasy_team_avatar_url' => 'https://example.test/team.png',
+                'fantasy_team_is_user_team' => true,
+                'roster_group' => 'reserve',
+                'contract_value_num' => 2.0,
+                'g' => 3,
+                'fantasy_pts_pg' => 3.0,
+                'stats' => ['contract_value_num' => 2.0, 'g' => 3, 'fantasy_pts_pg' => 3.0],
+            ],
+            [
+                'name' => 'Minor Player',
+                'fantasy_team_id' => 'team-1',
+                'fantasy_team_name' => 'Division Team',
+                'roster_group' => 'minor',
+                'contract_value_num' => 5.0,
+                'g' => 10,
+                'fantasy_pts_pg' => 10.0,
+            ],
+            [
+                'league_roster_placeholder' => true,
+                'fantasy_team_id' => 'team-1',
+                'fantasy_team_name' => 'Division Team',
+                'contract_value_num' => 7.0,
+                'g' => 20,
+                'fantasy_pts_pg' => 20.0,
+            ],
+        ],
+        'settings' => ['ownerColumn' => true, 'leaguePlatform' => 'fantrax'],
+        'meta' => [],
+    ];
+
+    $result = $method->invoke($controller, $payload);
+
+    expect(array_map(
+        static fn (array $heading): array => [$heading['key'], $heading['label']],
+        $result['headings'],
+    ))->toBe([
+        ['name', 'Team'],
+        ['contract_value_num', 'Cap'],
+        ['g', 'G'],
+        ['fantasy_pts_pg', 'FP/G'],
+    ]);
+
+    expect($result['settings']['resource'])->toBe('teams')
+        ->and($result['settings']['teamAggregate'])->toBeTrue()
+        ->and($result['data'])->toHaveCount(1)
+        ->and($result['data'][0]['player_count'])->toBe(2)
+        ->and($result['data'][0]['contract_value_num'])->toBe(3.0)
+        ->and($result['data'][0]['g'])->toBe(5.0)
+        ->and($result['data'][0]['fantasy_pts_pg'])->toBe(2.0)
+        ->and($result['data'][0]['__team_average']['contract_value_num'])->toBe(1.5)
+        ->and($result['data'][0]['__team_average']['g'])->toBe(2.5);
 });

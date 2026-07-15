@@ -229,7 +229,7 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 **Purpose:**
 Fetch Fantrax draft payloads and mirror them into canonical Draft Central tables.
 Division-scoped draft rows include provider division context in their provider pick key, and pending rows without a provider player id do not emit pick-made events.
-User-facing division-scoped Draft Central reads default normal users to their own Fantrax division or pool while commissioner/admin reads may retain all-division visibility.
+User-facing division-scoped Draft Central reads in the /leagues experience default users to their own Fantrax division or pool, including commissioner users.
 
 **When to Use:**
 Polling Fantrax draft payloads, comparing latest provider draft rows against canonical draft picks, and emitting events when a previously unmade canonical pick receives a Fantrax player id.
@@ -300,6 +300,7 @@ $resolved = app(PlatformLeagueSettingsResolver::class)->resolve($platformLeague,
 - `app/Support/Stats/LeagueStatsOwnershipHydrator.php`
 - `app/Support/Stats/LeagueStatsPerspectiveFactory.php`
 - `app/Support/Stats/LeagueStatsPlayerUniverseFilter.php`
+- `app/Support/FantraxViewerScope.php`
 - `app/Http/Controllers/StatsController.php`
 - `resources/js/pages/stats-payload-client.js`
 - `resources/js/pages/stats-filter-state.js`
@@ -310,6 +311,7 @@ $resolved = app(PlatformLeagueSettingsResolver::class)->resolve($platformLeague,
 **Purpose:**
 Build stats payloads through explicit request context, parsed filters, schema metadata, row assembly, and frontend payload consumption boundaries.
 Stats report UIs should consume server JSON payloads and apply sort, display-mode, and filter interactions without full page refreshes.
+League stats ownership hydration uses the shared Fantrax viewer scope resolver so division-scoped Fantrax league reads expose ownership only from the viewer's own division or pool.
 
 **When to Use:**
 League stats payloads, perspective-driven player stats payloads, JSON-fed stats report views including stats unit reports, prospects and draft-player stats payloads, and stats query/schema/row assembly refactors.
@@ -330,6 +332,7 @@ NHL import aggregation pipelines, Discord bot runtime, or one-off admin reports 
 - `LeagueStatsOwnershipHydrator`
 - `LeagueStatsPerspectiveFactory`
 - `LeagueStatsPlayerUniverseFilter`
+- `FantraxViewerScope`
 - `StatsController::leaguePayload()`
 - `StatsPayloadClient`
 - `StatsFilterState`
@@ -1433,6 +1436,7 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 - `app/Services/PlatformLeagueScoringCategoryService.php`
 - `app/Services/PlatformLeaguePlayerStatService.php`
 - `app/Services/FantraxLogoSyncService.php`
+- `app/Support/FantraxViewerScope.php`
 - `app/Support/FantraxLogoBrowserProfile.php`
 - `app/Services/ImportFantraxLeagues.php`
 - `app/Services/ImportFantraxPlayers.php`
@@ -1462,7 +1466,8 @@ Provider scoring category sync normalizes shorthand group names, upserts current
 Scheduled league refresh uses the same league sync path as the user-triggered top-level Leagues refresh action and runs on a four-hour cadence.
 Fantrax league shape metadata is persisted under platform league settings, including duplicate-player behavior, player-pool scope, team division labels, period counts, draft shape, and salary/contract detection.
 Team division or pool labels are preserved on platform team extras when Fantrax exposes them through either `teamInfo` or top-level team map entries.
-Division-scoped Fantrax league reads default normal users to their own Fantrax division or pool while commissioner/admin reads may retain all-division visibility.
+Division-scoped Fantrax league reads in the /leagues experience default users to their own Fantrax division or pool, including commissioner users.
+Fantrax viewer division scope is resolved through `FantraxViewerScope` when league-facing read payloads need to filter teams, ownership, draft rows, or roster context.
 
 **When to Use:**
 Syncing Fantrax leagues, updating rosters, resolving Fantrax player identity, or rendering league availability.
@@ -1479,6 +1484,7 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 - `PlatformLeagueScoringCategoryService`
 - `PlatformLeaguePlayerStatService`
 - `FantraxLogoSyncService`
+- `FantraxViewerScope`
 - `leagues.team-logos.sync`
 - `community.leagues.team-logos.sync`
 - `TeamLogosSynced`
