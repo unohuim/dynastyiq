@@ -499,6 +499,9 @@ it('persists fantrax league shape without treating normal divisions as duplicate
             'rosterInfo' => [
                 'positionConstraints' => [
                     'C' => ['maxActive' => 4],
+                    'D' => ['maxActive' => 6],
+                    'LW' => ['maxActive' => 4],
+                    'RW' => ['maxActive' => 4],
                     'G' => ['maxActive' => 2],
                     'Skt' => ['maxActive' => 1],
                 ],
@@ -541,8 +544,17 @@ it('persists fantrax league shape without treating normal divisions as duplicate
         'slot_type' => 'starter',
         'position_type' => 'skater',
         'count' => 4,
-        'sort_order' => 1,
+        'sort_order' => 10,
     ]);
+    expect(DB::table('platform_league_roster_slots')
+        ->where('platform_league_id', $platformLeague->id)
+        ->whereIn('slot', ['LW', 'RW', 'D'])
+        ->pluck('sort_order', 'slot')
+        ->all())->toBe([
+            'D' => 60,
+            'LW' => 20,
+            'RW' => 30,
+        ]);
     $this->assertDatabaseHas('platform_roster_memberships', [
         'player_id' => $player->id,
         'platform_player_id' => 'fx-skater',

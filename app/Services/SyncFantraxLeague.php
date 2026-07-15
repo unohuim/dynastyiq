@@ -732,7 +732,6 @@ final class SyncFantraxLeague
         }
 
         $rows = [];
-        $sortOrder = 1;
 
         foreach ($constraints as $slot => $constraint) {
             if (! is_array($constraint)) {
@@ -756,7 +755,7 @@ final class SyncFantraxLeague
                     ?? $constraint['max']
                     ?? null,
                 ) ?? 0,
-                'sort_order' => $sortOrder++,
+                'sort_order' => $this->fantraxRosterSlotSortOrder($slot),
                 'raw_payload' => json_encode($constraint),
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -857,6 +856,28 @@ final class SyncFantraxLeague
             'MIN', 'MINORS', 'NA' => 'minor',
             'F', 'SKT', 'UTIL' => 'utility',
             default => 'starter',
+        };
+    }
+
+    /**
+     * Return DynastyIQ's hockey roster display order for provider slot settings.
+     */
+    private function fantraxRosterSlotSortOrder(string $slot): int
+    {
+        return match (strtoupper(trim($slot))) {
+            'C' => 10,
+            'LW' => 20,
+            'RW' => 30,
+            'W' => 40,
+            'F' => 50,
+            'D' => 60,
+            'SKT' => 70,
+            'UTIL' => 80,
+            'G' => 90,
+            'BEN', 'BN', 'RES' => 100,
+            'IR', 'IR+', 'IL' => 110,
+            'MIN', 'MINORS', 'NA' => 120,
+            default => 900,
         };
     }
 

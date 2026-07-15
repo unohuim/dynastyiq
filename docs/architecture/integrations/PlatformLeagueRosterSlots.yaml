@@ -18,7 +18,8 @@ when_not_to_use:
 rules:
   - One row represents one provider roster slot within one platform league.
   - A platform league may have only one row for a given provider slot.
-  - The sort order must reflect the provider roster settings order when the provider exposes one.
+  - The sort order should reflect the provider roster settings order when that order matches DynastyIQ roster display expectations.
+  - Fantrax roster slot sort_order must use DynastyIQ's hockey display order rather than raw provider map iteration order, so skater slots render as forwards before defense, then goalies, reserve, injured, and minors.
   - Platform roster memberships store the current player slot, while platform league roster slots define the league slot metadata and display order.
   - Unknown membership slots must render after configured slots using a stable fallback order.
   - Provider-specific parsing must remain inside provider sync services before data enters this model.

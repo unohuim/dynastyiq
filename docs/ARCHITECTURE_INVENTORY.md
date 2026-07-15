@@ -1676,6 +1676,7 @@ $state = app(PlatformState::class);
 **Purpose:**
 Store provider-neutral roster slot order and counts for platform leagues so roster displays can follow league settings.
 Fantrax league sync upserts these rows from `getLeagueInfo.rosterInfo.positionConstraints` and stores the raw provider constraint payload on each slot row.
+Fantrax roster slot sort order is normalized to DynastyIQ hockey display order rather than raw provider map order.
 
 **When to Use:**
 Importing league roster position settings from external fantasy providers or sorting platform roster memberships for display.
