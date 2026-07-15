@@ -1341,19 +1341,13 @@
         return season?.cap_hit_label || player?.contract?.current_cap_hit_label || '-';
       },
       capAdjustmentPlayerCandidates(){
-        const selectedTeamId = String(this.capTeamId || '');
         const query = String(this.capAdjustmentPlayerQuery || '').toLowerCase().trim();
-        const selectedRosterIds = new Set((this.capTeam?.players || [])
-          .map(player => String(player?.id || ''))
-          .filter(Boolean));
-        const otherTeamPlayers = this.realTeams()
-          .filter(team => String(team?.id || '') !== selectedTeamId)
+        const teamPlayers = this.realTeams()
           .flatMap(team => Array.isArray(team?.players) ? team.players : []);
         const playersById = new Map();
 
-        [...otherTeamPlayers, ...(this.freeAgents || [])]
+        [...teamPlayers, ...(this.freeAgents || [])]
           .filter(player => player?.type !== 'empty')
-          .filter(player => !selectedRosterIds.has(String(player?.id || '')))
           .filter(player => this.playerHasCurrentOrFutureContract(player))
           .forEach(player => {
             const id = String(player?.id || '');
