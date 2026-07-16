@@ -25,6 +25,8 @@ rules:
   - Enum-like perspective values must reference docs/ENUMS.md rather than being duplicated here.
   - The /stats page must default to the Skaters perspective, not the first visible perspective by database id.
   - Only the canonical Prospects and Prospects - Goalies perspectives may read player rows from the legacy stats table.
+  - Prospect row universe filters must use stats.is_prospect from the legacy stats table, not players.is_prospect.
+  - stats.is_prospect is maintained by ProspectEligibilityService after NHL landing stats imports.
   - Non-prospect season perspectives must read from nhl_season_stats; non-prospect range views may read from nhl_game_summaries.
 public_interface:
   - Perspective::forUser()

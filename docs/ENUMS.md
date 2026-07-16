@@ -1428,6 +1428,25 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHLe League Factor Source
+
+**Name:** NHLe league factor source
+**Storage location(s):** `nhle_league_factors.source` (string column)
+**Allowed values currently seeded:**
+
+- `nl_ice_data`
+
+**Semantic meaning:**
+
+- `nl_ice_data`: NHLe league translation factors from NL Ice Data / Thibaud Chatel.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+- Source rows are versioned by `nhle_league_factors.source_version`.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:

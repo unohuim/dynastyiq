@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
+use App\Models\PlayerExternalIdentity;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +30,7 @@ final class StatsPayloadAssembler
     ): Collection {
         $rows = collect();
         $officialToiByPlayer = $this->officialBoxscoreToiByPlayer($collection, $mode, $filters);
+        $draftedOverallByPlayer = $this->draftedOverallByPlayer($collection);
 
         $grouped = $collection->groupBy(function ($row): string {
             $playerId = (string) ($row->player_id ?? $row->nhl_player_id ?? '');
@@ -73,6 +75,7 @@ final class StatsPayloadAssembler
             }
 
             $toiPerGameSeconds = ($gamesPlayed > 0) ? (int) floor($toiSeconds / $gamesPlayed) : 0;
+            $drafted = $draftedOverallByPlayer[(int) ($player?->id ?? $entry->player_id ?? 0)] ?? null;
 
             $row = [
                 'name' => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
@@ -88,6 +91,9 @@ final class StatsPayloadAssembler
                 'contract_value_num' => round($contractCapHitMillions, 2),
                 'contract_last_year' => $contractLastLabel,
                 'contract_last_year_num' => $lastYearNumber,
+                'drafted_overall_pick' => $drafted['overall_pick'] ?? null,
+                'drafted_year' => $drafted['year'] ?? null,
+                'drafted_label' => $this->draftedLabel($drafted),
                 'gp' => max(0, $gamesPlayed),
                 'nhl_player_id' => $player?->nhl_id ?? $entry->nhl_player_id ?? null,
                 'toi_seconds' => $toiPerGameSeconds,
@@ -124,7 +130,7 @@ final class StatsPayloadAssembler
             }
 
             $row = $this->withFormulaDependencyValues($row, $columns, $entry, $playerStats, $isSeason);
-            $row = $this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason);
+            $row = $this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason, $entry);
             $row = $this->withFormulaColumns($row, $columns);
             $row = $this->withComputedFantasyPoints($row, $columns);
 
@@ -132,6 +138,109 @@ final class StatsPayloadAssembler
         }
 
         return $rows;
+    }
+
+    /**
+     * @param Collection<int,object> $collection
+     * @return array<int,array{overall_pick:int,year:int|null}>
+     */
+    private function draftedOverallByPlayer(Collection $collection): array
+    {
+        $playerIds = $collection
+            ->map(static fn (object $row): mixed => $row->player_id ?? (($row->player ?? null)?->id) ?? null)
+            ->filter(static fn (mixed $id): bool => is_numeric($id))
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($playerIds->isEmpty()) {
+            return [];
+        }
+
+        $drafted = [];
+        DB::table('player_external_identities')
+            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+            ->whereIn('player_id', $playerIds->all())
+            ->get(['player_id', 'raw_payload'])
+            ->each(function (object $identity) use (&$drafted): void {
+                $playerId = (int) ($identity->player_id ?? 0);
+                $payload = $this->decodedPayload($identity->raw_payload ?? null);
+                $overallPick = $this->integerPayloadValue($payload, ['overallPick', 'overall_pick', 'overall']);
+                $year = $this->integerPayloadValue($payload, ['draft_year', 'draftYear', 'year']);
+
+                if (
+                    $playerId > 0
+                    && $overallPick !== null
+                    && (
+                        ! isset($drafted[$playerId])
+                        || $year > ($drafted[$playerId]['year'] ?? 0)
+                        || ($year === ($drafted[$playerId]['year'] ?? null) && $overallPick < $drafted[$playerId]['overall_pick'])
+                    )
+                ) {
+                    $drafted[$playerId] = [
+                        'overall_pick' => $overallPick,
+                        'year' => $year,
+                    ];
+                }
+            });
+
+        return $drafted;
+    }
+
+    /**
+     * @param array{overall_pick:int,year:int|null}|null $drafted
+     */
+    private function draftedLabel(?array $drafted): ?string
+    {
+        if ($drafted === null) {
+            return null;
+        }
+
+        $overallPick = (int) ($drafted['overall_pick'] ?? 0);
+        $year = (int) ($drafted['year'] ?? 0);
+        if ($overallPick <= 0 || $year <= 0) {
+            return null;
+        }
+
+        return $overallPick . '-' . $year;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function decodedPayload(mixed $payload): array
+    {
+        if (is_array($payload)) {
+            return $payload;
+        }
+
+        if (is_object($payload)) {
+            return (array) $payload;
+        }
+
+        if (! is_string($payload) || trim($payload) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($payload, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @param array<int,string> $keys
+     */
+    private function integerPayloadValue(array $payload, array $keys): ?int
+    {
+        foreach ($keys as $key) {
+            $value = $payload[$key] ?? null;
+            if (is_numeric($value)) {
+                return (int) $value;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -592,24 +701,21 @@ final class StatsPayloadAssembler
         Collection $playerStats,
         int $gamesPlayed,
         int $toiSeconds,
-        bool $isSeason
+        bool $isSeason,
+        ?object $seasonEntry = null
     ): array {
-        $total = function (string $key) use ($playerStats, $isSeason): float {
+        $total = function (string $key) use ($playerStats, $isSeason, $seasonEntry): float {
             if ($isSeason) {
-                $entry = $playerStats->first();
-
-                return (float) ($entry->{$key} ?? 0);
+                return (float) ($seasonEntry->{$key} ?? 0);
             }
 
             return (float) $playerStats->sum($key);
         };
-        $totalFirstAvailable = function (array $keys) use ($playerStats, $isSeason): float {
+        $totalFirstAvailable = function (array $keys) use ($playerStats, $isSeason, $seasonEntry): float {
             if ($isSeason) {
-                $entry = $playerStats->first();
-
                 foreach ($keys as $key) {
-                    if (isset($entry->{$key}) && is_numeric($entry->{$key})) {
-                        return (float) $entry->{$key};
+                    if (isset($seasonEntry->{$key}) && is_numeric($seasonEntry->{$key})) {
+                        return (float) $seasonEntry->{$key};
                     }
                 }
 

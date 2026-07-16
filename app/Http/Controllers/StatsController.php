@@ -11,6 +11,7 @@ use App\Services\PlatformLeaguePlayerStatService;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
+use App\Support\Stats\NhleProspectLens;
 use App\Support\Stats\RangeStatsPayloadRequest;
 use App\Support\Stats\SeasonStatsPayloadRequest;
 use App\Support\Stats\StatsFilterSet;
@@ -132,7 +133,9 @@ class StatsController extends BaseController
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
             'draft_context' => 'nullable|boolean',
+            'entry_draft_year' => 'nullable|integer',
             'column_group'  => 'nullable|in:goalie',
+            'nhle'          => 'nullable|boolean',
         ]);
         $mark('validate_ms');
 
@@ -306,6 +309,7 @@ class StatsController extends BaseController
             $viewerFantraxScope,
         );
         $payload = $this->dedupeLeagueProspectRows($payload);
+        $payload = app(NhleProspectLens::class)->apply($payload, $request->boolean('nhle'));
         $mark('ownership_ms');
 
         if ($isFantraxLeaguePerspective || $isLeagueScoringPerspective) {
@@ -445,6 +449,7 @@ class StatsController extends BaseController
             'from'          => 'nullable|date',
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
+            'entry_draft_year' => 'nullable|integer',
         ]);
 
         \Log::info('post validate request: ', ['request' => $request]);

@@ -1,0 +1,32 @@
+name: Prospect Eligibility
+type: Domain Service
+location:
+  - app/Services/ProspectEligibilityService.php
+  - app/Services/ImportNHLPlayer.php
+  - app/Console/Commands/RefreshNhlProspectFlagsCommand.php
+purpose: Determine and persist DynastyIQ prospect flags from local draft evidence and imported legacy stats instead of provider caller context.
+when_to_use:
+  - Recomputing players.is_prospect for an NHL player id.
+  - Recomputing stats.is_prospect after NHL landing stats are imported.
+  - Building future backfill or audit routines for prospect labeling.
+  - Running an operator-triggered refresh of prospect flags after stats or identity data changes.
+when_not_to_use:
+  - Deciding Calder Trophy award eligibility beyond the simplified DynastyIQ prospect definition.
+  - Replacing stats row imports or NHL player identity matching.
+rules:
+  - Prospect eligibility service receives an NHL player id and returns a boolean.
+  - A player must have local NHL draft evidence from NHL draft identity or NHL landing draftDetails.
+  - A player must be younger than 26 on September 15 of the current prospect evaluation season year.
+  - A player with more than 25 total NHL regular-season games played in legacy stats is not a prospect.
+  - A player must have at least one non-NHL legacy stats row with games played in the current evaluation season window.
+  - July through September use the previous NHL season as the evaluation season.
+  - October uses either previous NHL season or current NHL season as the evaluation season.
+  - November through June use the current NHL season as the evaluation season.
+  - NHL player imports must recompute players.is_prospect and stats.is_prospect after landing stats are persisted.
+  - nhl:isprospects must reuse ProspectEligibilityService and must update players.is_prospect and stats.is_prospect consistently.
+public_interface:
+  - ProspectEligibilityService::isProspect()
+  - ProspectEligibilityService::evaluationSeasonIds()
+  - nhl:isprospects
+example_usage: |
+  $isProspect = app(ProspectEligibilityService::class)->isProspect($nhlPlayerId);

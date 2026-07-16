@@ -35,11 +35,23 @@ The first implementation should prioritize correctness for FHL-style division-sc
 
 - `app/Services/SyncFantraxLeague.php`
 - `app/Services/SyncFantraxDraftState.php`
+- `app/Services/ProspectEligibilityService.php`
+- `app/Services/ImportNHLPlayer.php`
+- `app/Console/Commands/RefreshNhlProspectFlagsCommand.php`
 - `app/Http/Controllers/LeagueController.php`
 - `app/Http/Controllers/StatsController.php`
 - `app/Support/FantraxViewerScope.php`
 - `app/Support/Stats/LeagueStatsOwnershipHydrator.php`
+- `app/Support/Stats/StatsPayloadBuilder.php`
+- `app/Support/Stats/StatsQueryFilterApplier.php`
 - `app/Http/Controllers/CommunityLeagues.php`
+- `app/Models/NhleLeagueFactor.php`
+- `app/Support/Stats/NhleLeagueFactorResolver.php`
+- `app/Support/Stats/NhleProspectLens.php`
+- `app/Console/Commands/AuditNhleLeagueMappingsCommand.php`
+- `database/migrations/*_create_nhle_league_factors_table.php`
+- `database/seeders/NhleLeagueFactorSeeder.php`
+- `database/seeders/DatabaseSeeder.php`
 - `resources/views/leagues/_panel.blade.php`
 - `resources/js/pages/stats-payload-client.js`
 - `resources/js/pages/stats-page.js`
@@ -55,7 +67,12 @@ The first implementation should prioritize correctness for FHL-style division-sc
 - `docs/architecture/integrations/FantraxDraftStateSync.yaml`
 - `docs/architecture/integrations/PlatformLeagueRosterSlots.yaml`
 - `docs/architecture/application/DraftCentralDraftModel.yaml`
+- `docs/architecture/imports/ProspectEligibility.yaml`
+- `docs/architecture/stats/PerspectiveDrivenStatsPayload.yaml`
+- `docs/architecture/stats/NhleLeagueFactors.yaml`
 - `docs/ARCHITECTURE_INVENTORY.md`
+- `docs/DB_SCHEMA.md`
+- `docs/import-templates/nhle-league-factors-2026.md`
 
 ## Implemented
 
@@ -129,6 +146,22 @@ League stats payload ownership hydration now uses the same viewer Fantrax divisi
 
 League stats now also support a `Teams` tab next to `Players`. The tab reuses the league stats payload endpoint with `resource=teams`, aggregates stat columns across each scoped fantasy team's non-minor pro players, keeps rate-style stats as averages, and exposes an `Averages` toggle for average-per-player display. The Teams table omits player-only fields such as NHL team, age, roster slot, and contract term, while preserving Cap.
 
+Draft Central player search now includes a synthetic `{latest draft year} Entry Draft` perspective alongside Prospects, Prospects - Goalies, and My Queue. The entry-draft view reuses the prospect stats payload with an `entry_draft_year` filter and still intersects against the league's available-player universe, so it only lists available players from the most recently imported NHL entry draft class.
+
+### NHLe Factor Reference Data
+
+The PR now includes a versioned `nhle_league_factors` table, `NhleLeagueFactor` model, and deterministic seeder for the manually transcribed 2026 NL Ice Data / Thibaud Chatel NHLe table.
+
+League/Players prospect views now expose an opt-in `NHLe` button beside `Ranks`. When enabled, the league payload applies the latest seeded NL Ice Data points factor to skater prospect production fields for rows whose prospect league resolves through `source_league_name` or explicit `mapped_league_codes`. The lens leaves raw games played, identity, roster, contract, and cap fields unchanged.
+
+NHLe league recognition is now centralized in `NhleLeagueFactorResolver`, and `stats:nhle-audit` reports which imported `stats.league_abbrev` values are matched or unmapped. Generic `NCAA` explicitly resolves to the source `Independent` NCAA row as a temporary runtime alias until conference-specific NCAA mapping is available. Known spelling variants such as `HockeyAllsvenskan`, `Czechia2`, `Czechia U20`, `U20 Nationell`, and `U20 SM-sarja` are repaired by runtime aliases. Truly unknown leagues resolve to the lowest seeded points factor as a conservative fallback while still being logged for review.
+
+Prospect stats payloads now treat `stats.is_prospect` as the prospect row-universe authority. They no longer require `players.is_prospect` to be true for a legacy stats row to appear.
+
+`ProspectEligibilityService` now defines DynastyIQ prospect flags from local data after NHL landing stats are imported. A player is a prospect only when they have NHL draft evidence, are younger than 26 on the September 15 evaluation cutoff, have no more than 25 total NHL regular-season games played in legacy stats, and have a non-NHL legacy stats row with games played in the current evaluation season window. `ImportNHLPlayer` recomputes and persists both `players.is_prospect` and that player's `stats.is_prospect` after importing landing season totals.
+
+The `nhl:isprospects` command provides an operator-triggered backfill path that iterates NHL-linked players, reuses `ProspectEligibilityService`, and rewrites both `players.is_prospect` and linked `stats.is_prospect` values.
+
 ## Tests Added
 
 Focused Pest coverage was added in `tests/Feature/FantraxDraftingWindowTest.php` for:
@@ -157,6 +190,13 @@ Codex performed syntax checks only:
 - `php -l app/Support/FantraxViewerScope.php`
 - `php -l app/Support/Stats/LeagueStatsOwnershipHydrator.php`
 - `php -l app/Http/Controllers/CommunityLeagues.php`
+- `php -l app/Services/ProspectEligibilityService.php`
+- `php -l app/Services/ImportNHLPlayer.php`
+- `php -l app/Console/Commands/RefreshNhlProspectFlagsCommand.php`
+- `php -l app/Support/Stats/NhleProspectLens.php`
+- `php -l app/Support/Stats/NhleLeagueFactorResolver.php`
+- `php -l app/Console/Commands/AuditNhleLeagueMappingsCommand.php`
+- `php -l database/seeders/NhleLeagueFactorSeeder.php`
 - `php -l tests/Feature/FantraxDraftingWindowTest.php`
 - `php -l tests/Feature/StatsPayloadPipelineTest.php`
 - JS syntax checks for the touched stats page modules.

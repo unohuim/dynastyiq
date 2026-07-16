@@ -350,6 +350,80 @@ $payload = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league
 
 ---
 
+### NHLe League Factors
+
+**Name:** NHLe League Factors
+**Type:** Versioned Reference Data
+**Location:**
+- `app/Models/NhleLeagueFactor.php`
+- `app/Support/Stats/NhleLeagueFactorResolver.php`
+- `app/Support/Stats/NhleProspectLens.php`
+- `app/Console/Commands/AuditNhleLeagueMappingsCommand.php`
+- `database/migrations/*_create_nhle_league_factors_table.php`
+- `database/seeders/NhleLeagueFactorSeeder.php`
+- `docs/import-templates/nhle-league-factors-2026.md`
+
+**Purpose:**
+Store source-versioned league translation factors used to present non-NHL prospect production through an explicit NHLe lens.
+
+**When to Use:**
+Seeding annual NHLe league factor reference data, mapping imported prospect league codes to source NHLe league rows, or adding read-time prospect projections that explicitly request NHLe-adjusted output.
+
+**When Not to Use:**
+Replacing raw imported player statistics, deriving NHL game/event totals, or applying fantasy league scoring rules.
+
+**Public Interface:**
+- `NhleLeagueFactor`
+- `NhleLeagueFactorResolver`
+- `NhleProspectLens`
+- `stats:nhle-audit`
+- `NhleLeagueFactorSeeder`
+- `nhle_league_factors`
+- `docs/import-templates/nhle-league-factors-2026.md`
+
+**Example Usage:**
+```php
+$factor = NhleLeagueFactor::query()
+    ->where('source', 'nl_ice_data')
+    ->where('source_version', '2026')
+    ->whereJsonContains('mapped_league_codes', 'USHL')
+    ->first();
+```
+
+---
+
+### Prospect Eligibility
+
+**Name:** Prospect Eligibility
+**Type:** Domain Service
+**Location:**
+- `app/Services/ProspectEligibilityService.php`
+- `app/Services/ImportNHLPlayer.php`
+- `app/Console/Commands/RefreshNhlProspectFlagsCommand.php`
+
+**Purpose:**
+Determine and persist DynastyIQ prospect flags from local draft evidence and imported legacy stats instead of provider caller context.
+Prospects must be NHL-drafted, younger than 26 on the September 15 evaluation cutoff, under the NHL regular-season games-played limit, and active in current non-NHL legacy stats.
+
+**When to Use:**
+Recomputing `players.is_prospect`, recomputing `stats.is_prospect` after NHL landing stats imports, or building future prospect-label audits.
+Use `nhl:isprospects` for operator-triggered backfills after imported stats or identity links change.
+
+**When Not to Use:**
+Award-specific Calder eligibility modeling, stats row import replacement, or NHL player identity matching.
+
+**Public Interface:**
+- `ProspectEligibilityService::isProspect()`
+- `ProspectEligibilityService::evaluationSeasonIds()`
+- `nhl:isprospects`
+
+**Example Usage:**
+```php
+$isProspect = app(ProspectEligibilityService::class)->isProspect($nhlPlayerId);
+```
+
+---
+
 ## Authorization & Identity
 
 ### Role and Organization Authorization

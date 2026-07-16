@@ -60,7 +60,18 @@ final class StatsPayloadBuilder
                 ->with(['player.contracts.seasons'])
                 ->regularSeason()
                 ->where('league_abbrev', '!=', 'NHL')
-                ->whereHas('player', fn ($query) => $query->where('is_prospect', true));
+                ->where('stats.is_prospect', true);
+
+            $entryDraftYear = (int) ($payloadRequest->request?->integer('entry_draft_year') ?? 0);
+            if ($entryDraftYear > 0) {
+                $base->whereExists(function ($query) use ($entryDraftYear): void {
+                    $query->selectRaw('1')
+                        ->from('player_external_identities as pei')
+                        ->whereColumn('pei.player_id', 'stats.player_id')
+                        ->where('pei.provider', 'nhl_draft')
+                        ->whereRaw("(pei.raw_payload->>'draft_year')::int = ?", [$entryDraftYear]);
+                });
+            }
 
             $base->select($base->getModel()->getTable() . '.*');
             $buildMark('base_query_ms');
@@ -400,6 +411,7 @@ final class StatsPayloadBuilder
             'period' => $period,
             'slice' => $payloadRequest->slice,
             'draft_context' => $payloadRequest->request?->boolean('draft_context') ?? false,
+            'entry_draft_year' => $payloadRequest->request?->input('entry_draft_year'),
             'availability' => $payloadRequest->request?->input('availability', 0),
             'columns' => $this->columnKeys($columns),
         ];

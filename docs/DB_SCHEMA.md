@@ -59,6 +59,7 @@ Migrations remain the **sole source of truth**.
 - nhl_game_summaries
 - nhl_games
 - nhl_import_progress
+- nhle_league_factors
 - nhl_player_transactions
 - nhl_season_stats
 - nhl_shifts
@@ -1379,6 +1380,37 @@ Migrations remain the **sole source of truth**.
 
 - `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> game unit summaries -> validation.
 - New scheduled rows created by admin or CLI discovery are linked to `nhl_game_import_runs` through `run_id`; null `run_id` rows remain legacy-compatible and are read by date range.
+
+---
+
+## nhle_league_factors
+
+**Organization-owned:** No
+**Purpose:** Versioned NHLe translation factors for external league scoring equivalency.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source | string(64) | No | Source slug, e.g. `nl_ice_data` |
+| source_version | string(16) | No | Source version year, e.g. `2026` |
+| model_name | string(120) | No | Source model name |
+| model_window | string(120) | No | Seasons included in source model |
+| source_league_name | string(120) | No | League name exactly as used by the source |
+| mapped_league_codes | json | Yes | DynastyIQ/import league code mappings |
+| points_factor | decimal(5,2) | No | Points NHLe factor |
+| win_shares_factor | decimal(5,2) | No | Win Shares NHLe factor |
+| source_url | string(500) | No | Source article/data URL |
+| notes | text | Yes | Source or mapping notes |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source, source_version, source_league_name)`
+- Index: `(source, source_version)`
 
 ---
 

@@ -79,6 +79,7 @@ export class StatsPageShell {
       dirtyNumericFilters: {},
       leagueAutoSkaterFilter: false,
       teamAggregateStartersOnly: Boolean(settings.teamAggregateStartersOnly ?? meta.teamAggregateStartersOnly ?? false),
+      nhleLens: Boolean(settings.nhleLens ?? meta.nhle?.active ?? false),
       loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
@@ -285,14 +286,23 @@ export class StatsPageShell {
         settings.teamAggregateStartersOnly ?? meta.teamAggregateStartersOnly ?? this.state.teamAggregateStartersOnly,
       );
     }
+    this.state.nhleLens = Boolean(settings.nhleLens ?? meta.nhle?.active ?? this.state.nhleLens);
 
     this.state.slice = settings.slice || this.state.slice;
+    const preserveUserSort = this.settings?.leagueUserSortActive === true;
+    const preservedSort = preserveUserSort
+      ? {
+          sortKey: this.settings.sortKey,
+          sortDirection: this.settings.sortDirection,
+          displayKey: this.settings.displayKey,
+        }
+      : null;
     this.settings = {
       ...settings,
-      sortKey: settings.sortKey ?? settings.defaultSort ?? this.settings.sortKey,
-      sortDirection: settings.sortDirection ?? settings.defaultSortDirection ?? this.settings.sortDirection ?? 'desc',
-      displayKey: settings.displayKey ?? settings.sortKey ?? settings.defaultSort ?? this.settings.displayKey,
-      leagueUserSortActive: false,
+      sortKey: preservedSort?.sortKey ?? settings.sortKey ?? settings.defaultSort ?? this.settings.sortKey,
+      sortDirection: preservedSort?.sortDirection ?? settings.sortDirection ?? settings.defaultSortDirection ?? this.settings.sortDirection ?? 'desc',
+      displayKey: preservedSort?.displayKey ?? settings.displayKey ?? settings.sortKey ?? settings.defaultSort ?? this.settings.displayKey,
+      leagueUserSortActive: preserveUserSort,
     };
     this.syncNumericFiltersFromPayload();
   }
@@ -340,6 +350,11 @@ export class StatsPageShell {
     this.fetchPayload({ force: true });
   };
 
+  onNhleLensChange = (enabled) => {
+    this.state.nhleLens = enabled === true;
+    this.fetchPayload({ force: true });
+  };
+
   setPerspective(value) {
     this.state.perspective = value;
     this.state.selectedPos = [];
@@ -348,6 +363,7 @@ export class StatsPageShell {
     this.state.selectedLeagues = [];
     this.state.numericFilters = {};
     this.state.dirtyNumericFilters = {};
+    this.state.nhleLens = value === 'prospects' ? this.state.nhleLens : false;
     this.fetchPayload();
   }
 
@@ -800,7 +816,9 @@ export class StatsPageShell {
       selectedPosTypes: [...this.state.selectedPosTypes],
       leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,
       teamAggregateStartersOnly: this.state.teamAggregateStartersOnly,
+      nhleLens: this.state.nhleLens,
       onTeamAggregateStartersChange: this.onTeamAggregateStartersChange,
+      onNhleLensChange: this.onNhleLensChange,
       onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
     };
     const activeHeadings = leagueRosterHeadings(

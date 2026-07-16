@@ -75,6 +75,9 @@ export class StatsPayloadClient {
     if (this.resource === 'teams' && state.teamAggregateStartersOnly === true) {
       params.set('starters', '1');
     }
+    if (state.nhleLens === true) {
+      params.set('nhle', '1');
+    }
 
     state.selectedLeagues.forEach((value) => params.append('league[]', value));
     Object.entries(state.numericFilters || {}).forEach(([key, value]) => {

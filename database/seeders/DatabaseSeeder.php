@@ -8,6 +8,7 @@ use Illuminate\Database\Seeder;
 use Database\Seeders\UserSeeder;
 use Database\Seeders\PerspectiveSeeder;
 use Database\Seeders\DiscordCommandsSeeder;
+use Database\Seeders\NhleLeagueFactorSeeder;
 
 
 class DatabaseSeeder extends Seeder
@@ -22,6 +23,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,            
             RoleSeeder::class,
             PerspectiveSeeder::class,
+            NhleLeagueFactorSeeder::class,
             //DiscordCommandsSeeder::class,
         ]);
 

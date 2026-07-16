@@ -262,7 +262,7 @@ final class LeagueController extends Controller
         $leagueSettings = $this->resolvedLeagueSettings($league, $user);
 
         return response()->json([
-            'teams' => $this->teamsPayload($league, false, $user, $this->viewerFantraxScope($league, $user)),
+            'teams' => $this->teamsPayload($league, true, $user, $this->viewerFantraxScope($league, $user)),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'leagueStatsPayloadUrl' => route('leagues.stats.payload', $league->id),
             'leagueStatsPerspectives' => $leagueStatsControls['perspectives'],

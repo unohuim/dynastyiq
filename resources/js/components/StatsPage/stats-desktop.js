@@ -772,6 +772,24 @@ const renderLeagueOwnerStatsDesktop = (
     });
     controls.appendChild(ranksButton);
 
+    if (!isTeamAggregate && String(settings?.leagueProspectMode ?? "") === "skaters") {
+        const nhleButton = document.createElement("button");
+        nhleButton.type = "button";
+        const syncNhleButton = () => {
+            nhleButton.className = settings.nhleLens === true
+                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+            nhleButton.setAttribute("aria-pressed", settings.nhleLens === true ? "true" : "false");
+        };
+        nhleButton.textContent = "NHLe";
+        nhleButton.title = "Normalize prospect production by league translation factor";
+        syncNhleButton();
+        nhleButton.addEventListener("click", () => {
+            settings.onNhleLensChange?.(settings.nhleLens !== true);
+        });
+        controls.appendChild(nhleButton);
+    }
+
     if (isTeamAggregate) {
         const averagesButton = document.createElement("button");
         averagesButton.type = "button";

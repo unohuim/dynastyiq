@@ -186,6 +186,15 @@ final class StatsQueryFilterApplier
      */
     private function applyPerspectiveFiltersToBase($base, array $filters): void
     {
+        $table = $base->getModel()->getTable();
+
+        if ($table === 'stats' && ! $this->isProspectPerspectiveFilterSet($filters)) {
+            $filter = $filters['is_prospect'] ?? null;
+            if (is_array($filter) && array_key_exists('value', $filter)) {
+                $base->where('stats.is_prospect', (bool) $filter['value']);
+            }
+        }
+
         foreach (['pos', 'pos_type'] as $key) {
             $filter = $filters[$key] ?? null;
             if (! is_array($filter)) {
@@ -211,6 +220,19 @@ final class StatsQueryFilterApplier
                 $base->whereIn($column, $values);
             }
         }
+    }
+
+    /**
+     * @param array<string,mixed> $filters
+     */
+    private function isProspectPerspectiveFilterSet(array $filters): bool
+    {
+        return isset($filters['is_prospect'], $filters['league_abbrev'])
+            && is_array($filters['is_prospect'])
+            && is_array($filters['league_abbrev'])
+            && ($filters['is_prospect']['value'] ?? null) === true
+            && ($filters['league_abbrev']['operator'] ?? null) === '!='
+            && ($filters['league_abbrev']['value'] ?? null) === 'NHL';
     }
 
     /**

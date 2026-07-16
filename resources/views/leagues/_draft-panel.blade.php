@@ -21,11 +21,23 @@
     $playersPayloadUrl = (string) ($playersPayloadUrl ?? '');
     $leagueStatsFallbackSlug = (string) ($leagueStatsFallbackSlug ?? '');
     $leagueStatsFallbackName = (string) ($leagueStatsFallbackName ?? 'League Scoring');
+    $latestEntryDraftYear = \App\Models\PlayerExternalIdentity::query()
+        ->where('provider', \App\Models\PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+        ->get(['raw_payload'])
+        ->pluck('raw_payload')
+        ->map(static fn (mixed $payload): int => (int) data_get($payload, 'draft_year', 0))
+        ->filter(static fn (int $year): bool => $year > 0)
+        ->max();
     $draftPerspectiveOptions = [
         [
             'slug' => 'prospects',
             'name' => 'Prospects',
         ],
+        ...($latestEntryDraftYear ? [[
+            'slug' => 'entry-draft',
+            'name' => $latestEntryDraftYear . ' Entry Draft',
+            'entry_draft_year' => (int) $latestEntryDraftYear,
+        ]] : []),
         [
             'slug' => 'prospects-goalies',
             'name' => 'Prospects - Goalies',
@@ -186,7 +198,7 @@
         availabilityFilter: '',
         allPlayers: @js($allPlayers),
         availablePlayers: @js($availablePlayers),
-        availablePlayersById: Object.fromEntries(@js($availablePlayers).map((player) => [String(player.id), player])),
+        availablePlayersById: Object.fromEntries(@js($availablePlayers).map((player) => [String(player.id ?? player.player_id ?? ''), player])),
         myPlayers: @js($myDraftPicks),
         selectedPlayerTeam: '',
         playerTeamOptions: @js($availablePlayerTeams),
@@ -198,6 +210,7 @@
         playersPayloadError: '',
         playerPerspectiveOptions: @js($draftPerspectiveOptions),
         selectedPlayerPerspective: 'prospects',
+        latestEntryDraftYear: @js($latestEntryDraftYear ? (int) $latestEntryDraftYear : null),
         playerPerspectiveHeadings: [],
         playerPerspectiveRows: [],
         playerPerspectiveRowsById: {},
@@ -207,7 +220,8 @@
         playerPerspectiveRequestKey: '',
         playerPerspectiveRequestToken: 0,
         playerPerspectiveCache: {},
-        playerSortKey: '',
+        playerPerspectiveNhle: false,
+        playerSortKey: 'pts',
         playerSortDirection: 'desc',
         draftQueueItems: @js($draftQueueItems),
         queuedPlayerIds: @js($draftQueuedPlayerIds),
@@ -234,6 +248,10 @@
             return this.selectedPlayerPerspective === '__queue__';
         },
         get isPlayerPerspectivePending() {
+            if (this.activePlayerTab === 'players' && this.showingQueuePerspective) {
+                return this.queuePerspectiveLoading || this.playerPerspectiveLoading;
+            }
+
             return this.activePlayerTab === 'players'
                 && !this.showingQueuePerspective
                 && !this.playerPerspectiveError
@@ -274,6 +292,9 @@
             });
 
             return this.sortedDraftPlayers(filtered);
+        },
+        draftPlayerId(player) {
+            return String(player?.id ?? player?.player_id ?? '');
         },
         get filteredQueueDisplayPlayers() {
             return this.filteredDraftPlayers;
@@ -316,8 +337,6 @@
             });
         },
         get playerStatHeadings() {
-            if (this.showingQueuePerspective) return [];
-
             const identityKeys = new Set([
                 'name',
                 'player',
@@ -334,6 +353,9 @@
                 'head_shot_url',
                 'id',
                 'nhl_player_id',
+                'drafted_overall_pick',
+                'drafted_year',
+                'drafted_label',
                 'gp',
             ]);
 
@@ -345,10 +367,13 @@
             return [this.positionFilter, this.posTypeFilter, this.availabilityFilter, this.selectedPlayerTeam].filter(Boolean).length;
         },
         get draftPerspectiveSlugs() {
-            return ['prospects', 'prospects-goalies'];
+            return ['entry-draft', 'prospects', 'prospects-goalies'];
         },
         get showSkaterTypeFilters() {
-            return this.selectedPlayerPerspective === 'prospects';
+            return ['__queue__', 'entry-draft', 'prospects'].includes(this.selectedPlayerPerspective);
+        },
+        get showDraftPlayerTeamColumn() {
+            return ['__queue__', 'entry-draft', 'prospects'].includes(this.selectedPlayerPerspective);
         },
         init() {
             if (this.draftCanCountdown && this.draftCountdownExpiresAt) {
@@ -498,7 +523,7 @@
                 this.allPlayers = Array.isArray(allPlayersTeam.players) ? allPlayersTeam.players : [];
                 this.availablePlayers = availablePlayers;
                 this.availablePlayersById = Object.fromEntries(
-                    availablePlayers.map((player) => [String(player.id), player]),
+                    availablePlayers.map((player) => [this.draftPlayerId(player), player]),
                 );
                 this.playerTeamOptions = [...new Set(
                     availablePlayers
@@ -531,6 +556,27 @@
 
             return this.playerSortDirection === 'desc' ? '↓' : '↑';
         },
+        defaultPlayerSortForPerspective(value) {
+            if (value === 'entry-draft') {
+                return { key: 'drafted_overall_pick', direction: 'asc' };
+            }
+
+            if (value === 'prospects') {
+                return { key: 'pts', direction: 'desc' };
+            }
+
+            if (value === '__queue__') {
+                return { key: 'rank', direction: 'asc' };
+            }
+
+            return { key: '', direction: 'desc' };
+        },
+        applyDefaultPlayerSortForPerspective(value) {
+            const sort = this.defaultPlayerSortForPerspective(value);
+
+            this.playerSortKey = sort.key;
+            this.playerSortDirection = sort.direction;
+        },
         sortedDraftPlayers(players) {
             if (!this.playerSortKey) return players;
 
@@ -552,6 +598,12 @@
             if (key === 'rank') return Number(player?.rank ?? 0);
             if (key === 'name') return String(player?.name ?? '');
             if (key === 'age') return Number(player?.age ?? 0);
+            if (key === 'team') return String(player?.team_abbrev || player?.team || '');
+            if (key === 'drafted_overall_pick') {
+                const value = this.playerDraftedOverall(player);
+
+                return value === '-' ? (this.playerSortDirection === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY) : Number(value);
+            }
             if (key === 'league') return this.playerLeagueName(player);
             if (key === 'gp') return Number(this.playerGp(player) ?? 0);
 
@@ -572,6 +624,12 @@
         },
         playerAge(player) {
             return player?.age ?? this.playerPerspectiveRow(player)?.age ?? '-';
+        },
+        playerDraftedOverall(player) {
+            return player?.drafted_overall_pick ?? this.playerPerspectiveRow(player)?.drafted_overall_pick ?? '-';
+        },
+        playerDraftedLabel(player) {
+            return player?.drafted_label ?? this.playerPerspectiveRow(player)?.drafted_label ?? '-';
         },
         playerLeagueName(player) {
             return player?.league || player?.league_abbrev || this.playerPerspectiveRow(player)?.league || this.playerPerspectiveRow(player)?.league_abbrev || '-';
@@ -599,9 +657,19 @@
             this.playerPerspectiveRows = [];
             this.playerPerspectiveRowsById = {};
             this.playerPerspectiveLoaded = false;
+            this.playerPerspectiveError = '';
+        },
+        togglePlayerPerspectiveNhle() {
+            if (!this.showSkaterTypeFilters) return;
+
+            this.playerPerspectiveNhle = !this.playerPerspectiveNhle;
+            this.playerPerspectiveRequestKey = '';
+            this.resetPlayerPerspectiveRows();
+            this.playerPerspectiveLoading = true;
+            this.loadPlayerPerspectiveStats(true);
         },
         async loadPlayerPerspectiveStats(force = false) {
-            if (this.showingQueuePerspective || (this.playerPerspectiveLoading && !force)) return;
+            if (this.playerPerspectiveLoading && !force) return;
 
             if (!this.canShowLeagueStats || !this.leagueStatsPayloadUrl) {
                 this.playerPerspectiveLoaded = true;
@@ -609,14 +677,22 @@
                 return;
             }
 
-            const perspective = this.selectedPlayerPerspective || this.playerPerspectiveOptions[0]?.slug || '';
-            if (!perspective) {
+            const selectedPerspective = this.selectedPlayerPerspective || this.playerPerspectiveOptions[0]?.slug || '';
+            const entryDraftYear = selectedPerspective === 'entry-draft' ? Number(this.latestEntryDraftYear || 0) : 0;
+            const requestPerspective = ['__queue__', 'entry-draft'].includes(selectedPerspective) ? 'prospects' : selectedPerspective;
+            const useNhle = this.playerPerspectiveNhle && ['__queue__', 'entry-draft', 'prospects'].includes(selectedPerspective);
+            if (!requestPerspective) {
                 this.playerPerspectiveLoaded = true;
                 this.playerPerspectiveLoading = false;
                 return;
             }
 
-            const requestKey = perspective;
+            const baseRequestKey = selectedPerspective === '__queue__'
+                ? 'queue:prospects'
+                : selectedPerspective === 'entry-draft'
+                ? `entry-draft:${entryDraftYear}`
+                : requestPerspective;
+            const requestKey = `${baseRequestKey}:nhle:${useNhle ? '1' : '0'}`;
             if (this.playerPerspectiveRequestKey === requestKey && this.playerPerspectiveHeadings.length > 0) {
                 this.playerPerspectiveLoaded = true;
                 this.playerPerspectiveLoading = false;
@@ -639,13 +715,19 @@
 
             try {
                 const params = new URLSearchParams();
-                params.set('perspective', perspective);
+                params.set('perspective', requestPerspective);
                 params.set('resource', 'players');
                 params.set('period', 'season');
                 params.set('slice', 'total');
                 params.set('game_type', '2');
                 params.set('availability', '0');
                 params.set('draft_context', '1');
+                if (useNhle) {
+                    params.set('nhle', '1');
+                }
+                if (selectedPerspective === 'entry-draft' && entryDraftYear > 0) {
+                    params.set('entry_draft_year', String(entryDraftYear));
+                }
 
                 const response = await fetch(`${this.leagueStatsPayloadUrl}?${params.toString()}`, {
                     headers: { Accept: 'application/json' },
@@ -676,11 +758,23 @@
             const perspectives = Array.isArray(payload.perspectives)
                 ? payload.perspectives.filter((perspective) => allowed.includes(String(perspective?.slug ?? perspective?.id ?? perspective?.name ?? '')))
                 : [];
-            this.playerPerspectiveOptions = perspectives.length ? perspectives : this.playerPerspectiveOptions;
+            if (perspectives.length) {
+                const currentOptions = this.playerPerspectiveOptions.filter((perspective) => (
+                    String(perspective?.slug ?? perspective?.id ?? perspective?.name ?? '') === 'entry-draft'
+                ));
+                const merged = [...currentOptions, ...perspectives];
+                this.playerPerspectiveOptions = merged.filter((perspective, index, items) => {
+                    const slug = String(perspective?.slug ?? perspective?.id ?? perspective?.name ?? '');
+
+                    return slug !== '' && items.findIndex((item) => String(item?.slug ?? item?.id ?? item?.name ?? '') === slug) === index;
+                });
+            }
             if (!this.showingQueuePerspective) {
-                this.selectedPlayerPerspective = allowed.includes(String(payload.selectedPerspective ?? ''))
+                this.selectedPlayerPerspective = String(requestKey).startsWith('entry-draft:')
+                    ? 'entry-draft'
+                    : (allowed.includes(String(payload.selectedPerspective ?? ''))
                     ? payload.selectedPerspective
-                    : requestKey;
+                    : String(requestKey).split(':nhle:')[0]);
             }
             this.playerPerspectiveHeadings = Array.isArray(payload.headings) ? payload.headings : [];
             this.playerPerspectiveRows = Array.isArray(payload.data) ? payload.data : [];
@@ -694,16 +788,18 @@
         },
         setPlayerPerspective(value) {
             this.selectedPlayerPerspective = value;
+            this.applyDefaultPlayerSortForPerspective(value);
             this.posTypeFilter = '';
             this.playerPerspectiveRequestKey = '';
-            this.playerPerspectiveLoading = true;
-            this.resetPlayerPerspectiveRows();
             if (this.showingQueuePerspective) {
-                this.playerPerspectiveLoading = false;
+                this.playerPerspectiveLoading = true;
+                this.loadPlayerPerspectiveStats(true);
                 this.refreshDraftQueuePayload();
                 return;
             }
 
+            this.resetPlayerPerspectiveRows();
+            this.playerPerspectiveLoading = true;
             this.loadPlayerPerspectiveStats(true);
         },
         applyDraftQueuePayload(items) {
@@ -1356,6 +1452,16 @@
 
                         <button
                             type="button"
+                            x-show="showSkaterTypeFilters"
+                            x-on:click="togglePlayerPerspectiveNhle()"
+                            class="h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold shadow-sm transition"
+                            :class="playerPerspectiveNhle ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'"
+                        >
+                            NHLe
+                        </button>
+
+                        <button
+                            type="button"
                             x-show="filterCount > 0 || search"
                             x-on:click="resetFilters()"
                             class="h-9 rounded-lg px-2 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-800"
@@ -1368,7 +1474,7 @@
                     <div x-show="playerPerspectiveError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="playerPerspectiveError"></div>
                     <div x-show="queuePerspectiveError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="queuePerspectiveError"></div>
 
-                    <div x-show="showingQueuePerspective" x-cloak class="min-h-0 flex-1 overflow-hidden p-4">
+                    <div x-show="false" x-cloak class="min-h-0 flex-1 overflow-hidden p-4">
                         <div x-show="queuePerspectiveLoading" class="h-full overflow-hidden rounded-xl border border-slate-200">
                             <template x-for="index in 6" :key="`queue-loading-${index}`">
                                 <div class="grid grid-cols-[3.25rem_minmax(0,1fr)_4rem_minmax(8rem,0.75fr)] items-center gap-1.5 border-b border-slate-100 bg-white px-4 py-2">
@@ -1470,15 +1576,21 @@
                         </ol>
                     </div>
 
-                    <div x-show="!showingQueuePerspective" class="min-h-0 flex-1 overflow-auto">
+                    <div class="min-h-0 flex-1 overflow-auto">
                         <table class="min-w-full divide-y divide-slate-100 text-left">
                             <thead class="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                                 <tr>
                                     <th scope="col" class="w-10 px-3 py-2.5"></th>
                                     <th scope="col" class="w-14 px-4 py-2.5">
                                         <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortPlayerTable('rank')">
-                                            <span>Rank</span>
+                                            <span>Rk</span>
                                             <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('rank')"></span>
+                                        </button>
+                                    </th>
+                                    <th scope="col" class="whitespace-nowrap px-2 py-2.5 text-right">
+                                        <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortPlayerTable('drafted_overall_pick')">
+                                            <span>Drafted</span>
+                                            <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('drafted_overall_pick')"></span>
                                         </button>
                                     </th>
                                     <th scope="col" class="min-w-56 px-3 py-2.5">
@@ -1487,13 +1599,19 @@
                                             <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('name')"></span>
                                         </button>
                                     </th>
-                                    <th scope="col" class="whitespace-nowrap px-2 py-2.5 text-right">
+                                    <th scope="col" class="whitespace-nowrap pl-1 pr-4 py-2.5 text-right">
                                         <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortPlayerTable('age')">
                                             <span>Age</span>
                                             <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('age')"></span>
                                         </button>
                                     </th>
-                                    <th scope="col" class="min-w-24 px-2 py-2.5">
+                                    <th scope="col" x-show="showDraftPlayerTeamColumn" class="whitespace-nowrap px-2 py-2.5 text-center">
+                                        <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortPlayerTable('team')">
+                                            <span>Team</span>
+                                            <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('team')"></span>
+                                        </button>
+                                    </th>
+                                    <th scope="col" class="min-w-24 pl-5 pr-2 py-2.5">
                                         <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortPlayerTable('league')">
                                             <span>League</span>
                                             <span class="text-[10px] text-blue-600" x-text="playerSortIndicator('league')"></span>
@@ -1521,7 +1639,7 @@
                                     <td class="px-3 py-2.5">
                                         <button
                                             type="button"
-                                            x-show="!isPlayerQueued(player)"
+                                            x-show="!showingQueuePerspective && !isPlayerQueued(player)"
                                             x-on:click="addPlayerToQueue(player)"
                                             :disabled="queueLoading(player)"
                                             class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-600 shadow-sm transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-wait disabled:opacity-60"
@@ -1529,8 +1647,19 @@
                                         >
                                             +
                                         </button>
+                                        <button
+                                            type="button"
+                                            x-show="showingQueuePerspective"
+                                            x-on:click="removeQueueItem(player)"
+                                            :disabled="queueLoading(player)"
+                                            class="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-500 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:cursor-wait disabled:opacity-60"
+                                            aria-label="Remove player from queue"
+                                        >
+                                            &times;
+                                        </button>
                                     </td>
                                     <td class="px-4 py-2.5 text-xs font-semibold text-slate-500" x-text="index + 1"></td>
+                                    <td class="whitespace-nowrap px-2 py-2.5 text-right text-[10px] font-semibold tabular-nums text-slate-600" x-text="playerDraftedLabel(player)"></td>
                                     <td class="px-3 py-2.5">
                                         <div class="flex min-w-0 items-center gap-3">
                                             <template x-if="player.avatar_url">
@@ -1542,22 +1671,26 @@
                                             <div class="min-w-0">
                                                 <div class="truncate text-sm font-semibold text-slate-900" x-text="player.name"></div>
                                                 <div class="mt-0.5 truncate text-[11px] text-slate-500">
-                                                    <span x-text="player.team_abbrev || 'FA'"></span>
-                                                    <span x-show="player.position"> / <span x-text="player.position"></span></span>
+                                                    <span x-show="!showDraftPlayerTeamColumn" x-text="player.team_abbrev || 'FA'"></span>
+                                                    <span x-show="!showDraftPlayerTeamColumn && player.position"> / </span>
+                                                    <span x-show="player.position" x-text="player.position"></span>
                                                 </div>
                                             </div>
                                         </div>
                                     </td>
-                                    <td class="whitespace-nowrap px-2 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="playerAge(player)"></td>
-                                    <td class="whitespace-nowrap px-2 py-2.5 text-xs font-semibold text-slate-600" x-text="playerLeagueName(player)"></td>
+                                    <td class="whitespace-nowrap pl-1 pr-4 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="playerAge(player)"></td>
+                                    <td x-show="showDraftPlayerTeamColumn" class="whitespace-nowrap px-2 py-2.5 text-center">
+                                        <span class="inline-flex h-6 min-w-12 items-center justify-center rounded-md px-2 text-[10px] font-semibold tracking-wide text-white shadow-sm" :style="teamBadgeStyle(player.team_abbrev)" x-text="player.team_abbrev || '-'"></span>
+                                    </td>
+                                    <td class="whitespace-nowrap pl-5 pr-2 py-2.5 text-xs font-semibold text-slate-600" x-text="playerLeagueName(player)"></td>
                                     <td class="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="playerGp(player)"></td>
                                     <template x-for="heading in playerStatHeadings" :key="`${player.id}-${heading.key}`">
                                         <td class="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="formatPerspectiveValue(playerPerspectiveValue(player, heading.key))"></td>
                                     </template>
                                 </tr>
                             </template>
-                            <tr x-show="!isPlayerPerspectivePending && playerPerspectiveLoaded && filteredDraftPlayers.length === 0">
-                                <td :colspan="Math.max(6 + playerStatHeadings.length, 6)" class="px-4 py-8 text-center text-sm text-slate-500">No players match this draft view.</td>
+                            <tr x-show="!isPlayerPerspectivePending && (showingQueuePerspective || playerPerspectiveLoaded) && filteredDraftPlayers.length === 0">
+                                <td :colspan="Math.max((showDraftPlayerTeamColumn ? 8 : 7) + playerStatHeadings.length, showDraftPlayerTeamColumn ? 8 : 7)" class="px-4 py-8 text-center text-sm text-slate-500">No players match this draft view.</td>
                             </tr>
                             <template x-for="index in (isPlayerPerspectivePending ? 6 : 0)" :key="`players-loading-${index}`">
                                 <tr class="animate-pulse">
@@ -1566,6 +1699,9 @@
                                     </td>
                                     <td class="px-4 py-2.5">
                                         <div class="h-3 w-5 rounded-full bg-slate-200"></div>
+                                    </td>
+                                    <td class="px-2 py-2.5">
+                                        <div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div>
                                     </td>
                                     <td class="px-3 py-2.5">
                                         <div class="flex min-w-0 items-center gap-3">
@@ -1578,6 +1714,9 @@
                                     </td>
                                     <td class="px-3 py-2.5">
                                         <div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div>
+                                    </td>
+                                    <td x-show="showDraftPlayerTeamColumn" class="px-2 py-2.5">
+                                        <div class="mx-auto h-5 w-12 rounded-md bg-slate-100"></div>
                                     </td>
                                     <td class="px-4 py-2.5">
                                         <div class="h-3 w-16 rounded-full bg-slate-100"></div>

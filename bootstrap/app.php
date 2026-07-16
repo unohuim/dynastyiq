@@ -5,12 +5,14 @@ use App\Console\Commands\FantraxDraftsPollCommand;
 use App\Console\Commands\FantraxSyncCommand;
 use App\Console\Commands\GenerateDraftPickCardImageCommand;
 use App\Console\Commands\ImportCapWagesCommand;
+use App\Console\Commands\AuditNhleLeagueMappingsCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\BackfillLeagueCommissionersCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
 use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
 use App\Console\Commands\PatreonNightlySync;
+use App\Console\Commands\RefreshNhlProspectFlagsCommand;
 use App\Console\Commands\SumNhlSeasonCommand;
 use App\Http\Middleware\AdminLifecycleMiddleware;
 use App\Http\Middleware\HydrateDiscordSession;
@@ -27,8 +29,10 @@ return Application::configure(basePath: dirname(__DIR__))
         PatreonNightlySync::class,
         BackfillShotGeometryCommand::class,
         BackfillLeagueCommissionersCommand::class,
+        AuditNhleLeagueMappingsCommand::class,
         FantraxDraftsPollCommand::class,
         GenerateDraftPickCardImageCommand::class,
+        RefreshNhlProspectFlagsCommand::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

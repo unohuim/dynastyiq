@@ -1,0 +1,49 @@
+name: NHLe League Factors
+type: Versioned Reference Data
+location:
+  - app/Models/NhleLeagueFactor.php
+  - database/migrations/*_create_nhle_league_factors_table.php
+  - database/seeders/NhleLeagueFactorSeeder.php
+  - app/Support/Stats/NhleProspectLens.php
+  - app/Support/Stats/NhleLeagueFactorResolver.php
+  - app/Console/Commands/AuditNhleLeagueMappingsCommand.php
+  - docs/import-templates/nhle-league-factors-2026.md
+purpose: Store source-versioned league translation factors used to present non-NHL prospect production through an explicit NHLe lens.
+when_to_use:
+  - Seeding annual NHLe league factor reference data.
+  - Mapping imported prospect league codes to source NHLe league rows.
+  - Adding read-time prospect projections that explicitly request NHLe-adjusted output.
+when_not_to_use:
+  - Replacing raw imported player statistics.
+  - Deriving NHL event, boxscore, shift, or season totals.
+  - Applying fantasy league scoring rules.
+rules:
+  - NHLe factors must be source-versioned so annual factor sets can coexist.
+  - Seeders must upsert by source, source version, and source league name without deleting prior versions.
+  - Raw prospect stats remain authoritative and must remain available when an NHLe lens is shown.
+  - NHLe-adjusted values must be opt-in at the read/presentation layer.
+  - Source league mappings must be explicit and must not infer provider league codes silently.
+  - NHLe read lenses may resolve source league names and explicit mapped league codes only.
+  - NHLe read lenses may adjust production stats but must not adjust games played, identity, roster, contract, or cap fields.
+  - League mapping audits must use the same resolver as presentation code.
+  - Generic league labels must remain unmapped unless an explicit fallback is approved and documented.
+  - Generic NCAA may temporarily resolve to the source Independent NCAA row at runtime until conference-specific NCAA mapping is available.
+  - Known imported spelling variants may be repaired by resolver-level runtime aliases while the seeder catches up.
+  - Truly unknown league labels resolve to the lowest available seeded points factor as a conservative presentation fallback.
+  - Unmatched league labels observed by the NHLe read lens may be appended to troubleshooting/nhle/unmatched_leagues.md as a local troubleshooting artifact.
+  - The seeded source slug must remain documented in docs/ENUMS.md.
+  - Database columns must remain documented in docs/DB_SCHEMA.md while migrations remain schema authority.
+public_interface:
+  - NhleLeagueFactor
+  - NhleLeagueFactorResolver
+  - NhleProspectLens
+  - stats:nhle-audit
+  - NhleLeagueFactorSeeder
+  - nhle_league_factors
+  - docs/import-templates/nhle-league-factors-2026.md
+example_usage: |
+  $factor = NhleLeagueFactor::query()
+      ->where('source', 'nl_ice_data')
+      ->where('source_version', '2026')
+      ->whereJsonContains('mapped_league_codes', 'USHL')
+      ->first();

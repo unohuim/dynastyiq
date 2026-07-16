@@ -92,6 +92,7 @@ class ImportNHLPlayer
         $this->identityResolver->linkIdentityToPlayer($identity, $player);
 
         $this->importStats($player, $data['seasonTotals'] ?? []);
+        $this->syncProspectFlags($player);
 
         return $player;
     }
@@ -204,6 +205,43 @@ class ImportNHLPlayer
                 $player->save();
             }
         }
+    }
+
+    private function syncProspectFlags(Player $player): void
+    {
+        $nhlPlayerId = (int) ($player->nhl_id ?? 0);
+        if ($nhlPlayerId <= 0) {
+            return;
+        }
+
+        $isProspect = app(ProspectEligibilityService::class)->isProspect($nhlPlayerId);
+
+        $player->is_prospect = $isProspect;
+        if ($isProspect) {
+            $currentLeague = $this->currentEvaluationNonNhlLeague($player);
+            if ($currentLeague !== null) {
+                $player->current_league_abbrev = $currentLeague;
+            }
+        }
+        PlayerNhlIdentityObserver::withoutLandingRefresh(fn () => $player->save());
+
+        Stat::query()
+            ->where('player_id', $player->id)
+            ->update(['is_prospect' => $isProspect]);
+    }
+
+    private function currentEvaluationNonNhlLeague(Player $player): ?string
+    {
+        $seasons = app(ProspectEligibilityService::class)->evaluationSeasonIds(now());
+
+        return Stat::query()
+            ->where('player_id', $player->id)
+            ->where('league_abbrev', '<>', 'NHL')
+            ->whereIn('season_id', $seasons)
+            ->where('gp', '>', 0)
+            ->orderByDesc('season_id')
+            ->orderByDesc('gp')
+            ->value('league_abbrev');
     }
 
     /**
