@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Models\PlatformLeague;
-use App\Models\Membership;
-use App\Models\MembershipTier;
 use App\Http\Resources\MembershipResource;
 use App\Http\Resources\MembershipTierResource;
+use App\Models\Membership;
+use App\Models\MembershipTier;
+use App\Models\PlatformLeague;
+use App\Services\LeagueProviderBindingService;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\View\View;
@@ -19,9 +21,10 @@ class CommunitiesController extends Controller
      * Display a listing of the user's enabled communities,
      * plus Fantrax connection state and selectable Fantrax leagues.
      */
-    public function index(): View
+    public function index(Request $request): View
     {
         $user = Auth::user();
+        $bindingService = app(LeagueProviderBindingService::class);
 
         $hasMembershipsTable = Schema::hasTable('memberships');
 
@@ -47,7 +50,7 @@ class CommunitiesController extends Controller
             ->orderBy('organizations.name')
             ->get();
 
-        $activeOrganizationId = session()->pull('active_organization_id');
+        $activeOrganizationId = $request->integer('active') ?: session()->pull('active_organization_id');
         $activeCommunity = $communities
             ->firstWhere('id', $activeOrganizationId)
             ?? $communities->first();
@@ -63,19 +66,19 @@ class CommunitiesController extends Controller
         if ($fantraxConnected) {
 
             $fantraxOptions = PlatformLeague::query()
-                    ->select('platform_leagues.name', 'platform_leagues.platform_league_id', 'platform_leagues.sport')
+                    ->select('platform_leagues.*')
                     ->join('league_user_teams as lut', 'lut.platform_league_id', '=', 'platform_leagues.id')
                     ->where('lut.user_id', $user->id)
                     ->where('lut.is_active', true)
                     ->where('platform_leagues.platform', 'fantrax')
-                    ->whereDoesntHave('league.organization')
                     ->orderBy('platform_leagues.name')
                     ->get()
                     ->unique('platform_league_id')
-                    ->map(static fn ($l) => [
+                    ->map(fn (PlatformLeague $l) => [
                         'name'               => $l->name,
                         'platform_league_id' => $l->platform_league_id,
                         'sport'              => $l->sport,
+                        'scope_options'      => $bindingService->scopeOptions($l),
                     ])
                     ->values();
         }

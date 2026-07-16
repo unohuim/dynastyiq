@@ -14,6 +14,7 @@ use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Services\FantraxDraftingWindow;
 use App\Services\FantraxLogoSyncService;
+use App\Services\LeagueProviderBindingService;
 use App\Services\YahooFantasyLeagueService;
 use App\Traits\HasAPITrait;
 use App\ViewModels\LeagueShowViewModel;
@@ -53,33 +54,35 @@ class CommunityLeagues extends Controller
             ->get();
 
         $fantraxConnected = $user->fantraxSecret()->exists();
+        $bindingService = app(LeagueProviderBindingService::class);
 
         $fantraxOptions = [];
         if ($fantraxConnected) {
             $fantraxOptions = PlatformLeague::query()
-                ->select('platform_leagues.name', 'platform_leagues.platform_league_id', 'platform_leagues.sport')
+                ->select('platform_leagues.*')
                 ->join('league_user_teams as lut', 'lut.platform_league_id', '=', 'platform_leagues.id')
                 ->where('lut.user_id', $user->id)
                 ->where('lut.is_active', true)
                 ->where('platform_leagues.platform', 'fantrax')
-                ->whereDoesntHave('league.organization')
                 ->orderBy('platform_leagues.name')
                 ->get()
                 ->unique('platform_league_id')
-                ->map(static function ($row): array {
+                ->map(function (PlatformLeague $row) use ($bindingService): array {
                     return [
                         'name' => (string) $row->name,
                         'platform_league_id' => (string) $row->platform_league_id,
                         'sport' => (string) $row->sport,
+                        'scope_options' => $bindingService->scopeOptions($row),
                     ];
                 })
                 ->values()
                 ->all();
         }
 
-        $platformLeague = $league->primaryPlatformLeague();
+        $activeProviderScope = $league->activePlatformScope();
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
         $platformLeagueId = $platformLeague?->platform_league_id;
-        $isFantraxLeague = $league->getPlatformAttribute() === 'fantrax' && filled($platformLeagueId);
+        $isFantraxLeague = $platformLeague?->platform === 'fantrax' && filled($platformLeagueId);
         $canSyncTeamLogos = $platformLeague instanceof PlatformLeague
             && in_array($platformLeague->platform, ['fantrax', 'yahoo'], true)
             && $this->canManageLeague($league, $user);
@@ -96,6 +99,9 @@ class CommunityLeagues extends Controller
                 $apiTeams = $leagueInfo['teamInfo'] ?? [];
                 $teams = collect(is_array($apiTeams) ? $apiTeams : [])
                     ->filter(static fn (mixed $team): bool => is_array($team))
+                    ->filter(fn (array $team): bool => $platformLeague instanceof PlatformLeague
+                        ? $this->teamMatchesProviderScope($team, $platformLeague, $activeProviderScope)
+                        : true)
                     ->map(function (array $team): array {
                         return [
                             'id' => (string) ($team['id'] ?? ''),
@@ -195,7 +201,7 @@ class CommunityLeagues extends Controller
             ]),
         ];
         $payload['league_shape'] = $platformLeague instanceof PlatformLeague
-            ? $this->leagueShapePayload($platformLeague)
+            ? $this->leagueShapePayload($platformLeague, $activeProviderScope)
             : [];
 
         return view('communities.leagues.show', [
@@ -208,7 +214,7 @@ class CommunityLeagues extends Controller
      *
      * @return array<string,mixed>
      */
-    private function leagueShapePayload(PlatformLeague $league): array
+    private function leagueShapePayload(PlatformLeague $league, array $activeProviderScope = []): array
     {
         $shape = data_get($league, 'settings.league_shape', []);
 
@@ -224,7 +230,47 @@ class CommunityLeagues extends Controller
             'divisions' => array_values(is_array($shape['divisions'] ?? null) ? $shape['divisions'] : []),
             'draft_shape' => $shape['draft_shape'] ?? 'unknown',
             'salary_source' => ($shape['custom_salary_detected'] ?? false) ? 'fantrax' : 'none',
+            'active_scope' => [
+                'type' => data_get($activeProviderScope, 'scope_type'),
+                'key' => data_get($activeProviderScope, 'scope_key'),
+                'label' => data_get($activeProviderScope, 'scope_label'),
+            ],
         ];
+    }
+
+    /**
+     * Determine whether a raw Fantrax team belongs to the active provider scope.
+     *
+     * @param array<string,mixed> $team
+     * @param array<string,mixed> $activeProviderScope
+     */
+    private function teamMatchesProviderScope(array $team, PlatformLeague $league, array $activeProviderScope): bool
+    {
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return true;
+        }
+
+        $scopeKey = (string) data_get($activeProviderScope, 'scope_key', '');
+
+        if ($scopeKey === '') {
+            return true;
+        }
+
+        $teamId = (string) ($team['id'] ?? '');
+        $division = $teamId !== ''
+            ? (string) data_get($league, 'settings.league_shape.team_divisions.' . $teamId, '')
+            : '';
+
+        if ($division === '') {
+            $division = (string) ($team['division'] ?? $team['divisionName'] ?? $team['division_name'] ?? '');
+        }
+
+        return $this->providerScopeKey($division) === $scopeKey;
+    }
+
+    private function providerScopeKey(string $value): string
+    {
+        return str($value)->trim()->lower()->slug('-')->toString();
     }
 
     /**
@@ -250,7 +296,7 @@ class CommunityLeagues extends Controller
 
         abort_unless($this->canManageLeague($league, $user), 403);
 
-        $platformLeague = $league->primaryPlatformLeague();
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
 
         abort_unless($platformLeague instanceof PlatformLeague, 404);
 
@@ -326,7 +372,7 @@ class CommunityLeagues extends Controller
             ->findOrFail($cId);
         $league = $community->leagues()
             ->findOrFail($lId);
-        $platformLeague = $league->primaryPlatformLeague();
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
 
         abort_unless($platformLeague instanceof PlatformLeague && $platformLeague->platform === 'fantrax', 404);
 

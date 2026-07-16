@@ -60,10 +60,17 @@
                 // Fantrax
                 fOpen: false,
                 fSelected: null,
+                selectedScope: null,
+                scopeMode: 'single',
                 fOptions: @js($fantraxOptions),
                 manualId: '',
+                scopeOptions() {
+                  return this.fSelected?.scope_options || [];
+                },
                 onSelectFantrax(opt) {
                   this.fSelected = opt;
+                  this.selectedScope = (opt.scope_options || []).length === 1 ? opt.scope_options[0] : null;
+                  this.scopeMode = 'single';
                   this.lockName = true;
                   this.name = opt?.name || this.name;
                   this.platform = 'fantrax';
@@ -74,6 +81,8 @@
                   this.manualId = e.target.value.trim();
                   if (this.manualId.length) {
                     this.fSelected = null;   // reset dropdown
+                    this.selectedScope = null;
+                    this.scopeMode = 'single';
                     this.platform = 'fantrax';
                   } else if (!this.fSelected) {
                     this.platform = '';
@@ -104,7 +113,7 @@
                         <template x-if="selected?.avatar">
                             <img :src="selected.avatar" alt="" class="h-6 w-6 rounded-full object-cover ring-1 ring-slate-200">
                         </template>
-                        <span class="block truncate" x-text="selected?.name || '— Choose a server —'"></span>
+                        <span class="block truncate" x-text="selected?.name || '- Choose a server -'"></span>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
                         <svg class="h-5 w-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -149,7 +158,7 @@
                         @keydown.escape.window="fOpen = false"
                         class="relative mt-1 w-full rounded-xl border border-slate-300 bg-white pr-9 pl-3 py-2 text-left text-slate-900 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200">
                     <div class="flex items-center gap-3">
-                        <span class="block truncate" x-text="fSelected?.name || '— Select a Fantrax league —'"></span>
+                        <span class="block truncate" x-text="fSelected?.name || '- Select a Fantrax league -'"></span>
                     </div>
                     <span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
                         <svg class="h-5 w-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -180,6 +189,44 @@
             </div>
             @endif
 
+            <div x-show="scopeOptions().length > 1" x-cloak class="space-y-3">
+                <div>
+                    <label class="block text-xs font-medium text-slate-700">Add Mode</label>
+                    <div class="mt-1 grid grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            class="rounded-xl border px-3 py-2 text-sm font-semibold"
+                            :class="scopeMode === 'single' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-300 bg-white text-slate-700'"
+                            @click="scopeMode = 'single'"
+                        >
+                            Add one scope
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-xl border px-3 py-2 text-sm font-semibold"
+                            :class="scopeMode === 'all' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-300 bg-white text-slate-700'"
+                            @click="scopeMode = 'all'"
+                        >
+                            Add all scopes
+                        </button>
+                    </div>
+                </div>
+
+                <div x-show="scopeMode === 'single'" x-cloak>
+                    <label class="block text-xs font-medium text-slate-700">Fantrax Scope <span class="text-rose-500">*</span></label>
+                    <select
+                        class="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200"
+                        :value="selectedScope ? `${selectedScope.type || ''}:${selectedScope.key || ''}` : ''"
+                        @change="selectedScope = scopeOptions().find((scope) => `${scope.type || ''}:${scope.key || ''}` === $event.target.value) || null"
+                    >
+                        <option value="">- Choose a scope -</option>
+                        <template x-for="scope in scopeOptions()" :key="`${scope.type || 'full'}:${scope.key || 'league'}`">
+                            <option :value="`${scope.type || ''}:${scope.key || ''}`" x-text="scope.label"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+
             {{-- Always: Fantrax League ID (manual) --}}
             <div>
                 <label class="block text-xs font-medium text-slate-700">Fantrax League ID</label>
@@ -193,6 +240,11 @@
             <input type="hidden" name="platform" :value="platform">
             <input type="hidden" name="platform_league_id"
                    :value="fSelected ? (fSelected.platform_league_id || fSelected.id) : manualId">
+            <input type="hidden" name="provider_scope_mode" :value="scopeMode">
+            <input type="hidden" name="provider_scope_type" :value="scopeMode === 'single' ? (selectedScope?.type || '') : ''">
+            <input type="hidden" name="provider_scope_key" :value="scopeMode === 'single' ? (selectedScope?.key || '') : ''">
+            <input type="hidden" name="provider_scope_label" :value="scopeMode === 'single' ? (selectedScope?.label || '') : ''">
+            <input type="hidden" name="provider_scope_required" :value="scopeOptions().length > 1 && scopeMode === 'single' ? '1' : ''">
 
             <div class="flex items-center justify-end gap-2 pt-2">
                 <button type="button" @click="{{ $model }} = false"
@@ -207,18 +259,3 @@
         </form>
     </div>
 </div>
-
-{{-- Lightweight helper (only define once) --}}
-<script>
-window.__dropdownSelectInit = window.__dropdownSelectInit || (function () {
-  window.dropdownSelect = function ({ options = [] }) {
-    return {
-      openList: false,
-      options,
-      selected: null,
-      select(opt) { this.selected = opt; this.openList = false; },
-    };
-  };
-  return true;
-})();
-</script>

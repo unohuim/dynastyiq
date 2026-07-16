@@ -39,7 +39,7 @@ class PlatformLeague extends Model
             'league_platform_league',
             'platform_league_id',
             'league_id'
-        )->withPivot(['linked_at', 'status', 'meta', 'created_at', 'updated_at'])
+        )->withPivot(['linked_at', 'archived_at', 'status', 'meta', 'created_at', 'updated_at'])
          ->withTimestamps();
     }
 
@@ -54,6 +54,22 @@ class PlatformLeague extends Model
             'id',                         // PK on platform_leagues
             'league_id'                   // FK on pivot -> leagues.id
         );
+    }
+
+    /**
+     * Return the active internal league wrapper for this provider scope.
+     */
+    public function activeLeagueForScope(?string $scopeType = null, ?string $scopeKey = null): ?League
+    {
+        return LeaguePlatformLeague::query()
+            ->with('league')
+            ->where('platform_league_id', $this->id)
+            ->active()
+            ->forProviderScope($scopeType, $scopeKey)
+            ->latest('linked_at')
+            ->latest('id')
+            ->first()
+            ?->league;
     }
 
 

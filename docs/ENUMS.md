@@ -874,7 +874,8 @@ Do not introduce new enum values without updating this document.
 **Notes:**
 
 - The column is not database constrained.
-- `League::primaryPlatformLeague()` filters for pivot status `active`.
+- `League::activePlatformLeague()` filters for pivot status `active`.
+- Historical provider bindings should use `unlinked` with `league_platform_league.archived_at` populated.
 
 ---
 
@@ -1453,7 +1454,7 @@ The following enum-like areas are intentionally documented because they are not 
 
 - `players.status` is a string with default `active`; migration comments mention possible future values but no code-level validation currently canonicalizes them.
 - `provider_accounts.status` is a string with default `disconnected`; code also writes `connected` and `offline`.
-- `league_platform_league.status` is a string; migration comments mention `active`, `pending`, and `unlinked`, while code currently filters for `active`.
+- `league_platform_league.status` is a string; active binding reads filter for `active`.
 - Stats resource values differ between HTTP validation (`players`, `units`) and Discord command metadata (`player`, `unit`, `team`).
 - Stats period values differ in casing/naming between current stats validation (`lastWeek`, `thisWeek`, `past30days`) and legacy/Discord metadata (`lastweek`, `thisweek`, `last30`).
 

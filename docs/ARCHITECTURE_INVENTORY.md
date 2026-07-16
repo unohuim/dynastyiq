@@ -252,6 +252,47 @@ SyncFantraxDraftStateJob::dispatch($platformLeague->id);
 
 ---
 
+### League Provider Binding
+
+**Name:** League Provider Binding
+**Type:** Domain Binding Pattern
+**Location:**
+- `app/Models/League.php`
+- `app/Models/LeaguePlatformLeague.php`
+- `app/Models/PlatformLeague.php`
+- `app/Services/LeagueProviderBindingService.php`
+- `app/Http/Controllers/LeaguesController.php`
+- `docs/architecture/community/LeagueProviderBinding.yaml`
+
+**Purpose:**
+Preserve durable community-facing league identity while allowing provider league bindings to be scoped, archived, and migrated over time.
+
+**When to Use:**
+Attaching, re-adding, or preparing migration for provider-backed community league wrappers.
+
+**When Not to Use:**
+Duplicating provider-owned `platform_leagues` rows or silently repointing a league wrapper to a different provider source.
+
+**Public Interface:**
+- `LeagueProviderBindingService::scopeOptions()`
+- `LeagueProviderBindingService::attach()`
+- `LeagueProviderBindingService::attachAllScopes()`
+- `LeagueProviderBindingService::migrate()`
+- `League::activePlatformBinding()`
+- `League::activePlatformLeague()`
+- `League::activePlatformScope()`
+- `PlatformLeague::activeLeagueForScope()`
+- `LeaguePlatformLeague`
+- `organizations.leagues.provider-binding.update`
+- `league_platform_league`
+
+**Example Usage:**
+```php
+$league = $platformLeague->activeLeagueForScope('division', 'east');
+```
+
+---
+
 ### Platform League Settings Resolution
 
 **Name:** Platform League Settings Resolution

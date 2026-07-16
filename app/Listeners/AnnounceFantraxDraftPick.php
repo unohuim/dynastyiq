@@ -132,6 +132,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
         $row = DB::table('league_platform_league')
             ->join('organization_leagues', 'organization_leagues.league_id', '=', 'league_platform_league.league_id')
             ->where('league_platform_league.platform_league_id', $platformLeagueId)
+            ->where('league_platform_league.status', 'active')
             ->select([
                 'league_platform_league.league_id',
                 'organization_leagues.organization_id',

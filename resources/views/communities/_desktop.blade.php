@@ -1,12 +1,4 @@
-{{-- resources/views/communities/partials/desktop.blade.php --}}
-{{--
-    Pre-Implementation Analysis (reuse inventory)
-    Existing models reused: Membership, MembershipTier, MemberProfile
-    Existing services reused: MembershipSyncService, TierMapper, PatreonSyncService (read-only)
-    Existing UI components reused: dropdown/context menu primitives, modal patterns, badge styles
-    Existing authorization patterns reused: organization membership guard
-    Existing settings endpoint reused: OrganizationsController@updateSettings
---}}
+{{-- resources/views/communities/_desktop.blade.php --}}
 @php
     /** @var \Illuminate\Support\Collection|\App\Models\Organization[] $communities */
     $currentOrg = ($activeCommunity ?? null)
@@ -14,28 +6,52 @@
         : $communities->first();
     $user = auth()->user();
 
-    // Highest org-scoped role (by numeric level, higher = higher)
     $highestRole = null;
     if ($user && $currentOrg) {
         $highestRole = $user->roles()
             ->wherePivot('organization_id', $currentOrg->id)
             ->orderByDesc('level')
-            ->first(); // expects roles table has `level` and `name`
+            ->first();
     }
 
-    // Admin permission = level >= 10
-    $canEdit = $highestRole && (int)($highestRole->level ?? 0) >= 10;
+    $canEdit = $highestRole && (int) ($highestRole->level ?? 0) >= 10;
+    $roleLabel = $highestRole ? ucfirst((string) $highestRole->name) : 'Member';
 
-    // Connected Discord servers (from DB relation; respects eager load)
     $guilds = $currentOrg
         ? ($currentOrg->relationLoaded('discordServers')
             ? $currentOrg->discordServers
             : $currentOrg->discordServers()->get())
         : collect();
 
-    $memberships = $currentOrg?->memberships ?? collect();
+    $leagues = $currentOrg
+        ? ($currentOrg->relationLoaded('leagues')
+            ? $currentOrg->leagues
+            : $currentOrg->leagues()->get())
+        : collect();
+
+    $memberships = $currentOrg
+        ? ($currentOrg->relationLoaded('memberships')
+            ? $currentOrg->memberships
+            : $currentOrg->memberships()->with(['memberProfile', 'membershipTier', 'providerAccount'])->latest()->limit(10)->get())
+        : collect();
+
+    $tiers = $currentOrg
+        ? ($currentOrg->relationLoaded('membershipTiers')
+            ? $currentOrg->membershipTiers
+            : $currentOrg->membershipTiers()->orderBy('name')->get())
+        : collect();
+
     $patreonAccount = $currentOrg?->providerAccounts->firstWhere('provider', 'patreon');
     $commissionerEnabled = $currentOrg?->commissionerToolsEnabled();
+    $shortName = $currentOrg?->short_name ?: $currentOrg?->name;
+    $initials = strtoupper(mb_substr((string) $shortName, 0, 2));
+    $discordMemberCount = $memberships->where('provider', 'discord')->count();
+    $patreonMemberCount = $memberships->where('provider', 'patreon')->count();
+    $manualMemberCount = $memberships->whereNotIn('provider', ['discord', 'patreon'])->count();
+    $connectedCount = ($guilds->isNotEmpty() ? 1 : 0)
+        + ($patreonAccount ? 1 : 0)
+        + ($fantraxConnected ? 1 : 0);
+    $totalMembers = data_get($initialMembers ?? [], 'meta.total', $memberships->count());
 
     $desktopConfig = [
         'organizationId' => $currentOrg?->id,
@@ -50,593 +66,486 @@
     ];
 @endphp
 
-<div class="grid grid-cols-[280px,1fr] gap-6">
-    {{-- Sidebar: communities list --}}
-    <aside class="rounded-2xl border border-slate-200 bg-white p-3">
-        <div class="mb-2 px-2 text-xs font-semibold tracking-wider text-slate-600 uppercase">Communities</div>
-        <ul id="communityList" class="space-y-1">
-            @foreach ($communities as $i => $org)
-                <li>
-                    <button
-                        type="button"
-                        class="community-item group w-full rounded-xl px-3 py-2 text-left text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        data-slug="{{ $org->slug }}"
-                        data-name="{{ $org->name }}"
-                        data-org-id="{{ $org->id }}"
-                        aria-current="{{ ($currentOrg && $currentOrg->id === $org->id) ? 'true' : 'false' }}"
-                    >
-                        <div class="flex items-center gap-3">
-                            <span class="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 text-sm font-semibold text-slate-700">
-                                {{ strtoupper(mb_substr($org->short_name ?? $org->name, 0, 2)) }}
-                            </span>
-                            <span class="flex-1 truncate">{{ $org->name }}</span>
-                            <span class="hidden rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600 group-aria-[current=true]:inline">
-                                Active
-                            </span>
-                        </div>
-                    </button>
-                </li>
-            @endforeach
-        </ul>
-    </aside>
-
-    {{-- Main: Community Manager Hub --}}
-    <main
-        class="rounded-2xl border border-slate-200 bg-white p-0 overflow-hidden"
-        x-data="communityMembersHub({{ \Illuminate\Support\Js::from($desktopConfig) }})"
-    >
-        {{-- Header --}}
-        <div class="border-b border-slate-200 px-6 py-5">
-            <div class="flex items-center justify-between gap-6">
-                <div class="min-w-0">
-                    <h2
-                        id="desktopCommunityTitle"
-                        class="text-2xl font-semibold text-slate-900"
-                        x-text="$store.communityMembers.organizationName || '{{ $currentOrg?->name }}'"
-                    >
-                        {{ $currentOrg?->name }}
-                    </h2>
-                    <div class="mt-2 flex flex-wrap items-center gap-2">
-                        @if($highestRole)
-                            <span class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
-                                {{ ucfirst($highestRole->name) }}
-                            </span>
-                        @else
-                            <span class="text-xs text-slate-500">No role assigned</span>
-                        @endif
-                    </div>
+<div
+    x-data="communityMembersHub({{ \Illuminate\Support\Js::from($desktopConfig) }})"
+    class="min-h-[calc(100vh-8rem)] rounded-lg border border-slate-200 bg-slate-50 text-slate-900"
+    :class="theme === 'dark' ? 'border-slate-800 bg-slate-950 text-slate-100' : 'border-slate-200 bg-slate-50 text-slate-900'"
+>
+    <div class="grid gap-5 p-4 lg:grid-cols-[320px,1fr] lg:p-5">
+        <aside
+            class="rounded-lg border bg-white p-4"
+            :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'"
+        >
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold">Communities</h2>
+                    <div class="mt-2 h-px w-32 bg-indigo-500"></div>
                 </div>
-
-                {{-- Settings gear (admins only) --}}
-                @if($canEdit && $currentOrg)
-                    <button
-                        type="button"
-                        class="inline-flex items-center justify-center rounded-full border border-slate-200 bg-slate-50 p-2 text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                        aria-label="Edit community settings"
-                        @click="$store.communityMembers.openSettings()"
-                    >
-                        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.607 2.296.07 2.573-1.065z" />
-                            <circle cx="12" cy="12" r="3" />
-                        </svg>
-                    </button>
-                @endif
-            </div>
-
-            {{-- Sub-nav --}}
-            <div class="mt-4 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
                 <button
                     type="button"
+                    class="inline-flex h-9 w-16 items-center rounded-full border p-1 transition-colors"
+                    :class="theme === 'dark' ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-slate-100'"
+                    aria-label="Toggle light and dark community theme"
+                    @click="theme = theme === 'dark' ? 'light' : 'dark'"
+                >
+                    <span
+                        class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white text-[11px] font-semibold text-slate-700 shadow transition-transform"
+                        :class="theme === 'dark' ? 'translate-x-7' : 'translate-x-0'"
+                        x-text="theme === 'dark' ? 'D' : 'L'"
+                    ></span>
+                </button>
+            </div>
+
+            <nav class="mt-4 space-y-2">
+                @foreach ($communities as $org)
+                    @php
+                        $isActive = $currentOrg && (int) $currentOrg->id === (int) $org->id;
+                        $orgInitials = strtoupper(mb_substr((string) ($org->short_name ?: $org->name), 0, 2));
+                    @endphp
+                    <a
+                        href="{{ route('communities.index', ['active' => $org->id]) }}"
+                        class="group flex items-center gap-3 rounded-lg border px-3 py-3 text-sm font-semibold transition-colors"
+                        :class="theme === 'dark'
+                            ? '{{ $isActive ? 'border-indigo-500 bg-indigo-500/15 text-white' : 'border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800' }}'
+                            : '{{ $isActive ? 'border-indigo-500 bg-indigo-50 text-indigo-900' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50' }}'"
+                        aria-current="{{ $isActive ? 'page' : 'false' }}"
+                    >
+                        <span
+                            class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold"
+                            :class="theme === 'dark' ? 'bg-indigo-500 text-white' : 'bg-indigo-600 text-white'"
+                        >
+                            {{ $orgInitials }}
+                        </span>
+                        <span class="min-w-0 flex-1 truncate">{{ $org->name }}</span>
+                        @if ($isActive)
+                            <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                        @endif
+                    </a>
+                @endforeach
+            </nav>
+
+            <div class="mt-7 flex items-center justify-between text-xs font-semibold uppercase tracking-wide">
+                <span :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Leagues</span>
+                <span
+                    class="rounded-full px-2 py-0.5"
+                    data-community-league-count
+                    :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'"
+                >
+                    {{ $leagues->count() }}
+                </span>
+            </div>
+
+            <div class="mt-3 space-y-2">
+                @forelse ($leagues as $league)
+                    @php
+                        $platform = strtolower((string) $league->platform);
+                        $statusText = data_get($league, 'settings.status') ?: 'Connected';
+                        $scopeLabel = data_get($league->activePlatformScope(), 'scope_label');
+                    @endphp
+                    <a
+                        href="{{ route('community.leagues.show', ['c_id' => $currentOrg->id, 'l_id' => $league->id]) }}"
+                        class="flex items-center gap-3 rounded-lg border px-3 py-3 transition-colors"
+                        data-community-sidebar-league-row="{{ $league->id }}"
+                        :class="theme === 'dark' ? 'border-slate-800 bg-slate-950 hover:bg-slate-800' : 'border-slate-200 bg-white hover:bg-slate-50'"
+                    >
+                        <span class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-700 text-[10px] font-bold uppercase text-white">
+                            {{ $platform ? mb_substr($platform, 0, 2) : 'L' }}
+                        </span>
+                        <span class="min-w-0 flex-1">
+                            <span class="block truncate text-sm font-semibold">{{ $league->name }}</span>
+                            <span class="mt-0.5 block truncate text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
+                                {{ ucfirst($platform ?: 'League') }} / {{ $scopeLabel ?: $statusText }}
+                            </span>
+                        </span>
+                    </a>
+                @empty
+                    <div class="rounded-lg border border-dashed px-3 py-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'">
+                        No leagues connected yet.
+                    </div>
+                @endforelse
+            </div>
+        </aside>
+
+        <main class="min-w-0 space-y-5">
+            <section
+                class="relative overflow-hidden rounded-lg border p-6"
+                :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'"
+            >
+                <div class="absolute inset-y-0 right-0 hidden w-1/2 bg-gradient-to-l from-indigo-100 to-transparent opacity-70 lg:block" :class="theme === 'dark' ? 'from-indigo-950' : 'from-indigo-100'"></div>
+                <div class="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div class="flex min-w-0 items-center gap-4">
+                        <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-3xl font-bold text-white">
+                            {{ $initials }}
+                        </div>
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h1 class="truncate text-3xl font-semibold">{{ $currentOrg?->name }}</h1>
+                                <span class="rounded-full border px-2.5 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600'">
+                                    {{ $roleLabel }}
+                                </span>
+                            </div>
+                            <p class="mt-2 max-w-2xl text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                                Community operations, connected leagues, member access, and integrations.
+                            </p>
+                            <div class="mt-3 flex flex-wrap gap-3 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
+                                <span>{{ $leagues->count() }} leagues</span>
+                                <span>{{ $totalMembers }} members</span>
+                                <span>{{ $connectedCount }} connected services</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if ($canEdit && $currentOrg)
+                        <button
+                            type="button"
+                            class="inline-flex h-10 w-10 items-center justify-center rounded-lg border transition-colors"
+                            :class="theme === 'dark' ? 'border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
+                            aria-label="Edit community settings"
+                            @click="$store.communityMembers.openSettings()"
+                        >
+                            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.607 2.296.07 2.573-1.065z" />
+                                <circle cx="12" cy="12" r="3" />
+                            </svg>
+                        </button>
+                    @endif
+                </div>
+            </section>
+
+            <nav
+                class="flex flex-wrap gap-2 rounded-lg border p-2"
+                :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'"
+                aria-label="Community sections"
+            >
+                <button
+                    type="button"
+                    class="rounded-md px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'home' ? 'bg-indigo-600 text-white' : (theme === 'dark' ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100')"
+                    @click="activeTab = 'home'"
+                >
+                    Home
+                </button>
+                <button
+                    type="button"
+                    class="rounded-md px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'members' ? 'bg-indigo-600 text-white' : (theme === 'dark' ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100')"
                     @click="activeTab = 'members'"
-                    :class="activeTab === 'members' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                    class="rounded-xl px-3 py-2 transition-colors"
                 >
                     Members
                 </button>
-
-                @if($commissionerEnabled)
-                    <button
-                        type="button"
-                        @click="activeTab = 'leagues'"
-                        :class="activeTab === 'leagues' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                        class="rounded-xl px-3 py-2 transition-colors"
-                    >
-                        Leagues
-                    </button>
-                @endif
-
                 <button
                     type="button"
-                    @click="activeTab = 'integrations'"
-                    :class="activeTab === 'integrations' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                    class="rounded-xl px-3 py-2 transition-colors"
+                    class="rounded-md px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'leagues' ? 'bg-indigo-600 text-white' : (theme === 'dark' ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100')"
+                    @click="activeTab = 'leagues'"
                 >
-                    Integrations
+                    Leagues
                 </button>
-
                 <button
                     type="button"
-                    @click="activeTab = 'dashboard'"
-                    :class="activeTab === 'dashboard' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                    class="rounded-xl px-3 py-2 transition-colors"
+                    class="rounded-md px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'connections' ? 'bg-indigo-600 text-white' : (theme === 'dark' ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100')"
+                    @click="activeTab = 'connections'"
                 >
-                    Dashboard
+                    Connections
                 </button>
-            </div>
-        </div>
+            </nav>
 
-        {{-- Body --}}
-        <div class="p-6 space-y-6">
-            {{-- Members Tab --}}
-            <div x-show="activeTab === 'members'" x-cloak class="space-y-6">
-                <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" x-data="{}">
+            <div x-show="activeTab === 'home'" x-cloak class="grid gap-5 xl:grid-cols-3">
+                <section class="rounded-lg border p-5 xl:col-span-1" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-base font-semibold">Members</h3>
+                            <p class="text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">Total community members</p>
+                        </div>
+                        <button type="button" class="rounded-md border px-3 py-1.5 text-xs font-semibold" :class="theme === 'dark' ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600'" @click="activeTab = 'members'">
+                            View all
+                        </button>
+                    </div>
+                    <div class="mt-5 text-4xl font-semibold">{{ $totalMembers }}</div>
+                    <div class="mt-5 grid grid-cols-3 divide-x" :class="theme === 'dark' ? 'divide-slate-800' : 'divide-slate-200'">
+                        <div class="pr-3">
+                            <div class="text-2xl font-semibold">{{ $discordMemberCount }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Discord</div>
+                        </div>
+                        <div class="px-3">
+                            <div class="text-2xl font-semibold">{{ $patreonMemberCount }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Patreon</div>
+                        </div>
+                        <div class="pl-3">
+                            <div class="text-2xl font-semibold">{{ $manualMemberCount }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Other</div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-lg border p-5 xl:col-span-1" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-base font-semibold">Tiers</h3>
+                            <p class="text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">Access levels and perks</p>
+                        </div>
+                        <span class="rounded-full px-2.5 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'">{{ $tiers->count() }}</span>
+                    </div>
+                    <div class="mt-5 space-y-2">
+                        @forelse ($tiers->take(4) as $tier)
+                            <div class="flex items-center justify-between rounded-md border px-3 py-2" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+                                <span class="truncate text-sm font-semibold">{{ $tier->name }}</span>
+                                <span class="text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
+                                    {{ $memberships->where('membership_tier_id', $tier->id)->count() }} members
+                                </span>
+                            </div>
+                        @empty
+                            <p class="rounded-md border border-dashed px-3 py-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'">
+                                Tiers will appear after Patreon syncs or tier records are configured.
+                            </p>
+                        @endforelse
+                    </div>
+                </section>
+
+                <section class="rounded-lg border p-5 xl:col-span-1" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-base font-semibold">Syncs</h3>
+                            <p class="text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">Connection status</p>
+                        </div>
+                        <span class="rounded-full px-2.5 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-emerald-50 text-emerald-700'">{{ $connectedCount }} active</span>
+                    </div>
+                    <div class="mt-5 space-y-2">
+                        <div class="flex items-center justify-between rounded-md border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+                            <span class="text-sm font-semibold">Discord</span>
+                            <span class="text-xs font-semibold {{ $guilds->isNotEmpty() ? 'text-emerald-600' : 'text-slate-500' }}">{{ $guilds->isNotEmpty() ? 'Connected' : 'Not connected' }}</span>
+                        </div>
+                        <div class="flex items-center justify-between rounded-md border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+                            <span class="text-sm font-semibold">Patreon</span>
+                            <span class="text-xs font-semibold {{ $patreonAccount ? 'text-emerald-600' : 'text-slate-500' }}">{{ $patreonAccount ? 'Connected' : 'Not connected' }}</span>
+                        </div>
+                        <div class="flex items-center justify-between rounded-md border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+                            <span class="text-sm font-semibold">Fantrax</span>
+                            <span class="text-xs font-semibold {{ $fantraxConnected ? 'text-emerald-600' : 'text-slate-500' }}">{{ $fantraxConnected ? 'Connected' : 'Not connected' }}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-lg border p-5 xl:col-span-2" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <h3 class="text-sm font-semibold tracking-wider text-slate-600 uppercase">Community Members</h3>
-                            <p class="text-xs text-slate-600">Manage members and tiers with API-driven updates.</p>
+                            <h3 class="text-base font-semibold">League Overview</h3>
+                            <p class="text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">Connected leagues for this community</p>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <template x-if="$store.communityMembers.activeCollectionTab === 'members'">
-                                <button
-                                    type="button"
-                                    class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 disabled:cursor-not-allowed disabled:opacity-60"
-                                    :disabled="!$store.communityMembers.hasTiers"
-                                    :title="$store.communityMembers.hasTiers ? '' : 'Add a tier before adding members'"
-                                    @click="$store.communityMembers.openMemberModal()"
-                                >
-                                    Add Member
-                                </button>
-                            </template>
-                            <template x-if="$store.communityMembers.activeCollectionTab === 'tiers'">
-                                <button
-                                    type="button"
-                                    class="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                                    @click="$store.communityMembers.openTierModal()"
-                                >
-                                    Add Tier
-                                </button>
-                            </template>
-                        </div>
-                    </div>
-
-                    <div class="mt-4 flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-700">
                         <button
                             type="button"
-                            @click="$store.communityMembers.activeCollectionTab = 'members'"
-                            :class="$store.communityMembers.activeCollectionTab === 'members' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                            class="rounded-xl px-3 py-2 transition-colors"
+                            class="rounded-md border px-3 py-1.5 text-xs font-semibold"
+                            :class="theme === 'dark' ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'"
+                            @click="activeTab = 'leagues'"
                         >
-                            Members
-                        </button>
-                        <button
-                            type="button"
-                            @click="$store.communityMembers.activeCollectionTab = 'tiers'"
-                            :class="$store.communityMembers.activeCollectionTab === 'tiers' ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200' : 'bg-slate-50 text-slate-700 border border-slate-200'"
-                            class="rounded-xl px-3 py-2 transition-colors"
-                        >
-                            Tiers
+                            Manage leagues
                         </button>
                     </div>
+                    <div class="mt-5 grid grid-cols-3 divide-x rounded-lg border px-4 py-4" :class="theme === 'dark' ? 'divide-slate-800 border-slate-800 bg-slate-950' : 'divide-slate-200 border-slate-200 bg-slate-50'">
+                        <div class="pr-4">
+                            <div class="text-2xl font-semibold" data-community-league-count>{{ $leagues->count() }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Total</div>
+                        </div>
+                        <div class="px-4">
+                            <div class="text-2xl font-semibold">{{ $leagues->where('platform', 'fantrax')->count() }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Fantrax</div>
+                        </div>
+                        <div class="pl-4">
+                            <div class="text-2xl font-semibold">{{ $guilds->count() }}</div>
+                            <div class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Discord servers</div>
+                        </div>
+                    </div>
+                </section>
 
-                    <div class="mt-4" x-show="$store.communityMembers.activeCollectionTab === 'members'" x-cloak>
-                        <div class="divide-y divide-slate-200 rounded-xl border border-slate-200">
-                            <template x-if="$store.communityMembers.members.length === 0">
-                                <div class="p-4 text-sm text-slate-600">No members yet.</div>
-                            </template>
+                <section class="rounded-lg border p-5 xl:col-span-1" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                    <div>
+                        <h3 class="text-base font-semibold">Integrations</h3>
+                        <p class="text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">Services powering this community</p>
+                    </div>
+                    <div class="mt-5 grid gap-3">
+                        <button type="button" class="flex items-center justify-between rounded-md border px-3 py-3 text-left" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'" @click="activeTab = 'connections'">
+                            <span class="text-sm font-semibold">Discord</span>
+                            <span class="text-xs {{ $guilds->isNotEmpty() ? 'text-emerald-600' : 'text-slate-500' }}">{{ $guilds->count() }} servers</span>
+                        </button>
+                        <button type="button" class="flex items-center justify-between rounded-md border px-3 py-3 text-left" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'" @click="activeTab = 'connections'">
+                            <span class="text-sm font-semibold">Patreon</span>
+                            <span class="text-xs {{ $patreonAccount ? 'text-emerald-600' : 'text-slate-500' }}">{{ $patreonAccount ? 'Connected' : 'Not connected' }}</span>
+                        </button>
+                        <button type="button" class="flex items-center justify-between rounded-md border px-3 py-3 text-left" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'" @click="activeTab = 'connections'">
+                            <span class="text-sm font-semibold">Fantrax</span>
+                            <span class="text-xs {{ $fantraxConnected ? 'text-emerald-600' : 'text-slate-500' }}">{{ $fantraxConnected ? 'Connected' : 'Not connected' }}</span>
+                        </button>
+                    </div>
+                </section>
+            </div>
+
+            <section x-show="activeTab === 'members'" x-cloak class="rounded-lg border p-5" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <h3 class="text-lg font-semibold">Members</h3>
+                        <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                            Discord-connected members will appear here after the community has a connected Discord server and member sync is enabled.
+                        </p>
+                    </div>
+                    <span class="rounded-full px-3 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'">
+                        <span x-text="$store.communityMembers.memberMeta.total || {{ $totalMembers }}"></span> total
+                    </span>
+                </div>
+
+                <div class="mt-5 overflow-hidden rounded-lg border" :class="theme === 'dark' ? 'border-slate-800' : 'border-slate-200'">
+                    <template x-if="$store.communityMembers.members.length === 0">
+                        <div class="p-8 text-center">
+                            <h4 class="text-base font-semibold">No synced members yet</h4>
+                            <p class="mx-auto mt-2 max-w-xl text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                                Connect Discord in the Connections tab. Once Discord member import is wired, server members will populate this roster automatically.
+                            </p>
+                            <button type="button" class="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" @click="activeTab = 'connections'">
+                                Open Connections
+                            </button>
+                        </div>
+                    </template>
+
+                    <template x-if="$store.communityMembers.members.length > 0">
+                        <div class="divide-y" :class="theme === 'dark' ? 'divide-slate-800' : 'divide-slate-200'">
                             <template x-for="member in $store.communityMembers.members" :key="member.id">
                                 <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                                     <div class="min-w-0">
-                                        <p class="truncate text-sm font-semibold text-slate-800" x-text="member.display_name || 'Unknown member'"></p>
-                                        <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                            <span class="truncate" x-text="member.email || ''"></span>
+                                        <p class="truncate text-sm font-semibold" x-text="member.display_name || 'Unknown member'"></p>
+                                        <div class="mt-1 flex flex-wrap items-center gap-2 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
+                                            <span x-text="member.email || 'No email on file'"></span>
                                             <template x-if="member.provider_label">
-                                                <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                                                    <svg class="h-3 w-3" viewBox="0 0 256 315" fill="currentColor" aria-hidden="true">
-                                                        <path d="M34.86 0H0v315h34.86V0ZM178.18 67.21c-42.33 0-77 34.66-77 77s34.66 77 77 77c42.33 0 77-34.66 77-77s-34.66-77-77-77Z" />
-                                                    </svg>
-                                                    <span x-text="member.provider_label"></span>
-                                                </span>
+                                                <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold" :class="member.provider === 'discord' ? 'bg-indigo-50 text-indigo-700' : 'bg-rose-50 text-rose-700'" x-text="member.provider_label"></span>
                                             </template>
                                         </div>
                                     </div>
-                                    <div class="flex items-center gap-4">
-                                        <div class="text-right">
-                                            <p class="text-xs font-semibold text-indigo-700" x-text="member.tier?.name || 'No tier'"></p>
-                                            <p class="text-[11px] text-slate-500" x-text="$store.communityMembers.statusLabel(member.status)"></p>
-                                        </div>
-                                        <x-dropdown align="right" width="48">
-                                            <x-slot name="trigger">
-                                                <button type="button" class="rounded-full p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200">
-                                                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                                        <path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm0 5.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 16a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
-                                                    </svg>
-                                                </button>
-                                            </x-slot>
-                                            <x-slot name="content">
-                                                <button
-                                                    type="button"
-                                                    class="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                                                    :class="member.provider_managed ? 'cursor-not-allowed opacity-50' : ''"
-                                                    :disabled="member.provider_managed"
-                                                    @click.stop="$store.communityMembers.openMemberModal(member)"
-                                                >
-                                                    Edit
-                                                </button>
-                                                <div class="my-1 border-t border-slate-100"></div>
-                                                <button
-                                                    type="button"
-                                                    class="block w-full px-4 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
-                                                    :class="member.provider_managed ? 'cursor-not-allowed opacity-50' : ''"
-                                                    :disabled="member.provider_managed"
-                                                    @click.stop="$store.communityMembers.deleteMember(member.id)"
-                                                >
-                                                    Delete
-                                                </button>
-                                            </x-slot>
-                                        </x-dropdown>
+                                    <div class="text-right">
+                                        <p class="text-xs font-semibold text-indigo-600" x-text="member.tier?.name || 'No tier'"></p>
+                                        <p class="text-[11px]" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'" x-text="$store.communityMembers.statusLabel(member.status)"></p>
                                     </div>
                                 </div>
                             </template>
                         </div>
+                    </template>
+                </div>
 
-                        <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600" x-show="$store.communityMembers.memberMeta.total">
-                            <div>
-                                Page <span x-text="$store.communityMembers.memberMeta.current_page"></span>
-                                of <span x-text="$store.communityMembers.memberMeta.last_page"></span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                    :disabled="$store.communityMembers.memberMeta.current_page <= 1"
-                                    @click="$store.communityMembers.fetchMembers(($store.communityMembers.memberMeta.current_page || 1) - 1)"
-                                >
-                                    Previous
-                                </button>
-                                <button
-                                    type="button"
-                                    class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                    :disabled="$store.communityMembers.memberMeta.current_page >= $store.communityMembers.memberMeta.last_page"
-                                    @click="$store.communityMembers.fetchMembers(($store.communityMembers.memberMeta.current_page || 1) + 1)"
-                                >
-                                    Next
-                                </button>
-                            </div>
-                        </div>
+                <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'" x-show="$store.communityMembers.memberMeta.total">
+                    <div>
+                        Page <span x-text="$store.communityMembers.memberMeta.current_page"></span>
+                        of <span x-text="$store.communityMembers.memberMeta.last_page"></span>
                     </div>
+                    <div class="flex items-center gap-2">
+                        <button
+                            type="button"
+                            class="rounded-md border px-3 py-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            :class="theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-200 hover:bg-slate-50'"
+                            :disabled="$store.communityMembers.memberMeta.current_page <= 1"
+                            @click="$store.communityMembers.fetchMembers(($store.communityMembers.memberMeta.current_page || 1) - 1)"
+                        >
+                            Previous
+                        </button>
+                        <button
+                            type="button"
+                            class="rounded-md border px-3 py-1.5 font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            :class="theme === 'dark' ? 'border-slate-700 hover:bg-slate-800' : 'border-slate-200 hover:bg-slate-50'"
+                            :disabled="$store.communityMembers.memberMeta.current_page >= $store.communityMembers.memberMeta.last_page"
+                            @click="$store.communityMembers.fetchMembers(($store.communityMembers.memberMeta.current_page || 1) + 1)"
+                        >
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </section>
 
-                    <div class="mt-4" x-show="$store.communityMembers.activeCollectionTab === 'tiers'" x-cloak>
-                        <div class="divide-y divide-slate-200 rounded-xl border border-slate-200">
-                            <template x-if="$store.communityMembers.tiers.length === 0">
-                                <div class="p-4 text-sm text-slate-600">No tiers yet.</div>
-                            </template>
-                            <template x-for="tier in $store.communityMembers.tiers" :key="tier.id">
-                                <div class="flex items-center justify-between gap-3 px-4 py-3">
-                                    <div class="space-y-1">
-                                        <div class="flex items-center gap-2">
-                                            <p class="text-sm font-semibold text-slate-800" x-text="tier.name"></p>
-                                            <template x-if="tier.provider_label">
-                                                <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                                                    <svg class="h-3 w-3" viewBox="0 0 256 315" fill="currentColor" aria-hidden="true">
-                                                        <path d="M34.86 0H0v315h34.86V0ZM178.18 67.21c-42.33 0-77 34.66-77 77s34.66 77 77 77c42.33 0 77-34.66 77-77s-34.66-77-77-77Z" />
-                                                    </svg>
-                                                    <span x-text="tier.provider_label"></span>
-                                                </span>
-                                            </template>
-                                        </div>
-                                        <p class="text-[11px] text-slate-500" x-text="tier.provider_managed ? 'Provider-managed' : 'Manual tier'"></p>
-                                    </div>
-                                    <div class="flex items-center gap-3">
-                                        <div class="text-right">
-                                            <p
-                                                class="text-sm font-semibold text-slate-900"
-                                                x-text="$store.communityMembers.formatMoney(tier.amount_cents, tier.currency)"
-                                            ></p>
-                                            <p
-                                                class="text-[11px] text-slate-500"
-                                                x-text="tier.currency || 'USD'"
-                                                x-show="tier.amount_cents !== null && tier.amount_cents !== undefined"
-                                            ></p>
-                                        </div>
-                                        <x-dropdown align="right" width="48">
-                                            <x-slot name="trigger">
-                                                <button type="button" class="rounded-full p-2 text-slate-500 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200">
-                                                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                                        <path d="M10 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm0 5.5a1.5 1.5 0 110 3 1.5 1.5 0 010-3zM11.5 16a1.5 1.5 0 10-3 0 1.5 1.5 0 003 0z" />
-                                                    </svg>
-                                                </button>
-                                            </x-slot>
-                                            <x-slot name="content">
-                                                <button
-                                                    type="button"
-                                                    class="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                                                    :class="tier.provider_managed ? 'cursor-not-allowed opacity-50' : ''"
-                                                    :disabled="tier.provider_managed"
-                                                    @click.stop="$store.communityMembers.openTierModal(tier)"
-                                                >
-                                                    Edit
-                                                </button>
-                                                <div class="my-1 border-t border-slate-100"></div>
-                                                <button
-                                                    type="button"
-                                                    class="block w-full px-4 py-2 text-left text-sm text-rose-700 hover:bg-rose-50"
-                                                    :class="tier.provider_managed ? 'cursor-not-allowed opacity-50' : ''"
-                                                    :disabled="tier.provider_managed"
-                                                    @click.stop="$store.communityMembers.deleteTier(tier.id)"
-                                                >
-                                                    Delete
-                                                </button>
-                                            </x-slot>
-                                        </x-dropdown>
-                                    </div>
-                                </div>
-                            </template>
+            <section x-show="activeTab === 'leagues'" x-cloak class="rounded-lg border p-5" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h3 class="text-lg font-semibold">Leagues</h3>
+                        <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                            Manage league associations for this community.
+                        </p>
+                    </div>
+                    <span class="rounded-full px-3 py-1 text-xs font-semibold" data-community-league-count :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'">
+                        {{ $leagues->count() }}
+                    </span>
+                </div>
+
+                @include('communities._desktop-leagues', [
+                    'leagues' => $leagues,
+                    'guilds' => $guilds,
+                    'currentOrg' => $currentOrg,
+                    'canEdit' => $canEdit,
+                    'allowUnlink' => true,
+                ])
+            </section>
+
+            <div x-show="activeTab === 'connections'" x-cloak class="grid gap-5 xl:grid-cols-3">
+                <div class="xl:col-span-2">
+                    @include('communities._desktop-connected-servers')
+                </div>
+
+                <section class="rounded-lg border p-5" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'">
+                    <h3 class="text-base font-semibold">Fantrax</h3>
+                    <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                        Connected Fantrax leagues can be attached to this community.
+                    </p>
+                    <div class="mt-4 rounded-md border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-sm font-semibold">Account</span>
+                            <span class="text-xs font-semibold {{ $fantraxConnected ? 'text-emerald-600' : 'text-slate-500' }}">
+                                {{ $fantraxConnected ? 'Connected' : 'Not connected' }}
+                            </span>
+                        </div>
+                        <div class="mt-2 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
+                            {{ $fantraxOptions->count() }} available leagues can be linked.
                         </div>
                     </div>
                 </section>
-            </div>
 
-            {{-- Leagues Tab --}}
-            <div x-show="activeTab === 'leagues'" x-cloak class="space-y-6">
-                <div
-                    class="col-span-full"
-                    x-data="{
-                        enabled: {{ $commissionerEnabled ? 'true' : 'false' }},
-                        orgId: {{ $currentOrg?->id ?? 'null' }}
-                    }"
-                    x-show="enabled"
-                    x-cloak
-                    x-on:org:settings-updated.window="
-                        if ($event.detail?.organization_id === orgId) {
-                            const v = $event.detail?.settings?.commissioner_tools;
-                            if (v !== undefined) enabled = !!v;
-                        }
-                    "
-                >
-                    @php
-                        $leaguesOrg = $communities->first();
-                        $leagues = $leaguesOrg ? ($leaguesOrg->relationLoaded('leagues')
-                            ? $leaguesOrg->leagues
-                            : $leaguesOrg->leagues()->get()) : collect();
-
-                        $guilds = $leaguesOrg ? ($leaguesOrg->relationLoaded('discordServers')
-                            ? $leaguesOrg->discordServers
-                            : $leaguesOrg->discordServers()->get()) : collect();
-                    @endphp
-
-                    @include('communities._desktop-leagues', ['leagues' => $leagues, 'guilds' => $guilds, 'currentOrg' => $leaguesOrg, 'canEdit' => $canEdit])
-                </div>
-            </div>
-
-            {{-- Integrations Tab --}}
-            <div x-show="activeTab === 'integrations'" x-cloak class="space-y-6">
-                <div class="grid gap-6 lg:grid-cols-3">
-                    @include('communities._desktop-connected-servers')
+                <div class="xl:col-span-3">
                     @include('communities._desktop-memberships')
                 </div>
             </div>
+        </main>
+    </div>
 
-            {{-- Dashboard Tab --}}
-            <div x-show="activeTab === 'dashboard'" x-cloak class="space-y-6">
-                <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                        <h3 class="text-sm font-semibold tracking-wider text-slate-600 uppercase">Manager Hub</h3>
-                        <div class="text-xs text-slate-600">Tools &amp; integrations for {{ $currentOrg?->short_name ?? $currentOrg?->name }}</div>
-                    </div>
-                    <div class="mt-4 grid gap-4 md:grid-cols-3">
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Role</div>
-                            <p class="mt-1 text-xs text-slate-600">
-                                {{ $highestRole ? ucfirst($highestRole->name) : '—' }}
-                            </p>
-                        </div>
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Discord</div>
-                            <p class="mt-1 text-xs text-slate-600">{{ $guilds->count() }} server(s) connected.</p>
-                        </div>
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Last Patreon sync</div>
-                            <p class="mt-1 text-xs text-slate-600">
-                                {{ $patreonAccount?->last_synced_at ? $patreonAccount->last_synced_at->diffForHumans() : 'Never' }}
-                            </p>
-                        </div>
-                    </div>
-                    <div class="mt-4 grid gap-4 md:grid-cols-3">
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Last webhook</div>
-                            <p class="mt-1 text-xs text-slate-600">
-                                {{ $patreonAccount?->last_webhook_at ? $patreonAccount->last_webhook_at->diffForHumans() : 'None yet' }}
-                            </p>
-                        </div>
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Leagues</div>
-                            <p class="mt-1 text-xs text-slate-600">{{ $commissionerEnabled ? ($currentOrg?->leagues->count() ?? 0) : 0 }} connected</p>
-                        </div>
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-sm font-semibold text-slate-900">Branding</div>
-                            <p class="mt-1 text-xs text-slate-600">Name updates reflect across the app.</p>
-                        </div>
-                    </div>
-                </section>
-            </div>
-        </div>
-
-        {{-- Member modal --}}
-        <div
-            x-cloak
-            x-show="$store.communityMembers.modals.member"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-            @keydown.escape.window="$store.communityMembers.modals.member = false"
-            @click.self="$store.communityMembers.modals.member = false"
-        >
-            <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.member = false">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-slate-900" x-text="$store.communityMembers.memberForm.id ? 'Edit Member' : 'Add Member'"></h3>
-                    <button type="button" class="text-slate-500 hover:text-slate-700" @click="$store.communityMembers.modals.member = false">✕</button>
+    <div
+        x-cloak
+        x-show="$store.communityMembers.modals.settings"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        @keydown.escape.window="$store.communityMembers.modals.settings = false"
+        @click.self="$store.communityMembers.modals.settings = false"
+    >
+        <div class="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl">
+            <div class="flex items-center justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900">Community Settings</h3>
+                    <p class="text-xs text-slate-600">Update the community name.</p>
                 </div>
-                <form class="mt-4 space-y-4" @submit.prevent="$store.communityMembers.saveMember()">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Name</label>
-                        <input type="text" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.memberForm.name" required />
-                        <template x-if="$store.communityMembers.errors.member.name">
-                            <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.member.name[0]"></p>
-                        </template>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Email</label>
-                        <input type="email" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.memberForm.email" required />
-                        <template x-if="$store.communityMembers.errors.member.email">
-                            <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.member.email[0]"></p>
-                        </template>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Tier</label>
-                        <select class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model="$store.communityMembers.memberForm.membership_tier_id">
-                            <option value="">No tier</option>
-                            <template x-for="tier in $store.communityMembers.tiers" :key="tier.id">
-                                <option :value="tier.id" x-text="tier.name"></option>
-                            </template>
-                        </select>
-                        <template x-if="$store.communityMembers.errors.member.membership_tier_id">
-                            <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.member.membership_tier_id[0]"></p>
-                        </template>
-                    </div>
-                    <div class="flex justify-end gap-2 pt-2">
-                        <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.member = false">Cancel</button>
-                        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" :disabled="$store.communityMembers.loading.savingMember">
-                            <span x-text="$store.communityMembers.loading.savingMember ? 'Saving…' : 'Save'"></span>
-                        </button>
-                    </div>
-                    <template x-if="$store.communityMembers.errors.member.general">
-                        <p class="text-xs text-rose-600" x-text="$store.communityMembers.errors.member.general[0]"></p>
+                <button type="button" class="text-slate-500 hover:text-slate-700" @click="$store.communityMembers.modals.settings = false" aria-label="Close settings">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <form class="mt-4 space-y-4" @submit.prevent="$store.communityMembers.saveSettings()">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700">Name</label>
+                    <input type="text" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.settingsForm.name" required />
+                    <template x-if="$store.communityMembers.errors.settings.name">
+                        <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.settings.name[0]"></p>
                     </template>
-                </form>
-            </div>
-        </div>
-
-        {{-- Tier modal --}}
-        <div
-            x-cloak
-            x-show="$store.communityMembers.modals.tier"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-            @keydown.escape.window="$store.communityMembers.modals.tier = false"
-            @click.self="$store.communityMembers.modals.tier = false"
-        >
-            <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.tier = false">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-slate-900" x-text="$store.communityMembers.tierForm.id ? 'Edit Tier' : 'Add Tier'"></h3>
-                    <button type="button" class="text-slate-500 hover:text-slate-700" @click="$store.communityMembers.modals.tier = false">✕</button>
                 </div>
-                <form class="mt-4 space-y-4" @submit.prevent="$store.communityMembers.saveTier()">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Name</label>
-                        <input type="text" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.tierForm.name" required />
-                        <template x-if="$store.communityMembers.errors.tier.name">
-                            <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.tier.name[0]"></p>
-                        </template>
-                    </div>
-                    <div class="grid gap-3 md:grid-cols-2">
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-700">Amount (cents)</label>
-                            <input type="number" min="0" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.number="$store.communityMembers.tierForm.amount_cents" />
-                        </div>
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-700">Currency</label>
-                            <input type="text" maxlength="3" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.tierForm.currency" />
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Description</label>
-                        <textarea class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" rows="3" x-model.trim="$store.communityMembers.tierForm.description"></textarea>
-                        <div class="mt-2 flex items-center gap-2 text-xs text-slate-600">
-                            <input type="checkbox" id="tier-active" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" x-model="$store.communityMembers.tierForm.is_active" />
-                            <label for="tier-active">Active</label>
-                        </div>
-                    </div>
-                    <div class="flex justify-end gap-2 pt-2">
-                        <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.tier = false">Cancel</button>
-                        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" :disabled="$store.communityMembers.loading.savingTier">
-                            <span x-text="$store.communityMembers.loading.savingTier ? 'Saving…' : 'Save'"></span>
-                        </button>
-                    </div>
-                    <template x-if="$store.communityMembers.errors.tier.general">
-                        <p class="text-xs text-rose-600" x-text="$store.communityMembers.errors.tier.general[0]"></p>
-                    </template>
-                </form>
-            </div>
-        </div>
-
-        {{-- Member delete confirm --}}
-        <div
-            x-cloak
-            x-show="$store.communityMembers.modals.confirmMemberId"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-            @keydown.escape.window="$store.communityMembers.modals.confirmMemberId = null"
-            @click.self="$store.communityMembers.modals.confirmMemberId = null"
-        >
-            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmMemberId = null">
-                <h3 class="text-lg font-semibold text-slate-900">Delete member?</h3>
-                <p class="mt-2 text-sm text-slate-600">This removes the member from the community roster. Provider-managed members cannot be removed manually.</p>
-                <div class="mt-4 flex justify-end gap-2">
-                    <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.confirmMemberId = null">Cancel</button>
-                    <button type="button" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-300" @click="$store.communityMembers.confirmDeleteMember()">Delete</button>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.settings = false">Cancel</button>
+                    <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" :disabled="$store.communityMembers.loading.savingSettings">
+                        <span x-text="$store.communityMembers.loading.savingSettings ? 'Saving...' : 'Save'"></span>
+                    </button>
                 </div>
-            </div>
+                <template x-if="$store.communityMembers.errors.settings.general">
+                    <p class="text-xs text-rose-600" x-text="$store.communityMembers.errors.settings.general[0]"></p>
+                </template>
+            </form>
         </div>
-
-        {{-- Tier delete confirm --}}
-        <div
-            x-cloak
-            x-show="$store.communityMembers.modals.confirmTierId"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-            @keydown.escape.window="$store.communityMembers.modals.confirmTierId = null"
-            @click.self="$store.communityMembers.modals.confirmTierId = null"
-        >
-            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.confirmTierId = null">
-                <h3 class="text-lg font-semibold text-slate-900">Delete tier?</h3>
-                <p class="mt-2 text-sm text-slate-600">Members will retain access but lose tier linkage. Provider-managed tiers cannot be removed manually.</p>
-                <div class="mt-4 flex justify-end gap-2">
-                    <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.confirmTierId = null">Cancel</button>
-                    <button type="button" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-300" @click="$store.communityMembers.confirmDeleteTier()">Delete</button>
-                </div>
-            </div>
-        </div>
-
-        {{-- Settings modal --}}
-        <div
-            x-cloak
-            x-show="$store.communityMembers.modals.settings"
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
-            @keydown.escape.window="$store.communityMembers.modals.settings = false"
-            @click.self="$store.communityMembers.modals.settings = false"
-        >
-            <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl" @click.self="$store.communityMembers.modals.settings = false">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-lg font-semibold text-slate-900">Community Settings</h3>
-                        <p class="text-xs text-slate-600">Update the community name. More settings coming soon.</p>
-                    </div>
-                    <button type="button" class="text-slate-500 hover:text-slate-700" @click="$store.communityMembers.modals.settings = false">✕</button>
-                </div>
-                <form class="mt-4 space-y-4" @submit.prevent="$store.communityMembers.saveSettings()">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-700">Name</label>
-                        <input type="text" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200" x-model.trim="$store.communityMembers.settingsForm.name" required />
-                        <template x-if="$store.communityMembers.errors.settings.name">
-                            <p class="mt-1 text-xs text-rose-600" x-text="$store.communityMembers.errors.settings.name[0]"></p>
-                        </template>
-                    </div>
-                    <div class="flex justify-end gap-2 pt-2">
-                        <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" @click="$store.communityMembers.modals.settings = false">Cancel</button>
-                        <button type="submit" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-300" :disabled="$store.communityMembers.loading.savingSettings">
-                            <span x-text="$store.communityMembers.loading.savingSettings ? 'Saving…' : 'Save'"></span>
-                        </button>
-                    </div>
-                    <template x-if="$store.communityMembers.errors.settings.general">
-                        <p class="text-xs text-rose-600" x-text="$store.communityMembers.errors.settings.general[0]"></p>
-                    </template>
-                </form>
-            </div>
-        </div>
-    </main>
+    </div>
 </div>

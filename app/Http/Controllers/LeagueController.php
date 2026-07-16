@@ -3062,6 +3062,7 @@ final class LeagueController extends Controller
         $metaRows = DB::table('league_platform_league')
             ->join('organization_leagues', 'organization_leagues.league_id', '=', 'league_platform_league.league_id')
             ->where('league_platform_league.platform_league_id', (int) $league->id)
+            ->where('league_platform_league.status', 'active')
             ->pluck('organization_leagues.meta');
 
         foreach ($metaRows as $meta) {

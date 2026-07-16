@@ -227,6 +227,7 @@ final class PlatformLeagueSettingsResolver
     {
         return DB::table('league_platform_league')
             ->where('platform_league_id', (int) $league->id)
+            ->where('status', 'active')
             ->pluck('league_id')
             ->filter()
             ->map(static fn ($id): int => (int) $id)

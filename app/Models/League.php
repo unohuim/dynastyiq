@@ -41,7 +41,7 @@ class League extends Model
             'league_platform_league',
             'league_id',
             'platform_league_id'
-        )->withPivot(['linked_at', 'status', 'meta', 'created_at', 'updated_at'])
+        )->withPivot(['linked_at', 'archived_at', 'status', 'meta', 'created_at', 'updated_at'])
          ->withTimestamps();
     }
 
@@ -64,10 +64,7 @@ class League extends Model
 
     public function activePlatformLeague(): ?PlatformLeague
     {
-        return $this->platformLeagues()
-            ->wherePivot('status', 'active')
-            ->orderByPivot('linked_at', 'desc')
-            ->first();
+        return $this->activePlatformBinding()?->platformLeague;
     }
 
     public function primaryPlatformLeague(): ?PlatformLeague
@@ -82,6 +79,36 @@ class League extends Model
             ->first();
 
         return $recent ?? $this->platformLeagues()->first();
+    }
+
+    /**
+     * Return the current active provider binding for this league wrapper.
+     */
+    public function activePlatformBinding(): ?LeaguePlatformLeague
+    {
+        return LeaguePlatformLeague::query()
+            ->with('platformLeague')
+            ->where('league_id', $this->id)
+            ->active()
+            ->latest('linked_at')
+            ->latest('id')
+            ->first();
+    }
+
+    /**
+     * Return the provider scope metadata for the active binding.
+     *
+     * @return array{scope_type:mixed,scope_key:mixed,scope_label:mixed}
+     */
+    public function activePlatformScope(): array
+    {
+        $meta = $this->activePlatformBinding()?->meta ?? [];
+
+        return [
+            'scope_type' => data_get($meta, 'scope_type'),
+            'scope_key' => data_get($meta, 'scope_key'),
+            'scope_label' => data_get($meta, 'scope_label'),
+        ];
     }
 
     public function getPlatformAttribute(): ?string

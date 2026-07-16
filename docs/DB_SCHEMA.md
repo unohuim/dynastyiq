@@ -910,6 +910,7 @@ Migrations remain the **sole source of truth**.
 | league_id | bigint | No | FK -> leagues.id (CASCADE) |
 | platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
 | linked_at | timestamp | Yes | Link timestamp |
+| archived_at | timestamp | Yes | Binding archive timestamp |
 | status | string | Yes | Link status, e.g. `active`, `pending`, `unlinked` |
 | meta | json | Yes | Link metadata |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -918,16 +919,17 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `id`
-- Unique: `(league_id, platform_league_id)` (`uq_league_platform_link`)
-- Unique: `platform_league_id` (`uq_external_single_internal`)
 - Index: `(league_id, status, linked_at)` (`ix_league_status_linked`)
 - Index: `(platform_league_id, linked_at)` (`ix_pl_linked`)
+- Index: `(league_id, platform_league_id, status)` (`ix_lpl_league_platform_status`)
+- Index: `(platform_league_id, status)` (`ix_lpl_platform_status`)
 - Implicit (FK index): `league_id`
 - Implicit (FK index): `platform_league_id`
 
 ### Notes
 
-- The migration includes commented examples for enforcing one active platform link per league; those commented statements are not active DDL.
+- Active binding uniqueness is enforced by application service logic so provider scope and binding history can be represented without duplicating `platform_leagues`.
+- Provider scope metadata, when present, is stored in `meta` with `scope_type`, `scope_key`, and `scope_label`.
 
 ---
 

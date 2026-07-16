@@ -122,6 +122,15 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::post('/organizations/{organization}/leagues/{league?}', [LeaguesController::class, 'store'])
             ->middleware('auth')
             ->name('organizations.leagues.store');
+        Route::delete('/organizations/{organization}/leagues/{league}', [LeaguesController::class, 'destroy'])
+            ->middleware('auth')
+            ->name('organizations.leagues.destroy');
+        Route::put(
+            '/organizations/{organization}/leagues/{league}/provider-binding',
+            [LeaguesController::class, 'migrateProviderBinding']
+        )
+            ->middleware('auth')
+            ->name('organizations.leagues.provider-binding.update');
 
         // Community Leagues
         Route::get('/communities/{c_id}/leagues/{l_id}', [CommunityLeagues::class, 'show'])

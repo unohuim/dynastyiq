@@ -22,12 +22,220 @@ const emptyTierForm = () => ({
     is_active: true,
 });
 
+let createLeagueHandlerRegistered = false;
+let detachLeagueHandlerRegistered = false;
+
 function csrfToken() {
     return (
         document
             .querySelector('meta[name="csrf-token"]')
             ?.getAttribute("content") ?? ""
     );
+}
+
+function showToast(type, message) {
+    if (window.toast?.[type]) {
+        window.toast[type](message);
+        return;
+    }
+
+    if (window.toast?.show) {
+        window.toast.show(message, { type });
+    }
+}
+
+function resolveCreateLeagueAction(form) {
+    const dataAction = form.dataset?.action?.trim() || "";
+    if (dataAction) return dataAction;
+
+    return (form.getAttribute("action") || "").trim();
+}
+
+async function submitCreateLeagueForm(form) {
+    const url = resolveCreateLeagueAction(form);
+
+    if (!url || url === "#" || url === "/" || /\/communities(\?|$)/.test(url)) {
+        console.warn("[createLeague] Missing or invalid action URL on form:", url);
+        showToast("error", "Cannot submit: missing endpoint to create a league.");
+        return;
+    }
+
+    const name = form.querySelector('[name="name"]')?.value.trim() || "";
+    const discordId = form.querySelector('[name="discord_server_id"]')?.value || "";
+    const platform = form.querySelector('[name="platform"]')?.value || "";
+    const platformId =
+        form.querySelector('[name="platform_league_id"]')?.value || "";
+    const providerScopeType =
+        form.querySelector('[name="provider_scope_type"]')?.value || "";
+    const providerScopeKey =
+        form.querySelector('[name="provider_scope_key"]')?.value || "";
+    const providerScopeLabel =
+        form.querySelector('[name="provider_scope_label"]')?.value || "";
+    const providerScopeMode =
+        form.querySelector('[name="provider_scope_mode"]')?.value || "single";
+    const providerScopeRequired =
+        form.querySelector('[name="provider_scope_required"]')?.value === "1";
+
+    if (!name) {
+        showToast("error", "Please enter a league name.");
+        return;
+    }
+
+    if (platform && !platformId) {
+        showToast("error", "Please select or enter a Fantrax league ID.");
+        return;
+    }
+
+    if (platform && providerScopeRequired && !providerScopeKey) {
+        showToast("error", "Please choose a Fantrax scope.");
+        return;
+    }
+
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.disabled = true;
+
+    const payload = {
+        name,
+        ...(discordId ? { discord_server_id: discordId } : {}),
+        ...(platform ? { platform, platform_league_id: platformId } : {}),
+        ...(providerScopeMode ? { provider_scope_mode: providerScopeMode } : {}),
+        ...(providerScopeType ? { provider_scope_type: providerScopeType } : {}),
+        ...(providerScopeKey ? { provider_scope_key: providerScopeKey } : {}),
+        ...(providerScopeLabel ? { provider_scope_label: providerScopeLabel } : {}),
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-CSRF-TOKEN": csrfToken(),
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify(payload),
+            credentials: "same-origin",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data?.ok !== true) {
+            showToast(
+                "error",
+                data?.message || `Create failed (${response.status})`
+            );
+            return;
+        }
+
+        showToast(
+            "success",
+            data?.league_count > 1
+                ? `${data.league_count} leagues created successfully.`
+                : "League created successfully."
+        );
+        window.setTimeout(() => window.location.reload(), 350);
+    } catch (error) {
+        console.error("[createLeague] Network or JavaScript error:", error);
+        showToast("error", "Could not create league.");
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+function registerCreateLeagueHandler() {
+    if (createLeagueHandlerRegistered) return;
+
+    createLeagueHandlerRegistered = true;
+
+    document.addEventListener("submit", (event) => {
+        const form = event.target;
+
+        if (!(form instanceof HTMLFormElement) || form.id !== "createLeagueForm") {
+            return;
+        }
+
+        event.preventDefault();
+        submitCreateLeagueForm(form);
+    });
+}
+
+function updateCommunityLeagueCounts() {
+    const remaining = document.querySelectorAll(
+        "[data-community-league-row]"
+    ).length;
+
+    document.querySelectorAll("[data-community-league-count]").forEach((node) => {
+        node.textContent = String(remaining);
+    });
+
+    document.querySelectorAll("[data-community-leagues-empty]").forEach((node) => {
+        node.classList.toggle("hidden", remaining > 0);
+    });
+}
+
+async function detachCommunityLeague(button) {
+    const url = button.dataset.url || "";
+    const leagueId = button.dataset.leagueId || "";
+
+    if (!url || !leagueId) {
+        showToast("error", "Cannot remove league: missing endpoint.");
+        return;
+    }
+
+    button.disabled = true;
+
+    try {
+        const response = await fetch(url, {
+            method: "DELETE",
+            headers: {
+                Accept: "application/json",
+                "X-CSRF-TOKEN": csrfToken(),
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "same-origin",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data?.ok !== true) {
+            showToast(
+                "error",
+                data?.message || `Remove failed (${response.status})`
+            );
+            return;
+        }
+
+        document
+            .querySelectorAll(
+                `[data-community-league-row="${leagueId}"], [data-community-sidebar-league-row="${leagueId}"]`
+            )
+            .forEach((node) => node.remove());
+
+        updateCommunityLeagueCounts();
+        showToast("success", "League removed from this community.");
+    } catch (error) {
+        console.error("[communityLeagueDetach] Network or JavaScript error:", error);
+        showToast("error", "Could not remove league from this community.");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function registerDetachLeagueHandler() {
+    if (detachLeagueHandlerRegistered) return;
+
+    detachLeagueHandlerRegistered = true;
+
+    document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-community-league-detach]");
+
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        event.preventDefault();
+        detachCommunityLeague(button);
+    });
 }
 
 export function createCommunityMembersStore() {
@@ -401,6 +609,15 @@ function registerCommunityMembersStore() {
     }
 
     alpine.data("communityMembersHub", communityMembersHub);
+    alpine.data("dropdownSelect", ({ options = [] }) => ({
+        openList: false,
+        options,
+        selected: null,
+        select(option) {
+            this.selected = option;
+            this.openList = false;
+        },
+    }));
 }
 
 // Ensure registration works whether Alpine has already been injected or not.
@@ -410,9 +627,13 @@ if (window.Alpine) {
 
 document.addEventListener("alpine:init", registerCommunityMembersStore);
 
+registerCreateLeagueHandler();
+registerDetachLeagueHandler();
+
 function communityMembersHub(config) {
     return {
-        activeTab: "members",
+        activeTab: "home",
+        theme: "light",
         init() {
             // Ensure the store exists even if Alpine boot order changes.
             if (!this.$store.communityMembers) {

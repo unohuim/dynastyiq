@@ -1,0 +1,55 @@
+name: League Provider Binding
+type: Domain Binding Pattern
+location:
+  - app/Models/League.php
+  - app/Models/LeaguePlatformLeague.php
+  - app/Models/PlatformLeague.php
+  - app/Services/LeagueProviderBindingService.php
+  - app/Http/Controllers/LeaguesController.php
+  - database/migrations/*_prepare_league_platform_bindings_for_scope_history.php
+purpose: Preserve durable community-facing league identity while allowing provider league bindings to be scoped, archived, and migrated over time.
+when_to_use:
+  - Attaching a provider league to a community-facing league.
+  - Re-adding a detached community league wrapper.
+  - Representing Fantrax duplicate-player divisions or pools as separate community-facing leagues.
+  - Preparing explicit provider migration flows for existing leagues.
+when_not_to_use:
+  - Duplicating provider-owned platform_leagues rows.
+  - Treating organization_leagues removal as provider identity deletion.
+  - Silently repointing a league wrapper to a different provider source.
+rules:
+  - League is the durable DynastyIQ and community-facing league identity.
+  - PlatformLeague is the provider-owned league identity and must not be duplicated for provider scopes.
+  - LeaguePlatformLeague is the binding history between a League wrapper and a PlatformLeague provider source.
+  - A League wrapper may have at most one active provider binding at a time.
+  - A PlatformLeague plus provider scope may have at most one active League wrapper at a time.
+  - Provider scope belongs on the LeaguePlatformLeague binding metadata because it is meaningful only relative to the provider league.
+  - Normal provider leagues use a null provider scope.
+  - Division-scoped or pool-scoped provider leagues must store scope_type, scope_key, and scope_label in binding metadata.
+  - Removing a league from a community detaches organization_leagues and must not delete or rewrite the active provider binding.
+  - Re-adding a provider league should reuse the existing active League wrapper for the same provider source and scope when it is not attached to another community.
+  - Bulk scope add should create or reuse one League wrapper per provider scope and attach all wrappers to the community in a single request.
+  - Bulk scope add must not create duplicate PlatformLeague records.
+  - Provider migration must be explicit and must archive the previous active binding before creating a new active binding for the same League wrapper.
+  - Historical or unlinked bindings must not be treated as active league sources by controllers, settings resolution, draft notifications, or UI reads.
+public_interface:
+  - LeagueProviderBindingService::scopeOptions()
+  - LeagueProviderBindingService::attach()
+  - LeagueProviderBindingService::attachAllScopes()
+  - LeagueProviderBindingService::migrate()
+  - League::activePlatformBinding()
+  - League::activePlatformLeague()
+  - League::activePlatformScope()
+  - PlatformLeague::activeLeagueForScope()
+  - LeaguePlatformLeague::scopeActive()
+  - LeaguePlatformLeague::scopeForPlatformScope()
+  - organizations.leagues.store
+  - organizations.leagues.destroy
+  - organizations.leagues.provider-binding.update
+  - league_platform_league.status
+  - league_platform_league.meta.scope_type
+  - league_platform_league.meta.scope_key
+  - league_platform_league.meta.scope_label
+example_usage: |
+  $league = $platformLeague->activeLeagueForScope('division', 'east');
+  $platformLeague = $league->activePlatformLeague();

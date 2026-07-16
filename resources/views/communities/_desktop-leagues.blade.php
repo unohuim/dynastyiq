@@ -4,6 +4,7 @@
     /** @var \Illuminate\Support\Collection $guilds */
 
     $guilds = $guilds ?? collect();
+    $allowUnlink = (bool) ($allowUnlink ?? false);
 
     // Build dropdown options: id, name, avatar
     $guildOptions = $guilds->map(function ($g) {
@@ -30,7 +31,7 @@
     <div class="mb-3 flex items-center justify-between">
         <div class="flex items-center gap-2">
             <h3 class="text-sm font-semibold tracking-wider text-slate-600 uppercase">Leagues</h3>
-            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-700">{{ $leagues->count() }}</span>
+            <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-700" data-community-league-count>{{ $leagues->count() }}</span>
         </div>
 
         @if($canEdit && $currentOrg)
@@ -49,7 +50,7 @@
 
     {{-- List --}}
     @if ($leagues->isEmpty())
-        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600" data-community-leagues-empty>
             No leagues connected yet.
         </div>
     @else
@@ -74,30 +75,10 @@
                     $serverName = $server
                                     ? ($server->discord_guild_name ?? ('Server '.$server->discord_guild_id))
                                     : null;
+                    $scopeLabel = data_get($l->activePlatformScope(), 'scope_label');
                 @endphp
 
-                <li class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    @php
-                        $platform = strtolower((string) $l->platform);
-                        $badge = [
-                            'fantrax' => 'bg-emerald-100 text-emerald-800 ring-emerald-200',
-                            'yahoo'   => 'bg-violet-100 text-violet-800 ring-violet-200',
-                            'espn'    => 'bg-red-100 text-red-800 ring-red-200',
-                        ][$platform] ?? 'bg-slate-100 text-slate-700 ring-slate-200';
-
-                        // Linked Discord server (from pivot)
-                        $serverId   = data_get($l, 'pivot.discord_server_id');
-                        $server     = $serverId ? $guildIndex->get($serverId) : null;
-                        $icon       = $server ? data_get($server->meta, 'icon') : null;
-                        $ext        = $icon && str_starts_with($icon, 'a_') ? 'gif' : 'png';
-                        $avatarUrl  = ($server && $icon)
-                                        ? "https://cdn.discordapp.com/icons/{$server->discord_guild_id}/{$icon}.{$ext}?size=64"
-                                        : null;
-                        $serverName = $server
-                                        ? ($server->discord_guild_name ?? ('Server '.$server->discord_guild_id))
-                                        : null;
-                    @endphp
-
+                <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3" data-community-league-row="{{ $l->id }}">
                     <div class="flex items-center gap-3 min-w-0">
                         <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg ring-1 {{ $badge }} text-[10px] font-semibold uppercase">
                             {{ $platform ? substr($platform, 0, 2) : '' }}
@@ -124,24 +105,42 @@
 
                             <!-- Second line: ID / sport -->
                             <div class="text-xs text-slate-600">
-                                ID: {{ $l->id }}
+                                ID: {{ $l->id }}@if($scopeLabel) / {{ $scopeLabel }}@endif
                             </div>
                         </div>
                     </div>
 
-                    <button
-                        type="button"
-                        x-data
-                        @click="window.location.href='{{ route('community.leagues.show', ['c_id' => $currentOrg->id, 'l_id' => $l->id]) }}'"
-                        class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700"
-                    >
-                        Manage
-                    </button>
+                    <div class="ml-auto flex shrink-0 items-center gap-2">
+                        <a
+                            href="{{ route('community.leagues.show', ['c_id' => $currentOrg->id, 'l_id' => $l->id]) }}"
+                            class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                        >
+                            Manage
+                        </a>
+
+                        @if ($allowUnlink && $canEdit && $currentOrg)
+                            <button
+                                type="button"
+                                class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+                                data-community-league-detach
+                                data-league-id="{{ $l->id }}"
+                                data-url="{{ route('organizations.leagues.destroy', ['organization' => $currentOrg->id, 'league' => $l->id]) }}"
+                                aria-label="Remove {{ $l->name }} from this community"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                        @endif
+                    </div>
 
                 </li>
 
             @endforeach
         </ul>
+        <div class="mt-2 hidden rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600" data-community-leagues-empty>
+            No leagues connected yet.
+        </div>
     @endif
 
     <x-new-league-modal
@@ -152,111 +151,3 @@
     />
 
 </section>
-
-
-
-<script>
-/* -------- Dropdown helper (define once) -------- */
-window.__dropdownSelectInit = window.__dropdownSelectInit || (function () {
-  window.dropdownSelect = function ({ options = [] }) {
-    return {
-      openList: false,
-      options,
-      selected: null,
-      select(opt) { this.selected = opt; this.openList = false; },
-    };
-  };
-  return true;
-})();
-
-/* -------- Create League AJAX submit -------- */
-(() => {
-  const form = document.getElementById('createLeagueForm');
-  if (!form) return;
-
-  // Prefer data-action, fall back to action; otherwise bail
-  const resolveAction = () => {
-    const d = (form.dataset && form.dataset.action ? form.dataset.action.trim() : '');
-    if (d) return d;
-    const a = (form.getAttribute('action') || '').trim();
-    return a;
-  };
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const url = resolveAction();
-
-    const showToast = (type, message) => {
-      if (window.toast?.[type]) {
-        window.toast[type](message);
-      } else if (window.toast?.show) {
-        window.toast.show(message, { type });
-      }
-    };
-
-    // Hard guard so we never POST to the index page by accident
-    if (!url || url === '#' || url === '/' || /\/communities(\?|$)/.test(url)) {
-      console.warn('[createLeague] Missing/invalid action URL on form:', url);
-      showToast('error', 'Cannot submit: missing endpoint to create a league.');
-      return;
-    }
-
-    const token        = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    const name         = form.querySelector('[name="name"]')?.value.trim() || '';
-    const discordId    = form.querySelector('[name="discord_server_id"]')?.value || '';
-    const platform     = form.querySelector('[name="platform"]')?.value || '';
-    const platformId   = form.querySelector('[name="platform_league_id"]')?.value || '';
-
-    if (!name) {
-      showToast('error', 'Please enter a league name.');
-      return;
-    }
-    if (platform && !platformId) {
-      showToast('error', 'Please select or enter a Fantrax league ID.');
-      return;
-    }
-
-    const btn = form.querySelector('button[type="submit"]');
-    if (btn) btn.disabled = true;
-
-    const payload = {
-      name,
-      ...(discordId ? { discord_server_id: discordId } : {}),
-      ...(platform ? { platform, platform_league_id: platformId } : {}),
-    };
-
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': token,
-          'X-Requested-With': 'XMLHttpRequest',
-        },
-        body: JSON.stringify(payload),
-        credentials: 'same-origin',
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || data?.ok !== true) {
-        const msg = data?.message || `Create failed (${res.status})`;
-        console.warn('[createLeague] Server responded with error:', res.status, data);
-        showToast('error', msg);
-        return;
-      }
-
-      showToast('success', 'League created successfully.');
-      window.setTimeout(() => window.location.reload(), 350);
-    } catch (err) {
-      console.error('[createLeague] Network/JS error:', err);
-      showToast('error', 'Could not create league.');
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  });
-})();
-</script>
-
