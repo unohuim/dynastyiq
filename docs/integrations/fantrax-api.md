@@ -285,15 +285,15 @@ curl -s "https://www.fantrax.com/fxea/general/getStandings?leagueId=${FANTRAX_LE
 curl -s "https://www.fantrax.com/fxea/general/getPlayerProfile?leagueId=${FANTRAX_LEAGUE_ID}&playerId=${FANTRAX_PLAYER_ID}" | jq .
 ```
 
-Inspect logo-like fields for a synced Fantrax league:
+Fantrax logo work is currently tabled. Do not wire new Fantrax logo persistence or UI from these payloads without reopening the feature and adding fresh tests.
+
+The legacy diagnostic command remains available for manual investigation only:
 
 ```bash
 php artisan fantrax:inspect-logos "${FANTRAX_LEAGUE_ID}" --platform-id --json
 ```
 
-Use this before wiring logo persistence to a new Fantrax payload shape. The command checks
-`getLeagueInfo`, `getTeamRosters`, and `getStandings`, then prints only logo-like keys
-or image URLs with their JSON paths.
+The command checks `getLeagueInfo`, `getTeamRosters`, and `getStandings`, then prints only logo-like keys or image URLs with their JSON paths. It is not part of active Fantrax logo support.
 
 Inspect browser network responses for the authenticated Fantrax web app:
 
@@ -312,13 +312,7 @@ written under `docs/inspection` as you browse, using the current league and page
 `league_uf1sdl47mo6nzpr6_home_reload_1.txt` or
 `league_uf1sdl47mo6nzpr6_standings.txt`.
 
-The league-scoped Fantrax team logo sync backend remains available for inspection
-and future reuse, but the commissioner-facing league options UI entry point is
-hibernated. The shared server Chromium profile model does not scale across
-commissioners because the configured profile must be authenticated as a Fantrax
-account that can access the target league. Future commissioner-facing Fantrax logo
-collection should use a per-commissioner approach instead of depending on one
-shared production browser profile.
+The league-scoped Fantrax team logo sync backend remains hibernated. The shared server Chromium profile model does not scale across commissioners because the configured profile must be authenticated as a Fantrax account that can access the target league. Future commissioner-facing Fantrax logo collection should use a per-commissioner approach instead of depending on one shared production browser profile.
 
 Pass a URL only when a specific starting page is needed:
 

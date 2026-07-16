@@ -28,7 +28,7 @@ Do not run import, sync, migration, queue, scheduler, or destructive commands fr
 | `php artisan fx:import --players` | Dispatches jobs | Import Fantrax player records. | Supports `--import-run-id`; admin-tracked imports queue chunk jobs. |
 | `php artisan fantrax:drafts:poll` | Dispatches jobs | Queue draft-state sync jobs for live Fantrax mirrored drafts. | Manual/admin command; dispatches one draft sync job per due league. |
 | `php artisan fantrax:import-category-definitions` | Runs directly | Import Fantrax scoring-category dictionary definitions from CSV. | Default path is `docs/import-templates/fantrax_category_alignment.csv`; supports `--import-run-id`. |
-| `php artisan fantrax:inspect-logos` | Runs directly | Inspect Fantrax payloads for logo-like keys and image URLs. | Diagnostic command. |
+| `php artisan fantrax:inspect-logos` | Runs directly | Inspect Fantrax payloads for logo-like keys and image URLs. | Diagnostic command only; Fantrax logo support is tabled. |
 | `php artisan fx:empty` | Runs directly, destructive | Remove Fantrax-owned imported player data. | Does not delete canonical players or league connections. |
 
 ## Platform Leagues

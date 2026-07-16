@@ -1,9 +1,9 @@
 ---
 pr_id: 14
 pr_name: pr14
-status: Active
+status: Archived
 created: 2026-07-15
-last_updated: 2026-07-15
+last_updated: 2026-07-16
 ---
 
 # Fantrax League Shape And Draft Scope
@@ -214,6 +214,7 @@ Human-run verification still required:
 
 - Decide whether PR14 should visibly group/label Draft Central rows by division. Backend payload support exists, but the visible UI grouping is not implemented.
 - Decide whether Fantrax response documentation/sample files belong in PR14 or should remain separate documentation work.
+- Fantrax logo work remains tabled. The brittle `fantrax:inspect-logos` feature tests were removed from this PR because Fantrax logo support is not active scope.
 
 ## Suggested Human Test Commands
 
