@@ -389,7 +389,21 @@ final class PlatformLeaguePlayerStatService
      */
     private function statAliasMap(PlatformLeague $league): array
     {
-        $aliases = [];
+        $aliases = [
+            'gp' => 'gp',
+            'gamesplayed' => 'gp',
+            'games played' => 'gp',
+            'w' => 'wins',
+            'wins' => 'wins',
+            'sv' => 'sv',
+            'saves' => 'sv',
+            'sv%' => 'sv_pct',
+            'save percentage' => 'sv_pct',
+            'gaa' => 'gaa',
+            'goals against average' => 'gaa',
+            'so' => 'so',
+            'shutouts' => 'so',
+        ];
 
         foreach (app(PlatformLeagueScoringCategoryService::class)->payloadRows($league) as $category) {
             if (! is_array($category)) {

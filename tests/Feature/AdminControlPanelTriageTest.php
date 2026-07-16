@@ -22,6 +22,7 @@ use App\Models\YahooPlayer;
 use App\Services\YahooFantasyPlayerImporter;
 use App\Services\YahooFantasyRosterService;
 use App\Services\NhlImportOrchestrator;
+use App\Support\NhlImportStages;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -35,6 +36,7 @@ beforeEach(function () {
             'name' => 'Super Admin',
             'slug' => 'super-admin',
             'level' => 99,
+            'scope' => 'global',
             'is_active' => true,
         ]);
 
@@ -126,7 +128,7 @@ it('blocks authenticated non-admin users from the Yahoo OAuth proof redirect', f
 
 it('shows Yahoo connect in the authenticated account drawer', function () {
     $this->actingAs(User::factory()->create())
-        ->get(route('admin.dashboard', ['tab' => 'triage']))
+        ->get(route('dashboard'))
         ->assertOk()
         ->assertSee('Yahoo')
         ->assertSee(route('integrations.yahoo.redirect'))

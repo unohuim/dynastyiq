@@ -608,9 +608,9 @@ it('hydrates rostered goalie rows already present in the payload from season sta
     expect($hydrated['data'])->toHaveCount(1)
         ->and($hydrated['data'][0]['fantasy_team_name'])->toBe('Team One')
         ->and($hydrated['data'][0]['gp'])->toBe(29)
-        ->and($hydrated['data'][0]['wins'])->toBe(11)
-        ->and($hydrated['data'][0]['stats']['gp'])->toBe(29)
-        ->and($hydrated['data'][0]['stats']['wins'])->toBe(11);
+        ->and($hydrated['data'][0]['wins'])->toBe(11.0)
+        ->and($hydrated['data'][0]['stats']['gp'])->toBe(29.0)
+        ->and($hydrated['data'][0]['stats']['wins'])->toBe(11.0);
 });
 
 it('preserves payload games played when overlaying provider league stats', function (): void {
@@ -1122,6 +1122,23 @@ it('blocks league stats payload for users without a connected fantasy provider',
 
 it('returns not found when connected users request an inactive league assignment', function (): void {
     [$user, $league] = ($this->createConnectedLeagueFixture)();
+    $otherLeague = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'other-active-league',
+        'name' => 'Other Active League',
+        'sport' => 'hockey',
+    ]);
+    $otherTeam = PlatformTeam::create([
+        'platform_league_id' => $otherLeague->id,
+        'platform_team_id' => 'other-team',
+        'name' => 'Other Team',
+    ]);
+    $user->platformLeagues()->attach($otherLeague->id, [
+        'team_id' => $otherTeam->id,
+        'is_active' => true,
+        'extras' => json_encode(['provider' => 'fantrax'], JSON_THROW_ON_ERROR),
+        'synced_at' => now(),
+    ]);
     $user->platformLeagues()->updateExistingPivot($league->id, ['is_active' => false]);
 
     $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', $league->id));
@@ -1181,7 +1198,7 @@ it('passes goalie column group requests through fantrax league payload settings'
         ->assertJsonPath('meta.pos', ['G'])
         ->assertJsonPath('meta.pos_type', ['G'])
         ->assertJsonPath('settings.filters.pos_type.value', ['G'])
-        ->assertJsonPath('settings.columns.0.key', 'wins');
+        ->assertJsonPath('settings.columns.0.key', 'gp');
 });
 
 it('aggregates league team payload rows across pro roster players', function (): void {

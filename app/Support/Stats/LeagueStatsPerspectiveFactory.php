@@ -134,14 +134,29 @@ final class LeagueStatsPerspectiveFactory
             return null;
         }
 
+        if ((string) $league->platform === 'yahoo') {
+            $hasUnmappedCategory = $categoryRows->contains(static function (array $category): bool {
+                return trim((string) ($category['stat_key'] ?? '')) === ''
+                    && trim((string) ($category['formula'] ?? '')) === '';
+            });
+
+            if ($hasUnmappedCategory) {
+                return null;
+            }
+        }
+
         $columns = $categoryRows
             ->filter(static fn (mixed $category): bool => is_array($category))
             ->map(static function (array $category): ?array {
-                $statKey = trim((string) ($category['stat_key'] ?? ''));
+                $statKey = trim((string) ($category['stat_key'] ?? ''))
+                    ?: trim((string) ($category['auto_stat_key'] ?? ''));
                 $formula = trim((string) ($category['formula'] ?? ''));
                 $derivedKey = trim((string) ($category['id'] ?? ''));
+                $isSupported = array_key_exists('is_supported', $category)
+                    ? (bool) $category['is_supported']
+                    : ($statKey !== '' || $formula !== '');
 
-                if ($statKey === '' && $formula === '' && $derivedKey === '') {
+                if (! $isSupported || ($statKey === '' && $formula === '' && $derivedKey === '')) {
                     return null;
                 }
 
@@ -169,7 +184,7 @@ final class LeagueStatsPerspectiveFactory
                         : [],
                     'provider_group' => $category['provider_group'] ?? null,
                     'normalized_group' => $category['normalized_group'] ?? $category['group'] ?? null,
-                    'is_supported' => (bool) ($category['is_supported'] ?? false),
+                    'is_supported' => $isSupported,
                 ];
             })
             ->filter()
@@ -437,7 +452,7 @@ final class LeagueStatsPerspectiveFactory
 
                 if (
                     $columnKey === ''
-                    || ! $this->categoryHasExplicitGoalieGroup($category)
+                    || ! $this->categoryIsGoalieScoringColumn($category, $columnKey)
                     || isset($seen[$columnKey])
                 ) {
                     return null;
@@ -512,6 +527,18 @@ final class LeagueStatsPerspectiveFactory
             ->unique(static fn (array $column): string => (string) ($column['key'] ?? ''))
             ->values()
             ->all();
+    }
+
+    /**
+     * @param array<string,mixed> $category
+     */
+    private function categoryIsGoalieScoringColumn(array $category, string $columnKey): bool
+    {
+        if ($this->categoryHasExplicitGoalieGroup($category)) {
+            return true;
+        }
+
+        return in_array($columnKey, ['wins', 'sv', 'sv_pct', 'gaa', 'so'], true);
     }
 
     /**

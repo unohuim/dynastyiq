@@ -2273,8 +2273,11 @@ final class LeagueController extends Controller
             ->first();
 
         if (! $draft instanceof Draft) {
+            $payload = app(FantraxDraftingWindow::class)->normalize([], []);
+            $payload['empty_text'] = 'No draft has been configured for this league.';
+
             return $this->withDraftCentralMeta(
-                app(FantraxDraftingWindow::class)->normalize([], []),
+                $payload,
                 $league,
                 null,
             );

@@ -31,12 +31,12 @@ class ConnectFantraxUser
             throw new RuntimeException('Fantrax Secret ID is required.');
         }
 
+        $result = $this->syncLeagues($user, $secretId);
+
         IntegrationSecret::updateOrCreate(
             ['user_id' => $user->id, 'provider' => 'fantrax'],
             ['secret' => $secretId, 'status' => 'connected'],
         );
-
-        $result = $this->syncLeagues($user, $secretId);
 
         FantraxUserConnected::dispatch($user);
 

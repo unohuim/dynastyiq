@@ -348,9 +348,7 @@ final class SyncFantraxDraftState
                         'team.id',
                     ])) ?: null,
                     'fantrax_player_id' => $providerPlayerId,
-                    'drafted_at' => $providerPlayerId !== ''
-                        ? $this->dateValue($this->firstValue($item, ['time', 'draftedAt', 'drafted_at']))
-                        : null,
+                    'drafted_at' => $this->dateValue($this->firstValue($item, ['time', 'draftedAt', 'drafted_at'])),
                     'payload_hash' => $this->payloadHash($item),
                     'raw_payload' => $item,
                 ];

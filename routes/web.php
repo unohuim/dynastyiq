@@ -332,6 +332,19 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.cap-projections.update');
         Route::post('/leagues/{league_id}/team-logos/sync', [LeagueController::class, 'syncTeamLogos'])
             ->name('leagues.team-logos.sync');
+        Route::post('/integrations/fantrax/logos/connect', function (\App\Support\FantraxLogoBrowserProfile $profile) {
+            abort_unless(auth()->user()?->hasGlobalRole('super-admin'), 403);
+
+            $state = $profile->initialize();
+
+            return response()->json([
+                'integration' => [
+                    'provider' => 'fantrax_logos',
+                    'connected' => $state['ready'],
+                    'ready' => $state['ready'],
+                ],
+            ]);
+        })->name('integrations.fantrax.logos.connect');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
             ->name('leagues.stats.payload');
         Route::get('/leagues/{league_id}/players-payload', [LeagueController::class, 'playersPayload'])

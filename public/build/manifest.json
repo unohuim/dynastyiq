@@ -1,33 +1,36 @@
 {
-  "_toast-stack-BGYccCCD.js": {
-    "file": "assets/toast-stack-BGYccCCD.js",
+  "_toast-stack-DEzYpMu9.js": {
+    "file": "assets/toast-stack-DEzYpMu9.js",
     "name": "toast-stack"
   },
   "resources/css/app.css": {
-    "file": "assets/app-DLWznUwR.css",
+    "file": "assets/app-C1h17RWk.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-BNObvdTd.js",
+    "file": "assets/app-C95x6Vhm.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
     "imports": [
-      "_toast-stack-BGYccCCD.js"
+      "_toast-stack-DEzYpMu9.js"
     ],
     "dynamicImports": [
       "resources/js/pages/stats-page.js"
+    ],
+    "css": [
+      "assets/app-uUinxzQy.css"
     ]
   },
   "resources/js/pages/stats-page.js": {
-    "file": "assets/stats-page-e9pjBOL2.js",
+    "file": "assets/stats-page-CnH7ftp_.js",
     "name": "stats-page",
     "src": "resources/js/pages/stats-page.js",
     "isEntry": true,
     "isDynamicEntry": true,
     "imports": [
-      "_toast-stack-BGYccCCD.js"
+      "_toast-stack-DEzYpMu9.js"
     ]
   }
 }

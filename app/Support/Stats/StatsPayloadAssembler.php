@@ -32,14 +32,19 @@ final class StatsPayloadAssembler
         $officialToiByPlayer = $this->officialBoxscoreToiByPlayer($collection, $mode, $filters);
         $draftedOverallByPlayer = $this->draftedOverallByPlayer($collection);
 
-        $grouped = $collection->groupBy(function ($row): string {
+        $isDraftContext = (bool) ($filters['draft_context'] ?? false);
+        $grouped = $collection->groupBy(function ($row) use ($mode, $isDraftContext): string {
             $playerId = (string) ($row->player_id ?? $row->nhl_player_id ?? '');
+
+            if ($mode === 'prospects' && ! $isDraftContext) {
+                return $playerId . '|' . (string) ($row->league_abbrev ?? '');
+            }
 
             return $playerId;
         });
 
         foreach ($grouped as $playerStats) {
-            if ($mode === 'prospects' && ! (bool) ($filters['draft_context'] ?? false)) {
+            if ($mode === 'prospects' && $isDraftContext) {
                 $playerStats = $this->prospectStatsForPrimaryLeague($playerStats);
             }
 

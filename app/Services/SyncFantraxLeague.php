@@ -79,6 +79,8 @@ final class SyncFantraxLeague
         ]);
 
         if (empty($teamRosters)) {
+            $this->refreshReadOnlyDraftMirror($league);
+
             return;
         }
 
@@ -1115,18 +1117,14 @@ final class SyncFantraxLeague
     /**
      * Parse Fantrax point strings such as points0.5.
      */
-    private function parseFantraxPoints(mixed $value): int|float|string|null
+    private function parseFantraxPoints(mixed $value): float|string|null
     {
         if (is_numeric($value)) {
-            $number = (float) $value;
-
-            return floor($number) === $number ? (int) $number : $number;
+            return (float) $value;
         }
 
         if (is_string($value) && preg_match('/^points(-?\d+(?:\.\d+)?)$/i', trim($value), $matches)) {
-            $number = (float) $matches[1];
-
-            return floor($number) === $number ? (int) $number : $number;
+            return (float) $matches[1];
         }
 
         return is_string($value) ? $value : null;

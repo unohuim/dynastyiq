@@ -472,7 +472,30 @@ it('rejects identity match confidence outside the percentage range', function ()
 })->throws(\InvalidArgumentException::class);
 
 it('keeps the prospect flag when importing a prospect', function () {
-    ($this->fakeNhlLanding)(($this->nhlPayload)());
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'birthDate' => '2007-01-01',
+        'draftDetails' => [
+            'year' => 2025,
+            'teamAbbrev' => 'TOR',
+            'round' => 1,
+            'pickInRound' => 1,
+            'overallPick' => 1,
+        ],
+        'seasonTotals' => [
+            [
+                'teamName' => ['default' => 'London Knights'],
+                'season' => 20252026,
+                'gameTypeId' => 2,
+                'sequence' => 1,
+                'leagueAbbrev' => 'OHL',
+                'gamesPlayed' => 40,
+                'goals' => 20,
+                'assists' => 25,
+                'points' => 45,
+                'shots' => 120,
+            ],
+        ],
+    ]));
 
     app(ImportNHLPlayer::class)->import('8478402', true);
 
@@ -3414,6 +3437,7 @@ it('NHL landing refresh jobs preserve prospect status while importing stats', fu
         'first_name' => 'Theo',
         'last_name' => 'Rochette',
         'full_name' => 'Theo Rochette',
+        'dob' => '2007-01-01',
         'position' => 'C',
         'pos_type' => 'F',
         'is_prospect' => true,
@@ -3422,11 +3446,19 @@ it('NHL landing refresh jobs preserve prospect status while importing stats', fu
         'playerId' => 8482184,
         'firstName' => ['default' => 'Theo'],
         'lastName' => ['default' => 'Rochette'],
+        'birthDate' => '2007-01-01',
         'position' => 'C',
+        'draftDetails' => [
+            'year' => 2025,
+            'teamAbbrev' => 'MTL',
+            'round' => 2,
+            'pickInRound' => 1,
+            'overallPick' => 33,
+        ],
         'seasonTotals' => [
             [
                 'teamName' => ['default' => 'Quebec Remparts'],
-                'season' => 20212022,
+                'season' => 20252026,
                 'gameTypeId' => 2,
                 'sequence' => 1,
                 'leagueAbbrev' => 'QMJHL',
