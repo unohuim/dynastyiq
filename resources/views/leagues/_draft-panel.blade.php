@@ -159,7 +159,7 @@
         draftPanelResizeObserver: null,
         draftPanelHeight: 448,
         draftSupportPanelHeight: 500,
-        draftPanelBottomGap: 14,
+        draftPanelBottomGap: 56,
         activePlayerTab: 'live',
         activeRound: @js($activeRoundIndex),
         roundScrollCanLeft: false,
@@ -977,7 +977,7 @@
                     </div>
                     <h3 class="mt-5 text-2xl font-semibold tracking-tight text-slate-950">No draft data is available for this league yet.</h3>
                     <p class="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-                        Fantrax draft details are mirrored automatically during league refresh when Fantrax exposes a scheduled or live draft. Commissioners can still create a manual DynastyIQ draft when this league should not use Fantrax as the read-only source.
+                        Fantrax draft details are refreshed automatically during league refresh when Fantrax exposes a scheduled or live draft. Commissioners can still create a manual DynastyIQ draft when this league should not use Fantrax as the read-only source.
                     </p>
                     <div class="mt-6 flex flex-wrap items-center gap-3">
                         @if ($canManageDraft)
@@ -1003,7 +1003,7 @@
                     <div class="grid gap-3">
                         <div class="rounded-xl border border-blue-100 bg-blue-50/70 p-4">
                             <div class="text-sm font-semibold text-slate-950">Fantrax draft mirror</div>
-                            <p class="mt-1 text-xs leading-5 text-slate-600">League refresh imports scheduled, live, and completed Fantrax draft details as a read-only source when available.</p>
+                            <p class="mt-1 text-xs leading-5 text-slate-600">League refresh updates scheduled, live, and completed Fantrax draft details as a read-only source when available.</p>
                         </div>
                         <div class="rounded-xl border border-slate-200 bg-white p-4">
                             <div class="text-sm font-semibold text-slate-950">Manual draft</div>

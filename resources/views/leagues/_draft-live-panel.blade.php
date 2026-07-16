@@ -108,7 +108,7 @@
                         x-transition.opacity.duration.150ms
                         x-ref="roundScroller{{ $roundIndex }}"
                         data-draft-round-index="{{ $roundIndex }}"
-                        class="h-full scroll-pb-6 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200"
+                        class="h-full scroll-pb-16 divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200 pb-10"
                     >
                         @foreach ($round['rows'] as $row)
                             @php

@@ -444,22 +444,18 @@ final class SyncFantraxLeague
             }
         });
 
-        $this->bootstrapReadOnlyDraftWhenMissing($league);
+        $this->refreshReadOnlyDraftMirror($league);
     }
 
     /**
-     * Mirror Fantrax draft data for all league users when no draft exists yet.
+     * Mirror Fantrax draft data for all league users when Fantrax exposes it.
      */
-    private function bootstrapReadOnlyDraftWhenMissing(PlatformLeague $league): void
+    private function refreshReadOnlyDraftMirror(PlatformLeague $league): void
     {
-        if (Draft::query()->where('platform_league_id', $league->id)->exists()) {
-            return;
-        }
-
         try {
             $this->draftStateSync->syncIfAvailable((int) $league->id);
         } catch (Throwable $throwable) {
-            Log::info('[FX Sync] Draft mirror bootstrap skipped', [
+            Log::info('[FX Sync] Draft mirror refresh skipped', [
                 'platform_league_id' => $league->id,
                 'provider_league_id' => $league->platform_league_id,
                 'message' => $throwable->getMessage(),

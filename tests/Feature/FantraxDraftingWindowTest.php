@@ -680,6 +680,69 @@ it('preserves division scoped fantrax draft slots without dispatching pick event
     Event::assertNotDispatched(DraftPickMade::class);
 });
 
+it('refreshes an existing fantrax draft mirror during league sync', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'fhl-existing-draft-sync-league',
+    ]);
+    $platformLeague = PlatformLeague::query()
+        ->where('platform_league_id', 'fhl-existing-draft-sync-league')
+        ->firstOrFail();
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fhl-provider-draft',
+        'status' => 'scheduled',
+        'settings' => ['provider' => 'fantrax', 'draft_shape' => 'division_scoped'],
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'division:gretzky:round:1:pick-in-round:1',
+        'overall_pick' => null,
+        'round' => 1,
+        'pick' => 1,
+        'pick_in_round' => 1,
+        'provider_team_id' => 'team-1',
+        'raw_payload' => ['division' => 'Gretzky'],
+    ]);
+
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo?leagueId=fhl-existing-draft-sync-league' => Http::response([
+            'poolSettings' => ['duplicatePlayerType' => 'ACROSS_DIVISIONS'],
+            'teamInfo' => [
+                ['id' => 'team-1', 'name' => 'Gretzky Team', 'division' => 'Gretzky'],
+                ['id' => 'team-2', 'name' => 'Gretzky Two', 'division' => 'Gretzky'],
+            ],
+            'rosterInfo' => ['positionConstraints' => []],
+            'playerInfo' => [],
+        ], 200),
+        'https://fantrax.test/fxea/general/getTeamRosters?leagueId=fhl-existing-draft-sync-league' => Http::response([
+            'rosters' => [],
+        ], 200),
+        'https://fantrax.test/fxea/general/getDraftResults?leagueId=fhl-existing-draft-sync-league' => Http::response([
+            'draftId' => 'fhl-provider-draft',
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => [
+                ['division' => 'Gretzky', 'teamId' => 'team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+                ['division' => 'Gretzky', 'teamId' => 'team-2', 'round' => 1, 'pick' => 2, 'pickInRound' => 2],
+                ['division' => 'Gretzky', 'teamId' => 'team-1', 'round' => 2, 'pick' => 1, 'pickInRound' => 1],
+            ],
+        ], 200),
+        'https://fantrax.test/fxea/general/getDraftPicks?leagueId=fhl-existing-draft-sync-league' => Http::response([
+            'currentDraftPicks' => [
+                ['round' => 1, 'pick' => 1, 'teamId' => 'team-1'],
+            ],
+        ], 200),
+    ]);
+
+    app(SyncFantraxLeague::class)->sync($platformLeague->id);
+
+    $draft->refresh();
+
+    expect(Draft::query()->where('platform_league_id', $platformLeague->id)->count())->toBe(1)
+        ->and($draft->picks()->count())->toBe(3)
+        ->and($draft->picks()->where('round', 2)->exists())->toBeTrue()
+        ->and($draft->settings['draft_shape'] ?? null)->toBe('division_scoped');
+});
+
 it('dispatches a pick event when a division scoped pending fantrax slot receives a player id', function (): void {
     [, , $league] = ($this->createCommunityLeague)([
         'platform_league_id' => 'division-delta-league',
