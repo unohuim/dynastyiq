@@ -1,7 +1,7 @@
 {{-- resources/views/partials/_right-account-drawer.blade.php --}}
 
 {{-- RIGHT ACCOUNT DRAWER (desktop+mobile) --}}
-<div class="fixed inset-0 z-50 pointer-events-none">
+<div class="fixed inset-0 z-[90] pointer-events-none">
     {{-- overlay --}}
     <div x-show="accountOpen" x-transition.opacity.duration.250ms @click="accountOpen=false"
         class="absolute inset-0 bg-black/40 pointer-events-auto"></div>

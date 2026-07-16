@@ -7,7 +7,7 @@
 
 <div
     x-cloak
-    class="fixed inset-0 z-50 pointer-events-none"
+    class="fixed inset-0 z-[90] pointer-events-none"
 >
     <div
         x-show="{{ $show }}"
