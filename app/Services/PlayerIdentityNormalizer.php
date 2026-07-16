@@ -30,6 +30,22 @@ class PlayerIdentityNormalizer
     }
 
     /**
+     * Normalize a name and remove separator spaces for punctuation-variant matching.
+     */
+    public function compactNormalizedName(?string $name): ?string
+    {
+        $normalized = $this->normalizeName($name);
+
+        if ($normalized === null) {
+            return null;
+        }
+
+        $compact = str_replace(' ', '', $normalized);
+
+        return $compact === '' ? null : $compact;
+    }
+
+    /**
      * Build a display name from provider first and last name fields.
      */
     public function displayNameFromParts(?string $firstName, ?string $lastName): ?string
@@ -84,6 +100,10 @@ class PlayerIdentityNormalizer
         }
 
         if ($firstName === $otherFirstName) {
+            return true;
+        }
+
+        if ($this->compactNormalizedName($firstName) === $this->compactNormalizedName($otherFirstName)) {
             return true;
         }
 

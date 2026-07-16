@@ -512,12 +512,30 @@ class PlayerIdentityResolver
             return true;
         }
 
+        $compactPlayerFullName = $this->normalizer->compactNormalizedName($player->full_name);
+        $compactIdentityDisplayName = $this->normalizer->compactNormalizedName($identity->display_name);
+        if (
+            $compactPlayerFullName !== null
+            && $compactIdentityDisplayName !== null
+            && $compactPlayerFullName === $compactIdentityDisplayName
+        ) {
+            return true;
+        }
+
         $identityFirstName = $this->normalizer->normalizeName($identity->first_name);
         $identityLastName = $this->normalizer->normalizeName($identity->last_name);
         $playerFirstName = $this->normalizer->normalizeName($player->first_name);
         $playerLastName = $this->normalizer->normalizeName($player->last_name);
 
-        if ($identityLastName === null || $playerLastName === null || $identityLastName !== $playerLastName) {
+        if (
+            $identityLastName === null
+            || $playerLastName === null
+            || (
+                $identityLastName !== $playerLastName
+                && $this->normalizer->compactNormalizedName($identityLastName)
+                    !== $this->normalizer->compactNormalizedName($playerLastName)
+            )
+        ) {
             return false;
         }
 

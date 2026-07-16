@@ -688,6 +688,29 @@ it('fantrax exact normalized name plus position and team auto-links as name plus
     expect($identity->player_id)->toBe($player->id);
 });
 
+it('fantrax compact apostrophe surname auto-links to canonical punctuation surname', function () {
+    $player = ($this->makePlayer)([
+        'first_name' => 'Charle-Edouard',
+        'last_name' => "D'Astous",
+        'full_name' => "Charle-Edouard D'Astous",
+        'position' => 'D',
+        'team_abbrev' => 'TBL',
+    ]);
+
+    (new ImportFantraxPlayer())->syncOne(($this->fantraxEntry)([
+        'name' => 'DAstous, Charle-Edouard',
+        'birthDate' => null,
+        'position' => 'D',
+        'team' => 'TBL',
+    ]));
+
+    $identity = PlayerExternalIdentity::first();
+
+    expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
+    expect($identity->match_confidence)->toBe(95);
+    expect($identity->player_id)->toBe($player->id);
+});
+
 it('fantrax supporting evidence can disambiguate one threshold-passing candidate', function () {
     $matchedPlayer = ($this->makePlayer)([
         'first_name' => 'Shared',
