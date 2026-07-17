@@ -155,6 +155,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/communities/{c_id}/leagues/{l_id}/players-payload', [CommunityLeagues::class, 'playersPayload'])
             ->middleware('auth')
             ->name('community.leagues.players-payload');
+        Route::get('/communities/{c_id}/leagues/{l_id}/draft-testing', [CommunityLeagues::class, 'draftTesting'])
+            ->middleware('auth')
+            ->name('community.leagues.draft-testing');
+        Route::post('/communities/{c_id}/leagues/{l_id}/draft-testing/simulate', [CommunityLeagues::class, 'simulateDraftTestingPick'])
+            ->middleware('auth')
+            ->name('community.leagues.draft-testing.simulate');
         Route::get('/communities/{c_id}/leagues/{l_id}/stats-payload', [StatsController::class, 'communityLeaguePayload'])
             ->middleware('auth')
             ->name('community.leagues.stats-payload');

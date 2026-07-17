@@ -1808,6 +1808,133 @@ it('saves a draft notification channel and creates it on discord when needed', f
     });
 });
 
+it('sends community draft testing picks to discord without tagging users or mutating draft picks', function (): void {
+    [$user, $organization, $league] = ($this->createCommunityLeague)();
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = $league->activePlatformLeague();
+    expect($platformLeague)->toBeInstanceOf(PlatformLeague::class);
+
+    $teamOneId = $platformLeague->teams()->where('platform_team_id', 'team-1')->value('id');
+    $teamTwo = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Team Two',
+    ]);
+    $teamThree = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-3',
+        'name' => 'Team Three',
+    ]);
+    $draft = Draft::create([
+        'organization_id' => null,
+        'platform_league_id' => $platformLeague->id,
+        'source_type' => 'platform_mirror',
+        'platform' => 'fantrax',
+        'external_draft_id' => 'fantrax:test-draft',
+        'name' => 'Testing Draft',
+        'draft_type' => 'snake',
+        'status' => 'live',
+        'starts_at' => CarbonImmutable::parse('2026-09-21 19:00:00'),
+        'settings' => ['provider' => 'fantrax'],
+    ]);
+    $pickOne = ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:1',
+        'overall_pick' => 1,
+        'pick' => 1,
+        'pick_in_round' => 1,
+        'platform_team_id' => $teamOneId,
+        'provider_team_id' => 'team-1',
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:2',
+        'overall_pick' => 2,
+        'pick' => 2,
+        'pick_in_round' => 2,
+        'platform_team_id' => $teamTwo->id,
+        'provider_team_id' => 'team-2',
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:3',
+        'overall_pick' => 3,
+        'pick' => 3,
+        'pick_in_round' => 3,
+        'platform_team_id' => $teamThree->id,
+        'provider_team_id' => 'team-3',
+    ]);
+    $player = Player::create([
+        'nhl_id' => 990001,
+        'full_name' => 'Test Prospect',
+        'first_name' => 'Test',
+        'last_name' => 'Prospect',
+        'is_prospect' => true,
+        'position' => 'C',
+        'team_abbrev' => 'TST',
+        'draft_year' => 2026,
+        'draft_round' => 1,
+        'draft_round_pick' => 1,
+        'draft_oa' => 1,
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'draft_notifications' => [
+                'discord_channel' => [
+                    'id' => 'draft-channel',
+                    'name' => 'draft-room',
+                ],
+                'announce_otc' => true,
+                'announce_on_deck' => true,
+            ],
+        ]),
+    ]);
+    app()->instance(DraftPickCardRenderer::class, new class {
+        /**
+         * @param array<string,mixed> $card
+         */
+        public function render(array $card, ?string $path = null): ?string
+        {
+            $targetPath = $path ?: tempnam(sys_get_temp_dir(), 'diq-test-card-');
+
+            if (! is_string($targetPath)) {
+                return null;
+            }
+
+            file_put_contents($targetPath, 'draft-card');
+
+            return $targetPath;
+        }
+    });
+
+    Http::fake([
+        'https://discord.com/api/v10/channels/draft-channel/messages' => Http::response(['id' => 'message-1']),
+    ]);
+
+    $this->actingAs($user)
+        ->postJson("/communities/{$organization->id}/leagues/{$league->id}/draft-testing/simulate", [
+            'player_id' => $player->id,
+            'announce_otc' => true,
+            'announce_on_deck' => true,
+            'simulated_pick_keys' => [],
+        ])
+        ->assertOk()
+        ->assertJsonPath('picked_key', 'overall:1')
+        ->assertJsonPath('current_pick.team_name', 'Team Two')
+        ->assertJsonPath('on_deck_pick.team_name', 'Team Three');
+
+    Http::assertSent(function ($request): bool {
+        $payload = ($this->discordRequestPayload)($request);
+
+        return $request->url() === 'https://discord.com/api/v10/channels/draft-channel/messages'
+            && $request->method() === 'POST'
+            && array_key_exists('payload_json', $request->data())
+            && $payload['content'] === 'Team One selects Test Prospect with pick 1. Team Two is now OTC. Team Three is on deck.'
+            && $payload['allowed_mentions']['parse'] === []
+            && $payload['allowed_mentions']['users'] === [];
+    });
+    expect($pickOne->refresh()->provider_player_id)->toBeNull()
+        ->and($pickOne->announced_at)->toBeNull()
+        ->and($pickOne->status)->toBe('pending');
+});
+
 it('preloads draft notification channels from the connected discord guild and omits stale saved channels', function (): void {
     [$user, $organization, $league] = ($this->createCommunityLeague)([
         'organization_slug' => 'draft-channel-community',

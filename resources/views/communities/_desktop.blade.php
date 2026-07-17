@@ -153,6 +153,8 @@
                             'draftSettingsUrl' => route('community.leagues.draft-settings', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'playersPayloadUrl' => route('community.leagues.players-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'leagueStatsPayloadUrl' => route('community.leagues.stats-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'draftTestingUrl' => route('community.leagues.draft-testing', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'draftTestingSimulateUrl' => route('community.leagues.draft-testing.simulate', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                         ];
                     @endphp
                     <button
@@ -707,6 +709,14 @@
                                 >
                                     Players
                                 </button>
+                                <button
+                                    type="button"
+                                    class="border-b-2 pb-3 transition-colors"
+                                    :class="activeCommunityDraftTab === 'testing' ? 'border-blue-600 text-blue-700' : (theme === 'dark' ? 'border-transparent text-slate-400 hover:text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-800')"
+                                    @click="setCommunityDraftTab('testing')"
+                                >
+                                    Testing
+                                </button>
                             </div>
 
                             @if ($canEdit)
@@ -725,7 +735,7 @@
                         </div>
 
                         <div class="min-h-[22rem]">
-                            <div x-show="activeCommunityDraftTab === 'live'" x-cloak class="p-4">
+                            <div x-show="['live', 'testing'].includes(activeCommunityDraftTab)" x-cloak class="p-4">
                                 <div x-show="leagueDraftSummaryLoading" class="rounded-lg border p-6 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-200 text-slate-600'">
                                     Loading draft summary...
                                 </div>

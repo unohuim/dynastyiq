@@ -35,6 +35,7 @@
     ];
     $fallbackTeamGradient = 'linear-gradient(to bottom, #e5e7eb, #9ca3af)';
     $draftRounds = collect($draftRounds ?? []);
+    $enableCommunityDraftTesting = (bool) ($enableCommunityDraftTesting ?? false);
 @endphp
 
 <div class="h-full min-h-0">
@@ -116,6 +117,7 @@
                                 $teamBadgeBackground = $teamGradients[$teamAbbrev] ?? $fallbackTeamGradient;
                                 $pickInRound = $row['pick_in_round'] ?? $row['pick'] ?? null;
                                 $overallPick = $row['overall_pick'] ?? $row['pick'] ?? null;
+                                $testingPickKey = (string) ($row['provider_pick_key'] ?? ($overallPick ? 'overall:' . $overallPick : ''));
                                 $hasDraftedPlayer = (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id']));
                                 $isNextPick = ! empty($row['is_next_pick']);
                                 $isGoalie = strtoupper((string) ($row['position'] ?? '')) === 'G';
@@ -144,6 +146,16 @@
                                             @endif
                                         </div>
                                     @endif
+                                    @if ($enableCommunityDraftTesting)
+                                        <div x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')" x-cloak class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-100 text-xs font-semibold text-slate-600 ring-1 ring-slate-200">
+                                            <template x-if="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.avatar_url">
+                                                <img :src="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}').avatar_url" alt="" class="h-full w-full object-cover" loading="lazy">
+                                            </template>
+                                            <template x-if="!communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.avatar_url">
+                                                <span x-text="communityDraftPlayerInitials(communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}'))"></span>
+                                            </template>
+                                        </div>
+                                    @endif
 
                                     <div class="min-w-0">
                                         @if ($hasDraftedPlayer)
@@ -162,9 +174,43 @@
                                                 @endif
                                             </div>
                                         @elseif ($isNextPick)
-                                            <div class="space-y-2">
+                                            <div @if ($enableCommunityDraftTesting) x-show="activeCommunityDraftTab !== 'testing'" @endif class="space-y-2">
                                                 <div class="h-3 w-24 animate-pulse rounded-full bg-slate-200"></div>
                                                 <div class="h-2 w-20 animate-pulse rounded-full bg-slate-100"></div>
+                                            </div>
+                                        @endif
+                                        @if ($enableCommunityDraftTesting)
+                                            <div x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')" x-cloak class="min-w-0">
+                                                <div class="truncate text-sm font-semibold text-slate-900" x-text="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.name"></div>
+                                                <div class="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-slate-500">
+                                                    <span class="shrink-0" x-text="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.position || '-'"></span>
+                                                    <span class="shrink-0 text-slate-300">/</span>
+                                                    <span class="truncate" x-text="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.team_abbrev || '-'"></span>
+                                                </div>
+                                            </div>
+                                            <div x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingIsCurrentPick('{{ $testingPickKey }}')" x-cloak class="flex min-w-0 flex-col gap-2">
+                                                <select
+                                                    x-model="communityDraftTestingSelectedPlayerId"
+                                                    class="h-9 w-full min-w-48 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-800 shadow-sm outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+                                                    :disabled="communityDraftTestingLoading || communityDraftTestingSimulating"
+                                                >
+                                                    <option value="">Select available entry draftee</option>
+                                                    <template x-for="player in communityDraftTestingAvailablePlayers" :key="player.id">
+                                                        <option :value="player.id" x-text="communityDraftTestingPlayerLabel(player)"></option>
+                                                    </template>
+                                                </select>
+                                                <div class="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        class="inline-flex h-7 shrink-0 items-center justify-center rounded-md bg-slate-900 px-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                                        x-on:click="simulateCommunityDraftPick()"
+                                                        :disabled="communityDraftTestingLoading || communityDraftTestingSimulating || !communityDraftTestingSelectedPlayerId"
+                                                    >
+                                                        <span x-show="!communityDraftTestingSimulating">Simulate</span>
+                                                        <span x-show="communityDraftTestingSimulating">Sending...</span>
+                                                    </button>
+                                                    <span x-show="communityDraftTestingError" class="truncate text-[11px] font-medium text-rose-600" x-text="communityDraftTestingError"></span>
+                                                </div>
                                             </div>
                                         @endif
                                     </div>
@@ -178,6 +224,15 @@
                                         >
                                             {{ $teamAbbrev !== '' ? $teamAbbrev : '-' }}
                                         </span>
+                                    @endif
+                                    @if ($enableCommunityDraftTesting)
+                                        <span
+                                            x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')"
+                                            x-cloak
+                                            class="inline-flex h-7 min-w-14 items-center justify-center rounded-md px-3 text-xs font-semibold tracking-wide text-white shadow-sm"
+                                            :style="communityDraftTeamBadgeStyle(communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.team_abbrev)"
+                                            x-text="communityDraftTestingSimulatedPlayerForPick('{{ $testingPickKey }}')?.team_abbrev || '-'"
+                                        ></span>
                                     @endif
                                 </div>
 
@@ -201,6 +256,16 @@
                                 <div class="flex min-w-0 items-center justify-end gap-2">
                                     @if ($isNextPick)
                                         <span class="inline-flex h-5 shrink-0 items-center rounded-full bg-orange-100 px-2 text-[11px] font-semibold text-orange-700 ring-1 ring-orange-200">
+                                            @if ($enableCommunityDraftTesting)
+                                                <span x-show="activeCommunityDraftTab !== 'testing'">OTC</span>
+                                                <span x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingIsCurrentPick('{{ $testingPickKey }}')">OTC</span>
+                                            @else
+                                                OTC
+                                            @endif
+                                        </span>
+                                    @endif
+                                    @if ($enableCommunityDraftTesting && ! $isNextPick && $testingPickKey !== '')
+                                        <span x-show="activeCommunityDraftTab === 'testing' && communityDraftTestingIsCurrentPick('{{ $testingPickKey }}')" x-cloak class="inline-flex h-5 shrink-0 items-center rounded-full bg-orange-100 px-2 text-[11px] font-semibold text-orange-700 ring-1 ring-orange-200">
                                             OTC
                                         </span>
                                     @endif

@@ -801,6 +801,19 @@ function communityMembersHub(config) {
         communityDraftPlayerCache: {},
         communityDraftPlayerSortKey: "drafted_overall_pick",
         communityDraftPlayerSortDirection: "asc",
+        communityDraftTestingUrl: "",
+        communityDraftTestingSimulateUrl: "",
+        communityDraftTestingLoading: false,
+        communityDraftTestingSimulating: false,
+        communityDraftTestingError: "",
+        communityDraftTestingMessage: "",
+        communityDraftTestingPlayers: [],
+        communityDraftTestingSelectedPlayerId: "",
+        communityDraftTestingCurrentPick: null,
+        communityDraftTestingOnDeckPick: null,
+        communityDraftTestingSimulatedPickKeys: [],
+        communityDraftTestingSimulatedPlayerIds: [],
+        communityDraftTestingSimulatedPlayersByPickKey: {},
         init() {
             // Ensure the store exists even if Alpine boot order changes.
             if (!this.$store.communityMembers) {
@@ -833,6 +846,7 @@ function communityMembersHub(config) {
             this.leagueDraftLiveHtml = "";
             this.leagueDraftSummaryError = "";
             this.resetCommunityDraftPlayers();
+            this.resetCommunityDraftTesting();
             this.resetDraftOptions();
 
             if (this.activeLeagueTab === "teams") {
@@ -878,11 +892,15 @@ function communityMembersHub(config) {
             }
         },
         setCommunityDraftTab(tab) {
-            this.activeCommunityDraftTab = ["live", "players"].includes(tab)
+            this.activeCommunityDraftTab = ["live", "players", "testing"].includes(tab)
                 ? tab
                 : "live";
 
-            if (this.activeCommunityDraftTab === "live") {
+            if (["live", "testing"].includes(this.activeCommunityDraftTab)) {
+                if (this.activeCommunityDraftTab === "testing") {
+                    this.loadCommunityDraftTesting();
+                }
+
                 this.$nextTick(() => this.initializeCommunityDraftLivePanel());
             } else {
                 this.loadCommunityDraftPlayers();
@@ -910,6 +928,21 @@ function communityMembersHub(config) {
             this.communityDraftPlayerCache = {};
             this.communityDraftPlayerSortKey = "drafted_overall_pick";
             this.communityDraftPlayerSortDirection = "asc";
+        },
+        resetCommunityDraftTesting() {
+            this.communityDraftTestingUrl = this.selectedLeague?.draftTestingUrl || "";
+            this.communityDraftTestingSimulateUrl = this.selectedLeague?.draftTestingSimulateUrl || "";
+            this.communityDraftTestingLoading = false;
+            this.communityDraftTestingSimulating = false;
+            this.communityDraftTestingError = "";
+            this.communityDraftTestingMessage = "";
+            this.communityDraftTestingPlayers = [];
+            this.communityDraftTestingSelectedPlayerId = "";
+            this.communityDraftTestingCurrentPick = null;
+            this.communityDraftTestingOnDeckPick = null;
+            this.communityDraftTestingSimulatedPickKeys = [];
+            this.communityDraftTestingSimulatedPlayerIds = [];
+            this.communityDraftTestingSimulatedPlayersByPickKey = {};
         },
         async loadCommunityLeagueTeams() {
             const url = this.selectedLeague?.teamsUrl || "";
@@ -1176,6 +1209,168 @@ function communityMembersHub(config) {
             return this.draftChannelOptions.filter((channel) => (
                 String(channel?.name || "").toLowerCase().includes(query)
             ));
+        },
+        async loadCommunityDraftTesting(force = false) {
+            if (!this.communityDraftTestingUrl || (this.communityDraftTestingLoading && !force)) {
+                return;
+            }
+
+            if (!force && this.communityDraftTestingPlayers.length > 0) {
+                return;
+            }
+
+            this.communityDraftTestingLoading = true;
+            this.communityDraftTestingError = "";
+
+            try {
+                const params = new URLSearchParams();
+                this.communityDraftTestingSimulatedPickKeys.forEach((key) => {
+                    params.append("simulated_pick_keys[]", key);
+                });
+                const url = params.toString()
+                    ? `${this.communityDraftTestingUrl}?${params.toString()}`
+                    : this.communityDraftTestingUrl;
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load draft testing.");
+                }
+
+                this.communityDraftTestingPlayers = Array.isArray(payload.players)
+                    ? payload.players
+                    : [];
+                this.communityDraftTestingCurrentPick = payload.current_pick || null;
+                this.communityDraftTestingOnDeckPick = payload.on_deck_pick || null;
+                if (this.communityDraftTestingCurrentPick?.round) {
+                    this.setActiveRoundForTestingPick(this.communityDraftTestingCurrentPick);
+                }
+                this.applyDraftNotificationConfig(payload.notifications || {});
+            } catch (error) {
+                console.error("[communityDraftTesting] Unable to load testing controls:", error);
+                this.communityDraftTestingError = error?.message || "Could not load draft testing.";
+            } finally {
+                this.communityDraftTestingLoading = false;
+            }
+        },
+        async simulateCommunityDraftPick() {
+            if (!this.communityDraftTestingSimulateUrl || this.communityDraftTestingSimulating) {
+                return;
+            }
+
+            const playerId = Number(this.communityDraftTestingSelectedPlayerId || 0);
+
+            if (playerId <= 0) {
+                this.communityDraftTestingError = "Select an entry draft player first.";
+                return;
+            }
+
+            this.communityDraftTestingSimulating = true;
+            this.communityDraftTestingError = "";
+            this.communityDraftTestingMessage = "";
+
+            try {
+                const response = await fetch(this.communityDraftTestingSimulateUrl, {
+                    method: "POST",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({
+                        player_id: playerId,
+                        simulated_pick_keys: this.communityDraftTestingSimulatedPickKeys,
+                        announce_otc: Boolean(this.draftAnnounceOtc),
+                        announce_on_deck: Boolean(this.draftAnnounceOnDeck),
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not simulate draft pick.");
+                }
+
+                const selectedPlayer = this.communityDraftTestingPlayers
+                    .find((player) => Number(player?.id || 0) === playerId) || null;
+                const pickedKey = payload.picked_key || "";
+
+                this.communityDraftTestingSimulatedPickKeys = Array.isArray(payload.simulated_pick_keys)
+                    ? payload.simulated_pick_keys
+                    : [...this.communityDraftTestingSimulatedPickKeys, pickedKey].filter(Boolean);
+                this.communityDraftTestingSimulatedPlayerIds = [
+                    ...new Set([...this.communityDraftTestingSimulatedPlayerIds, playerId]),
+                ];
+                if (pickedKey && selectedPlayer) {
+                    this.communityDraftTestingSimulatedPlayersByPickKey = {
+                        ...this.communityDraftTestingSimulatedPlayersByPickKey,
+                        [pickedKey]: selectedPlayer,
+                    };
+                }
+                this.communityDraftTestingCurrentPick = payload.current_pick || null;
+                this.communityDraftTestingOnDeckPick = payload.on_deck_pick || null;
+                if (this.communityDraftTestingCurrentPick?.round) {
+                    this.setActiveRoundForTestingPick(this.communityDraftTestingCurrentPick);
+                }
+                this.communityDraftTestingSelectedPlayerId = "";
+                this.communityDraftTestingMessage = payload.message || "Discord test announcement sent.";
+            } catch (error) {
+                console.error("[communityDraftTesting] Unable to simulate pick:", error);
+                this.communityDraftTestingError = error?.message || "Could not simulate draft pick.";
+            } finally {
+                this.communityDraftTestingSimulating = false;
+            }
+        },
+        communityDraftTestingPickLabel(pick) {
+            if (!pick) return "No OTC pick available";
+
+            const round = pick.round || "-";
+            const pickInRound = pick.pick_in_round || pick.pick || "-";
+            const overall = pick.overall_pick ? `, #${pick.overall_pick}` : "";
+
+            return `${pick.team_name || "Unknown team"} - Round ${round}, Pick ${pickInRound}${overall}`;
+        },
+        communityDraftTestingIsCurrentPick(pickKey) {
+            return String(this.communityDraftTestingCurrentPick?.key || "") === String(pickKey || "");
+        },
+        communityDraftTestingSimulatedPlayerForPick(pickKey) {
+            return this.communityDraftTestingSimulatedPlayersByPickKey[String(pickKey || "")] || null;
+        },
+        setActiveRoundForTestingPick(pick) {
+            const round = Number(pick?.round || 0);
+
+            if (round <= 0 || !this.leagueDraftSummary?.rounds) {
+                return;
+            }
+
+            const index = this.leagueDraftSummary.rounds.findIndex((item) => Number(item?.round || 0) === round);
+
+            if (index >= 0) {
+                this.setActiveRound(index);
+            }
+        },
+        communityDraftTestingPlayerLabel(player) {
+            const parts = [];
+
+            if (player?.draft_oa) parts.push(`#${player.draft_oa}`);
+            if (player?.position) parts.push(player.position);
+            if (player?.team_abbrev) parts.push(player.team_abbrev);
+
+            return parts.length > 0
+                ? `${player?.name || "Unknown player"} (${parts.join(" / ")})`
+                : (player?.name || "Unknown player");
+        },
+        get communityDraftTestingAvailablePlayers() {
+            const used = new Set(this.communityDraftTestingSimulatedPlayerIds.map(Number));
+
+            return this.communityDraftTestingPlayers.filter((player) => !used.has(Number(player?.id || 0)));
         },
         async loadCommunityDraftPlayers(force = false) {
             if (this.communityDraftPlayersLoading && !force) {

@@ -17,6 +17,7 @@ use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Services\FantraxDraftingWindow;
+use App\Services\DraftPickCardRenderer;
 use App\Services\FantraxLogoSyncService;
 use App\Services\LeagueProviderBindingService;
 use App\Services\YahooFantasyLeagueService;
@@ -451,6 +452,126 @@ class CommunityLeagues extends Controller
     }
 
     /**
+     * Return non-mutating draft testing controls for a community league.
+     */
+    public function draftTesting(int $cId, int $lId): JsonResponse
+    {
+        [$community, $league] = $this->communityLeagueForDraftTesting($cId, $lId);
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        $draft = $this->latestCommunityDraft($community, $platformLeague);
+        $communityProviderScope = $this->communityProviderScope($platformLeague, $league->activePlatformScope());
+        $simulatedPickKeys = collect(request()->query('simulated_pick_keys', []))
+            ->map(static fn (mixed $value): string => trim((string) $value))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $picks = $draft instanceof Draft
+            ? $this->draftTestingAvailablePicks($draft, $platformLeague, $simulatedPickKeys, $communityProviderScope)
+            : collect();
+
+        return response()->json([
+            'ok' => true,
+            'players' => $this->draftTestingEntryDraftees(),
+            'current_pick' => $this->draftTestingPickPayload($picks->first()),
+            'on_deck_pick' => $this->draftTestingPickPayload($picks->skip(1)->first()),
+            'notifications' => $this->draftNotificationOptionsFromMeta($this->pivotMeta($league)),
+        ]);
+    }
+
+    /**
+     * Send a Discord-only test draft pick announcement without mutating draft state.
+     */
+    public function simulateDraftTestingPick(Request $request, int $cId, int $lId): JsonResponse
+    {
+        [$community, $league] = $this->communityLeagueForDraftTesting($cId, $lId);
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        $data = $request->validate([
+            'player_id' => ['required', 'integer', 'exists:players,id'],
+            'simulated_pick_keys' => ['array', 'max:500'],
+            'simulated_pick_keys.*' => ['string', 'max:120'],
+            'announce_otc' => ['nullable', 'boolean'],
+            'announce_on_deck' => ['nullable', 'boolean'],
+        ]);
+        $draft = $this->latestCommunityDraft($community, $platformLeague);
+
+        if (! $draft instanceof Draft) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'No draft is available for testing.',
+            ], 422);
+        }
+
+        $simulatedPickKeys = collect($data['simulated_pick_keys'] ?? [])
+            ->map(static fn (mixed $value): string => trim((string) $value))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $communityProviderScope = $this->communityProviderScope($platformLeague, $league->activePlatformScope());
+        $availablePicks = $this->draftTestingAvailablePicks($draft, $platformLeague, $simulatedPickKeys, $communityProviderScope);
+        $currentPick = $availablePicks->first();
+
+        if (! $currentPick instanceof DraftPick) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'No OTC pick is available for testing.',
+            ], 422);
+        }
+
+        $player = Player::query()->findOrFail((int) $data['player_id']);
+        $meta = $this->pivotMeta($league);
+        $options = $this->draftNotificationOptionsFromMeta($meta);
+
+        if (array_key_exists('announce_otc', $data)) {
+            $options['announce_otc'] = (bool) $data['announce_otc'];
+        }
+
+        if (array_key_exists('announce_on_deck', $data)) {
+            $options['announce_on_deck'] = (bool) $data['announce_on_deck'];
+        }
+
+        $remainingPicks = $availablePicks->slice(1)->values();
+        $nextPick = $remainingPicks->first();
+        $onDeckPick = $remainingPicks->skip(1)->first();
+        $message = $this->draftTestingMessage($currentPick, $player, $nextPick, $onDeckPick, $options);
+        $discordPayload = $this->draftTestingDiscordPayload($currentPick, $player, $message);
+        $channel = data_get($meta, 'draft_notifications.discord_channel');
+        $channelId = is_array($channel) ? trim((string) ($channel['id'] ?? '')) : '';
+
+        if ($channelId === '') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Select a draft pick channel before testing Discord announcements.',
+            ], 422);
+        }
+
+        if (! $this->postDraftTestingDiscordMessage($channelId, $discordPayload)) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Could not send the Discord test announcement.',
+            ], 422);
+        }
+
+        $pickedKey = $this->draftTestingPickKey($currentPick);
+
+        return response()->json([
+            'ok' => true,
+            'message' => $message,
+            'picked_key' => $pickedKey,
+            'simulated_pick_keys' => collect([...$simulatedPickKeys, $pickedKey])->unique()->values()->all(),
+            'current_pick' => $this->draftTestingPickPayload($nextPick),
+            'on_deck_pick' => $this->draftTestingPickPayload($onDeckPick),
+        ]);
+    }
+
+    /**
      * Apply a community provider scope only when the platform league has division-scoped player pools.
      *
      * @param array<string,mixed> $activeProviderScope
@@ -525,6 +646,295 @@ class CommunityLeagues extends Controller
             [
                 'slug' => 'prospects-goalies',
                 'name' => 'Prospects - Goalies',
+            ],
+        ];
+    }
+
+    /**
+     * Resolve the community and league for draft testing.
+     *
+     * @return array{0:mixed,1:mixed}
+     */
+    private function communityLeagueForDraftTesting(int $communityId, int $leagueId): array
+    {
+        $user = Auth::user();
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('discordServers')
+            ->findOrFail($communityId);
+        $league = $community->leagues()
+            ->withPivot(['discord_server_id', 'meta'])
+            ->findOrFail($leagueId);
+
+        return [$community, $league];
+    }
+
+    private function latestCommunityDraft(mixed $community, PlatformLeague $platformLeague): ?Draft
+    {
+        return $platformLeague->drafts()
+            ->with(['picks.platformTeam'])
+            ->where('source_type', 'platform_mirror')
+            ->latest('updated_at')
+            ->first()
+            ?? $platformLeague->drafts()
+                ->with(['picks.platformTeam'])
+                ->latest('updated_at')
+                ->first();
+    }
+
+    /**
+     * Return available entry draft player options for testing.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function draftTestingEntryDraftees(): array
+    {
+        $latestEntryDraftYear = $this->latestEntryDraftYear();
+
+        if (! $latestEntryDraftYear) {
+            return [];
+        }
+
+        return Player::query()
+            ->where('draft_year', $latestEntryDraftYear)
+            ->orderByRaw('draft_oa is null')
+            ->orderBy('draft_oa')
+            ->orderBy('full_name')
+            ->get(['id', 'full_name', 'position', 'team_abbrev', 'draft_year', 'draft_round', 'draft_round_pick', 'draft_oa', 'head_shot_url'])
+            ->map(static function (Player $player): array {
+                return [
+                    'id' => (int) $player->id,
+                    'name' => (string) ($player->full_name ?: 'Unknown player'),
+                    'position' => $player->position ? (string) $player->position : null,
+                    'team_abbrev' => $player->team_abbrev ? (string) $player->team_abbrev : null,
+                    'draft_year' => $player->draft_year ? (int) $player->draft_year : null,
+                    'draft_round' => $player->draft_round ? (int) $player->draft_round : null,
+                    'draft_round_pick' => $player->draft_round_pick ? (int) $player->draft_round_pick : null,
+                    'draft_oa' => $player->draft_oa ? (int) $player->draft_oa : null,
+                    'avatar_url' => $player->head_shot_url ? (string) $player->head_shot_url : null,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return unpicked draft picks after excluding locally simulated picks.
+     *
+     * @param array<int,string> $simulatedPickKeys
+     * @param array<string,mixed> $activeProviderScope
+     * @return Collection<int,DraftPick>
+     */
+    private function draftTestingAvailablePicks(
+        Draft $draft,
+        PlatformLeague $platformLeague,
+        array $simulatedPickKeys,
+        array $activeProviderScope
+    ): Collection
+    {
+        $simulatedPickKeys = collect($simulatedPickKeys)->flip();
+
+        return $draft->picks
+            ->filter(fn (DraftPick $pick): bool => $this->draftPickMatchesProviderScope($pick, $platformLeague, $activeProviderScope))
+            ->filter(static fn (DraftPick $pick): bool => blank($pick->provider_player_id) && blank($pick->player_id))
+            ->sortBy([
+                ['overall_pick', 'asc'],
+                ['round', 'asc'],
+                ['pick_in_round', 'asc'],
+                ['provider_pick_key', 'asc'],
+            ])
+            ->reject(fn (DraftPick $pick): bool => $simulatedPickKeys->has($this->draftTestingPickKey($pick)))
+            ->values();
+    }
+
+    private function draftTestingPickKey(DraftPick $pick): string
+    {
+        $providerPickKey = trim((string) $pick->provider_pick_key);
+
+        return $providerPickKey !== '' ? $providerPickKey : 'draft-pick:' . $pick->id;
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function draftTestingPickPayload(mixed $pick): ?array
+    {
+        if (! $pick instanceof DraftPick) {
+            return null;
+        }
+
+        return [
+            'key' => $this->draftTestingPickKey($pick),
+            'team_name' => (string) ($pick->platformTeam?->name ?: $pick->provider_team_id ?: 'Unknown team'),
+            'round' => $pick->round !== null ? (int) $pick->round : null,
+            'pick' => $pick->pick !== null ? (int) $pick->pick : null,
+            'pick_in_round' => $pick->pick_in_round !== null ? (int) $pick->pick_in_round : null,
+            'overall_pick' => $pick->overall_pick !== null ? (int) $pick->overall_pick : null,
+        ];
+    }
+
+    /**
+     * @param array<string,bool> $options
+     */
+    private function draftTestingMessage(
+        DraftPick $currentPick,
+        Player $player,
+        mixed $nextPick,
+        mixed $onDeckPick,
+        array $options
+    ): string {
+        $teamName = (string) ($currentPick->platformTeam?->name ?: $currentPick->provider_team_id ?: 'Unknown team');
+        $pickLabel = $currentPick->overall_pick ? (string) $currentPick->overall_pick : 'unknown';
+        $message = "{$teamName} selects {$player->full_name} with pick {$pickLabel}.";
+
+        if (($options['announce_otc'] ?? true) && $nextPick instanceof DraftPick) {
+            $message .= ' ' . (string) ($nextPick->platformTeam?->name ?: $nextPick->provider_team_id ?: 'Unknown team') . ' is now OTC.';
+        }
+
+        if (($options['announce_on_deck'] ?? false) && $onDeckPick instanceof DraftPick) {
+            $message .= ' ' . (string) ($onDeckPick->platformTeam?->name ?: $onDeckPick->provider_team_id ?: 'Unknown team') . ' is on deck.';
+        }
+
+        return $message;
+    }
+
+    /**
+     * @return array{content:string,allowed_mentions:array{parse:array<int,string>,users:array<int,string>},card:array<string,mixed>}
+     */
+    private function draftTestingDiscordPayload(DraftPick $currentPick, Player $player, string $message): array
+    {
+        $isGoalie = $this->draftTestingPlayerIsGoalie($player);
+        $stats = $this->draftTestingRecentSeasonStats((int) $player->id);
+
+        return [
+            'content' => $message,
+            'allowed_mentions' => [
+                'parse' => [],
+                'users' => [],
+            ],
+            'card' => [
+                'overall_pick' => $currentPick->overall_pick,
+                'round' => $currentPick->round,
+                'pick_in_round' => $currentPick->pick_in_round,
+                'player_name' => (string) ($player->full_name ?: 'Unknown player'),
+                'position' => $player->position,
+                'avatar_url' => $player->head_shot_url,
+                'team_name' => (string) ($currentPick->platformTeam?->name ?: $currentPick->provider_team_id ?: 'Unknown team'),
+                'team_abbrev' => $player->team_abbrev,
+                'drafting_owner_avatar_url' => $currentPick->platformTeam?->logo_url,
+                'stats' => $stats,
+                'stat_headers' => $isGoalie ? ['GP', 'W', 'SV', 'SV%'] : ['GP', 'G', 'A', 'PTS'],
+                'stat_keys' => $isGoalie ? ['gp', 'wins', 'saves', 'sv_pct'] : ['gp', 'g', 'a', 'pts'],
+            ],
+        ];
+    }
+
+    private function draftTestingPlayerIsGoalie(Player $player): bool
+    {
+        return collect([$player->position, $player->pos_type])
+            ->filter()
+            ->contains(static fn (string $position): bool => strtoupper(trim($position)) === 'G');
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function draftTestingRecentSeasonStats(int $playerId): array
+    {
+        return Stat::query()
+            ->where('player_id', $playerId)
+            ->orderByDesc('season_id')
+            ->orderByDesc('gp')
+            ->orderByDesc('updated_at')
+            ->get(['season_id', 'league_abbrev', 'nhl_team_abbrev', 'team_name', 'gp', 'g', 'a', 'pts', 'wins', 'saves', 'sv_pct', 'updated_at'])
+            ->groupBy(static fn (Stat $stat): string => (string) $stat->season_id)
+            ->sortKeysDesc()
+            ->take(2)
+            ->map(static function ($seasonStats): array {
+                $stat = $seasonStats
+                    ->sortByDesc(static fn (Stat $stat): int => (int) $stat->gp)
+                    ->first();
+
+                return [
+                    'season_id' => (string) $stat->season_id,
+                    'league_abbrev' => (string) $stat->league_abbrev,
+                    'team_abbrev' => $stat->nhl_team_abbrev ? (string) $stat->nhl_team_abbrev : null,
+                    'team_name' => $stat->team_name ? (string) $stat->team_name : null,
+                    'gp' => (int) $stat->gp,
+                    'g' => (int) $stat->g,
+                    'a' => (int) $stat->a,
+                    'pts' => (int) $stat->pts,
+                    'wins' => $stat->wins === null ? null : (int) $stat->wins,
+                    'saves' => $stat->saves === null ? null : (int) $stat->saves,
+                    'sv_pct' => $stat->sv_pct === null ? null : (float) $stat->sv_pct,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function postDraftTestingDiscordMessage(string $channelId, array $payload): bool
+    {
+        $token = (string) config('apiurls.discord-bot.key');
+
+        if ($token === '') {
+            return false;
+        }
+
+        $cardPath = app(DraftPickCardRenderer::class)->render(is_array($payload['card'] ?? null) ? $payload['card'] : []);
+
+        try {
+            if ($cardPath) {
+                $cardContents = file_get_contents($cardPath);
+
+                if ($cardContents !== false) {
+                    $response = Http::withHeaders(['Authorization' => 'Bot ' . $token])
+                        ->acceptJson()
+                        ->asMultipart()
+                        ->attach('files[0]', $cardContents, 'draft-pick-card.png')
+                        ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', [
+                            'payload_json' => json_encode($this->draftTestingDiscordTextPayload($payload), JSON_UNESCAPED_SLASHES),
+                        ]);
+                } else {
+                    $response = $this->postDraftTestingDiscordTextMessage($channelId, $token, $payload);
+                }
+            } else {
+                $response = $this->postDraftTestingDiscordTextMessage($channelId, $token, $payload);
+            }
+        } finally {
+            if ($cardPath && file_exists($cardPath)) {
+                @unlink($cardPath);
+            }
+        }
+
+        return $response->successful();
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function postDraftTestingDiscordTextMessage(string $channelId, string $token, array $payload): \Illuminate\Http\Client\Response
+    {
+        return Http::withHeaders(['Authorization' => 'Bot ' . $token])
+            ->acceptJson()
+            ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $this->draftTestingDiscordTextPayload($payload));
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array{content:string,allowed_mentions:array<string,mixed>}
+     */
+    private function draftTestingDiscordTextPayload(array $payload): array
+    {
+        return [
+            'content' => (string) ($payload['content'] ?? ''),
+            'allowed_mentions' => [
+                'parse' => [],
+                'users' => [],
             ],
         ];
     }
@@ -752,6 +1162,7 @@ class CommunityLeagues extends Controller
         return view('leagues._draft-live-panel', [
             'drafting' => $drafting,
             'draftRounds' => collect($drafting['rounds'] ?? []),
+            'enableCommunityDraftTesting' => true,
         ])->render();
     }
 
