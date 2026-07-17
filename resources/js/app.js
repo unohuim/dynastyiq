@@ -10,6 +10,7 @@ import './analytics-tracker.js';
 import './pages/stats-units.js';
 import './admin/player-triage.js';
 import './components/community-members-store';
+import './components/draft-round-scrollbar';
 import { registerToastStack } from './components/toast-stack';
 import adminHub from './admin/admin-hub';
 window.adminHub = adminHub;

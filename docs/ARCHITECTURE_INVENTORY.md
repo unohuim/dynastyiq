@@ -230,13 +230,14 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 Fetch Fantrax draft payloads and mirror them into canonical Draft Central tables.
 Division-scoped draft rows include provider division context in their provider pick key, and pending rows without a provider player id do not emit pick-made events.
 User-facing division-scoped Draft Central reads in the /leagues experience default users to their own Fantrax division or pool, including commissioner users.
+DraftPickMade may open a minimal current platform roster membership for the drafting team before the next full Fantrax roster refresh.
 
 **When to Use:**
 Polling Fantrax draft payloads, comparing latest provider draft rows against canonical draft picks, and emitting events when a previously unmade canonical pick receives a Fantrax player id.
 Discord draft announcement cards use skater columns GP/G/A/PTS and goalie columns GP/W/SV/SV% based on canonical or provider position.
 
 **When Not to Use:**
-Rendering the draft window directly from Fantrax cache tables, storing every raw polling snapshot, or syncing Fantrax rosters.
+Rendering the draft window directly from Fantrax cache tables, storing every raw polling snapshot, or rebuilding full Fantrax rosters.
 
 **Public Interface:**
 - `SyncFantraxDraftState::sync`
@@ -1699,12 +1700,13 @@ $drafting = app(FantraxDraftingWindow::class)->normalize($leagueInfo, $draftResu
 **Purpose:**
 Store platform-neutral draft configuration, pick order, pick selections, and notification settings for Draft Central.
 Provider draft order shape is retained in draft settings, and division-scoped mirrored drafts may leave overall pick empty because provider pick numbers can repeat by division.
+DraftPickMade may trigger a minimal current roster membership update, while full roster slot/status metadata remains owned by provider roster sync.
 
 **When to Use:**
 Building Draft Central UI/API payloads, mirroring provider draft data, or running DynastyIQ-managed drafts.
 
 **When Not to Use:**
-Raw provider polling snapshots or current platform roster sync.
+Raw provider polling snapshots or full current platform roster sync from provider roster payloads.
 
 **Public Interface:**
 - `Draft`
@@ -1939,7 +1941,9 @@ app(PatreonSyncService::class)->syncProviderAccount($providerAccount);
 **Location:**
 - `app/Models/DiscordServer.php`
 - `app/Http/Controllers/Auth/DiscordServerCallbackController.php`
+- `app/Http/Controllers/DiscordCommunityMemberRefreshController.php`
 - `app/Http/Controllers/Api/DiscordWebhookController.php`
+- `app/Services/DiscordCommunityMemberSyncService.php`
 - `app/Events/DiscordMemberConnected.php`
 - `app/Listeners/MarkDiscordConnected.php`
 
@@ -1947,7 +1951,7 @@ app(PatreonSyncService::class)->syncProviderAccount($providerAccount);
 Attach Discord guilds to organizations and connect Discord member events to users, memberships, and bot behavior.
 
 **When to Use:**
-Guild connection OAuth, Discord member join webhooks, and server-aware community features.
+Guild connection OAuth, Discord member join webhooks, manual Discord member refresh, and server-aware community features.
 
 **When Not to Use:**
 General OAuth login, Fantrax role sync internals, or non-Discord provider data.
@@ -1955,8 +1959,10 @@ General OAuth login, Fantrax role sync internals, or non-Discord provider data.
 **Public Interface:**
 - `discord-server.redirect`
 - `discord-server.callback`
+- `organizations.discord-servers.members.refresh`
 - `discord.webhooks.memberJoined`
 - `DiscordServer`
+- `DiscordCommunityMemberSyncService`
 
 **Example Usage:**
 ```php

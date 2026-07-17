@@ -71,6 +71,7 @@ export class StatsFilterState {
     this.state.selectedPos = [];
     this.state.selectedPosTypes = [];
     this.state.selectedLeagues = [];
+    this.state.selectedDraftYear = '';
     this.state.dirtyNumericFilters = {};
     this.syncNumericFiltersFromPayload(payload, schemaAdapter, true);
   }

@@ -8,6 +8,7 @@ use App\Listeners\AnnounceFantraxDraftPick;
 use App\Listeners\QueueCapWagesContractRefresh;
 use App\Listeners\QueueNhlIdentityResolution;
 use App\Listeners\SyncFantraxRosterMembershipsForLinkedIdentity;
+use App\Listeners\UpdateRosterMembershipForDraftPick;
 use App\Models\Player;
 use App\Observers\PlayerNhlIdentityObserver;
 use Illuminate\Support\ServiceProvider;
@@ -60,6 +61,7 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(PlayerExternalIdentityLinked::class, QueueCapWagesContractRefresh::class);
         Event::listen(PlayerExternalIdentityLinked::class, QueueNhlIdentityResolution::class);
         Event::listen(PlayerExternalIdentityLinked::class, SyncFantraxRosterMembershipsForLinkedIdentity::class);
+        Event::listen(DraftPickMade::class, UpdateRosterMembershipForDraftPick::class);
         Event::listen(DraftPickMade::class, AnnounceFantraxDraftPick::class);
         Player::observe(PlayerNhlIdentityObserver::class);
 

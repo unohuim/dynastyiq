@@ -6,6 +6,8 @@ namespace App\Http\Controllers;
 
 use App\Models\FantraxPlayer;
 use App\Models\DiscordServer;
+use App\Models\Draft;
+use App\Models\DraftPick;
 use App\Events\TeamLogosSynced;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Models\PlatformLeague;
@@ -18,9 +20,11 @@ use App\Services\LeagueProviderBindingService;
 use App\Services\YahooFantasyLeagueService;
 use App\Traits\HasAPITrait;
 use App\ViewModels\LeagueShowViewModel;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
@@ -83,6 +87,9 @@ class CommunityLeagues extends Controller
         $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
         $platformLeagueId = $platformLeague?->platform_league_id;
         $isFantraxLeague = $platformLeague?->platform === 'fantrax' && filled($platformLeagueId);
+        $communityProviderScope = $platformLeague instanceof PlatformLeague
+            ? $this->communityProviderScope($platformLeague, $activeProviderScope)
+            : [];
         $canSyncTeamLogos = $platformLeague instanceof PlatformLeague
             && in_array($platformLeague->platform, ['fantrax', 'yahoo'], true)
             && $this->canManageLeague($league, $user);
@@ -100,7 +107,7 @@ class CommunityLeagues extends Controller
                 $teams = collect(is_array($apiTeams) ? $apiTeams : [])
                     ->filter(static fn (mixed $team): bool => is_array($team))
                     ->filter(fn (array $team): bool => $platformLeague instanceof PlatformLeague
-                        ? $this->teamMatchesProviderScope($team, $platformLeague, $activeProviderScope)
+                        ? $this->teamMatchesProviderScope($team, $platformLeague, $communityProviderScope)
                         : true)
                     ->map(function (array $team): array {
                         return [
@@ -173,6 +180,9 @@ class CommunityLeagues extends Controller
                 $draftPickInfo
             )
             : $draftingWindow->normalize([], []);
+        $drafting = $platformLeague instanceof PlatformLeague
+            ? $this->scopedCommunityDraftingPayload($drafting, $platformLeague, $communityProviderScope)
+            : $drafting;
         $drafting['config'] = $this->draftingConfig($community, $league);
 
         $vm = new LeagueShowViewModel(
@@ -201,7 +211,7 @@ class CommunityLeagues extends Controller
             ]),
         ];
         $payload['league_shape'] = $platformLeague instanceof PlatformLeague
-            ? $this->leagueShapePayload($platformLeague, $activeProviderScope)
+            ? $this->leagueShapePayload($platformLeague, $communityProviderScope)
             : [];
 
         return view('communities.leagues.show', [
@@ -236,6 +246,895 @@ class CommunityLeagues extends Controller
                 'label' => data_get($activeProviderScope, 'scope_label'),
             ],
         ];
+    }
+
+    /**
+     * Return stored fantasy teams for a community league wrapper.
+     */
+    public function teams(int $cId, int $lId): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        if (! $platformLeague instanceof PlatformLeague) {
+            return response()->json([
+                'ok' => true,
+                'teams' => [],
+                'message' => 'No fantasy platform league is connected.',
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'teams' => $this->communityTeamRows(
+                $platformLeague,
+                $this->communityProviderScope($platformLeague, $league->activePlatformScope())
+            ),
+        ]);
+    }
+
+    /**
+     * Return draft status cards for a community league wrapper.
+     */
+    public function draftSummary(int $cId, int $lId): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        if (! $platformLeague instanceof PlatformLeague || $platformLeague->platform !== 'fantrax') {
+            $drafting = app(FantraxDraftingWindow::class)->normalize([], []);
+            $drafting['empty_text'] = 'No Fantrax draft connected.';
+
+            return response()->json([
+                'ok' => true,
+                'summary' => $this->emptyDraftSummary('No Fantrax draft connected.'),
+                'live_html' => $this->communityDraftLiveHtml($drafting),
+                'active_round_index' => 0,
+            ]);
+        }
+
+        $draft = $platformLeague->drafts()
+            ->with(['picks.player', 'picks.platformTeam'])
+            ->where('source_type', 'platform_mirror')
+            ->latest('updated_at')
+            ->first()
+            ?? $platformLeague->drafts()
+                ->with(['picks.player', 'picks.platformTeam'])
+                ->latest('updated_at')
+                ->first();
+        $communityProviderScope = $this->communityProviderScope($platformLeague, $league->activePlatformScope());
+
+        if ($draft instanceof Draft) {
+            $drafting = $this->canonicalCommunityDraftingPayload(
+                $draft,
+                $platformLeague,
+                $communityProviderScope
+            );
+
+            return response()->json([
+                'ok' => true,
+                'summary' => $this->communityDraftSummaryPayload(
+                    $drafting,
+                    $platformLeague,
+                    []
+                ),
+                'live_html' => $this->communityDraftLiveHtml($drafting),
+                'active_round_index' => (int) ($drafting['active_round_index'] ?? 0),
+            ]);
+        }
+
+        $platformLeagueId = (string) $platformLeague->platform_league_id;
+        $draftingWindow = app(FantraxDraftingWindow::class);
+        $draftResults = [];
+        $draftPickInfo = [];
+        $draftError = null;
+
+        try {
+            $resp = $this->getAPIData('fantrax', 'draft_results', [
+                'leagueId' => $platformLeagueId,
+            ]);
+            $draftResults = is_array($resp) ? $resp : [];
+        } catch (Throwable $e) {
+            $draftError = $e;
+        }
+
+        try {
+            $resp = $this->getAPIData('fantrax', 'draft_picks', [
+                'leagueId' => $platformLeagueId,
+            ]);
+            $draftPickInfo = is_array($resp) ? $resp : [];
+        } catch (Throwable) {
+            $draftPickInfo = [];
+        }
+
+        $teamMap = $this->fantraxDraftTeamMap((int) $platformLeague->id);
+        $drafting = $draftingWindow->normalize(
+            [],
+            $draftResults,
+            $draftError,
+            null,
+            $this->fantraxDraftPlayerMap($draftingWindow->fantraxPlayerIds($draftResults)),
+            $teamMap,
+            $draftPickInfo
+        );
+        $drafting = $this->scopedCommunityDraftingPayload($drafting, $platformLeague, $communityProviderScope);
+
+        return response()->json([
+            'ok' => true,
+            'summary' => $this->communityDraftSummaryPayload(
+                $drafting,
+                $platformLeague,
+                []
+            ),
+            'live_html' => $this->communityDraftLiveHtml($drafting),
+            'active_round_index' => (int) ($drafting['active_round_index'] ?? 0),
+        ]);
+    }
+
+    /**
+     * Apply a community provider scope only when the platform league has division-scoped player pools.
+     *
+     * @param array<string,mixed> $activeProviderScope
+     * @return array<string,mixed>
+     */
+    private function communityProviderScope(PlatformLeague $platformLeague, array $activeProviderScope = []): array
+    {
+        $shape = data_get($platformLeague, 'settings.league_shape', []);
+        $playerPoolScope = is_array($shape) ? (string) ($shape['player_pool_scope'] ?? '') : '';
+        $duplicatePlayerType = is_array($shape) ? strtoupper((string) ($shape['duplicate_player_type'] ?? '')) : '';
+
+        if ($playerPoolScope !== 'division' && $duplicatePlayerType !== 'ACROSS_DIVISIONS') {
+            return [];
+        }
+
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return [];
+        }
+
+        if ((string) data_get($activeProviderScope, 'scope_key', '') === '') {
+            return [];
+        }
+
+        return $activeProviderScope;
+    }
+
+    /**
+     * Filter and rebuild a community draft payload for the effective provider scope.
+     *
+     * @param array<string,mixed> $drafting
+     * @param array<string,mixed> $activeProviderScope
+     * @return array<string,mixed>
+     */
+    private function scopedCommunityDraftingPayload(
+        array $drafting,
+        PlatformLeague $platformLeague,
+        array $activeProviderScope = []
+    ): array {
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return $drafting;
+        }
+
+        $rows = collect($drafting['rows'] ?? [])
+            ->filter(static fn (mixed $row): bool => is_array($row))
+            ->filter(fn (array $row): bool => $this->draftRowMatchesProviderScope($row, $platformLeague, $activeProviderScope))
+            ->values();
+
+        if (! $rows->contains(static fn (array $row): bool => ! empty($row['is_next_pick']))) {
+            $markedNextPick = false;
+            $rows = $rows
+                ->map(function (array $row) use (&$markedNextPick): array {
+                    $row['is_next_pick'] = false;
+
+                    if (! $markedNextPick && ! $this->communityDraftRowIsPicked($row)) {
+                        $row['is_next_pick'] = true;
+                        $markedNextPick = true;
+                    }
+
+                    return $row;
+                })
+                ->values();
+        }
+
+        $drafting['rows'] = $rows->all();
+        $drafting['rounds'] = $this->communityDraftRounds($rows)
+            ->map(function (array $round) use ($rows): array {
+                $round['count'] = $rows
+                    ->filter(static fn (array $row): bool => ($row['round'] ?? null) === $round['round'])
+                    ->count();
+                $round['rows'] = $rows
+                    ->filter(static fn (array $row): bool => ($row['round'] ?? null) === $round['round'])
+                    ->values()
+                    ->all();
+
+                return $round;
+            })
+            ->values()
+            ->all();
+        $drafting['active_round_index'] = $this->communityDraftActiveRoundIndex($drafting['rounds']);
+
+        return $drafting;
+    }
+
+    /**
+     * Build the community draft header payload from a normalized draft.
+     *
+     * @param array<string,mixed> $drafting
+     * @param array<string,mixed> $activeProviderScope
+     * @return array<string,mixed>
+     */
+    private function communityDraftSummaryPayload(
+        array $drafting,
+        PlatformLeague $platformLeague,
+        array $activeProviderScope = []
+    ): array
+    {
+        $rows = collect($drafting['rows'] ?? [])
+            ->filter(static fn (mixed $row): bool => is_array($row))
+            ->filter(fn (array $row): bool => $this->draftRowMatchesProviderScope($row, $platformLeague, $activeProviderScope))
+            ->values();
+        $isCompleted = strtolower((string) ($drafting['status_text'] ?? '')) === 'complete';
+        $pickedRows = $rows
+            ->filter(fn (array $row): bool => $this->communityDraftRowIsPicked($row))
+            ->values();
+        $nextPick = $isCompleted
+            ? null
+            : ($rows->first(static fn (array $row): bool => ! empty($row['is_next_pick']))
+                ?? $rows->first(fn (array $row): bool => ! $this->communityDraftRowIsPicked($row)));
+        $upNextPick = $isCompleted
+            ? null
+            : $this->communityDraftRowAfter($rows, $nextPick);
+        $rounds = $this->communityDraftRounds($rows);
+
+        return [
+            'available' => (bool) ($drafting['available'] ?? true),
+            'status_text' => (string) ($drafting['status_text'] ?? 'Draft'),
+            'status_tone' => (string) ($drafting['status_tone'] ?? 'slate'),
+            'draft_at' => (string) ($drafting['draft_at'] ?? ''),
+            'draft_at_label' => $this->communityDraftAtLabel((string) ($drafting['draft_at'] ?? '')),
+            'is_completed' => $isCompleted,
+            'time_remaining_label' => $isCompleted ? '-' : '--:--',
+            'countdown_expires_at' => (string) ($drafting['countdown_expires_at'] ?? ''),
+            'otc_team' => $this->communityDraftPickTeamPayload($nextPick, 'Awaiting pick'),
+            'up_next_team' => $this->communityDraftPickTeamPayload($upNextPick, 'No upcoming pick'),
+            'drafted_count' => $pickedRows->count(),
+            'total_picks' => $rows->count(),
+            'rounds' => $rounds
+                ->all(),
+            'active_round' => is_array($nextPick) ? ($nextPick['round'] ?? null) : null,
+        ];
+    }
+
+    /**
+     * Return the next unpicked normalized draft row after the current row.
+     *
+     * @param Collection<int,array<string,mixed>> $rows
+     * @param array<string,mixed>|null $currentPick
+     * @return array<string,mixed>|null
+     */
+    private function communityDraftRowAfter(Collection $rows, ?array $currentPick): ?array
+    {
+        if (! is_array($currentPick)) {
+            return null;
+        }
+
+        $currentKey = (string) ($currentPick['provider_pick_key'] ?? '');
+        $currentIndex = $rows
+            ->values()
+            ->search(function (array $row) use ($currentPick, $currentKey): bool {
+                if ($currentKey !== '' && (string) ($row['provider_pick_key'] ?? '') === $currentKey) {
+                    return true;
+                }
+
+                return $row === $currentPick;
+            });
+
+        if ($currentIndex === false) {
+            return null;
+        }
+
+        return $rows
+            ->values()
+            ->slice(((int) $currentIndex) + 1)
+            ->first(fn (array $row): bool => ! $this->communityDraftRowIsPicked($row));
+    }
+
+    /**
+     * Determine whether a normalized draft row has a picked player.
+     *
+     * @param array<string,mixed> $row
+     */
+    private function communityDraftRowIsPicked(array $row): bool
+    {
+        return (bool) ($row['is_picked'] ?? ! empty($row['fantrax_player_id']) || ! empty($row['player_id']));
+    }
+
+    /**
+     * Choose the initial round index for a scoped community draft payload.
+     *
+     * @param array<int,array<string,mixed>> $rounds
+     */
+    private function communityDraftActiveRoundIndex(array $rounds): int
+    {
+        foreach ($rounds as $index => $round) {
+            foreach ($round['rows'] ?? [] as $row) {
+                if (is_array($row) && ! empty($row['is_next_pick'])) {
+                    return $index;
+                }
+            }
+        }
+
+        return max(0, count($rounds) - 1);
+    }
+
+    /**
+     * Build compact round labels from scoped draft rows.
+     *
+     * @param Collection<int,array<string,mixed>> $rows
+     * @return Collection<int,array{round:int|null,label:string}>
+     */
+    private function communityDraftRounds(Collection $rows): Collection
+    {
+        return $rows
+            ->groupBy(static fn (array $row): string => ($row['round'] ?? null) === null ? 'unknown' : (string) $row['round'])
+            ->map(static function ($roundRows, string $round): array {
+                $roundNumber = $round === 'unknown' ? null : (int) $round;
+
+                return [
+                    'round' => $roundNumber,
+                    'label' => $roundNumber === null ? 'Round' : 'Round ' . $roundNumber,
+                ];
+            })
+            ->sortBy(static fn (array $round): int => $round['round'] ?? PHP_INT_MAX)
+            ->values();
+    }
+
+    /**
+     * Render the shared Draft Central live pick list for the community selected-league panel.
+     *
+     * @param array<string,mixed> $drafting
+     */
+    private function communityDraftLiveHtml(array $drafting): string
+    {
+        return view('leagues._draft-live-panel', [
+            'drafting' => $drafting,
+            'draftRounds' => collect($drafting['rounds'] ?? []),
+        ])->render();
+    }
+
+    /**
+     * Build a community-safe Draft Central live payload from stored draft rows.
+     *
+     * @param array<string,mixed> $activeProviderScope
+     * @return array<string,mixed>
+     */
+    private function canonicalCommunityDraftingPayload(
+        Draft $draft,
+        PlatformLeague $platformLeague,
+        array $activeProviderScope = []
+    ): array {
+        $picks = $draft->picks instanceof Collection
+            ? $draft->picks
+            : $draft->picks()
+                ->with(['player', 'platformTeam'])
+                ->orderBy('overall_pick')
+                ->orderBy('round')
+                ->orderBy('pick_in_round')
+                ->orderBy('provider_pick_key')
+                ->get();
+        $picks = $picks
+            ->filter(fn (DraftPick $pick): bool => $this->draftPickMatchesProviderScope($pick, $platformLeague, $activeProviderScope))
+            ->sortBy([
+                ['overall_pick', 'asc'],
+                ['round', 'asc'],
+                ['pick_in_round', 'asc'],
+                ['provider_pick_key', 'asc'],
+            ])
+            ->values();
+        $providerPlayerIds = $picks
+            ->pluck('provider_player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): string => (string) $playerId)
+            ->unique()
+            ->values()
+            ->all();
+        $currentPick = $picks->first(static fn (DraftPick $pick): bool => (string) $pick->status === 'on_clock')
+            ?? $picks->first(static fn (DraftPick $pick): bool => blank($pick->provider_player_id) && blank($pick->player_id));
+        $providerPlayerMap = $this->fantraxDraftPlayerMap($providerPlayerIds);
+        $teamMap = $this->fantraxDraftTeamMap((int) $platformLeague->id);
+
+        $rows = $picks
+            ->map(function (DraftPick $pick) use ($providerPlayerMap, $teamMap): array {
+                $providerPlayerId = $pick->provider_player_id ? (string) $pick->provider_player_id : '';
+                $mappedPlayer = $providerPlayerId !== ''
+                    ? ($providerPlayerMap[$providerPlayerId] ?? [])
+                    : [];
+                $providerTeamId = $pick->provider_team_id ? (string) $pick->provider_team_id : '';
+                $mappedTeam = $providerTeamId !== '' ? ($teamMap[$providerTeamId] ?? []) : [];
+                $hasPlayer = $providerPlayerId !== '' || filled($pick->player_id);
+                $rawPayload = is_array($pick->raw_payload) ? $pick->raw_payload : [];
+
+                return [
+                    'player_name' => $hasPlayer
+                        ? ((string) ($mappedPlayer['name'] ?? '') ?: (string) ($pick->player?->full_name ?? 'Unknown player'))
+                        : '',
+                    'fantrax_player_id' => $providerPlayerId,
+                    'is_picked' => $hasPlayer,
+                    'player_id' => $pick->player_id ? (int) $pick->player_id : null,
+                    'nhl_id' => $mappedPlayer['nhl_id'] ?? ($pick->player?->nhl_id ? (int) $pick->player->nhl_id : null),
+                    'position' => $mappedPlayer['position'] ?? $pick->player?->position,
+                    'age' => $mappedPlayer['age'] ?? $pick->player?->age(),
+                    'league_abbrev' => $mappedPlayer['league_abbrev'] ?? null,
+                    'team_abbrev' => $mappedPlayer['team_abbrev'] ?? null,
+                    'avatar_url' => $mappedPlayer['avatar_url'] ?? $pick->player?->head_shot_url,
+                    'next_season' => $mappedPlayer['next_season'] ?? null,
+                    'stats' => $mappedPlayer['stats'] ?? [
+                        'gp' => null,
+                        'g' => null,
+                        'a' => null,
+                        'pts' => null,
+                        'wins' => null,
+                        'sv_pct' => null,
+                    ],
+                    'team_id' => $providerTeamId,
+                    'team_name' => (string) ($pick->platformTeam?->name ?: ($mappedTeam['team_name'] ?? ($providerTeamId ?: 'Unknown team'))),
+                    'team_avatar_url' => $mappedTeam['owner_avatar_url'] ?? $pick->platformTeam?->logo_url,
+                    'round' => $pick->round !== null ? (int) $pick->round : null,
+                    'pick' => $pick->pick !== null ? (int) $pick->pick : null,
+                    'pick_in_round' => $pick->pick_in_round !== null ? (int) $pick->pick_in_round : null,
+                    'overall_pick' => $pick->overall_pick !== null ? (int) $pick->overall_pick : null,
+                    'provider_pick_key' => (string) $pick->provider_pick_key,
+                    'division' => (string) ($rawPayload['division'] ?? ''),
+                    'picked_at' => $pick->picked_at?->toIso8601String(),
+                    'is_next_pick' => (string) $pick->status === 'on_clock',
+                ];
+            })
+            ->values();
+
+        if (! $rows->contains(static fn (array $row): bool => ! empty($row['is_next_pick']))) {
+            $markedNextPick = false;
+            $rows = $rows
+                ->map(function (array $row) use (&$markedNextPick): array {
+                    $row['is_next_pick'] = false;
+
+                    if (! $markedNextPick && ! $this->communityDraftRowIsPicked($row)) {
+                        $row['is_next_pick'] = true;
+                        $markedNextPick = true;
+                    }
+
+                    return $row;
+                })
+                ->values();
+        }
+
+        $rounds = $this->communityDraftRounds($rows)
+            ->map(function (array $round) use ($rows): array {
+                $round['count'] = $rows
+                    ->filter(static fn (array $row): bool => ($row['round'] ?? null) === $round['round'])
+                    ->count();
+                $round['rows'] = $rows
+                    ->filter(static fn (array $row): bool => ($row['round'] ?? null) === $round['round'])
+                    ->values()
+                    ->all();
+
+                return $round;
+            })
+            ->values()
+            ->all();
+
+        return [
+            'available' => true,
+            'title' => $draft->starts_at?->format('F j, Y') ?? $draft->name,
+            'draft_at' => $draft->starts_at?->toIso8601String(),
+            'is_live' => (string) $draft->status === 'live',
+            'status_text' => ucfirst((string) $draft->status),
+            'status_tone' => match ((string) $draft->status) {
+                'live' => 'green',
+                'scheduled' => 'blue',
+                default => 'slate',
+            },
+            'countdown_expires_at' => $this->canonicalDraftCountdownExpiresAt($draft, $currentPick),
+            'rows' => $rows->all(),
+            'rounds' => $rounds,
+            'active_round_index' => $this->communityDraftActiveRoundIndex($rounds),
+            'empty_text' => 'No drafted players yet.',
+            'error_text' => null,
+        ];
+    }
+
+    /**
+     * Build the community draft header payload from stored draft tables.
+     *
+     * @return array<string,mixed>
+     */
+    private function canonicalCommunityDraftSummary(
+        Draft $draft,
+        PlatformLeague $platformLeague,
+        array $activeProviderScope = []
+    ): array {
+        $picks = $draft->picks
+            ->filter(fn (DraftPick $pick): bool => $this->draftPickMatchesProviderScope($pick, $platformLeague, $activeProviderScope))
+            ->sortBy([
+                ['overall_pick', 'asc'],
+                ['round', 'asc'],
+                ['pick_in_round', 'asc'],
+                ['provider_pick_key', 'asc'],
+            ])
+            ->values();
+        $isCompleted = (string) $draft->status === 'complete';
+        $pickedRows = $picks
+            ->filter(static fn (DraftPick $pick): bool => filled($pick->provider_player_id) || filled($pick->player_id))
+            ->values();
+        $draftCurrentPick = $draft->currentPick;
+        $scopedCurrentPick = $draftCurrentPick instanceof DraftPick
+            && $picks->contains(static fn (DraftPick $pick): bool => (int) $pick->id === (int) $draftCurrentPick->id)
+                ? $draftCurrentPick
+                : null;
+        $currentPick = $isCompleted
+            ? null
+            : ($scopedCurrentPick
+                ?? $picks->first(static fn (DraftPick $pick): bool => (string) $pick->status === 'on_clock')
+                ?? $picks->first(static fn (DraftPick $pick): bool => blank($pick->provider_player_id) && blank($pick->player_id)));
+        $upNextPick = $isCompleted || ! $currentPick instanceof DraftPick
+            ? null
+            : $this->communityDraftPickAfter($picks, $currentPick);
+        $rounds = $picks
+            ->groupBy(static fn (DraftPick $pick): string => $pick->round === null ? 'unknown' : (string) $pick->round)
+            ->map(static function ($roundPicks, string $round): array {
+                $roundNumber = $round === 'unknown' ? null : (int) $round;
+
+                return [
+                    'round' => $roundNumber,
+                    'label' => $roundNumber === null ? 'Round' : 'Round ' . $roundNumber,
+                ];
+            })
+            ->sortBy(static fn (array $round): int => $round['round'] ?? PHP_INT_MAX)
+            ->values();
+
+        return [
+            'available' => true,
+            'status_text' => ucfirst((string) $draft->status),
+            'status_tone' => match ((string) $draft->status) {
+                'live' => 'green',
+                'scheduled' => 'blue',
+                default => 'slate',
+            },
+            'draft_at' => $draft->starts_at?->toIso8601String() ?? '',
+            'draft_at_label' => $this->communityDraftAtLabel($draft->starts_at?->toIso8601String() ?? ''),
+            'is_completed' => $isCompleted,
+            'time_remaining_label' => $isCompleted ? '-' : '--:--',
+            'countdown_expires_at' => $this->canonicalDraftCountdownExpiresAt($draft, $currentPick),
+            'pick_clock_seconds' => (int) ($draft->pick_clock_seconds ?? 0),
+            'otc_team' => $this->canonicalDraftPickTeamPayload($currentPick, 'Awaiting pick'),
+            'up_next_team' => $this->canonicalDraftPickTeamPayload($upNextPick, 'No upcoming pick'),
+            'drafted_count' => $pickedRows->count(),
+            'total_picks' => $picks->count(),
+            'rounds' => $rounds->all(),
+            'active_round' => $currentPick instanceof DraftPick ? $currentPick->round : null,
+        ];
+    }
+
+    /**
+     * Format a draft start date for compact community draft summaries.
+     */
+    private function communityDraftAtLabel(string $draftAt): string
+    {
+        if ($draftAt === '') {
+            return '';
+        }
+
+        try {
+            return CarbonImmutable::parse($draftAt)->format('M j, Y g:i A');
+        } catch (Throwable) {
+            return '';
+        }
+    }
+
+    /**
+     * Return the next unpicked canonical draft pick after the current pick.
+     *
+     * @param Collection<int,DraftPick> $picks
+     */
+    private function communityDraftPickAfter(Collection $picks, DraftPick $currentPick): ?DraftPick
+    {
+        $currentIndex = $picks
+            ->values()
+            ->search(static fn (DraftPick $pick): bool => (int) $pick->id === (int) $currentPick->id);
+
+        if ($currentIndex === false) {
+            return null;
+        }
+
+        return $picks
+            ->values()
+            ->slice(((int) $currentIndex) + 1)
+            ->first(static fn (DraftPick $pick): bool => blank($pick->provider_player_id) && blank($pick->player_id));
+    }
+
+    private function canonicalDraftCountdownExpiresAt(Draft $draft, ?DraftPick $currentPick): string
+    {
+        if ((string) $draft->status === 'complete') {
+            return '';
+        }
+
+        if ($currentPick instanceof DraftPick && $currentPick->expires_at) {
+            return $currentPick->expires_at->toIso8601String();
+        }
+
+        $pickClockSeconds = (int) ($draft->pick_clock_seconds ?? 0);
+        $lastPickedAt = $draft->picks
+            ->filter(static fn (DraftPick $pick): bool => $pick->picked_at !== null)
+            ->sortByDesc(static fn (DraftPick $pick): int => $pick->picked_at?->getTimestamp() ?? 0)
+            ->first()
+            ?->picked_at;
+
+        if ($pickClockSeconds <= 0 || ! $lastPickedAt) {
+            return '';
+        }
+
+        return $lastPickedAt->copy()
+            ->addSeconds($pickClockSeconds)
+            ->toIso8601String();
+    }
+
+    /**
+     * Determine whether a stored draft pick belongs to the active provider scope.
+     *
+     * @param array<string,mixed> $activeProviderScope
+     */
+    private function draftPickMatchesProviderScope(
+        DraftPick $pick,
+        PlatformLeague $league,
+        array $activeProviderScope
+    ): bool {
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return true;
+        }
+
+        $scopeKey = (string) data_get($activeProviderScope, 'scope_key', '');
+
+        if ($scopeKey === '') {
+            return true;
+        }
+
+        $teamId = (string) ($pick->provider_team_id ?? $pick->platformTeam?->platform_team_id ?? '');
+        $candidates = $this->providerScopeCandidates(
+            $league,
+            $teamId,
+            is_array($pick->raw_payload) ? $pick->raw_payload : [],
+            $pick->platformTeam instanceof PlatformTeam ? $pick->platformTeam : null,
+            (string) $pick->provider_pick_key
+        );
+
+        return collect($candidates)
+            ->contains(fn (string $candidate): bool => $this->providerScopeKey($candidate) === $scopeKey);
+    }
+
+    /**
+     * Determine whether a normalized Fantrax draft row belongs to the active provider scope.
+     *
+     * @param array<string,mixed> $row
+     * @param array<string,mixed> $activeProviderScope
+     */
+    private function draftRowMatchesProviderScope(
+        array $row,
+        PlatformLeague $league,
+        array $activeProviderScope
+    ): bool {
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return true;
+        }
+
+        $scopeKey = (string) data_get($activeProviderScope, 'scope_key', '');
+
+        if ($scopeKey === '') {
+            return true;
+        }
+
+        $teamId = (string) ($row['team_id'] ?? '');
+        $candidates = $this->providerScopeCandidates($league, $teamId, $row);
+
+        return collect($candidates)
+            ->contains(fn (string $candidate): bool => $this->providerScopeKey($candidate) === $scopeKey);
+    }
+
+    /**
+     * Return possible provider scope labels from a team, draft row, or pick key.
+     *
+     * @param array<string,mixed> $payload
+     * @return array<int,string>
+     */
+    private function providerScopeCandidates(
+        PlatformLeague $league,
+        string $providerTeamId = '',
+        array $payload = [],
+        ?PlatformTeam $team = null,
+        string $providerPickKey = ''
+    ): array {
+        $candidates = [];
+
+        if ($providerTeamId !== '') {
+            $candidates[] = (string) data_get($league, 'settings.league_shape.team_divisions.' . $providerTeamId, '');
+        }
+
+        foreach ([
+            'division',
+            'divisionName',
+            'division_name',
+            'pool',
+            'poolName',
+            'pool_name',
+        ] as $key) {
+            $candidates[] = (string) data_get($payload, $key, '');
+        }
+
+        if ($team instanceof PlatformTeam) {
+            $candidates[] = (string) data_get($team->extras, 'fantrax.division', '');
+            $candidates[] = (string) data_get($team->extras, 'fantrax.pool', '');
+        }
+
+        if (preg_match('/(?:division|pool):([^:]+)/', $providerPickKey, $matches) === 1) {
+            $candidates[] = (string) $matches[1];
+        }
+
+        return collect($candidates)
+            ->map(static fn (string $candidate): string => trim($candidate))
+            ->filter(static fn (string $candidate): bool => $candidate !== '')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Build a compact team payload from a stored draft pick.
+     *
+     * @return array<string,mixed>
+     */
+    private function canonicalDraftPickTeamPayload(?DraftPick $pick, string $fallbackName): array
+    {
+        return [
+            'name' => (string) ($pick?->platformTeam?->name ?: $fallbackName),
+            'avatar_url' => $pick?->platformTeam?->logo_url,
+            'round' => $pick?->round,
+            'pick' => $pick?->pick_in_round ?? $pick?->pick,
+        ];
+    }
+
+    /**
+     * Build a compact team payload for a draft card.
+     *
+     * @param array<string,mixed>|null $pick
+     * @return array<string,mixed>
+     */
+    private function communityDraftPickTeamPayload(?array $pick, string $fallbackName): array
+    {
+        return [
+            'name' => (string) data_get($pick, 'team_name', $fallbackName),
+            'avatar_url' => data_get($pick, 'team_avatar_url'),
+            'round' => data_get($pick, 'round'),
+            'pick' => data_get($pick, 'pick_in_round', data_get($pick, 'pick')),
+        ];
+    }
+
+    /**
+     * Return an empty draft header payload.
+     *
+     * @return array<string,mixed>
+     */
+    private function emptyDraftSummary(string $message): array
+    {
+        return [
+            'available' => false,
+            'status_text' => $message,
+            'status_tone' => 'slate',
+            'is_completed' => false,
+            'time_remaining_label' => '-',
+            'countdown_expires_at' => '',
+            'otc_team' => $this->communityDraftPickTeamPayload(null, '-'),
+            'up_next_team' => $this->communityDraftPickTeamPayload(null, '-'),
+            'drafted_count' => 0,
+            'total_picks' => 0,
+            'rounds' => [],
+            'active_round' => null,
+        ];
+    }
+
+    /**
+     * Build community-facing team rows for a selected league wrapper.
+     *
+     * @param array<string,mixed> $activeProviderScope
+     * @return array<int,array<string,mixed>>
+     */
+    private function communityTeamRows(PlatformLeague $platformLeague, array $activeProviderScope = []): array
+    {
+        return $platformLeague->teams()
+            ->with(['users' => static function ($query): void {
+                $query->wherePivot('is_active', true)
+                    ->select('users.id', 'users.name')
+                    ->with(['socialAccounts' => static function ($query): void {
+                        $query->select('id', 'user_id', 'avatar')
+                            ->where('provider', 'discord');
+                    }]);
+            }])
+            ->orderBy('name')
+            ->get(['id', 'platform_team_id', 'name', 'short_name', 'logo_url', 'extras'])
+            ->filter(fn (PlatformTeam $team): bool => $this->platformTeamMatchesProviderScope($team, $platformLeague, $activeProviderScope))
+            ->map(static function (PlatformTeam $team): array {
+                $ownerNames = $team->users
+                    ->pluck('name')
+                    ->filter()
+                    ->values()
+                    ->all();
+                $ownerAvatarUrls = $team->users
+                    ->map(static fn ($user): ?string => $user->socialAccounts->first()?->avatar)
+                    ->filter()
+                    ->values()
+                    ->all();
+
+                return [
+                    'id' => (string) $team->platform_team_id,
+                    'name' => (string) $team->name,
+                    'short_name' => (string) ($team->short_name ?: $team->name),
+                    'logo_url' => filled($team->logo_url) ? (string) $team->logo_url : null,
+                    'owner_names' => $ownerNames,
+                    'owner_avatar_urls' => $ownerAvatarUrls,
+                    'fantrax_division' => data_get($team->extras, 'fantrax.division'),
+                    'fantrax_pool' => data_get($team->extras, 'fantrax.pool'),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Determine whether a stored platform team belongs to the active provider scope.
+     *
+     * @param array<string,mixed> $activeProviderScope
+     */
+    private function platformTeamMatchesProviderScope(
+        PlatformTeam $team,
+        PlatformLeague $league,
+        array $activeProviderScope
+    ): bool {
+        if (data_get($activeProviderScope, 'scope_type') !== 'division') {
+            return true;
+        }
+
+        $scopeKey = (string) data_get($activeProviderScope, 'scope_key', '');
+
+        if ($scopeKey === '') {
+            return true;
+        }
+
+        $teamId = (string) $team->platform_team_id;
+        $division = $teamId !== ''
+            ? (string) data_get($league, 'settings.league_shape.team_divisions.' . $teamId, '')
+            : '';
+
+        if ($division === '') {
+            $division = (string) data_get($team->extras, 'fantrax.division', '');
+        }
+
+        return $this->providerScopeKey($division) === $scopeKey;
     }
 
     /**
@@ -1018,7 +1917,7 @@ class CommunityLeagues extends Controller
     /**
      * Build drafting team owner avatar metadata keyed by Fantrax platform team id.
      *
-     * @return array<string,array{owner_avatar_url:string|null}>
+     * @return array<string,array{team_name:string,owner_avatar_url:string|null}>
      */
     private function fantraxDraftTeamMap(?int $platformLeagueId): array
     {
@@ -1036,7 +1935,7 @@ class CommunityLeagues extends Controller
                             ->where('provider', 'discord');
                     }]);
             }])
-            ->get(['id', 'platform_team_id'])
+            ->get(['id', 'platform_team_id', 'name'])
             ->mapWithKeys(static function (PlatformTeam $team): array {
                 $avatar = null;
 
@@ -1051,6 +1950,7 @@ class CommunityLeagues extends Controller
                 return [
                     (string) $team->platform_team_id => [
                         'owner_avatar_url' => filled($avatar) ? (string) $avatar : null,
+                        'team_name' => (string) $team->name,
                     ],
                 ];
             })

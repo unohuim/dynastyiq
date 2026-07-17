@@ -3,13 +3,16 @@ type: External Platform Connection Pattern
 location:
   - app/Models/DiscordServer.php
   - app/Http/Controllers/Auth/DiscordServerCallbackController.php
+  - app/Http/Controllers/DiscordCommunityMemberRefreshController.php
   - app/Http/Controllers/Api/DiscordWebhookController.php
+  - app/Services/DiscordCommunityMemberSyncService.php
   - app/Events/DiscordMemberConnected.php
   - app/Listeners/MarkDiscordConnected.php
 purpose: Attach Discord guilds to organizations and connect Discord member events to users, memberships, and bot behavior.
 when_to_use:
   - Guild connection OAuth.
   - Discord member join webhooks.
+  - Manual Discord guild member refresh for a connected community server.
   - Server-aware community features.
 when_not_to_use:
   - General OAuth login.
@@ -17,14 +20,18 @@ when_not_to_use:
   - Non-Discord provider data.
 rules:
   - Discord server records represent organization-connected guilds.
+  - Initial Discord server connection should attempt a best-effort member import using the same member sync service as manual refresh.
   - Discord member events must enter through server-side webhook handling.
+  - Manual Discord member refresh must verify that the connected guild belongs to the organization and that the bot can access the guild.
+  - Discord member refresh may upsert community memberships, but must not deactivate missing Discord members until that destructive policy is explicitly approved.
   - Discord connection state must not replace app authorization.
 public_interface:
   - discord-server.redirect
   - discord-server.callback
+  - organizations.discord-servers.members.refresh
   - discord.webhooks.memberJoined
   - DiscordServer
+  - DiscordCommunityMemberSyncService
   - DiscordMemberConnected
 example_usage: |
   event(new DiscordMemberConnected($user, $discordServer));
-

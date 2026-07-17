@@ -34,29 +34,6 @@
                         </span>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">
-                        @can('refresh-leagues')
-                            <button
-                                type="button"
-                                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:cursor-wait disabled:opacity-60"
-                                data-provider-resync-button
-                                data-provider-resync-url="{{ route('leagues.resync') }}"
-                                data-provider-resync-label="all leagues"
-                                aria-label="Refresh all leagues"
-                                title="Refresh all leagues"
-                            >
-                                <svg
-                                    class="h-4 w-4"
-                                    data-provider-resync-icon
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.5"
-                                    aria-hidden="true"
-                                >
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                                </svg>
-                            </button>
-                        @endcan
                         <button
                             type="button"
                             class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"

@@ -1393,6 +1393,35 @@ describe('admin-hub import listeners', () => {
         expect(instance.progressPollers.fantrax).toBeTruthy();
     });
 
+    it('posts fantrax league refresh from the admin imports panel', async () => {
+        document.head.innerHTML = '<meta name="csrf-token" content="token-123" />';
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ message: 'League refresh queued.' }),
+            })
+        );
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({
+            leagueRefreshUrl: '/leagues/resync',
+        });
+
+        await instance.refreshFantraxLeagues();
+
+        expect(global.fetch).toHaveBeenCalledWith('/leagues/resync', expect.objectContaining({
+            method: 'POST',
+            headers: expect.objectContaining({
+                'X-CSRF-TOKEN': 'token-123',
+                'X-Requested-With': 'XMLHttpRequest',
+            }),
+            body: JSON.stringify({}),
+        }));
+        expect(instance.fantraxLeagueRefresh.running).toBe(false);
+        expect(instance.streams.fantrax.open).toBe(true);
+        expect(instance.streams.fantrax.messages[0].message).toBe('League refresh queued.');
+    });
+
     it('resets import card state before starting a new run', async () => {
         vi.useFakeTimers();
         global.fetch = vi.fn(() =>

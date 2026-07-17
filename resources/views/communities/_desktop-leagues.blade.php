@@ -76,10 +76,25 @@
                                     ? ($server->discord_guild_name ?? ('Server '.$server->discord_guild_id))
                                     : null;
                     $scopeLabel = data_get($l->activePlatformScope(), 'scope_label');
+                    $teamsUrl = route('community.leagues.teams', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false);
+                    $draftSummaryUrl = route('community.leagues.draft-summary', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false);
+                    $leaguePayload = [
+                        'id' => $l->id,
+                        'name' => (string) $l->name,
+                        'platform' => ucfirst($platform ?: 'League'),
+                        'scope' => $scopeLabel,
+                        'server' => $serverName,
+                        'teamsUrl' => $teamsUrl,
+                        'draftSummaryUrl' => $draftSummaryUrl,
+                    ];
                 @endphp
 
                 <li class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3" data-community-league-row="{{ $l->id }}">
-                    <div class="flex items-center gap-3 min-w-0">
+                    <button
+                        type="button"
+                        class="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                        @click="openCommunityLeague(@js($leaguePayload), 'teams')"
+                    >
                         <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg ring-1 {{ $badge }} text-[10px] font-semibold uppercase">
                             {{ $platform ? substr($platform, 0, 2) : '' }}
                         </span>
@@ -108,15 +123,16 @@
                                 ID: {{ $l->id }}@if($scopeLabel) / {{ $scopeLabel }}@endif
                             </div>
                         </div>
-                    </div>
+                    </button>
 
                     <div class="ml-auto flex shrink-0 items-center gap-2">
-                        <a
-                            href="{{ route('community.leagues.show', ['c_id' => $currentOrg->id, 'l_id' => $l->id]) }}"
+                        <button
+                            type="button"
                             class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                            @click.stop="openCommunityLeague(@js($leaguePayload), 'setup')"
                         >
                             Manage
-                        </a>
+                        </button>
 
                         @if ($allowUnlink && $canEdit && $currentOrg)
                             <button

@@ -75,6 +75,7 @@ export class StatsPageShell {
       selectedPos: [],
       selectedPosTypes: [],
       selectedLeagues: [],
+      selectedDraftYear: '',
       numericFilters: {},
       dirtyNumericFilters: {},
       leagueAutoSkaterFilter: false,
@@ -133,6 +134,10 @@ export class StatsPageShell {
 
   availableLeagues() {
     return this.schemaAdapter.availableLeagues();
+  }
+
+  draftYearOptions() {
+    return this.schemaAdapter.draftYearOptions();
   }
 
   canSlice() {
@@ -278,6 +283,12 @@ export class StatsPageShell {
     if (Array.isArray(meta.appliedFilters?.league)) {
       this.state.selectedLeagues = meta.appliedFilters.league.map(String);
     }
+    if (meta.appliedFilters?.entry_draft_year != null) {
+      const selectedDraftYears = Array.isArray(meta.appliedFilters.entry_draft_year)
+        ? meta.appliedFilters.entry_draft_year
+        : [meta.appliedFilters.entry_draft_year];
+      this.state.selectedDraftYear = selectedDraftYears[0] != null ? String(selectedDraftYears[0]) : '';
+    }
     if (!this.supportsDateRange()) {
       this.state.period = 'season';
     }
@@ -361,6 +372,7 @@ export class StatsPageShell {
     this.state.selectedPosTypes = [];
     this.state.leagueAutoSkaterFilter = false;
     this.state.selectedLeagues = [];
+    this.state.selectedDraftYear = '';
     this.state.numericFilters = {};
     this.state.dirtyNumericFilters = {};
     this.state.nhleLens = value === 'prospects' ? this.state.nhleLens : false;
@@ -369,6 +381,11 @@ export class StatsPageShell {
 
   setLeague(value) {
     this.state.selectedLeagues = value ? [value] : [];
+    this.fetchPayload();
+  }
+
+  setDraftYear(value) {
+    this.state.selectedDraftYear = value || '';
     this.fetchPayload();
   }
 
@@ -521,6 +538,12 @@ export class StatsPageShell {
         { label: 'All Leagues', value: '' },
         ...this.availableLeagues().map((league) => ({ label: league, value: league })),
       ], this.state.selectedLeagues[0] || '', (value) => this.setLeague(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
+    }
+    if (this.draftYearOptions().length > 0) {
+      selects.appendChild(this.renderSelect([
+        { label: 'Drafted', value: '' },
+        ...this.draftYearOptions().map((year) => ({ label: year, value: year })),
+      ], this.state.selectedDraftYear, (value) => this.setDraftYear(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
     }
     selects.appendChild(this.renderSelect(this.availableGameTypes().map((type) => ({ label: this.gameTypeLabel(type), value: type })), this.state.gameType, (value) => this.setGameType(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
 
@@ -716,6 +739,12 @@ export class StatsPageShell {
         { label: 'All Leagues', value: '' },
         ...this.availableLeagues().map((league) => ({ label: league, value: league })),
       ], this.state.selectedLeagues[0] || '', (value) => this.setLeague(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
+    }
+    if (this.draftYearOptions().length > 0) {
+      row.appendChild(this.renderSelect([
+        { label: 'Drafted', value: '' },
+        ...this.draftYearOptions().map((year) => ({ label: year, value: year })),
+      ], this.state.selectedDraftYear, (value) => this.setDraftYear(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
     }
 
     if (this.canSlice()) {

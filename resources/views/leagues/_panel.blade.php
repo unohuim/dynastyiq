@@ -63,7 +63,8 @@
       canEditLeagueSettings: @js($canEditLeagueSettings),
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
       fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
-      activeLeagueTab: 'draft',
+      initialLeagueTab: @js($initialLeagueTab ?? null),
+      activeLeagueTab: @js($initialLeagueTab ?? 'draft'),
       playerSearch: '',
       capView: 'sheet',
       capSettingsDrawerOpen: false,
@@ -237,7 +238,9 @@
 
       init(){
         const state = this.readLeagueUiState();
-        this.activeLeagueTab = this.validLeagueTab(state.activeTab);
+        this.activeLeagueTab = this.initialLeagueTab
+          ? this.validLeagueTab(this.initialLeagueTab)
+          : this.validLeagueTab(state.activeTab);
         this.capView = this.validCapView(state.capView);
         this.capShowLimitRows = state.capShowLimitRows === undefined ? false : Boolean(state.capShowLimitRows);
         this.capShowSummaryRows = Number(state.capSummaryRowsVersion || 0) >= 2

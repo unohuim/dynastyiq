@@ -5,10 +5,12 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Models\DiscordServer;
 use App\Models\Organization;
+use App\Services\DiscordCommunityMemberSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 class DiscordServerCallbackController extends Controller
 {
@@ -90,7 +92,7 @@ class DiscordServerCallbackController extends Controller
     }
 
     // POST /auth/discord-server/attach
-    public function attach(Request $request)
+    public function attach(Request $request, DiscordCommunityMemberSyncService $memberSync)
     {
         $validated = $request->validate([
             'guild_ids'   => 'required|array|min:1',
@@ -122,9 +124,11 @@ class DiscordServerCallbackController extends Controller
             return redirect()->route('communities.index')->with('error', 'Invalid selection.');
         }
 
-        DB::transaction(function () use ($org, $selected, $userId) {
+        $discordServers = DB::transaction(function () use ($org, $selected, $userId) {
+            $servers = collect();
+
             foreach ($selected as $g) {
-                DiscordServer::updateOrCreate(
+                $servers->push(DiscordServer::updateOrCreate(
                     ['discord_guild_id' => $g['id']],
                     [
                         'organization_id'              => $org->id,
@@ -133,9 +137,23 @@ class DiscordServerCallbackController extends Controller
                         'granted_permissions'          => (string) ($g['permissions'] ?? '0'),
                         'meta'                         => ['icon' => $g['icon'] ?? null], // <-- save icon
                     ]
-                );
+                ));
             }
+
+            return $servers;
         });
+
+        $syncedCount = 0;
+        $syncErrors = [];
+
+        foreach ($discordServers as $discordServer) {
+            try {
+                $summary = $memberSync->sync($discordServer);
+                $syncedCount += (int) ($summary['synced_count'] ?? 0);
+            } catch (RuntimeException $e) {
+                $syncErrors[] = $e->getMessage();
+            }
+        }
 
         // clear session
         session()->forget([
@@ -144,7 +162,19 @@ class DiscordServerCallbackController extends Controller
             'discord.connect.guilds',
         ]);
 
-        return redirect()->route('communities.index')->with('success', $selected->count().' server(s) connected.');
+        $redirect = redirect()
+            ->route('communities.index')
+            ->with('success', $selected->count() . ' server(s) connected.');
+
+        if ($syncedCount > 0) {
+            $redirect->with('success', $selected->count() . ' server(s) connected. ' . $syncedCount . ' Discord member(s) imported.');
+        }
+
+        if ($syncErrors !== []) {
+            $redirect->with('error', 'Discord server connected, but member import needs the DIQ bot installed with member access.');
+        }
+
+        return $redirect;
     }
 
 }

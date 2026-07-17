@@ -21,6 +21,14 @@ export class StatsSchemaAdapter {
       : [];
   }
 
+  draftYearOptions() {
+    const definition = this.filterSchema().find((spec) => String(spec?.key || '') === 'entry_draft_year');
+
+    return Array.isArray(definition?.options)
+      ? [...new Set(definition.options.map(String).filter(Boolean))]
+      : [];
+  }
+
   canSlice() {
     return Boolean(this.payload.meta?.canSlice ?? true);
   }

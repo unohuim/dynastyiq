@@ -207,6 +207,14 @@ final class FantraxDraftingWindow
                     'pickedAt',
                     'picked_at',
                 ]));
+                $division = $this->stringValue($this->firstValue($item, [
+                    'division',
+                    'divisionName',
+                    'division_name',
+                    'pool',
+                    'poolName',
+                    'pool_name',
+                ]));
                 $hasPlayer = $playerId !== '';
 
                 return [
@@ -235,6 +243,7 @@ final class FantraxDraftingWindow
                     'pick' => $pick,
                     'pick_in_round' => $pickInRound,
                     'overall_pick' => $overallPick,
+                    'division' => $division,
                     'picked_at' => $pickedAt?->toIso8601String(),
                 ];
             })

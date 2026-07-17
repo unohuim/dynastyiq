@@ -80,6 +80,9 @@ export class StatsPayloadClient {
     }
 
     state.selectedLeagues.forEach((value) => params.append('league[]', value));
+    if (state.selectedDraftYear) {
+      params.set('entry_draft_year', String(state.selectedDraftYear));
+    }
     Object.entries(state.numericFilters || {}).forEach(([key, value]) => {
       if (!state.dirtyNumericFilters?.[key]) return;
 

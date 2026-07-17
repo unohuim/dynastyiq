@@ -24,6 +24,7 @@ const emptyTierForm = () => ({
 
 let createLeagueHandlerRegistered = false;
 let detachLeagueHandlerRegistered = false;
+let refreshDiscordMembersHandlerRegistered = false;
 
 function csrfToken() {
     return (
@@ -235,6 +236,70 @@ function registerDetachLeagueHandler() {
 
         event.preventDefault();
         detachCommunityLeague(button);
+    });
+}
+
+async function refreshDiscordMembers(button) {
+    const url = button.dataset.url || "";
+
+    if (!url) {
+        showToast("error", "Cannot refresh Discord members: missing endpoint.");
+        return;
+    }
+
+    button.disabled = true;
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "X-CSRF-TOKEN": csrfToken(),
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "same-origin",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data?.ok !== true) {
+            showToast(
+                "error",
+                data?.message || `Discord refresh failed (${response.status})`
+            );
+            return;
+        }
+
+        const syncedCount = Number(data?.summary?.synced_count || 0);
+        showToast(
+            "success",
+            syncedCount === 1
+                ? "1 Discord member refreshed."
+                : `${syncedCount} Discord members refreshed.`
+        );
+        window.dispatchEvent(new CustomEvent("community-members:refresh"));
+    } catch (error) {
+        console.error("[discordMembersRefresh] Network or JavaScript error:", error);
+        showToast("error", "Could not refresh Discord members.");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function registerRefreshDiscordMembersHandler() {
+    if (refreshDiscordMembersHandlerRegistered) return;
+
+    refreshDiscordMembersHandlerRegistered = true;
+
+    document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-discord-members-refresh]");
+
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        event.preventDefault();
+        refreshDiscordMembers(button);
     });
 }
 
@@ -629,11 +694,31 @@ document.addEventListener("alpine:init", registerCommunityMembersStore);
 
 registerCreateLeagueHandler();
 registerDetachLeagueHandler();
+registerRefreshDiscordMembersHandler();
 
 function communityMembersHub(config) {
     return {
         activeTab: "home",
+        activeLeagueTab: "draft",
+        activeCommunityDraftTab: "live",
         theme: "light",
+        selectedLeague: null,
+        leagueTeams: [],
+        leagueTeamsLoading: false,
+        leagueTeamsError: "",
+        leagueTeamsRequestUrl: "",
+        leagueDraftSummary: null,
+        leagueDraftLiveHtml: "",
+        leagueDraftSummaryLoading: false,
+        leagueDraftSummaryError: "",
+        leagueDraftSummaryRequestUrl: "",
+        leagueDraftClockNow: Date.now(),
+        leagueDraftClockTimer: null,
+        activeRound: 0,
+        roundScrollCanLeft: false,
+        roundScrollCanRight: false,
+        showAvatars: true,
+        showTeamBadges: true,
         init() {
             // Ensure the store exists even if Alpine boot order changes.
             if (!this.$store.communityMembers) {
@@ -641,6 +726,221 @@ function communityMembersHub(config) {
             }
 
             this.$store.communityMembers.bootstrap(config);
+            this.leagueDraftClockTimer = window.setInterval(() => {
+                this.leagueDraftClockNow = Date.now();
+            }, 1000);
+        },
+        destroy() {
+            if (this.leagueDraftClockTimer) {
+                window.clearInterval(this.leagueDraftClockTimer);
+            }
+        },
+        selectCommunityTab(tab) {
+            this.selectedLeague = null;
+            this.activeTab = tab;
+        },
+        openCommunityLeague(league, tab = "draft") {
+            this.selectedLeague = league;
+            this.activeLeagueTab = ["home", "teams", "draft", "setup"].includes(tab)
+                ? tab
+                : "draft";
+            this.activeCommunityDraftTab = "live";
+            this.leagueTeams = [];
+            this.leagueTeamsError = "";
+            this.leagueDraftSummary = null;
+            this.leagueDraftLiveHtml = "";
+            this.leagueDraftSummaryError = "";
+
+            if (this.activeLeagueTab === "teams") {
+                this.loadCommunityLeagueTeams();
+            } else if (this.activeLeagueTab === "draft") {
+                this.loadCommunityLeagueDraftSummary();
+            }
+        },
+        openCommunityLeagueTab(tab) {
+            this.activeLeagueTab = ["home", "teams", "draft", "setup"].includes(tab)
+                ? tab
+                : "draft";
+
+            if (this.activeLeagueTab === "teams") {
+                this.loadCommunityLeagueTeams();
+            } else if (this.activeLeagueTab === "draft") {
+                this.loadCommunityLeagueDraftSummary();
+            }
+        },
+        setCommunityDraftTab(tab) {
+            this.activeCommunityDraftTab = ["live", "players"].includes(tab)
+                ? tab
+                : "live";
+
+            if (this.activeCommunityDraftTab === "live") {
+                this.$nextTick(() => this.initializeCommunityDraftLivePanel());
+            }
+        },
+        async loadCommunityLeagueTeams() {
+            const url = this.selectedLeague?.teamsUrl || "";
+
+            if (!url) {
+                return;
+            }
+
+            this.leagueTeamsLoading = true;
+            this.leagueTeamsError = "";
+            this.leagueTeamsRequestUrl = url;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load teams.");
+                }
+
+                if (this.leagueTeamsRequestUrl !== url) {
+                    return;
+                }
+
+                this.leagueTeams = Array.isArray(payload.teams) ? payload.teams : [];
+            } catch (error) {
+                if (this.leagueTeamsRequestUrl !== url) {
+                    return;
+                }
+
+                console.error("[communityLeagueTeams] Unable to load teams:", error);
+                this.leagueTeams = [];
+                this.leagueTeamsError = error?.message || "Could not load teams.";
+            } finally {
+                if (this.leagueTeamsRequestUrl === url) {
+                    this.leagueTeamsLoading = false;
+                }
+            }
+        },
+        async loadCommunityLeagueDraftSummary() {
+            const url = this.selectedLeague?.draftSummaryUrl || "";
+
+            if (!url) {
+                return;
+            }
+
+            this.leagueDraftSummaryLoading = true;
+            this.leagueDraftSummaryError = "";
+            this.leagueDraftSummaryRequestUrl = url;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load draft summary.");
+                }
+
+                if (this.leagueDraftSummaryRequestUrl !== url) {
+                    return;
+                }
+
+                this.leagueDraftSummary = payload.summary || null;
+                this.leagueDraftLiveHtml = String(payload.live_html || "");
+                this.activeRound = Number(payload.active_round_index || 0);
+                this.$nextTick(() => this.initializeCommunityDraftLivePanel());
+            } catch (error) {
+                if (this.leagueDraftSummaryRequestUrl !== url) {
+                    return;
+                }
+
+                console.error("[communityLeagueDraft] Unable to load draft summary:", error);
+                this.leagueDraftSummary = null;
+                this.leagueDraftLiveHtml = "";
+                this.leagueDraftSummaryError =
+                    error?.message || "Could not load draft summary.";
+            } finally {
+                if (this.leagueDraftSummaryRequestUrl === url) {
+                    this.leagueDraftSummaryLoading = false;
+                }
+            }
+        },
+        draftStatusDotClass() {
+            const tone = this.leagueDraftSummary?.status_tone || "slate";
+
+            if (tone === "green") return "bg-emerald-500";
+            if (tone === "blue") return "bg-blue-500";
+
+            return "bg-slate-400";
+        },
+        draftTimeRemainingLabel() {
+            const expiresAt = this.leagueDraftSummary?.countdown_expires_at || "";
+
+            if (!expiresAt || this.leagueDraftSummary?.is_completed) {
+                return this.leagueDraftSummary?.time_remaining_label || "--:--";
+            }
+
+            const expires = Date.parse(expiresAt);
+
+            if (!Number.isFinite(expires)) {
+                return this.leagueDraftSummary?.time_remaining_label || "--:--";
+            }
+
+            const remaining = Math.max(
+                0,
+                Math.floor((expires - this.leagueDraftClockNow) / 1000)
+            );
+            const hours = Math.floor(remaining / 3600);
+            const minutes = Math.floor((remaining % 3600) / 60);
+            const seconds = remaining % 60;
+
+            if (hours > 0) {
+                return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+            }
+
+            return `${minutes}:${String(seconds).padStart(2, "0")}`;
+        },
+        initializeCommunityDraftLivePanel() {
+            const panel = this.$refs.communityDraftLivePanel;
+
+            if (!panel) {
+                return;
+            }
+
+            const html = String(this.leagueDraftLiveHtml || "");
+            const signature = `${html.length}:${html.slice(0, 48)}:${html.slice(-48)}`;
+
+            if (panel.dataset.communityDraftLiveInitialized === signature) {
+                this.$nextTick(() => this.updateRoundScrollAffordance());
+                return;
+            }
+
+            window.Alpine?.initTree(panel);
+            panel.dataset.communityDraftLiveInitialized = signature;
+            this.$nextTick(() => this.updateRoundScrollAffordance());
+        },
+        setActiveRound(index) {
+            this.activeRound = Number(index || 0);
+            this.$nextTick(() => this.updateRoundScrollAffordance());
+        },
+        updateRoundScrollAffordance() {
+            const scroller = this.$refs.roundTabsScroller;
+
+            if (!scroller) {
+                this.roundScrollCanLeft = false;
+                this.roundScrollCanRight = false;
+                return;
+            }
+
+            const maxScrollLeft = scroller.scrollWidth - scroller.clientWidth;
+
+            this.roundScrollCanLeft = scroller.scrollLeft > 2;
+            this.roundScrollCanRight = scroller.scrollLeft < maxScrollLeft - 2;
         },
     };
 }

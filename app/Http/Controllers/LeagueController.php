@@ -237,6 +237,7 @@ final class LeagueController extends Controller
             'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
+            'initialLeagueTab' => $request->query('initial_tab'),
         ]);
     }
 

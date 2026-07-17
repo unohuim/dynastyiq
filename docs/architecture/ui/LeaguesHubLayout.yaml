@@ -17,7 +17,7 @@ rules:
   - League hub pages should use the shared layout instead of duplicating shell markup.
   - League hub behavior must remain scoped to league pages.
   - League navigation items should show the platform provider when platform leagues can come from more than one provider.
-  - League provider refresh actions should live in the shared left navigation header when they affect the visible league list.
+  - League provider refresh actions should not live in the league list header; manual all-league refresh belongs in the Admin Player Imports Fantrax Players panel.
   - League list options should live in the shared left navigation header and update per-user league visibility without changing provider access state.
   - League list option rows may be reordered by the current user through SortableList, and the shared layout must keep the visible league list in sync with that saved order.
   - League navigation icons should prefer the current user's linked team logo when available, then the platform league logo, then initials.

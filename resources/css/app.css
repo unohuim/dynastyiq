@@ -274,4 +274,40 @@
   .player-stats-page {
     @apply flex flex-col;
   }
+
+  .draft-round-scroll {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .draft-round-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .draft-round-scrollbar {
+    display: none;
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 6px;
+    border-radius: 9999px;
+    background: #e2e8f0;
+    pointer-events: none;
+  }
+
+  .draft-round-scrollbar__thumb {
+    display: block;
+    height: 100%;
+    min-width: 32px;
+    border-radius: 9999px;
+    background: #64748b;
+    pointer-events: auto;
+    transition: opacity 120ms ease;
+  }
+
+  .draft-round-scroll-root--overflowing .draft-round-scrollbar {
+    display: block;
+  }
+
 }

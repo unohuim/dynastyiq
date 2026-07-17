@@ -17,6 +17,7 @@ use App\Http\Controllers\FantraxController;
 use App\Http\Controllers\StatsUnitsController;
 use App\Http\Controllers\StatsController;
 use App\Http\Controllers\CommunitiesController;
+use App\Http\Controllers\DiscordCommunityMemberRefreshController;
 use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
 use App\Http\Controllers\CommunityMemberController;
@@ -131,11 +132,23 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         )
             ->middleware('auth')
             ->name('organizations.leagues.provider-binding.update');
+        Route::post(
+            '/organizations/{organization}/discord-servers/{discordServer}/members/refresh',
+            [DiscordCommunityMemberRefreshController::class, 'store']
+        )
+            ->middleware('auth')
+            ->name('organizations.discord-servers.members.refresh');
 
         // Community Leagues
         Route::get('/communities/{c_id}/leagues/{l_id}', [CommunityLeagues::class, 'show'])
             ->middleware('auth')
             ->name('community.leagues.show');
+        Route::get('/communities/{c_id}/leagues/{l_id}/teams', [CommunityLeagues::class, 'teams'])
+            ->middleware('auth')
+            ->name('community.leagues.teams');
+        Route::get('/communities/{c_id}/leagues/{l_id}/draft-summary', [CommunityLeagues::class, 'draftSummary'])
+            ->middleware('auth')
+            ->name('community.leagues.draft-summary');
         Route::get('/communities/{c_id}/leagues/{l_id}/fantrax-aav-export', [CommunityLeagues::class, 'exportFantraxAav'])
             ->middleware('auth')
             ->name('community.leagues.fantrax-aav-export');

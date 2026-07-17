@@ -22,6 +22,7 @@ class MembershipResource extends JsonResource
             'member_profile_id' => $this->member_profile_id,
             'display_name' => $this->memberProfile?->display_name,
             'email' => $this->memberProfile?->email,
+            'avatar_url' => $this->memberProfile?->avatar_url,
             'status' => $this->status,
             'provider' => $this->provider,
             'provider_account_id' => $this->provider_account_id,

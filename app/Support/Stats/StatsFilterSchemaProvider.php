@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
+use App\Models\PlayerExternalIdentity;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -49,6 +50,13 @@ final class StatsFilterSchemaProvider
                 'options' => $this->leagueOptionsForBase($base),
             ];
         }
+
+        $schema[] = [
+            'key' => 'entry_draft_year',
+            'label' => 'Drafted',
+            'type' => 'enum',
+            'options' => $this->draftYearOptionsForBase($base),
+        ];
 
         foreach ($columns as $column) {
             $key = $column['key'] ?? null;
@@ -198,6 +206,28 @@ final class StatsFilterSchemaProvider
             ->distinct()
             ->pluck('pf.position')
             ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function draftYearOptionsForBase($base): array
+    {
+        $draftYearExpression = "COALESCE(raw_payload->>'draft_year', "
+            . "raw_payload->>'draftYear', raw_payload->>'year')";
+
+        return PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+            ->whereRaw($draftYearExpression . " ~ '^[0-9]+$'")
+            ->selectRaw('(' . $draftYearExpression . ')::int as draft_year')
+            ->distinct()
+            ->pluck('draft_year')
+            ->map(static fn (mixed $year): string => (string) $year)
+            ->filter()
+            ->unique()
+            ->sortDesc()
             ->values()
             ->all();
     }

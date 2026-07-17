@@ -16,6 +16,7 @@ final class StatsFilterSet
      * @param array<int,string> $positionTypes
      * @param array<int,string> $teams
      * @param array<int,string> $leagues
+     * @param array<int,int> $draftYears
      * @param array<string,array{min:float|null,max:float|null}> $numericRanges
      */
     public function __construct(
@@ -23,6 +24,7 @@ final class StatsFilterSet
         public readonly array $positionTypes,
         public readonly array $teams,
         public readonly array $leagues,
+        public readonly array $draftYears,
         public readonly array $numericRanges,
     ) {
     }
@@ -30,7 +32,7 @@ final class StatsFilterSet
     public static function fromRequest(?Request $request): self
     {
         if (! $request) {
-            return new self([], [], [], [], []);
+            return new self([], [], [], [], [], []);
         }
 
         return new self(
@@ -38,6 +40,7 @@ final class StatsFilterSet
             self::stringList($request->query('pos_type', [])),
             self::stringList($request->query('team', [])),
             self::stringList($request->query('league', [])),
+            self::integerList($request->query('entry_draft_year', [])),
             self::numericRanges($request->query()),
         );
     }
@@ -64,6 +67,20 @@ final class StatsFilterSet
                 (array) ($value ?? []),
             ),
             static fn (string $item): bool => $item !== '',
+        ));
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private static function integerList(mixed $value): array
+    {
+        return array_values(array_filter(
+            array_map(
+                static fn (mixed $item): int => (int) $item,
+                (array) ($value ?? []),
+            ),
+            static fn (int $item): bool => $item > 0,
         ));
     }
 

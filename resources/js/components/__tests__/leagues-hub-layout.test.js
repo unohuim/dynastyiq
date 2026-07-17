@@ -5,9 +5,6 @@ const html = () => `
     <div data-component="leagues-hub-layout">
         <meta name="csrf-token" content="bad-location" />
         <button class="inline-flex h-8 w-8 shrink-0" data-leagues-options-open aria-expanded="false"></button>
-        <button class="inline-flex h-8 w-8 shrink-0" data-provider-resync-button data-provider-resync-url="/leagues/resync" data-provider-resync-label="all leagues">
-            <span data-provider-resync-icon></span>
-        </button>
         <ul id="leagueList">
             <li>
                 <a class="league-item" href="/leagues?active=1" data-league-id="1" data-panel-url="/leagues/1/panel" aria-current="false">
@@ -150,12 +147,10 @@ describe('LeaguesHubLayout', () => {
         expect(window.DIQ.userChannel.listen).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps header icon buttons from shrinking inside the sidebar header', () => {
+    it('keeps the header options button from shrinking inside the sidebar header', () => {
         const gear = root.querySelector('[data-leagues-options-open]');
-        const refresh = root.querySelector('[data-provider-resync-button]');
 
         expect(gear.classList.contains('shrink-0')).toBe(true);
-        expect(refresh.classList.contains('shrink-0')).toBe(true);
     });
 
     it('optimistically flips a visible league toggle off', async () => {
@@ -369,50 +364,6 @@ describe('LeaguesHubLayout', () => {
 
         expect(links.map((link) => link.dataset.leagueId)).toEqual(['1', '2']);
         expect(sortableRows.map((row) => row.dataset.sortableId)).toEqual(['1', '2']);
-    });
-
-    it('posts refresh requests with csrf headers', async () => {
-        fetch.mockResolvedValueOnce(response('{"message":"Queued"}')).mockResolvedValueOnce(response(pageHtml()));
-        mount(root);
-
-        root.querySelector('[data-provider-resync-button]').click();
-        await Promise.resolve();
-
-        expect(fetch).toHaveBeenCalledWith('/leagues/resync', expect.objectContaining({
-            method: 'POST',
-            headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'token-123' }),
-        }));
-    });
-
-    it('spins the refresh icon while refresh is pending', () => {
-        fetch.mockReturnValue(new Promise(() => {}));
-        mount(root);
-
-        root.querySelector('[data-provider-resync-button]').click();
-
-        expect(root.querySelector('[data-provider-resync-icon]').classList.contains('animate-spin')).toBe(true);
-    });
-
-    it('updates the root markup after a successful refresh', async () => {
-        fetch.mockResolvedValueOnce(response('{"message":"Queued"}')).mockResolvedValueOnce(response(pageHtml()));
-        mount(root);
-
-        root.querySelector('[data-provider-resync-button]').click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(root.querySelector('#leagueMain').textContent).toBe('Reloaded');
-    });
-
-    it('shows refresh errors as toasts', async () => {
-        fetch.mockResolvedValueOnce(response('{"message":"Forbidden"}', false, 403));
-        mount(root);
-
-        root.querySelector('[data-provider-resync-button]').click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(window.toast.error).toHaveBeenCalledWith('Forbidden');
     });
 
     it('loads league panels into the main region', async () => {

@@ -29,6 +29,7 @@ const state = (overrides = {}) => ({
   selectedPos: [],
   selectedPosTypes: [],
   selectedLeagues: [],
+  selectedDraftYear: '',
   numericFilters: {},
   dirtyNumericFilters: {},
   ...overrides,
@@ -104,6 +105,14 @@ describe('stats page payload modules', () => {
     }));
 
     expect(params.getAll('league[]')).toEqual(['OHL', 'AHL']);
+  });
+
+  it('adds selected drafted year params', () => {
+    const params = new StatsPayloadClient({ apiUrl: '/stats' }).buildParams(state({
+      selectedDraftYear: '2024',
+    }));
+
+    expect(params.get('entry_draft_year')).toBe('2024');
   });
 
   it('sends only dirty numeric filters', () => {
@@ -201,6 +210,7 @@ describe('stats page payload modules', () => {
       selectedPos: ['C'],
       selectedPosTypes: ['F'],
       selectedLeagues: ['OHL'],
+      selectedDraftYear: '2024',
       dirtyNumericFilters: { gp: true },
       numericFilters: { gp: { min: 10, max: 82 } },
     });
@@ -216,6 +226,7 @@ describe('stats page payload modules', () => {
     expect(current.selectedPos).toEqual([]);
     expect(current.selectedPosTypes).toEqual([]);
     expect(current.selectedLeagues).toEqual([]);
+    expect(current.selectedDraftYear).toBe('');
     expect(current.dirtyNumericFilters).toEqual({});
     expect(current.numericFilters.gp).toEqual({ min: 0, max: 82 });
   });
@@ -276,8 +287,21 @@ describe('stats page payload modules', () => {
     expect(adapter.availableSeasons()).toEqual([]);
     expect(adapter.availableGameTypes()).toEqual(['2']);
     expect(adapter.availableLeagues()).toEqual([]);
+    expect(adapter.draftYearOptions()).toEqual([]);
     expect(adapter.canSlice()).toBe(true);
     expect(adapter.supportsDateRange()).toBe(true);
+  });
+
+  it('returns drafted year options from the filter schema', () => {
+    const adapter = new StatsSchemaAdapter(payload({
+      meta: {
+        filterSchema: [
+          { key: 'entry_draft_year', type: 'enum', options: [2024, '2023', '2024'] },
+        ],
+      },
+    }));
+
+    expect(adapter.draftYearOptions()).toEqual(['2024', '2023']);
   });
 
   it('returns numeric filter specs only for bounded numeric schema entries', () => {

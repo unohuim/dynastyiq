@@ -21,6 +21,7 @@
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
+            leagueRefreshUrl: @js(route('leagues.resync')),
         })"
         x-init="init()"
         x-cloak
@@ -106,13 +107,24 @@
                                         <span x-text="formatLastRun('{{ $import['key'] }}')"></span>
                                     </div>
                                 </div>
-                                <x-primary-button
-                                    type="button"
-                                    x-on:click="startImport('{{ $import['key'] }}')"
-                                    x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
-                                >
-                                    Run Now
-                                </x-primary-button>
+                                <div class="flex shrink-0 flex-wrap items-center gap-2">
+                                    @if ($import['key'] === 'fantrax')
+                                        <x-secondary-button
+                                            type="button"
+                                            x-on:click="refreshFantraxLeagues()"
+                                            x-bind:disabled="fantraxLeagueRefresh.running === true || streams['fantrax']?.running === true"
+                                        >
+                                            <span x-text="fantraxLeagueRefresh.running ? 'Refreshing...' : 'Refresh Leagues'"></span>
+                                        </x-secondary-button>
+                                    @endif
+                                    <x-primary-button
+                                        type="button"
+                                        x-on:click="startImport('{{ $import['key'] }}')"
+                                        x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
+                                    >
+                                        {{ $import['key'] === 'fantrax' ? 'Import' : 'Run Now' }}
+                                    </x-primary-button>
+                                </div>
                             </div>
 
                             <div

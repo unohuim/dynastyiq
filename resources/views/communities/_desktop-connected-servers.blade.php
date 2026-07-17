@@ -58,6 +58,24 @@
                 @endphp
                 <li class="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <div class="flex items-center gap-3">
+                        <button
+                            type="button"
+                            @disabled(! $botInstalled)
+                            @if($botInstalled)
+                                data-discord-members-refresh
+                                data-url="{{ route('organizations.discord-servers.members.refresh', ['organization' => $currentOrg->id, 'discordServer' => $g->id]) }}"
+                            @endif
+                            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border {{ $botInstalled ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200' : 'cursor-not-allowed border-slate-200 bg-white text-slate-300' }}"
+                            title="{{ $botInstalled ? 'Refresh Discord members' : 'Install the bot before refreshing members' }}"
+                            aria-label="{{ $botInstalled ? 'Refresh Discord members for ' . ($g->discord_guild_name ?? 'server') : 'Discord member refresh unavailable' }}"
+                        >
+                            <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 20v-6h-6" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M20 9a8 8 0 0 0-13.657-3.657L4 7.686" />
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 15a8 8 0 0 0 13.657 3.657L20 16.314" />
+                            </svg>
+                        </button>
                         @if ($avatar)
                             <img src="{{ $avatar }}" alt="{{ $g->discord_guild_name ?? 'Server' }} icon"
                                  class="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">

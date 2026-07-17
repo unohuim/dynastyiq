@@ -78,6 +78,7 @@ export default function adminHub(options = {}) {
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
+        leagueRefreshUrl: options.leagueRefreshUrl ?? '/leagues/resync',
         triageLoaded: false,
         triageLoading: false,
         triageError: '',
@@ -124,6 +125,9 @@ export default function adminHub(options = {}) {
         streams: {},
         progressPollers: {},
         gameImportPoller: null,
+        fantraxLeagueRefresh: {
+            running: false,
+        },
 
         roster: {
             nhl: {
@@ -1525,6 +1529,57 @@ export default function adminHub(options = {}) {
                 });
 
                 stream.running = false;
+            }
+        },
+
+        async refreshFantraxLeagues() {
+            if (!this.leagueRefreshUrl || this.fantraxLeagueRefresh.running) {
+                return;
+            }
+
+            this.ensureStream('fantrax');
+
+            const stream = this.streams.fantrax;
+            stream.open = true;
+            this.fantraxLeagueRefresh.running = true;
+            stream.messages.unshift({
+                message: 'Refreshing Fantrax leagues...',
+                status: 'started',
+                timestamp: new Date().toISOString(),
+            });
+
+            try {
+                const response = await fetch(this.leagueRefreshUrl, {
+                    method: 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document
+                            .querySelector('meta[name="csrf-token"]')
+                            ?.getAttribute('content'),
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({}),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message || 'Failed to refresh Fantrax leagues');
+                }
+
+                stream.messages.unshift({
+                    message: payload.message || 'Fantrax league refresh queued.',
+                    status: 'completed',
+                    timestamp: new Date().toISOString(),
+                });
+            } catch (e) {
+                stream.messages.unshift({
+                    message: e.message,
+                    status: 'failed',
+                    timestamp: new Date().toISOString(),
+                });
+            } finally {
+                this.fantraxLeagueRefresh.running = false;
             }
         },
 

@@ -8,6 +8,7 @@ use App\Events\DraftPickMade;
 use App\Events\FantraxDraftPickToast;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Listeners\AnnounceFantraxDraftPick;
+use App\Listeners\UpdateRosterMembershipForDraftPick;
 use App\Models\Draft;
 use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
@@ -464,6 +465,80 @@ it('detects a new fantrax draft selection when a canonical unmade pick receives 
     Event::assertDispatched(DraftPickMade::class);
 });
 
+it('updates current roster memberships immediately when a draft pick is made', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'draft-roster-membership-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'draft-roster-membership-league')->firstOrFail();
+    $draftingTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $previousTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Previous Team',
+    ]);
+    $player = Player::create([
+        'first_name' => 'Roster',
+        'last_name' => 'Pick',
+        'full_name' => 'Roster Pick',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'status' => 'active',
+    ]);
+    PlayerExternalIdentity::create([
+        'player_id' => $player->id,
+        'provider' => PlayerExternalIdentity::PROVIDER_FANTRAX,
+        'provider_player_id' => 'fx-roster-pick',
+        'provider_slug' => 'fx-roster-pick',
+        'display_name' => 'Roster Pick',
+        'normalized_name' => 'roster pick',
+        'match_status' => PlayerExternalIdentity::STATUS_MATCHED,
+        'match_confidence' => 100,
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+    ]);
+    $draft = ($this->createDraft)($platformLeague);
+    $draftPick = ($this->createDraftPick)($draft, [
+        'platform_team_id' => $draftingTeam->id,
+        'provider_team_id' => 'team-1',
+        'player_id' => $player->id,
+        'provider_player_id' => 'fx-roster-pick',
+        'status' => 'picked',
+    ]);
+    DB::table('platform_roster_memberships')->insert([
+        'platform_team_id' => $previousTeam->id,
+        'player_id' => $player->id,
+        'platform' => 'fantrax',
+        'platform_player_id' => 'fx-roster-pick',
+        'slot' => 'C',
+        'status' => 'active',
+        'eligibility' => json_encode(['C']),
+        'starts_at' => now()->subDay(),
+        'created_at' => now()->subDay(),
+        'updated_at' => now()->subDay(),
+    ]);
+
+    app(UpdateRosterMembershipForDraftPick::class)->handle(DraftPickMade::fromDraftPick($draftPick));
+
+    $this->assertDatabaseHas('platform_roster_memberships', [
+        'platform_team_id' => $draftingTeam->id,
+        'player_id' => $player->id,
+        'platform' => 'fantrax',
+        'platform_player_id' => 'fx-roster-pick',
+        'slot' => null,
+        'status' => null,
+        'ends_at' => null,
+    ]);
+
+    expect(DB::table('platform_roster_memberships')
+        ->where('platform_team_id', $previousTeam->id)
+        ->where('player_id', $player->id)
+        ->whereNotNull('ends_at')
+        ->exists())->toBeTrue();
+});
+
 it('persists fantrax league shape without treating normal divisions as duplicate player pools', function (): void {
     config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
 
@@ -686,6 +761,59 @@ it('preserves division scoped fantrax draft slots without dispatching pick event
         ->and(DraftPick::query()->whereNotNull('picked_at')->exists())->toBeFalse();
 
     Event::assertNotDispatched(DraftPickMade::class);
+});
+
+it('removes stale fantrax draft picks whose provider keys disappear from the latest payload', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'division-stale-draft-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'division-stale-draft-league')->firstOrFail();
+    $draft = ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fhl-provider-draft',
+        'status' => 'live',
+        'settings' => ['provider' => 'fantrax', 'draft_shape' => 'division_scoped'],
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:236',
+        'overall_pick' => 236,
+        'round' => 48,
+        'pick' => 236,
+        'pick_in_round' => 1,
+        'provider_team_id' => 'lidstrom-team-1',
+        'raw_payload' => ['division' => 'Lidstrom'],
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:237',
+        'overall_pick' => 237,
+        'round' => 48,
+        'pick' => 237,
+        'pick_in_round' => 2,
+        'provider_team_id' => 'lidstrom-team-2',
+        'raw_payload' => ['division' => 'Lidstrom'],
+    ]);
+
+    app(SyncFantraxDraftState::class)->syncPayloads(
+        $platformLeague,
+        [
+            'draftId' => 'fhl-provider-draft',
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftOrder' => [
+                'Lidstrom' => ['lidstrom-team-1', 'lidstrom-team-2'],
+            ],
+            'draftPicks' => [
+                ['division' => 'Lidstrom', 'teamId' => 'lidstrom-team-1', 'round' => 1, 'pick' => 1, 'pickInRound' => 1],
+                ['division' => 'Lidstrom', 'teamId' => 'lidstrom-team-2', 'round' => 1, 'pick' => 2, 'pickInRound' => 2],
+            ],
+        ],
+        ['currentDraftPicks' => [['teamId' => 'lidstrom-team-1']]],
+        CarbonImmutable::parse('2026-09-21 20:00:00')
+    );
+
+    expect(DraftPick::query()->where('draft_id', $draft->id)->where('provider_pick_key', 'overall:236')->exists())->toBeFalse()
+        ->and(DraftPick::query()->where('draft_id', $draft->id)->where('provider_pick_key', 'overall:237')->exists())->toBeFalse()
+        ->and(DraftPick::query()->where('draft_id', $draft->id)->where('provider_pick_key', 'division:lidstrom:round:1:pick-in-round:1')->exists())->toBeTrue()
+        ->and(DraftPick::query()->where('draft_id', $draft->id)->where('provider_pick_key', 'division:lidstrom:round:1:pick-in-round:2')->exists())->toBeTrue()
+        ->and(DraftPick::query()->where('draft_id', $draft->id)->count())->toBe(2);
 });
 
 it('refreshes an existing fantrax draft mirror during league sync', function (): void {
@@ -1025,6 +1153,182 @@ it('scopes division scoped draft central rows to the viewer division', function 
         ->assertDontSee('Orr Team');
 
     Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
+});
+
+it('scopes community draft tab rows to the active provider division only for duplicate player leagues', function (): void {
+    config()->set('apiurls.fantrax.base', 'https://fantrax.test/fxea');
+
+    [$user, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'community-division-draft-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'community-division-draft-league')->firstOrFail();
+    $platformLeague->forceFill([
+        'settings' => [
+            'league_shape' => [
+                'duplicate_player_type' => 'ACROSS_DIVISIONS',
+                'player_pool_scope' => 'division',
+                'draft_shape' => 'division_scoped',
+                'team_divisions' => [
+                    'team-1' => 'Lidstrom',
+                    'team-2' => 'Orr',
+                ],
+            ],
+        ],
+    ])->save();
+    DB::table('league_platform_league')
+        ->where('league_id', $league->id)
+        ->where('platform_league_id', $platformLeague->id)
+        ->update([
+            'meta' => json_encode([
+                'scope_type' => 'division',
+                'scope_key' => 'lidstrom',
+                'scope_label' => 'Lidstrom',
+            ]),
+        ]);
+    PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->update([
+            'name' => 'Lidstrom Team',
+            'extras' => json_encode(['fantrax' => ['division' => 'Lidstrom']]),
+        ]);
+    PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Orr Team',
+        'extras' => ['fantrax' => ['division' => 'Orr']],
+    ]);
+    $lidstromRows = collect(range(1, 53))
+        ->map(static fn (int $pick): array => [
+            'division' => 'Lidstrom',
+            'teamId' => 'team-1',
+            'round' => (int) ceil($pick / 10),
+            'pick' => $pick,
+            'pickInRound' => (($pick - 1) % 10) + 1,
+        ]);
+    $orrRows = collect(range(1, 600))
+        ->map(static fn (int $pick): array => [
+            'division' => 'Orr',
+            'teamId' => 'team-2',
+            'round' => (int) ceil($pick / 10),
+            'pick' => $pick,
+            'pickInRound' => (($pick - 1) % 10) + 1,
+        ]);
+
+    Http::fake([
+        'https://fantrax.test/fxea/general/getLeagueInfo*leagueId=community-division-draft-league*' => Http::response([
+            'poolSettings' => ['duplicatePlayerType' => 'ACROSS_DIVISIONS'],
+            'teamInfo' => [
+                ['id' => 'team-1', 'name' => 'Lidstrom Team', 'division' => 'Lidstrom'],
+                ['id' => 'team-2', 'name' => 'Orr Team', 'division' => 'Orr'],
+            ],
+        ], 200),
+        'https://fantrax.test/fxea/general/getDraftResults*leagueId=community-division-draft-league*' => Http::response([
+            'draftDate' => '2026-09-21 19:00:00',
+            'draftPicks' => $lidstromRows->concat($orrRows)->values()->all(),
+        ], 200),
+        'https://fantrax.test/fxea/general/getDraftPicks*leagueId=community-division-draft-league*' => Http::response([
+            'currentDraftPicks' => [['teamId' => 'team-1']],
+        ], 200),
+    ]);
+    Bus::fake();
+
+    $this->actingAs($user)
+        ->get(route('community.leagues.show', [$organization->id, $league->id]))
+        ->assertOk()
+        ->assertSee('Round 6')
+        ->assertSee('Lidstrom Team')
+        ->assertDontSee('Round 60')
+        ->assertDontSee('Orr Team');
+
+    $response = $this->actingAs($user)
+        ->getJson(route('community.leagues.draft-summary', [$organization->id, $league->id]))
+        ->assertOk();
+
+    expect($response->json('summary.total_picks'))->toBe(53)
+        ->and($response->json('summary.otc_team.name'))->toBe('Lidstrom Team')
+        ->and($response->json('summary.draft_at'))->toContain('2026-09-21T19:00:00')
+        ->and($response->json('summary.draft_at_label'))->toBe('Sep 21, 2026 7:00 PM');
+
+    Bus::assertDispatched(SyncFantraxDraftStateJob::class);
+});
+
+it('does not scope community draft summaries for single player pool leagues', function (): void {
+    [$user, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'community-single-pool-draft-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'community-single-pool-draft-league')->firstOrFail();
+    $platformLeague->forceFill([
+        'settings' => [
+            'league_shape' => [
+                'duplicate_player_type' => 'NONE',
+                'player_pool_scope' => 'league',
+                'draft_shape' => 'flat',
+                'team_divisions' => [
+                    'team-1' => 'Lidstrom',
+                    'team-2' => 'Orr',
+                ],
+            ],
+        ],
+    ])->save();
+    DB::table('league_platform_league')
+        ->where('league_id', $league->id)
+        ->where('platform_league_id', $platformLeague->id)
+        ->update([
+            'meta' => json_encode([
+                'scope_type' => 'division',
+                'scope_key' => 'lidstrom',
+                'scope_label' => 'Lidstrom',
+            ]),
+        ]);
+    $lidstromTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $lidstromTeam->forceFill([
+        'name' => 'Lidstrom Team',
+        'extras' => ['fantrax' => ['division' => 'Lidstrom']],
+    ])->save();
+    $orrTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Orr Team',
+        'extras' => ['fantrax' => ['division' => 'Orr']],
+    ]);
+    $draft = ($this->createDraft)($platformLeague, [
+        'status' => 'live',
+        'settings' => ['provider' => 'fantrax', 'draft_shape' => 'flat'],
+    ]);
+    $currentPick = ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:1',
+        'overall_pick' => 1,
+        'round' => 1,
+        'pick' => 1,
+        'pick_in_round' => 1,
+        'platform_team_id' => $lidstromTeam->id,
+        'provider_team_id' => 'team-1',
+        'status' => 'on_clock',
+        'raw_payload' => ['division' => 'Lidstrom'],
+    ]);
+    ($this->createDraftPick)($draft, [
+        'provider_pick_key' => 'overall:2',
+        'overall_pick' => 2,
+        'round' => 1,
+        'pick' => 2,
+        'pick_in_round' => 2,
+        'platform_team_id' => $orrTeam->id,
+        'provider_team_id' => 'team-2',
+        'raw_payload' => ['division' => 'Orr'],
+    ]);
+    $draft->forceFill(['current_draft_pick_id' => $currentPick->id])->save();
+
+    $response = $this->actingAs($user)
+        ->getJson(route('community.leagues.draft-summary', [$organization->id, $league->id]))
+        ->assertOk();
+
+    expect($response->json('summary.total_picks'))->toBe(2)
+        ->and($response->json('summary.otc_team.name'))->toBe('Lidstrom Team')
+        ->and($response->json('summary.up_next_team.name'))->toBe('Orr Team');
 });
 
 it('scopes division scoped league teams and roster players to the viewer division', function (): void {

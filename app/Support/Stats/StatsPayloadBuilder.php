@@ -62,17 +62,6 @@ final class StatsPayloadBuilder
                 ->where('league_abbrev', '!=', 'NHL')
                 ->where('stats.is_prospect', true);
 
-            $entryDraftYear = (int) ($payloadRequest->request?->integer('entry_draft_year') ?? 0);
-            if ($entryDraftYear > 0) {
-                $base->whereExists(function ($query) use ($entryDraftYear): void {
-                    $query->selectRaw('1')
-                        ->from('player_external_identities as pei')
-                        ->whereColumn('pei.player_id', 'stats.player_id')
-                        ->where('pei.provider', 'nhl_draft')
-                        ->whereRaw("(pei.raw_payload->>'draft_year')::int = ?", [$entryDraftYear]);
-                });
-            }
-
             $base->select($base->getModel()->getTable() . '.*');
             $buildMark('base_query_ms');
 

@@ -1256,14 +1256,19 @@
                     @endif
                 </div>
             </div>
-            <div class="mt-3 flex flex-wrap items-center gap-1.5">
-                @forelse ($draftRounds as $round)
-                    <span class="inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-[11px] font-semibold {{ (int) ($round['round'] ?? 0) === (int) data_get($activeRound, 'round', 0) ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600' }}">
-                        {{ $round['round'] ?? '?' }}
-                    </span>
-                @empty
-                    <span class="text-xs text-slate-500">No draft rounds loaded.</span>
-                @endforelse
+            <div class="relative mt-3 pb-3" data-draft-round-scroll-root>
+                <div class="draft-round-scroll flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" data-draft-round-scroll>
+                    @forelse ($draftRounds as $round)
+                        <span class="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full px-2 text-[11px] font-semibold {{ (int) ($round['round'] ?? 0) === (int) data_get($activeRound, 'round', 0) ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600' }}">
+                            {{ $round['round'] ?? '?' }}
+                        </span>
+                    @empty
+                        <span class="shrink-0 text-xs text-slate-500">No draft rounds loaded.</span>
+                    @endforelse
+                </div>
+                <div class="draft-round-scrollbar" data-draft-round-scrollbar aria-hidden="true">
+                    <span class="draft-round-scrollbar__thumb" data-draft-round-scroll-thumb></span>
+                </div>
             </div>
         </div>
     </div>

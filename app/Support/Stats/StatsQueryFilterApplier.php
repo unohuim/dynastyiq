@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
+use App\Models\PlayerExternalIdentity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -79,6 +80,24 @@ final class StatsQueryFilterApplier
         if ($table === 'stats' && $filterSet->leagues !== []) {
             $base->whereIn("{$table}.league_abbrev", $filterSet->leagues);
             $applied['filters']['league'] = $filterSet->leagues;
+        }
+
+        if ($filterSet->draftYears !== []) {
+            $draftYearExpression = "COALESCE(draft_filter.raw_payload->>'draft_year', "
+                . "draft_filter.raw_payload->>'draftYear', draft_filter.raw_payload->>'year')";
+
+            $base->whereExists(function ($query) use ($draftYearExpression, $filterSet): void {
+                $query->selectRaw('1')
+                    ->from('player_external_identities as draft_filter')
+                    ->whereColumn('draft_filter.player_id', 'pf.id')
+                    ->where('draft_filter.provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+                    ->whereRaw($draftYearExpression . " ~ '^[0-9]+$'")
+                    ->whereIn(
+                        DB::raw('(' . $draftYearExpression . ')::int'),
+                        $filterSet->draftYears,
+                    );
+            });
+            $applied['filters']['entry_draft_year'] = $filterSet->draftYears;
         }
 
         $ageRange = $filterSet->numericRanges['age'] ?? null;

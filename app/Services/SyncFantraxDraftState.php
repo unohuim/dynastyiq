@@ -175,6 +175,14 @@ final class SyncFantraxDraftState
             $draft->forceFill(['pick_clock_seconds' => 300])->save();
         }
 
+        $providerPickKeys = collect($rows)
+            ->pluck('provider_pick_key')
+            ->filter()
+            ->map(static fn (mixed $key): string => (string) $key)
+            ->unique()
+            ->values()
+            ->all();
+
         foreach ($rows as $row) {
             $providerTeamId = $row['fantrax_team_id'] ?: null;
             $providerPlayerId = $row['fantrax_player_id'] ?: null;
@@ -216,6 +224,14 @@ final class SyncFantraxDraftState
             if ($providerPlayerId && $wasUnpicked) {
                 $newDraftPicks[] = $draftPick;
             }
+        }
+
+        if ($providerPickKeys !== []) {
+            DraftPick::query()
+                ->where('draft_id', $draft->id)
+                ->where('source', 'fantrax')
+                ->whereNotIn('provider_pick_key', $providerPickKeys)
+                ->delete();
         }
 
         $nextPick = DraftPick::query()
