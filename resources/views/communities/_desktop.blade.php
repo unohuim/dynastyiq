@@ -150,6 +150,9 @@
                             'server' => null,
                             'teamsUrl' => route('community.leagues.teams', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'draftSummaryUrl' => route('community.leagues.draft-summary', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'draftSettingsUrl' => route('community.leagues.draft-settings', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'playersPayloadUrl' => route('community.leagues.players-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'leagueStatsPayloadUrl' => route('community.leagues.stats-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                         ];
                     @endphp
                     <button
@@ -686,7 +689,7 @@
                         class="min-w-0 rounded-xl border shadow-sm"
                         :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'"
                     >
-                        <div class="border-b px-4 pt-3" :class="theme === 'dark' ? 'border-slate-800' : 'border-slate-200'">
+                        <div class="flex items-start justify-between gap-3 border-b px-4 pt-3" :class="theme === 'dark' ? 'border-slate-800' : 'border-slate-200'">
                             <div class="flex gap-6 text-sm font-semibold">
                                 <button
                                     type="button"
@@ -705,6 +708,20 @@
                                     Players
                                 </button>
                             </div>
+
+                            @if ($canEdit)
+                                <button
+                                    type="button"
+                                    class="mb-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                                    x-on:click="openDraftOptions()"
+                                    aria-label="Toggle draft options"
+                                >
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-5 w-5" aria-hidden="true">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.397-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.281Z" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                                    </svg>
+                                </button>
+                            @endif
                         </div>
 
                         <div class="min-h-[22rem]">
@@ -816,15 +833,14 @@
                             </div>
 
                             <div x-show="activeCommunityDraftTab === 'players'" x-cloak class="flex min-h-[22rem] flex-col overflow-hidden">
-                                <div class="flex shrink-0 flex-wrap items-center gap-2 border-b bg-slate-50/70 px-3 py-2" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900/70' : 'border-slate-100 bg-slate-50/70'">
+                                <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50/70 px-3 py-2">
                                     <div class="w-48 shrink-0">
                                         <label class="sr-only" for="community-draft-player-search">Search players</label>
                                         <input
                                             id="community-draft-player-search"
                                             type="search"
-                                            disabled
-                                            class="h-9 w-full rounded-lg border px-3 text-sm shadow-sm outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                                            :class="theme === 'dark' ? 'border-slate-800 bg-slate-950 text-slate-300' : 'border-slate-200 bg-white text-slate-900'"
+                                            x-model.debounce.150ms="communityDraftPlayerSearch"
+                                            class="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
                                             placeholder="Search players"
                                         >
                                     </div>
@@ -832,45 +848,151 @@
                                     <label class="sr-only" for="community-draft-player-team">Team</label>
                                     <select
                                         id="community-draft-player-team"
-                                        disabled
-                                        class="h-9 rounded-lg border px-3 text-xs font-semibold shadow-sm outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                                        :class="theme === 'dark' ? 'border-slate-800 bg-slate-950 text-slate-300' : 'border-slate-200 bg-white text-slate-700'"
+                                        x-model="communityDraftPlayerTeam"
+                                        class="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
                                     >
-                                        <option>All Teams</option>
+                                        <option value="">All Teams</option>
+                                        <template x-for="team in communityDraftPlayerTeams" :key="team">
+                                            <option :value="team" x-text="team"></option>
+                                        </template>
                                     </select>
 
                                     <label class="sr-only" for="community-draft-player-perspective">Perspective</label>
                                     <select
                                         id="community-draft-player-perspective"
-                                        disabled
-                                        class="h-9 min-w-44 rounded-lg border px-3 text-xs font-semibold shadow-sm outline-none disabled:cursor-not-allowed disabled:opacity-70"
-                                        :class="theme === 'dark' ? 'border-slate-800 bg-slate-950 text-slate-300' : 'border-slate-200 bg-white text-slate-700'"
+                                        x-model="communityDraftSelectedPerspective"
+                                        x-on:change="setCommunityDraftPlayerPerspective($event.target.value)"
+                                        class="h-9 min-w-44 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
                                     >
-                                        <option>All Players</option>
+                                        <template x-for="perspective in communityDraftPlayerPerspectives" :key="perspective.slug || perspective.id || perspective.name">
+                                            <option :value="perspective.slug || perspective.id || perspective.name" x-text="perspective.name || perspective.slug"></option>
+                                        </template>
                                     </select>
+
+                                    <button
+                                        type="button"
+                                        x-show="communityDraftPlayerSearch || communityDraftPlayerTeam"
+                                        x-on:click="communityDraftResetPlayerFilters()"
+                                        class="h-9 rounded-lg px-2 text-xs font-semibold text-slate-500 transition hover:bg-white hover:text-slate-800"
+                                    >
+                                        Reset
+                                    </button>
                                 </div>
 
+                                <div x-show="communityDraftPlayersError" class="border-b border-amber-100 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="communityDraftPlayersError"></div>
+
                                 <div class="min-h-0 flex-1 overflow-auto">
-                                    <table class="min-w-full divide-y text-left" :class="theme === 'dark' ? 'divide-slate-800' : 'divide-slate-100'">
-                                        <thead class="sticky top-0 z-10 text-[11px] font-semibold uppercase tracking-wide" :class="theme === 'dark' ? 'bg-slate-900 text-slate-400' : 'bg-slate-50 text-slate-500'">
+                                    <table class="min-w-full divide-y divide-slate-100 text-left">
+                                        <thead class="sticky top-0 z-10 bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                                             <tr>
                                                 <th scope="col" class="w-14 px-4 py-2.5">Rk</th>
-                                                <th scope="col" class="min-w-56 px-3 py-2.5">Player</th>
-                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">Age</th>
-                                                <th scope="col" class="whitespace-nowrap px-2 py-2.5 text-center">Team</th>
-                                                <th scope="col" class="min-w-24 pl-5 pr-2 py-2.5">League</th>
-                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">GP</th>
-                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">G</th>
-                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">A</th>
-                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">PTS</th>
+                                                <th scope="col" class="whitespace-nowrap px-2 py-2.5 text-right">
+                                                    <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('drafted_overall_pick')">
+                                                        <span>Drafted</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('drafted_overall_pick')"></span>
+                                                    </button>
+                                                </th>
+                                                <th scope="col" class="min-w-56 px-3 py-2.5">
+                                                    <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('name')">
+                                                        <span>Player</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('name')"></span>
+                                                    </button>
+                                                </th>
+                                                <th scope="col" class="whitespace-nowrap pl-1 pr-4 py-2.5 text-right">
+                                                    <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('age')">
+                                                        <span>Age</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('age')"></span>
+                                                    </button>
+                                                </th>
+                                                <th scope="col" class="whitespace-nowrap px-2 py-2.5 text-center">
+                                                    <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('team')">
+                                                        <span>Team</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('team')"></span>
+                                                    </button>
+                                                </th>
+                                                <th scope="col" class="min-w-24 pl-5 pr-2 py-2.5">
+                                                    <button type="button" class="inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('league')">
+                                                        <span>League</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('league')"></span>
+                                                    </button>
+                                                </th>
+                                                <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">
+                                                    <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers('gp')">
+                                                        <span>GP</span>
+                                                        <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator('gp')"></span>
+                                                    </button>
+                                                </th>
+                                                <template x-for="heading in communityDraftPlayerStatHeadings" :key="heading.key">
+                                                    <th scope="col" class="whitespace-nowrap px-3 py-2.5 text-right">
+                                                        <button type="button" class="ml-auto inline-flex items-center gap-1 transition hover:text-slate-800" x-on:click="sortCommunityDraftPlayers(heading.key)">
+                                                            <span x-text="heading.label || heading.key"></span>
+                                                            <span class="text-[10px] text-blue-600" x-text="communityDraftPlayerSortIndicator(heading.key)"></span>
+                                                        </button>
+                                                    </th>
+                                                </template>
                                             </tr>
                                         </thead>
-                                        <tbody class="divide-y text-sm" :class="theme === 'dark' ? 'divide-slate-800 bg-slate-950' : 'divide-slate-100 bg-white'">
-                                            <tr>
-                                                <td colspan="9" class="px-4 py-10 text-center text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">
-                                                    Player board data is not available in the community management draft view yet.
-                                                </td>
+                                        <tbody class="divide-y divide-slate-100 bg-white text-sm">
+                                            <template x-for="(player, index) in filteredCommunityDraftPlayers" :key="player.id || player.player_id || `${player.name}-${index}`">
+                                                <tr class="transition-colors hover:bg-slate-50/80">
+                                                    <td class="px-4 py-2.5 text-xs font-semibold text-slate-500" x-text="index + 1"></td>
+                                                    <td class="whitespace-nowrap px-2 py-2.5 text-right text-[10px] font-semibold tabular-nums text-slate-600" x-text="communityDraftPlayerDraftedLabel(player)"></td>
+                                                    <td class="px-3 py-2.5">
+                                                        <div class="flex min-w-0 items-center gap-3">
+                                                            <template x-if="player.avatar_url || player.head_shot_url">
+                                                                <img :src="player.avatar_url || player.head_shot_url" alt="" class="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-slate-200" loading="lazy">
+                                                            </template>
+                                                            <template x-if="!player.avatar_url && !player.head_shot_url">
+                                                                <span class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200" x-text="communityDraftPlayerInitials(player)"></span>
+                                                            </template>
+                                                            <div class="min-w-0">
+                                                                <div class="truncate text-sm font-semibold text-slate-900" x-text="player.name || player.full_name"></div>
+                                                                <div class="mt-0.5 truncate text-[11px] text-slate-500">
+                                                                    <span x-show="player.position || player.pos" x-text="player.position || player.pos"></span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td class="whitespace-nowrap pl-1 pr-4 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="communityDraftPlayerAge(player)"></td>
+                                                    <td class="whitespace-nowrap px-2 py-2.5 text-center">
+                                                        <span
+                                                            class="inline-flex h-6 min-w-12 items-center justify-center rounded-md px-2 text-[10px] font-semibold tracking-wide text-white shadow-sm"
+                                                            :style="communityDraftTeamBadgeStyle(player.team_abbrev || player.team)"
+                                                            x-text="player.team_abbrev || player.team || '-'"
+                                                        ></span>
+                                                    </td>
+                                                    <td class="whitespace-nowrap pl-5 pr-2 py-2.5 text-xs font-semibold text-slate-600" x-text="communityDraftPlayerLeagueName(player)"></td>
+                                                    <td class="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="communityDraftPlayerGp(player)"></td>
+                                                    <template x-for="heading in communityDraftPlayerStatHeadings" :key="`${player.id || player.player_id}-${heading.key}`">
+                                                        <td class="whitespace-nowrap px-3 py-2.5 text-right text-xs font-semibold tabular-nums text-slate-700" x-text="communityDraftFormatValue(communityDraftPlayerValue(player, heading.key))"></td>
+                                                    </template>
+                                                </tr>
+                                            </template>
+                                            <tr x-show="!communityDraftPlayersLoading && communityDraftPlayerLoaded && filteredCommunityDraftPlayers.length === 0">
+                                                <td :colspan="Math.max(7 + communityDraftPlayerStatHeadings.length, 7)" class="px-4 py-8 text-center text-sm text-slate-500">No players match this draft view.</td>
                                             </tr>
+                                            <template x-for="index in (communityDraftPlayersLoading ? 6 : 0)" :key="`community-draft-players-loading-${index}`">
+                                                <tr class="animate-pulse">
+                                                    <td class="px-4 py-2.5"><div class="h-3 w-5 rounded-full bg-slate-200"></div></td>
+                                                    <td class="px-2 py-2.5"><div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div></td>
+                                                    <td class="px-3 py-2.5">
+                                                        <div class="flex min-w-0 items-center gap-3">
+                                                            <div class="h-8 w-8 shrink-0 rounded-full bg-slate-200"></div>
+                                                            <div class="min-w-0 flex-1 space-y-2">
+                                                                <div class="h-3 w-40 max-w-full rounded-full bg-slate-200"></div>
+                                                                <div class="h-2 w-24 rounded-full bg-slate-100"></div>
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td class="px-3 py-2.5"><div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div></td>
+                                                    <td class="px-2 py-2.5"><div class="mx-auto h-5 w-12 rounded-md bg-slate-100"></div></td>
+                                                    <td class="px-4 py-2.5"><div class="h-3 w-16 rounded-full bg-slate-100"></div></td>
+                                                    <td class="px-3 py-2.5"><div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div></td>
+                                                    <template x-for="heading in communityDraftPlayerStatHeadings" :key="`community-draft-players-loading-${index}-${heading.key}`">
+                                                        <td class="px-3 py-2.5"><div class="ml-auto h-3 w-8 rounded-full bg-slate-100"></div></td>
+                                                    </template>
+                                                </tr>
+                                            </template>
                                         </tbody>
                                     </table>
                                 </div>
@@ -888,6 +1010,157 @@
             </section>
         </main>
     </div>
+
+    @if ($canEdit)
+        <x-ui.slide-over show="draftOptionsOpen" close-action="draftOptionsOpen = false" title-id="community-draft-options-title" max-width="max-w-md">
+            <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                <h2 id="community-draft-options-title" class="text-base font-semibold text-slate-950">Draft options</h2>
+                <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600" x-on:click="draftOptionsOpen = false" aria-label="Close draft options">
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 1 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="flex-1 divide-y divide-slate-200 overflow-y-auto px-5">
+                <section class="py-4">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Clock</div>
+                    <div class="mt-3 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div x-show="draftOptionsLoading" class="text-xs font-medium text-slate-500">Loading draft options...</div>
+                        <div x-show="draftOptionsError" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="draftOptionsError"></div>
+
+                        <div class="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                            <div class="grid gap-3 sm:grid-cols-3">
+                                <label class="block">
+                                    <span class="text-xs font-semibold text-slate-600">Hours</span>
+                                    <input type="number" min="0" max="24" step="1" inputmode="numeric" x-model.number="draftPickClockHours" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                </label>
+                                <label class="block">
+                                    <span class="text-xs font-semibold text-slate-600">Minutes</span>
+                                    <input type="number" min="0" max="59" step="1" inputmode="numeric" x-model.number="draftPickClockMinutes" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                </label>
+                                <label class="block">
+                                    <span class="text-xs font-semibold text-slate-600">Seconds</span>
+                                    <input type="number" min="0" max="59" step="1" inputmode="numeric" x-model.number="draftPickClockSeconds" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                </label>
+                            </div>
+                            <div class="mt-4">
+                                <label class="block">
+                                    <span class="text-xs font-semibold text-slate-600">Pause seconds</span>
+                                    <input type="number" min="0" max="3600" step="1" inputmode="numeric" x-model.number="draftPauseSeconds" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                </label>
+                            </div>
+                            <label class="mt-4 flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+                                <input type="checkbox" x-model="draftAutoPickEnabled" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                                <span class="text-sm font-medium text-slate-700">Enable auto-pick</span>
+                            </label>
+                            <div class="mt-3 min-h-5 text-xs">
+                                <span x-show="draftTimerMessage" x-text="draftTimerMessage" :class="draftTimerMessage.includes('Could not') ? 'text-red-600' : 'text-emerald-700'"></span>
+                                <span x-show="!draftTimerCanUpdate && !draftTimerMessage" class="text-slate-500">Connect a draft before saving timer settings.</span>
+                            </div>
+                            <button type="button" class="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60" x-on:click="saveDraftTimerSettings()" :disabled="draftTimerSaving || !draftTimerCanUpdate">
+                                <span x-show="!draftTimerSaving">Save timer settings</span>
+                                <span x-show="draftTimerSaving">Saving...</span>
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="py-4">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Discord</div>
+                    <div class="mt-3 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <div class="rounded-lg border border-slate-200 bg-white px-3 py-3">
+                            <div class="flex items-center justify-between gap-3">
+                                <label class="text-sm font-medium text-slate-700" for="community-draft-channel-combobox">Draft pick channel</label>
+                                <span class="text-[11px] text-slate-400" x-text="draftChannelOptions.length + ' loaded'"></span>
+                            </div>
+                            <div class="relative mt-2" @click.stop>
+                                <input
+                                    id="community-draft-channel-combobox"
+                                    type="text"
+                                    x-model="draftChannelQuery"
+                                    x-on:focus="draftChannelOpen = true"
+                                    x-on:click="draftChannelOpen = true"
+                                    x-on:input="draftChannelId = ''; draftChannelOpen = true"
+                                    x-on:keydown.escape.prevent.stop="draftChannelOpen = false"
+                                    placeholder="None"
+                                    autocomplete="off"
+                                    class="block w-full rounded-md border-slate-200 pr-9 text-sm text-slate-900 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+                                    :disabled="!draftDiscordConnected"
+                                >
+                                <button
+                                    type="button"
+                                    x-on:click="draftChannelOpen = !draftChannelOpen"
+                                    class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 text-slate-400"
+                                    :disabled="!draftDiscordConnected"
+                                >
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                                    </svg>
+                                </button>
+
+                                <div x-cloak x-show="draftChannelOpen" x-transition @click.outside="draftChannelOpen = false" class="absolute z-30 mt-1 max-h-48 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg ring-1 ring-black/5">
+                                    <button type="button" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="selectDraftChannel({ id: '', name: '' })">
+                                        None
+                                    </button>
+                                    <template x-for="channel in filteredDraftChannels" :key="channel.id">
+                                        <button type="button" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="selectDraftChannel(channel)">
+                                            <span class="truncate">#<span x-text="channel.name"></span></span>
+                                        </button>
+                                    </template>
+                                    <div x-show="!draftChannelQuery && draftChannelOptions.length === 0" class="px-3 py-2 text-xs text-slate-500" x-text="draftChannelsMessage || 'No text channels returned for this Discord server.'"></div>
+                                    <button type="button" x-show="draftChannelQuery && filteredDraftChannels.length === 0" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="draftChannelOpen = false">
+                                        Create #<span x-text="draftChannelQuery.replace(/^#/, '')"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="mt-3 grid gap-2">
+                                <label class="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+                                    <input type="checkbox" x-model="draftAnnounceOtc" :disabled="!draftDiscordConnected" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-60">
+                                    <span class="text-sm font-medium text-slate-700">Announce OTC</span>
+                                </label>
+                                <label class="flex items-center gap-3 rounded-lg bg-slate-50 px-3 py-2 ring-1 ring-slate-200">
+                                    <input type="checkbox" x-model="draftAnnounceOnDeck" :disabled="!draftDiscordConnected" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-60">
+                                    <span class="text-sm font-medium text-slate-700">Announce On Deck</span>
+                                </label>
+                            </div>
+
+                            <div class="mt-2 flex items-center justify-between gap-3">
+                                <p class="text-[11px] text-slate-500" x-text="draftDiscordConnected ? 'New names create a text channel.' : 'Connect a Discord server first.'"></p>
+                                <button type="button" x-on:click="saveDraftChannel()" :disabled="draftChannelSaving || !draftDiscordConnected" class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                                    <span x-show="!draftChannelSaving">Save</span>
+                                    <span x-show="draftChannelSaving">Saving...</span>
+                                </button>
+                            </div>
+                            <p x-show="draftChannelMessage" x-text="draftChannelMessage" class="mt-2 text-[11px] text-slate-500"></p>
+                        </div>
+                    </div>
+                </section>
+
+                @foreach ([
+                    'Auto-Pick' => ['Enable Auto-Pick', 'Auto-Pick Strategy'],
+                    'Queue Settings' => ['Queue Prioritization', 'Max Queue Size', 'Duplicates'],
+                    'Sound & Notifications' => ['Pick Time Alerts', 'Sound Notifications'],
+                    'League Info' => ['League Home', 'View Managers', 'Draft Order'],
+                ] as $section => $items)
+                    <section class="py-4">
+                        <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{{ $section }}</div>
+                        <div class="mt-2 space-y-1">
+                            @foreach ($items as $item)
+                                <button type="button" class="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-slate-50">
+                                    <span class="text-sm font-semibold text-slate-800">{{ $item }}</span>
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M7.22 4.22a.75.75 0 0 1 1.06 0l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 1 1-1.06-1.06L11.94 10 7.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                                    </svg>
+                                </button>
+                            @endforeach
+                        </div>
+                    </section>
+                @endforeach
+            </div>
+        </x-ui.slide-over>
+    @endif
 
     <div
         x-cloak

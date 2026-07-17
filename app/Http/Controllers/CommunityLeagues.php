@@ -7,11 +7,13 @@ namespace App\Http\Controllers;
 use App\Models\FantraxPlayer;
 use App\Models\DiscordServer;
 use App\Models\Draft;
+use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
 use App\Events\TeamLogosSynced;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
 use App\Services\FantraxDraftingWindow;
@@ -336,7 +338,8 @@ class CommunityLeagues extends Controller
                 'summary' => $this->communityDraftSummaryPayload(
                     $drafting,
                     $platformLeague,
-                    []
+                    [],
+                    $this->draftTimerSettingsFromLeagueMeta($league)
                 ),
                 'live_html' => $this->communityDraftLiveHtml($drafting),
                 'active_round_index' => (int) ($drafting['active_round_index'] ?? 0),
@@ -384,10 +387,66 @@ class CommunityLeagues extends Controller
             'summary' => $this->communityDraftSummaryPayload(
                 $drafting,
                 $platformLeague,
-                []
+                [],
+                $this->draftTimerSettingsFromLeagueMeta($league)
             ),
             'live_html' => $this->communityDraftLiveHtml($drafting),
             'active_round_index' => (int) ($drafting['active_round_index'] ?? 0),
+        ]);
+    }
+
+    /**
+     * Return draft options drawer settings for a community league.
+     */
+    public function draftSettings(int $cId, int $lId): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with(['discordServers', 'leagues'])
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->withPivot(['discord_server_id', 'meta'])
+            ->findOrFail($lId);
+
+        return response()->json([
+            'ok' => true,
+            'config' => $this->draftingConfig($community, $league),
+        ]);
+    }
+
+    /**
+     * Return community-safe draft player board metadata.
+     */
+    public function playersPayload(int $cId, int $lId): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        $latestEntryDraftYear = $this->latestEntryDraftYear();
+
+        return response()->json([
+            'ok' => true,
+            'latestEntryDraftYear' => $latestEntryDraftYear,
+            'leagueStatsPayloadUrl' => route('community.leagues.stats-payload', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+            'perspectives' => $this->communityDraftPerspectiveOptions($latestEntryDraftYear),
         ]);
     }
 
@@ -416,6 +475,58 @@ class CommunityLeagues extends Controller
         }
 
         return $activeProviderScope;
+    }
+
+    /**
+     * Return the newest known NHL entry draft year.
+     */
+    private function latestEntryDraftYear(): ?int
+    {
+        $playerDraftYear = Player::query()
+            ->whereNotNull('draft_year')
+            ->max('draft_year');
+
+        if ((int) $playerDraftYear > 0) {
+            return (int) $playerDraftYear;
+        }
+
+        $identityDraftYear = PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+            ->get(['raw_payload'])
+            ->pluck('raw_payload')
+            ->map(static fn (mixed $payload): int => (int) data_get($payload, 'draft_year', 0))
+            ->filter(static fn (int $year): bool => $year > 0)
+            ->max();
+
+        return (int) $identityDraftYear > 0 ? (int) $identityDraftYear : null;
+    }
+
+    /**
+     * Build draft player perspective options for the community management view.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function communityDraftPerspectiveOptions(?int $latestEntryDraftYear): array
+    {
+        return [
+            [
+                'slug' => 'prospects',
+                'name' => 'Prospects',
+            ],
+            ...($latestEntryDraftYear ? [[
+                'slug' => 'entry-draft',
+                'name' => $latestEntryDraftYear . ' Entry Draft',
+                'entry_draft_year' => $latestEntryDraftYear,
+            ], [
+                'slug' => 'entry-draft-goalies',
+                'name' => $latestEntryDraftYear . ' Entry Draft - Goalies',
+                'entry_draft_year' => $latestEntryDraftYear,
+            ]] : []),
+            [
+                'slug' => 'prospects-goalies',
+                'name' => 'Prospects - Goalies',
+            ],
+        ];
     }
 
     /**
@@ -485,7 +596,8 @@ class CommunityLeagues extends Controller
     private function communityDraftSummaryPayload(
         array $drafting,
         PlatformLeague $platformLeague,
-        array $activeProviderScope = []
+        array $activeProviderScope = [],
+        array $timerSettings = []
     ): array
     {
         $rows = collect($drafting['rows'] ?? [])
@@ -505,6 +617,28 @@ class CommunityLeagues extends Controller
             : $this->communityDraftRowAfter($rows, $nextPick);
         $rounds = $this->communityDraftRounds($rows);
 
+        $countdownExpiresAt = (string) ($drafting['countdown_expires_at'] ?? '');
+        $timerSeconds = (int) ($timerSettings['pick_clock_seconds'] ?? 0);
+        if (! $isCompleted && $timerSeconds > 0) {
+            $lastPickedAt = $pickedRows
+                ->pluck('picked_at')
+                ->filter()
+                ->map(static function (mixed $pickedAt): ?CarbonImmutable {
+                    try {
+                        return CarbonImmutable::parse((string) $pickedAt);
+                    } catch (Throwable) {
+                        return null;
+                    }
+                })
+                ->filter()
+                ->sortByDesc(static fn (CarbonImmutable $pickedAt): int => $pickedAt->getTimestamp())
+                ->first();
+
+            $countdownExpiresAt = $lastPickedAt instanceof CarbonImmutable
+                ? $lastPickedAt->addSeconds($timerSeconds)->toIso8601String()
+                : $countdownExpiresAt;
+        }
+
         return [
             'available' => (bool) ($drafting['available'] ?? true),
             'status_text' => (string) ($drafting['status_text'] ?? 'Draft'),
@@ -513,7 +647,7 @@ class CommunityLeagues extends Controller
             'draft_at_label' => $this->communityDraftAtLabel((string) ($drafting['draft_at'] ?? '')),
             'is_completed' => $isCompleted,
             'time_remaining_label' => $isCompleted ? '-' : '--:--',
-            'countdown_expires_at' => (string) ($drafting['countdown_expires_at'] ?? ''),
+            'countdown_expires_at' => $countdownExpiresAt,
             'otc_team' => $this->communityDraftPickTeamPayload($nextPick, 'Awaiting pick'),
             'up_next_team' => $this->communityDraftPickTeamPayload($upNextPick, 'No upcoming pick'),
             'drafted_count' => $pickedRows->count(),
@@ -769,7 +903,8 @@ class CommunityLeagues extends Controller
     private function canonicalCommunityDraftSummary(
         Draft $draft,
         PlatformLeague $platformLeague,
-        array $activeProviderScope = []
+        array $activeProviderScope = [],
+        array $timerSettings = []
     ): array {
         $picks = $draft->picks
             ->filter(fn (DraftPick $pick): bool => $this->draftPickMatchesProviderScope($pick, $platformLeague, $activeProviderScope))
@@ -822,7 +957,11 @@ class CommunityLeagues extends Controller
             'draft_at_label' => $this->communityDraftAtLabel($draft->starts_at?->toIso8601String() ?? ''),
             'is_completed' => $isCompleted,
             'time_remaining_label' => $isCompleted ? '-' : '--:--',
-            'countdown_expires_at' => $this->canonicalDraftCountdownExpiresAt($draft, $currentPick),
+            'countdown_expires_at' => $this->canonicalDraftCountdownExpiresAt(
+                $draft,
+                $currentPick,
+                (int) ($timerSettings['pick_clock_seconds'] ?? 0)
+            ),
             'pick_clock_seconds' => (int) ($draft->pick_clock_seconds ?? 0),
             'otc_team' => $this->canonicalDraftPickTeamPayload($currentPick, 'Awaiting pick'),
             'up_next_team' => $this->canonicalDraftPickTeamPayload($upNextPick, 'No upcoming pick'),
@@ -870,7 +1009,7 @@ class CommunityLeagues extends Controller
             ->first(static fn (DraftPick $pick): bool => blank($pick->provider_player_id) && blank($pick->player_id));
     }
 
-    private function canonicalDraftCountdownExpiresAt(Draft $draft, ?DraftPick $currentPick): string
+    private function canonicalDraftCountdownExpiresAt(Draft $draft, ?DraftPick $currentPick, ?int $timerOverrideSeconds = null): string
     {
         if ((string) $draft->status === 'complete') {
             return '';
@@ -880,7 +1019,9 @@ class CommunityLeagues extends Controller
             return $currentPick->expires_at->toIso8601String();
         }
 
-        $pickClockSeconds = (int) ($draft->pick_clock_seconds ?? 0);
+        $pickClockSeconds = $timerOverrideSeconds !== null && $timerOverrideSeconds > 0
+            ? $timerOverrideSeconds
+            : (int) ($draft->pick_clock_seconds ?? 0);
         $lastPickedAt = $draft->picks
             ->filter(static fn (DraftPick $pick): bool => $pick->picked_at !== null)
             ->sortByDesc(static fn (DraftPick $pick): int => $pick->picked_at?->getTimestamp() ?? 0)
@@ -1339,16 +1480,30 @@ class CommunityLeagues extends Controller
         $data = $request->validate([
             'draft_channel_id' => ['nullable', 'string', 'max:64'],
             'draft_channel_name' => ['nullable', 'string', 'max:100'],
+            'announce_otc' => ['nullable', 'boolean'],
+            'announce_on_deck' => ['nullable', 'boolean'],
+            'pick_clock_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
+            'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
+            'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
+            'auto_pick_enabled' => ['nullable', 'boolean'],
         ]);
 
+        $hasChannelPayload = array_key_exists('draft_channel_id', $data)
+            || array_key_exists('draft_channel_name', $data);
+        $hasDiscordOptionsPayload = array_key_exists('announce_otc', $data)
+            || array_key_exists('announce_on_deck', $data);
+        $hasTimerPayload = array_key_exists('pick_clock_seconds', $data)
+            || array_key_exists('pick_clock_minutes', $data)
+            || array_key_exists('pause_between_picks_seconds', $data)
+            || array_key_exists('auto_pick_enabled', $data);
         $channelId = trim((string) ($data['draft_channel_id'] ?? ''));
         $channelName = $this->normalizeDiscordChannelName($data['draft_channel_name'] ?? '');
         $discordServer = $this->selectedDiscordServer($community, $league);
         $meta = $this->pivotMeta($league);
 
-        if ($channelId === '' && $channelName === '') {
+        if ($hasChannelPayload && $channelId === '' && $channelName === '') {
             data_forget($meta, 'draft_notifications.discord_channel');
-        } elseif ($discordServer) {
+        } elseif ($hasChannelPayload && $discordServer) {
             $channels = $this->discordTextChannels($discordServer);
             $channel = collect($channels)->first(static fn (array $option): bool => $channelId !== ''
                 ? (string) $option['id'] === $channelId
@@ -1369,11 +1524,20 @@ class CommunityLeagues extends Controller
                     'message' => 'Could not find or create that Discord channel.',
                 ], 422);
             }
-        } else {
+        } elseif ($hasChannelPayload) {
             return response()->json([
                 'ok' => false,
                 'message' => 'Connect a Discord server before selecting a draft channel.',
             ], 422);
+        }
+
+        if ($hasDiscordOptionsPayload) {
+            data_set($meta, 'draft_notifications.announce_otc', (bool) ($data['announce_otc'] ?? false));
+            data_set($meta, 'draft_notifications.announce_on_deck', (bool) ($data['announce_on_deck'] ?? false));
+        }
+
+        if ($hasTimerPayload) {
+            data_set($meta, 'draft_timer', $this->normalizeCommunityDraftTimerSettings($data));
         }
 
         DB::table('organization_leagues')
@@ -1384,9 +1548,15 @@ class CommunityLeagues extends Controller
                 'updated_at' => now(),
             ]);
 
+        if ($hasChannelPayload || $hasDiscordOptionsPayload) {
+            $this->syncDraftNotificationSettings($community, $league, $meta);
+        }
+
         return response()->json([
             'ok' => true,
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
+            'notifications' => $this->draftNotificationOptionsFromMeta($meta),
+            'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
         ]);
     }
 
@@ -1612,6 +1782,7 @@ class CommunityLeagues extends Controller
     {
         $discordServer = $this->selectedDiscordServer($community, $league);
         $selectedChannel = data_get($this->pivotMeta($league), 'draft_notifications.discord_channel');
+        $meta = $this->pivotMeta($league);
         $channelOptions = $this->discordTextChannelOptions($discordServer);
         $channels = $channelOptions['channels'];
 
@@ -1635,6 +1806,121 @@ class CommunityLeagues extends Controller
             'channels_status' => $channelOptions['status'],
             'channels_message' => $channelOptions['message'],
             'selected_channel' => is_array($selectedChannel) ? $selectedChannel : null,
+            'notifications' => $this->draftNotificationOptionsFromMeta($meta),
+            'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
+        ];
+    }
+
+    /**
+     * Return the community-managed draft notification options.
+     *
+     * @param array<string,mixed> $meta
+     * @return array<string,bool>
+     */
+    private function draftNotificationOptionsFromMeta(array $meta): array
+    {
+        return [
+            'announce_otc' => (bool) data_get($meta, 'draft_notifications.announce_otc', true),
+            'announce_on_deck' => (bool) data_get($meta, 'draft_notifications.announce_on_deck', false),
+        ];
+    }
+
+    /**
+     * Keep the active neutral draft notification row aligned with community settings.
+     *
+     * @param array<string,mixed> $meta
+     */
+    private function syncDraftNotificationSettings(mixed $community, mixed $league, array $meta): void
+    {
+        $draft = Draft::query()
+            ->where('organization_id', (int) $community->id)
+            ->where('platform_league_id', (int) $league->id)
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $draft instanceof Draft) {
+            return;
+        }
+
+        $channel = data_get($meta, 'draft_notifications.discord_channel');
+        $channelId = is_array($channel) ? trim((string) ($channel['id'] ?? '')) : '';
+        $channelName = is_array($channel) ? trim((string) ($channel['name'] ?? '')) : '';
+        $options = $this->draftNotificationOptionsFromMeta($meta);
+
+        $settings = DraftNotificationSetting::query()->firstOrNew(['draft_id' => $draft->id]);
+        $existingSettings = is_array($settings->settings) ? $settings->settings : [];
+
+        $settings->fill([
+            'discord_channel_id' => $channelId !== '' ? $channelId : null,
+            'discord_channel_name' => $channelName !== '' ? $channelName : null,
+            'enabled' => $channelId !== '',
+            'settings' => array_merge($existingSettings, [
+                'source' => 'community_league_meta',
+                'announce_otc' => $options['announce_otc'],
+                'announce_on_deck' => $options['announce_on_deck'],
+            ]),
+        ])->save();
+    }
+
+    /**
+     * Normalize request timer fields for organization_leagues.meta.
+     *
+     * @param array<string,mixed> $settings
+     * @return array<string,mixed>
+     */
+    private function normalizeCommunityDraftTimerSettings(array $settings): array
+    {
+        return [
+            'pick_clock_seconds' => array_key_exists('pick_clock_seconds', $settings)
+                ? max(0, (int) $settings['pick_clock_seconds'])
+                : max(0, (int) ($settings['pick_clock_minutes'] ?? 5)) * 60,
+            'pause_between_picks_seconds' => (int) ($settings['pause_between_picks_seconds'] ?? 0),
+            'auto_pick_enabled' => (bool) ($settings['auto_pick_enabled'] ?? false),
+        ];
+    }
+
+    /**
+     * Return timer settings stored on a community league pivot.
+     *
+     * @return array<string,mixed>
+     */
+    private function draftTimerSettingsFromLeagueMeta(mixed $league): array
+    {
+        return $this->draftTimerSettingsFromMeta($this->pivotMeta($league));
+    }
+
+    /**
+     * Return timer settings stored inside organization_leagues.meta.
+     *
+     * @param array<string,mixed> $meta
+     * @return array<string,mixed>
+     */
+    private function draftTimerSettingsFromMeta(array $meta): array
+    {
+        $timer = data_get($meta, 'draft_timer', []);
+
+        return is_array($timer) ? $timer : [];
+    }
+
+    /**
+     * Build timer settings for the draft options drawer.
+     *
+     * @return array<string,mixed>
+     */
+    private function draftTimerSettingsPayload(array $timer): array
+    {
+        $pickClockSeconds = (int) ($timer['pick_clock_seconds'] ?? 300);
+
+        return [
+            'pick_clock_seconds' => $pickClockSeconds,
+            'pick_clock_hours' => intdiv($pickClockSeconds, 3600),
+            'pick_clock_minutes' => $pickClockSeconds > 0
+                ? intdiv($pickClockSeconds % 3600, 60)
+                : 5,
+            'pick_clock_seconds_remainder' => $pickClockSeconds % 60,
+            'pause_between_picks_seconds' => (int) ($timer['pause_between_picks_seconds'] ?? 0),
+            'auto_pick_enabled' => (bool) ($timer['auto_pick_enabled'] ?? false),
+            'can_update' => true,
         ];
     }
 

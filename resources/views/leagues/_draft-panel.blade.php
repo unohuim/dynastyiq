@@ -115,11 +115,15 @@
     $draftSettingsUrl = (string) ($drafting['settings_url'] ?? '');
     $isFantraxLeague = (string) ($league?->platform ?? '') === 'fantrax';
     $draftPickClockSeconds = (int) ($drafting['pick_clock_seconds'] ?? 0);
+    $draftPickClockHours = (int) ($drafting['pick_clock_hours'] ?? intdiv($draftPickClockSeconds, 3600));
     $draftPickClockMinutes = (int) ($drafting['pick_clock_minutes'] ?? 5);
+    $draftPickClockSecondsRemainder = (int) ($drafting['pick_clock_seconds_remainder'] ?? ($draftPickClockSeconds % 60));
     $draftPauseSeconds = (int) ($drafting['pause_between_picks_seconds'] ?? 0);
     $draftAutoPickEnabled = (bool) ($drafting['auto_pick_enabled'] ?? false);
     $draftCountdownExpiresAt = $isCompletedDraft ? '' : (string) ($drafting['countdown_expires_at'] ?? '');
     $draftCanCountdown = ! $isCompletedDraft && (bool) ($drafting['is_live'] ?? false) && $draftCountdownExpiresAt !== '';
+    $draftTimerReadOnly = (bool) ($drafting['timer_read_only'] ?? false);
+    $draftTimerReadOnlyMessage = (string) ($drafting['timer_read_only_message'] ?? '');
     $draftQueueItems = collect($drafting['queue_items'] ?? [])->values();
     $draftQueuedPlayerIds = $draftQueueItems
         ->pluck('player_id')
@@ -185,11 +189,15 @@
         draftRequestMessage: '',
         draftRequestError: '',
         draftPickClockSeconds: @js($draftPickClockSeconds),
+        draftPickClockHours: @js($draftPickClockHours),
         draftPickClockMinutes: @js($draftPickClockMinutes),
+        draftPickClockSecondsRemainder: @js($draftPickClockSecondsRemainder),
         draftPauseSeconds: @js($draftPauseSeconds),
         draftAutoPickEnabled: @js($draftAutoPickEnabled),
         draftCountdownExpiresAt: @js($draftCountdownExpiresAt),
         draftCanCountdown: @js($draftCanCountdown),
+        draftTimerReadOnly: @js($draftTimerReadOnly),
+        draftTimerReadOnlyMessage: @js($draftTimerReadOnlyMessage),
         createDraftUrl: @js($createDraftUrl),
         draftSettingsUrl: @js($draftSettingsUrl),
         search: '',
@@ -1004,6 +1012,11 @@
         },
         async submitDraftRequest(mode, url) {
             if (!url || this.draftRequestLoading) return;
+            if (mode === 'settings' && this.draftTimerReadOnly) {
+                this.draftRequestMessage = '';
+                this.draftRequestError = this.draftTimerReadOnlyMessage || 'Draft timer settings are read-only.';
+                return;
+            }
 
             this.draftRequestLoading = true;
             this.draftRequestMessage = '';
@@ -1020,7 +1033,7 @@
                     },
                     body: JSON.stringify({
                         mode,
-                        pick_clock_minutes: Number(this.draftPickClockMinutes || 0),
+                        pick_clock_seconds: this.normalizedDraftClockSeconds(),
                         pause_between_picks_seconds: Number(this.draftPauseSeconds || 0),
                         auto_pick_enabled: Boolean(this.draftAutoPickEnabled),
                     }),
@@ -1057,6 +1070,13 @@
         },
         saveDraftSettings() {
             return this.submitDraftRequest('settings', this.draftSettingsUrl);
+        },
+        normalizedDraftClockSeconds() {
+            const hours = Math.max(0, Number(this.draftPickClockHours || 0));
+            const minutes = Math.max(0, Number(this.draftPickClockMinutes || 0));
+            const seconds = Math.max(0, Number(this.draftPickClockSecondsRemainder || 0));
+
+            return Math.min(86400, Math.floor(hours * 3600 + minutes * 60 + seconds));
         },
     }"
     x-on:fantrax:draft-pick.window="refreshDraftQueuePayload()"
@@ -1809,37 +1829,40 @@
         </div>
 
         <div class="flex-1 divide-y divide-slate-200 overflow-y-auto px-5">
-            <section class="py-4">
-                <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Quick Actions</div>
-                <div class="mt-3 grid grid-cols-2 gap-2">
-                    <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">My Queue</button>
-                    <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">Export Board</button>
-                </div>
-            </section>
-
             @if ($canManageDraft && $draftSettingsUrl !== '')
                 <section class="py-4">
-                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Draft Preferences</div>
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Clock</div>
                     <div class="mt-3 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                        <div class="grid gap-4 sm:grid-cols-2">
+                        <div class="grid gap-3 sm:grid-cols-3">
                             <label class="block">
-                                <span class="text-xs font-semibold text-slate-600">Pick clock minutes</span>
-                                <input type="number" min="0" max="1440" x-model.number="draftPickClockMinutes" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                <span class="text-xs font-semibold text-slate-600">Hours</span>
+                                <input type="number" min="0" max="24" step="1" inputmode="numeric" x-model.number="draftPickClockHours" :disabled="draftTimerReadOnly" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
                             </label>
                             <label class="block">
+                                <span class="text-xs font-semibold text-slate-600">Minutes</span>
+                                <input type="number" min="0" max="59" step="1" inputmode="numeric" x-model.number="draftPickClockMinutes" :disabled="draftTimerReadOnly" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
+                            </label>
+                            <label class="block">
+                                <span class="text-xs font-semibold text-slate-600">Seconds</span>
+                                <input type="number" min="0" max="59" step="1" inputmode="numeric" x-model.number="draftPickClockSecondsRemainder" :disabled="draftTimerReadOnly" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block">
                                 <span class="text-xs font-semibold text-slate-600">Pause seconds</span>
-                                <input type="number" min="0" max="3600" x-model.number="draftPauseSeconds" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600">
+                                <input type="number" min="0" max="3600" step="1" inputmode="numeric" x-model.number="draftPauseSeconds" :disabled="draftTimerReadOnly" class="mt-1 block w-full rounded-lg border-0 bg-white py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
                             </label>
                         </div>
                         <label class="flex items-center gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200">
-                            <input type="checkbox" x-model="draftAutoPickEnabled" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600">
+                            <input type="checkbox" x-model="draftAutoPickEnabled" :disabled="draftTimerReadOnly" class="rounded border-slate-300 text-blue-600 focus:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-60">
                             <span class="text-sm font-medium text-slate-700">Enable auto-pick</span>
                         </label>
                         <div class="min-h-5 text-xs">
+                            <span x-show="draftTimerReadOnly && !draftRequestError" class="text-slate-500" x-text="draftTimerReadOnlyMessage"></span>
                             <span x-show="draftRequestMessage" class="text-emerald-700" x-text="draftRequestMessage"></span>
                             <span x-show="draftRequestError" class="text-red-600" x-text="draftRequestError"></span>
                         </div>
-                        <button type="button" class="inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60" x-on:click="saveDraftSettings()" :disabled="draftRequestLoading">
+                        <button type="button" class="inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60" x-on:click="saveDraftSettings()" :disabled="draftRequestLoading || draftTimerReadOnly">
                             <span x-show="!draftRequestLoading">Save draft settings</span>
                             <span x-show="draftRequestLoading">Saving...</span>
                         </button>

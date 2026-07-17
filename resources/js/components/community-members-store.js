@@ -45,6 +45,44 @@ function showToast(type, message) {
     }
 }
 
+const teamGradients = {
+    ANA: "linear-gradient(to bottom, #FF6F00, #000000)",
+    ARI: "linear-gradient(to bottom, #8C2633, #000000)",
+    BOS: "linear-gradient(to bottom, #FFB81C, #000000)",
+    BUF: "linear-gradient(to bottom, #002654, #FDBB2F)",
+    CGY: "linear-gradient(to bottom, #C8102E, #F1BE48)",
+    CAR: "linear-gradient(to bottom, #CC0000, #000000)",
+    CHI: "linear-gradient(to bottom, #CF0A2C, #000000)",
+    COL: "linear-gradient(to bottom, #6F263D, #236192)",
+    CBJ: "linear-gradient(to bottom, #002654, #A6A6A6)",
+    DAL: "linear-gradient(to bottom, #006847, #000000)",
+    DET: "linear-gradient(to bottom, #CE1126, #FFFFFF)",
+    EDM: "linear-gradient(to bottom, #FF4C00, #041E42)",
+    FLA: "linear-gradient(to bottom, #041E42, #C8102E)",
+    LAK: "linear-gradient(to bottom, #A2AAAD, #000000)",
+    MIN: "linear-gradient(to bottom, #154734, #A6192E)",
+    MTL: "linear-gradient(to bottom, #AF1E2D, #192168)",
+    NSH: "linear-gradient(to bottom, #FFB81C, #041E42)",
+    NJD: "linear-gradient(to bottom, #CE1126, #000000)",
+    NYI: "linear-gradient(to bottom, #00539B, #F47D30)",
+    NYR: "linear-gradient(to bottom, #0038A8, #CE1126)",
+    OTT: "linear-gradient(to bottom, #E31837, #000000)",
+    PHI: "linear-gradient(to bottom, #FA4616, #000000)",
+    PIT: "linear-gradient(to bottom, #FFB81C, #000000)",
+    SEA: "linear-gradient(to bottom, #001628, #99D9D9)",
+    SJS: "linear-gradient(to bottom, #006D75, #000000)",
+    STL: "linear-gradient(to bottom, #002F87, #FDB827)",
+    TBL: "linear-gradient(to bottom, #002868, #00529B)",
+    TOR: "linear-gradient(to bottom, #00205B, #003E7E)",
+    UTA: "linear-gradient(to bottom, #6CACE4, #000000)",
+    VAN: "linear-gradient(to bottom, #00205B, #00843D)",
+    VGK: "linear-gradient(to bottom, #B4975A, #333F48)",
+    WSH: "linear-gradient(to bottom, #C8102E, #041E42)",
+    WPG: "linear-gradient(to bottom, #041E42, #7B303D)",
+};
+
+const fallbackTeamGradient = "linear-gradient(to bottom, #e5e7eb, #9ca3af)";
+
 function resolveCreateLeagueAction(form) {
     const dataAction = form.dataset?.action?.trim() || "";
     if (dataAction) return dataAction;
@@ -719,6 +757,50 @@ function communityMembersHub(config) {
         roundScrollCanRight: false,
         showAvatars: true,
         showTeamBadges: true,
+        draftOptionsOpen: false,
+        draftOptionsLoading: false,
+        draftOptionsError: "",
+        draftOptionsLoadedUrl: "",
+        draftSettingsActionUrl: "",
+        draftDiscordConnected: false,
+        draftChannelOptions: [],
+        draftChannelsMessage: "",
+        draftChannelOpen: false,
+        draftChannelQuery: "",
+        draftChannelId: "",
+        draftChannelSaving: false,
+        draftChannelMessage: "",
+        draftAnnounceOtc: true,
+        draftAnnounceOnDeck: false,
+        draftPickClockHours: 0,
+        draftPickClockMinutes: 5,
+        draftPickClockSeconds: 0,
+        draftPauseSeconds: 0,
+        draftAutoPickEnabled: false,
+        draftTimerCanUpdate: false,
+        draftTimerSaving: false,
+        draftTimerMessage: "",
+        communityDraftPlayerSearch: "",
+        communityDraftPlayerTeam: "",
+        communityDraftPlayerTeams: [],
+        communityDraftPlayerPerspectives: [
+            { slug: "entry-draft", name: "2026 Entry Draft", entry_draft_year: 2026 },
+            { slug: "entry-draft-goalies", name: "2026 Entry Draft - Goalies", entry_draft_year: 2026 },
+        ],
+        communityDraftSelectedPerspective: "entry-draft",
+        communityDraftLatestEntryDraftYear: 2026,
+        communityDraftPlayersPayloadUrl: "",
+        communityDraftStatsPayloadUrl: "",
+        communityDraftPlayersLoading: false,
+        communityDraftPlayersError: "",
+        communityDraftPlayerRows: [],
+        communityDraftPlayerHeadings: [],
+        communityDraftPlayerLoaded: false,
+        communityDraftPlayerRequestKey: "",
+        communityDraftPlayerRequestToken: 0,
+        communityDraftPlayerCache: {},
+        communityDraftPlayerSortKey: "drafted_overall_pick",
+        communityDraftPlayerSortDirection: "asc",
         init() {
             // Ensure the store exists even if Alpine boot order changes.
             if (!this.$store.communityMembers) {
@@ -750,12 +832,39 @@ function communityMembersHub(config) {
             this.leagueDraftSummary = null;
             this.leagueDraftLiveHtml = "";
             this.leagueDraftSummaryError = "";
+            this.resetCommunityDraftPlayers();
+            this.resetDraftOptions();
 
             if (this.activeLeagueTab === "teams") {
                 this.loadCommunityLeagueTeams();
             } else if (this.activeLeagueTab === "draft") {
                 this.loadCommunityLeagueDraftSummary();
             }
+        },
+        resetDraftOptions() {
+            this.draftOptionsOpen = false;
+            this.draftOptionsLoading = false;
+            this.draftOptionsError = "";
+            this.draftOptionsLoadedUrl = "";
+            this.draftSettingsActionUrl = "";
+            this.draftDiscordConnected = false;
+            this.draftChannelOptions = [];
+            this.draftChannelsMessage = "";
+            this.draftChannelOpen = false;
+            this.draftChannelQuery = "";
+            this.draftChannelId = "";
+            this.draftChannelSaving = false;
+            this.draftChannelMessage = "";
+            this.draftAnnounceOtc = true;
+            this.draftAnnounceOnDeck = false;
+            this.draftPickClockHours = 0;
+            this.draftPickClockMinutes = 5;
+            this.draftPickClockSeconds = 0;
+            this.draftPauseSeconds = 0;
+            this.draftAutoPickEnabled = false;
+            this.draftTimerCanUpdate = false;
+            this.draftTimerSaving = false;
+            this.draftTimerMessage = "";
         },
         openCommunityLeagueTab(tab) {
             this.activeLeagueTab = ["home", "teams", "draft", "setup"].includes(tab)
@@ -775,7 +884,32 @@ function communityMembersHub(config) {
 
             if (this.activeCommunityDraftTab === "live") {
                 this.$nextTick(() => this.initializeCommunityDraftLivePanel());
+            } else {
+                this.loadCommunityDraftPlayers();
             }
+        },
+        resetCommunityDraftPlayers() {
+            this.communityDraftPlayerSearch = "";
+            this.communityDraftPlayerTeam = "";
+            this.communityDraftPlayerTeams = [];
+            this.communityDraftPlayerPerspectives = [
+                { slug: "entry-draft", name: "2026 Entry Draft", entry_draft_year: 2026 },
+                { slug: "entry-draft-goalies", name: "2026 Entry Draft - Goalies", entry_draft_year: 2026 },
+            ];
+            this.communityDraftSelectedPerspective = "entry-draft";
+            this.communityDraftLatestEntryDraftYear = 2026;
+            this.communityDraftPlayersPayloadUrl = this.selectedLeague?.playersPayloadUrl || "";
+            this.communityDraftStatsPayloadUrl = this.selectedLeague?.leagueStatsPayloadUrl || "";
+            this.communityDraftPlayersLoading = false;
+            this.communityDraftPlayersError = "";
+            this.communityDraftPlayerRows = [];
+            this.communityDraftPlayerHeadings = [];
+            this.communityDraftPlayerLoaded = false;
+            this.communityDraftPlayerRequestKey = "";
+            this.communityDraftPlayerRequestToken = 0;
+            this.communityDraftPlayerCache = {};
+            this.communityDraftPlayerSortKey = "drafted_overall_pick";
+            this.communityDraftPlayerSortDirection = "asc";
         },
         async loadCommunityLeagueTeams() {
             const url = this.selectedLeague?.teamsUrl || "";
@@ -869,6 +1003,487 @@ function communityMembersHub(config) {
                     this.leagueDraftSummaryLoading = false;
                 }
             }
+        },
+        openDraftOptions() {
+            this.draftOptionsOpen = true;
+            this.loadDraftOptions();
+        },
+        async loadDraftOptions() {
+            const url = this.selectedLeague?.draftSettingsUrl || "";
+
+            if (!url || this.draftOptionsLoading || this.draftOptionsLoadedUrl === url) {
+                return;
+            }
+
+            this.draftOptionsLoading = true;
+            this.draftOptionsError = "";
+            this.draftOptionsLoadedUrl = url;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load draft options.");
+                }
+
+                const config = payload.config || {};
+                const selectedChannel = config.selected_channel || {};
+
+                this.draftSettingsActionUrl = config.action_url || "";
+                this.draftDiscordConnected = Boolean(config.discord_connected);
+                this.draftChannelOptions = Array.isArray(config.channels) ? config.channels : [];
+                this.draftChannelsMessage = config.channels_message || "";
+                this.draftChannelId = selectedChannel.id || "";
+                this.draftChannelQuery = selectedChannel.name
+                    ? `#${selectedChannel.name}`
+                    : "";
+                this.applyDraftNotificationConfig(config.notifications || {});
+                this.applyDraftTimerConfig(config.timer || {});
+            } catch (error) {
+                console.error("[communityDraftOptions] Unable to load options:", error);
+                this.draftOptionsError = error?.message || "Could not load draft options.";
+                this.draftOptionsLoadedUrl = "";
+            } finally {
+                this.draftOptionsLoading = false;
+            }
+        },
+        applyDraftTimerConfig(timer) {
+            this.draftPickClockHours = Number(timer.pick_clock_hours || 0);
+            this.draftPickClockMinutes = Number(timer.pick_clock_minutes || 0);
+            this.draftPickClockSeconds = Number(timer.pick_clock_seconds_remainder || 0);
+            this.draftPauseSeconds = Number(timer.pause_between_picks_seconds || 0);
+            this.draftAutoPickEnabled = Boolean(timer.auto_pick_enabled);
+            this.draftTimerCanUpdate = Boolean(timer.can_update);
+        },
+        applyDraftNotificationConfig(notifications) {
+            this.draftAnnounceOtc = Boolean(notifications.announce_otc);
+            this.draftAnnounceOnDeck = Boolean(notifications.announce_on_deck);
+        },
+        normalizedDraftClockSeconds() {
+            const hours = Math.max(0, Number(this.draftPickClockHours || 0));
+            const minutes = Math.max(0, Number(this.draftPickClockMinutes || 0));
+            const seconds = Math.max(0, Number(this.draftPickClockSeconds || 0));
+
+            return Math.min(86400, Math.floor(hours * 3600 + minutes * 60 + seconds));
+        },
+        selectDraftChannel(channel) {
+            this.draftChannelId = channel?.id || "";
+            this.draftChannelQuery = channel?.name ? `#${channel.name}` : "";
+            this.draftChannelOpen = false;
+        },
+        async saveDraftChannel() {
+            if (!this.draftSettingsActionUrl || this.draftChannelSaving) {
+                return;
+            }
+
+            this.draftChannelSaving = true;
+            this.draftChannelMessage = "";
+
+            try {
+                const response = await fetch(this.draftSettingsActionUrl, {
+                    method: "PUT",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({
+                        draft_channel_id: this.draftChannelId || null,
+                        draft_channel_name: this.draftChannelQuery.replace(/^#/, "").trim() || null,
+                        announce_otc: Boolean(this.draftAnnounceOtc),
+                        announce_on_deck: Boolean(this.draftAnnounceOnDeck),
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not save draft options.");
+                }
+
+                const channel = payload.channel || {};
+                this.draftChannelId = channel.id || "";
+                this.draftChannelQuery = channel.name ? `#${channel.name}` : "";
+                this.applyDraftNotificationConfig(payload.notifications || {});
+                this.applyDraftTimerConfig(payload.timer || {});
+                this.draftChannelMessage = channel.name
+                    ? `Draft picks will post to #${channel.name}.`
+                    : "Draft pick channel cleared.";
+            } catch (error) {
+                console.error("[communityDraftOptions] Unable to save channel:", error);
+                this.draftChannelMessage = error?.message || "Could not save draft options.";
+            } finally {
+                this.draftChannelSaving = false;
+            }
+        },
+        async saveDraftTimerSettings() {
+            if (!this.draftSettingsActionUrl || this.draftTimerSaving) {
+                return;
+            }
+
+            this.draftTimerSaving = true;
+            this.draftTimerMessage = "";
+
+            try {
+                const response = await fetch(this.draftSettingsActionUrl, {
+                    method: "PUT",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({
+                        pick_clock_seconds: this.normalizedDraftClockSeconds(),
+                        pause_between_picks_seconds: Number(this.draftPauseSeconds || 0),
+                        auto_pick_enabled: Boolean(this.draftAutoPickEnabled),
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not save draft timer.");
+                }
+
+                this.applyDraftTimerConfig(payload.timer || {});
+                this.draftTimerMessage = "Draft timer settings saved.";
+                if (this.selectedLeague?.draftSummaryUrl) {
+                    this.loadCommunityLeagueDraftSummary();
+                }
+            } catch (error) {
+                console.error("[communityDraftOptions] Unable to save timer:", error);
+                this.draftTimerMessage = error?.message || "Could not save draft timer.";
+            } finally {
+                this.draftTimerSaving = false;
+            }
+        },
+        get filteredDraftChannels() {
+            const query = this.draftChannelQuery.replace(/^#/, "").toLowerCase().trim();
+
+            if (!query) {
+                return this.draftChannelOptions;
+            }
+
+            return this.draftChannelOptions.filter((channel) => (
+                String(channel?.name || "").toLowerCase().includes(query)
+            ));
+        },
+        async loadCommunityDraftPlayers(force = false) {
+            if (this.communityDraftPlayersLoading && !force) {
+                return;
+            }
+
+            if (!this.communityDraftPlayersPayloadUrl) {
+                this.communityDraftPlayersError = "Could not load draft players.";
+                return;
+            }
+
+            this.communityDraftPlayersLoading = true;
+            this.communityDraftPlayersError = "";
+
+            try {
+                const response = await fetch(this.communityDraftPlayersPayloadUrl, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load draft players.");
+                }
+
+                this.communityDraftLatestEntryDraftYear =
+                    Number(payload.latestEntryDraftYear || 0) || null;
+                this.communityDraftStatsPayloadUrl =
+                    payload.leagueStatsPayloadUrl || this.communityDraftStatsPayloadUrl;
+                this.communityDraftPlayerPerspectives = Array.isArray(payload.perspectives)
+                    ? payload.perspectives
+                    : [];
+
+                this.communityDraftSelectedPerspective = this.communityDraftPlayerPerspectives
+                    .some((perspective) => String(perspective?.slug || "") === "entry-draft")
+                    ? "entry-draft"
+                    : (this.communityDraftPlayerPerspectives[0]?.slug || "prospects");
+                this.applyCommunityDraftPlayerSort(this.communityDraftSelectedPerspective);
+
+                await this.loadCommunityDraftPlayerStats(true);
+            } catch (error) {
+                console.error("[communityDraftPlayers] Unable to load players:", error);
+                this.communityDraftPlayersError =
+                    error?.message || "Could not load draft players.";
+            } finally {
+                this.communityDraftPlayersLoading = false;
+            }
+        },
+        async loadCommunityDraftPlayerStats(force = false) {
+            if (!this.communityDraftStatsPayloadUrl) {
+                this.communityDraftPlayerLoaded = true;
+                return;
+            }
+
+            const selectedPerspective = this.communityDraftSelectedPerspective || "prospects";
+            const isEntryDraftPerspective = ["entry-draft", "entry-draft-goalies"].includes(selectedPerspective);
+            const entryDraftYear = isEntryDraftPerspective
+                ? Number(this.communityDraftLatestEntryDraftYear || 0)
+                : 0;
+            const requestPerspective = selectedPerspective === "entry-draft"
+                ? "prospects"
+                : (selectedPerspective === "entry-draft-goalies" ? "prospects-goalies" : selectedPerspective);
+            const requestKey = isEntryDraftPerspective
+                ? `${selectedPerspective}:${entryDraftYear}`
+                : requestPerspective;
+
+            if (!force && this.communityDraftPlayerRequestKey === requestKey) {
+                return;
+            }
+
+            if (this.communityDraftPlayerCache[requestKey]) {
+                this.applyCommunityDraftPlayerStats(this.communityDraftPlayerCache[requestKey], requestKey);
+                return;
+            }
+
+            const requestToken = this.communityDraftPlayerRequestToken + 1;
+            this.communityDraftPlayerRequestToken = requestToken;
+            this.communityDraftPlayersLoading = true;
+
+            const params = new URLSearchParams();
+            params.set("perspective", requestPerspective);
+            params.set("resource", "players");
+            params.set("period", "season");
+            params.set("slice", "total");
+            params.set("game_type", "2");
+            params.set("availability", "0");
+            params.set("draft_context", "1");
+
+            if (isEntryDraftPerspective && entryDraftYear > 0) {
+                params.set("entry_draft_year", String(entryDraftYear));
+            }
+
+            try {
+                const response = await fetch(`${this.communityDraftStatsPayloadUrl}?${params.toString()}`, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload?.message || "Could not load player stats.");
+                }
+
+                if (this.communityDraftPlayerRequestToken !== requestToken) {
+                    return;
+                }
+
+                this.communityDraftPlayerCache[requestKey] = payload;
+                this.applyCommunityDraftPlayerStats(payload, requestKey);
+            } catch (error) {
+                if (this.communityDraftPlayerRequestToken === requestToken) {
+                    console.error("[communityDraftPlayers] Unable to load stats:", error);
+                    this.communityDraftPlayersError =
+                        error?.message || "Could not load player stats.";
+                    this.communityDraftPlayerLoaded = true;
+                }
+            } finally {
+                if (this.communityDraftPlayerRequestToken === requestToken) {
+                    this.communityDraftPlayersLoading = false;
+                }
+            }
+        },
+        applyCommunityDraftPlayerStats(payload, requestKey) {
+            this.communityDraftPlayerHeadings = Array.isArray(payload.headings)
+                ? payload.headings
+                : [];
+            this.communityDraftPlayerRows = Array.isArray(payload.data)
+                ? payload.data
+                : [];
+            this.communityDraftPlayerTeams = [...new Set(
+                this.communityDraftPlayerRows
+                    .map((player) => String(player.team_abbrev || player.team || "").toUpperCase().trim())
+                    .filter(Boolean)
+            )].sort();
+            this.communityDraftPlayerRequestKey = requestKey;
+            this.communityDraftPlayerLoaded = true;
+        },
+        setCommunityDraftPlayerPerspective(value) {
+            this.communityDraftSelectedPerspective = value;
+            this.communityDraftPlayerTeam = "";
+            this.applyCommunityDraftPlayerSort(value);
+            this.loadCommunityDraftPlayerStats(true);
+        },
+        applyCommunityDraftPlayerSort(value) {
+            if (["entry-draft", "entry-draft-goalies"].includes(value)) {
+                this.communityDraftPlayerSortKey = "drafted_overall_pick";
+                this.communityDraftPlayerSortDirection = "asc";
+                return;
+            }
+
+            this.communityDraftPlayerSortKey = "pts";
+            this.communityDraftPlayerSortDirection = "desc";
+        },
+        sortCommunityDraftPlayers(key) {
+            if (this.communityDraftPlayerSortKey === key) {
+                this.communityDraftPlayerSortDirection =
+                    this.communityDraftPlayerSortDirection === "desc" ? "asc" : "desc";
+                return;
+            }
+
+            this.communityDraftPlayerSortKey = key;
+            this.communityDraftPlayerSortDirection = "desc";
+        },
+        communityDraftPlayerSortIndicator(key) {
+            if (this.communityDraftPlayerSortKey !== key) return "";
+
+            return this.communityDraftPlayerSortDirection === "desc" ? "↓" : "↑";
+        },
+        communityDraftPlayerInitials(player) {
+            return String(player?.name || player?.full_name || "?")
+                .split(/\s+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((part) => part[0]?.toUpperCase() || "")
+                .join("") || "?";
+        },
+        communityDraftTeamBadgeStyle(team) {
+            const abbrev = String(team || "").toUpperCase().trim();
+
+            return `background: ${teamGradients[abbrev] || fallbackTeamGradient};`;
+        },
+        communityDraftPlayerAge(player) {
+            return player?.age ?? "-";
+        },
+        communityDraftPlayerDraftedOverall(player) {
+            return player?.drafted_overall_pick ?? player?.draft_oa ?? "-";
+        },
+        communityDraftPlayerDraftedLabel(player) {
+            return player?.drafted_label ?? "-";
+        },
+        communityDraftPlayerLeagueName(player) {
+            return player?.league || player?.league_abbrev || "-";
+        },
+        communityDraftPlayerGp(player) {
+            return player?.gp ?? player?.stats?.gp ?? "-";
+        },
+        communityDraftPlayerValue(player, key) {
+            const stats = player?.stats && typeof player.stats === "object"
+                ? player.stats
+                : {};
+
+            return stats[key] ?? player?.[key] ?? null;
+        },
+        communityDraftFormatValue(value) {
+            if (value === null || value === undefined || value === "") return "-";
+            if (typeof value === "number") {
+                return Number.isInteger(value)
+                    ? String(value)
+                    : value.toFixed(2).replace(/\.?0+$/, "");
+            }
+
+            return String(value);
+        },
+        communityDraftPlayerSortValue(player, key) {
+            if (key === "name") return String(player?.name || player?.full_name || "");
+            if (key === "age") return Number(player?.age ?? 0);
+            if (key === "team") return String(player?.team_abbrev || player?.team || "");
+            if (key === "league") return this.communityDraftPlayerLeagueName(player);
+            if (key === "gp") return Number(this.communityDraftPlayerGp(player) ?? 0);
+            if (key === "drafted_overall_pick") {
+                const value = this.communityDraftPlayerDraftedOverall(player);
+
+                return value === "-"
+                    ? (this.communityDraftPlayerSortDirection === "asc"
+                        ? Number.POSITIVE_INFINITY
+                        : Number.NEGATIVE_INFINITY)
+                    : Number(value);
+            }
+
+            const value = this.communityDraftPlayerValue(player, key);
+
+            if (value === null || value === undefined || value === "") {
+                return this.communityDraftPlayerSortDirection === "asc"
+                    ? Number.POSITIVE_INFINITY
+                    : Number.NEGATIVE_INFINITY;
+            }
+
+            const numeric = Number(value);
+
+            return Number.isNaN(numeric) ? String(value) : numeric;
+        },
+        get communityDraftPlayerStatHeadings() {
+            const identityKeys = new Set([
+                "name",
+                "player",
+                "team",
+                "league",
+                "pos",
+                "pos_type",
+                "age",
+                "avatar_url",
+                "head_shot_url",
+                "id",
+                "nhl_player_id",
+                "drafted_overall_pick",
+                "drafted_year",
+                "drafted_label",
+                "gp",
+            ]);
+
+            return this.communityDraftPlayerHeadings.filter((heading) => {
+                const key = String(heading?.key || "").toLowerCase();
+
+                return key && !identityKeys.has(key);
+            });
+        },
+        get filteredCommunityDraftPlayers() {
+            const query = this.communityDraftPlayerSearch.toLowerCase().trim();
+            const teamFilter = String(this.communityDraftPlayerTeam || "").toUpperCase();
+            const direction = this.communityDraftPlayerSortDirection === "asc" ? 1 : -1;
+            const sortKey = this.communityDraftPlayerSortKey;
+
+            return this.communityDraftPlayerRows
+                .filter((player) => {
+                    const name = String(player?.name || player?.full_name || "").toLowerCase();
+                    const team = String(player?.team_abbrev || player?.team || "").toUpperCase();
+                    const position = String(player?.position || player?.pos || "").toLowerCase();
+                    const matchesSearch = query === ""
+                        || name.includes(query)
+                        || team.toLowerCase().includes(query)
+                        || position.includes(query);
+                    const matchesTeam = teamFilter === "" || team === teamFilter;
+
+                    return matchesSearch && matchesTeam;
+                })
+                .sort((left, right) => {
+                    const leftValue = this.communityDraftPlayerSortValue(left, sortKey);
+                    const rightValue = this.communityDraftPlayerSortValue(right, sortKey);
+
+                    if (typeof leftValue === "number" && typeof rightValue === "number") {
+                        return (leftValue - rightValue) * direction;
+                    }
+
+                    return String(leftValue).localeCompare(String(rightValue), undefined, {
+                        numeric: true,
+                        sensitivity: "base",
+                    }) * direction;
+                });
+        },
+        communityDraftResetPlayerFilters() {
+            this.communityDraftPlayerSearch = "";
+            this.communityDraftPlayerTeam = "";
         },
         draftStatusDotClass() {
             const tone = this.leagueDraftSummary?.status_tone || "slate";

@@ -91,6 +91,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             $legacyChannel = data_get($legacyPivotMeta, 'draft_notifications.discord_channel');
             $channelId = is_array($legacyChannel) ? trim((string) ($legacyChannel['id'] ?? '')) : '';
             $channelName = is_array($legacyChannel) ? trim((string) ($legacyChannel['name'] ?? '')) : '';
+            $notificationOptions = $this->draftNotificationOptions([], $legacyPivotMeta);
 
             $settings = DraftNotificationSetting::query()->updateOrCreate(
                 ['draft_id' => $draft->id],
@@ -98,22 +99,47 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                     'discord_channel_id' => $channelId !== '' ? $channelId : null,
                     'discord_channel_name' => $channelName !== '' ? $channelName : null,
                     'enabled' => $channelId !== '',
-                    'settings' => [
+                    'settings' => array_merge([
                         'source' => $channelId !== '' ? 'legacy_community_league_meta' : 'draft_pick_listener',
-                    ],
+                    ], $notificationOptions),
                 ],
             );
         }
+
+        $notificationOptions = $this->draftNotificationOptions(
+            is_array($settings->settings) ? $settings->settings : [],
+            $legacyPivotMeta,
+        );
 
         return [
             'discord_channel_id' => $settings->enabled ? $settings->discord_channel_id : null,
             'discord_channel_name' => $settings->discord_channel_name,
             'enabled' => (bool) $settings->enabled,
+            'announce_otc' => $notificationOptions['announce_otc'],
+            'announce_on_deck' => $notificationOptions['announce_on_deck'],
         ];
     }
 
     /**
-     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>,drafting_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,notification_settings:array<string,mixed>,user_ids:array<int,int>}|null
+     * @param array<string,mixed> $settings
+     * @param array<string,mixed> $legacyPivotMeta
+     *
+     * @return array{announce_otc:bool,announce_on_deck:bool}
+     */
+    private function draftNotificationOptions(array $settings, array $legacyPivotMeta): array
+    {
+        return [
+            'announce_otc' => array_key_exists('announce_otc', $settings)
+                ? (bool) $settings['announce_otc']
+                : (bool) data_get($legacyPivotMeta, 'draft_notifications.announce_otc', true),
+            'announce_on_deck' => array_key_exists('announce_on_deck', $settings)
+                ? (bool) $settings['announce_on_deck']
+                : (bool) data_get($legacyPivotMeta, 'draft_notifications.announce_on_deck', false),
+        ];
+    }
+
+    /**
+     * @return array{team_name:string,player_name:string,position:string|null,avatar_url:string|null,team_abbrev:string|null,stats:array<int,array<string,mixed>>,stat_headers:array<int,string>,stat_keys:array<int,string>,drafting_owner:array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null},otc_owner:array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,on_deck_owner:array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null,notification_settings:array<string,mixed>,user_ids:array<int,int>}|null
      */
     private function context(DraftPick $draftPick): ?array
     {
@@ -177,6 +203,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             'team_abbrev' => $playerDetails['team_abbrev'],
             'drafting_owner' => $this->teamOwnerDiscordContext($platformLeagueId, $providerTeamId, (string) ($teamName ?: $providerTeamId ?: 'Unknown team'), $draftPick->platform_team_id ? (int) $draftPick->platform_team_id : null),
             'otc_owner' => $this->nextOtcOwnerContext($draftPick),
+            'on_deck_owner' => $this->nextOnDeckOwnerContext($draftPick),
             'notification_settings' => $notificationSettings,
             'user_ids' => $userIds,
         ];
@@ -189,9 +216,16 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     {
         $pickLabel = $draftPick->overall_pick ? (string) $draftPick->overall_pick : 'unknown';
         $draftingOwner = $context['drafting_owner']['mention'] ?? $context['drafting_owner']['label'];
+        $notificationSettings = is_array($context['notification_settings'] ?? null)
+            ? $context['notification_settings']
+            : [];
         $otcOwnerContext = $context['otc_owner'] ?? null;
-        $otcOwner = is_array($otcOwnerContext)
-            ? ($otcOwnerContext['mention'] ?? $otcOwnerContext['label'])
+        $otcOwner = (bool) ($notificationSettings['announce_otc'] ?? false) && is_array($otcOwnerContext)
+            ? $this->ownerAnnouncementLabel($otcOwnerContext)
+            : null;
+        $onDeckOwnerContext = $context['on_deck_owner'] ?? null;
+        $onDeckOwner = (bool) ($notificationSettings['announce_on_deck'] ?? false) && is_array($onDeckOwnerContext)
+            ? $this->ownerAnnouncementLabel($onDeckOwnerContext)
             : null;
         $message = "{$draftingOwner} ({$context['team_name']}) selects {$context['player_name']} with pick {$pickLabel}.";
 
@@ -199,7 +233,22 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             $message .= " {$otcOwner} is now OTC.";
         }
 
+        if ($onDeckOwner) {
+            $message .= " {$onDeckOwner} is on deck.";
+        }
+
         return $message;
+    }
+
+    /**
+     * @param array<string,mixed> $ownerContext
+     */
+    private function ownerAnnouncementLabel(array $ownerContext): string
+    {
+        $teamName = trim((string) ($ownerContext['team_name'] ?? $ownerContext['label'] ?? 'Unknown team'));
+        $mention = trim((string) ($ownerContext['mention'] ?? ''));
+
+        return $mention !== '' ? "{$mention} ({$teamName})" : $teamName;
     }
 
     /**
@@ -209,7 +258,12 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     {
         $mentionUserIds = collect([
             $context['drafting_owner']['discord_user_id'] ?? null,
-            data_get($context, 'otc_owner.discord_user_id'),
+            (bool) data_get($context, 'notification_settings.announce_otc')
+                ? data_get($context, 'otc_owner.discord_user_id')
+                : null,
+            (bool) data_get($context, 'notification_settings.announce_on_deck')
+                ? data_get($context, 'on_deck_owner.discord_user_id')
+                : null,
         ])
             ->filter()
             ->unique()
@@ -240,12 +294,12 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     }
 
     /**
-     * @return array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}
+     * @return array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}
      */
     private function teamOwnerDiscordContext(int $platformLeagueId, ?string $providerTeamId, string $fallbackLabel, ?int $platformTeamId = null): array
     {
         if (! $providerTeamId && ! $platformTeamId) {
-            return ['label' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
+            return ['label' => $fallbackLabel, 'team_name' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
         }
 
         $team = $platformTeamId
@@ -256,7 +310,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
                 ->first(['id', 'name']);
 
         if (! $team instanceof PlatformTeam) {
-            return ['label' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
+            return ['label' => $fallbackLabel, 'team_name' => $fallbackLabel, 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
         }
 
         $userId = DB::table('league_user_teams')
@@ -266,7 +320,7 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->value('user_id');
 
         if (! $userId) {
-            return ['label' => (string) ($team->name ?: $fallbackLabel), 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
+            return ['label' => (string) ($team->name ?: $fallbackLabel), 'team_name' => (string) ($team->name ?: $fallbackLabel), 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
         }
 
         $account = SocialAccount::query()
@@ -275,13 +329,14 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             ->first(['provider_user_id', 'nickname', 'name', 'avatar']);
 
         if (! $account instanceof SocialAccount) {
-            return ['label' => (string) ($team->name ?: $fallbackLabel), 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
+            return ['label' => (string) ($team->name ?: $fallbackLabel), 'team_name' => (string) ($team->name ?: $fallbackLabel), 'mention' => null, 'discord_user_id' => null, 'avatar_url' => null];
         }
 
         $discordUserId = (string) $account->provider_user_id;
 
         return [
             'label' => (string) ($account->nickname ?: $account->name ?: $team->name ?: $fallbackLabel),
+            'team_name' => (string) ($team->name ?: $fallbackLabel),
             'mention' => $discordUserId !== '' ? '<@' . $discordUserId . '>' : null,
             'discord_user_id' => $discordUserId !== '' ? $discordUserId : null,
             'avatar_url' => $account->avatar ? (string) $account->avatar : null,
@@ -289,9 +344,25 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
     }
 
     /**
-     * @return array{label:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null
+     * @return array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null
      */
     private function nextOtcOwnerContext(DraftPick $draftPick): ?array
+    {
+        return $this->upcomingOwnerContext($draftPick, 0);
+    }
+
+    /**
+     * @return array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null
+     */
+    private function nextOnDeckOwnerContext(DraftPick $draftPick): ?array
+    {
+        return $this->upcomingOwnerContext($draftPick, 1);
+    }
+
+    /**
+     * @return array{label:string,team_name:string,mention:string|null,discord_user_id:string|null,avatar_url:string|null}|null
+     */
+    private function upcomingOwnerContext(DraftPick $draftPick, int $offset): ?array
     {
         $draft = $draftPick->draft;
         $platformLeagueId = $draft?->platform_league_id ? (int) $draft->platform_league_id : null;
@@ -312,7 +383,9 @@ final class AnnounceFantraxDraftPick implements ShouldQueue
             $query->where('overall_pick', '>', $draftPick->overall_pick);
         }
 
-        $nextPick = $query->first(['platform_team_id', 'provider_team_id']);
+        $nextPick = $query
+            ->skip(max(0, $offset))
+            ->first(['platform_team_id', 'provider_team_id']);
 
         if (! $nextPick instanceof DraftPick || (! $nextPick->provider_team_id && ! $nextPick->platform_team_id)) {
             return null;

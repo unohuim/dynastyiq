@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Models\Perspective;
+use App\Models\PlatformLeague;
 use App\Services\FantasyLeagueAccess;
 use App\Support\FantraxViewerScope;
 use App\Services\PlatformLeaguePlayerStatService;
@@ -374,6 +375,27 @@ class StatsController extends BaseController
     }
 
     /**
+     * Return a stats payload for community league management draft views.
+     */
+    public function communityLeaguePayload(Request $request, int $cId, int $lId)
+    {
+        $user = $request->user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()->findOrFail($lId);
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        return $this->payload($request);
+    }
+
+    /**
      * Return the default saved stats perspective for non-scoring league views.
      */
     private function defaultSavedStatsPerspective($user): Perspective
@@ -451,9 +473,11 @@ class StatsController extends BaseController
             'from'          => 'nullable|date',
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
+            'draft_context' => 'nullable|boolean',
             'entry_draft_year' => 'nullable|integer',
             'entry_draft_year_min' => 'nullable|integer',
             'entry_draft_year_max' => 'nullable|integer',
+            'nhle'          => 'nullable|boolean',
         ]);
 
         \Log::info('post validate request: ', ['request' => $request]);
@@ -502,6 +526,7 @@ class StatsController extends BaseController
             );
 
             $payload['connectedLeagues'] = $connectedLeagues;
+            $payload = app(NhleProspectLens::class)->apply($payload, $request->boolean('nhle'));
 
             return response()->json($payload);
         }
@@ -520,6 +545,7 @@ class StatsController extends BaseController
         );
 
         $payload['connectedLeagues'] = $connectedLeagues;
+        $payload = app(NhleProspectLens::class)->apply($payload, $request->boolean('nhle'));
 
         \Log::info('updated payload: ', ['payload' => $payload]);
 

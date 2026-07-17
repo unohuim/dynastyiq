@@ -770,6 +770,7 @@ final class LeagueController extends Controller
 
         $validated = $request->validate([
             'mode' => ['required', Rule::in(['fantrax', 'manual'])],
+            'pick_clock_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
             'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
             'auto_pick_enabled' => ['nullable', 'boolean'],
@@ -797,7 +798,9 @@ final class LeagueController extends Controller
                 'external_draft_id' => 'dynastyiq:' . $league->id . ':' . Str::uuid()->toString(),
                 'name' => $league->name . ' Draft',
                 'status' => 'scheduled',
-                'pick_clock_seconds' => $this->minutesToSeconds($validated['pick_clock_minutes'] ?? 5),
+                'pick_clock_seconds' => array_key_exists('pick_clock_seconds', $validated)
+                    ? max(0, (int) $validated['pick_clock_seconds'])
+                    : $this->minutesToSeconds($validated['pick_clock_minutes'] ?? 5),
                 'pause_between_picks_seconds' => (int) ($validated['pause_between_picks_seconds'] ?? 0),
                 'auto_pick_enabled' => (bool) ($validated['auto_pick_enabled'] ?? false),
                 'settings' => [
@@ -834,8 +837,14 @@ final class LeagueController extends Controller
 
         abort_unless($this->canManageLeague($league, $user), 403);
         abort_unless((int) $draft->platform_league_id === (int) $league->id, 404);
+        abort_if(
+            $this->draftTimerIsCommunityManaged($league, $draft),
+            409,
+            'Draft timer settings are managed from the community league.'
+        );
 
         $validated = $request->validate([
+            'pick_clock_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
             'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
             'auto_pick_enabled' => ['nullable', 'boolean'],
@@ -2724,9 +2733,15 @@ final class LeagueController extends Controller
     private function withDraftCentralMeta(array $payload, $league, ?Draft $draft): array
     {
         $isCompletedDraft = $draft instanceof Draft && (string) $draft->status === 'complete';
-        $pickClockSeconds = $draft instanceof Draft
+        $communityTimer = $draft instanceof Draft
+            ? $this->communityDraftTimerSettings($league)
+            : [];
+        $communityPickClockSeconds = $communityTimer['pick_clock_seconds'] ?? null;
+        $pickClockSeconds = $communityPickClockSeconds !== null
+            ? (int) $communityPickClockSeconds
+            : ($draft instanceof Draft
             ? (int) ($draft->pick_clock_seconds ?? 300)
-            : 0;
+            : 0);
         $lastPickAt = $payload['last_pick_at'] ?? null;
         $lastPickAt = is_string($lastPickAt) && $lastPickAt !== ''
             ? $lastPickAt
@@ -2759,11 +2774,25 @@ final class LeagueController extends Controller
         }
 
         $payload['pick_clock_seconds'] = $pickClockSeconds;
+        $payload['pick_clock_hours'] = intdiv($pickClockSeconds, 3600);
         $payload['pick_clock_minutes'] = $pickClockSeconds > 0
-            ? (int) ceil($pickClockSeconds / 60)
+            ? intdiv($pickClockSeconds % 3600, 60)
             : 5;
-        $payload['pause_between_picks_seconds'] = (int) ($draft?->pause_between_picks_seconds ?? 0);
-        $payload['auto_pick_enabled'] = (bool) ($draft?->auto_pick_enabled ?? false);
+        $payload['pick_clock_seconds_remainder'] = $pickClockSeconds % 60;
+        $payload['pause_between_picks_seconds'] = (int) (
+            $communityTimer['pause_between_picks_seconds']
+            ?? ($draft?->pause_between_picks_seconds ?? 0)
+        );
+        $payload['auto_pick_enabled'] = (bool) (
+            $communityTimer['auto_pick_enabled']
+            ?? ($draft?->auto_pick_enabled ?? false)
+        );
+        $payload['timer_read_only'] = $draft instanceof Draft
+            ? $this->draftTimerIsCommunityManaged($league, $draft)
+            : false;
+        $payload['timer_read_only_message'] = $payload['timer_read_only']
+            ? 'Timer settings are managed from the community league.'
+            : '';
         $payload['countdown_started_at'] = $lastPickAt;
         $payload['countdown_expires_at'] = $expiresAt;
         $payload['draft_commit_season_label'] = $this->seasonLabel($this->draftCommitSeasonId());
@@ -3078,6 +3107,36 @@ final class LeagueController extends Controller
         return null;
     }
 
+    private function draftTimerIsCommunityManaged($league, Draft $draft): bool
+    {
+        return array_key_exists('pick_clock_seconds', $this->communityDraftTimerSettings($league));
+    }
+
+    /**
+     * Return community-level draft timer settings for a platform league.
+     *
+     * @return array<string,mixed>
+     */
+    private function communityDraftTimerSettings($league): array
+    {
+        $metaRows = DB::table('league_platform_league')
+            ->join('organization_leagues', 'organization_leagues.league_id', '=', 'league_platform_league.league_id')
+            ->where('league_platform_league.platform_league_id', (int) $league->id)
+            ->where('league_platform_league.status', 'active')
+            ->pluck('organization_leagues.meta');
+
+        foreach ($metaRows as $meta) {
+            $decoded = is_string($meta) && $meta !== '' ? json_decode($meta, true) : null;
+            $timer = is_array($decoded) ? data_get($decoded, 'draft_timer') : null;
+
+            if (is_array($timer) && array_key_exists('pick_clock_seconds', $timer)) {
+                return $timer;
+            }
+        }
+
+        return [];
+    }
+
     /**
      * Persist draft timer settings to the canonical draft row.
      *
@@ -3086,7 +3145,9 @@ final class LeagueController extends Controller
     private function applyDraftSettings(Draft $draft, array $settings): void
     {
         $draft->forceFill([
-            'pick_clock_seconds' => $this->minutesToSeconds($settings['pick_clock_minutes'] ?? 5),
+            'pick_clock_seconds' => array_key_exists('pick_clock_seconds', $settings)
+                ? max(0, (int) $settings['pick_clock_seconds'])
+                : $this->minutesToSeconds($settings['pick_clock_minutes'] ?? 5),
             'pause_between_picks_seconds' => (int) ($settings['pause_between_picks_seconds'] ?? 0),
             'auto_pick_enabled' => (bool) ($settings['auto_pick_enabled'] ?? false),
         ])->save();

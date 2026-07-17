@@ -149,6 +149,15 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/communities/{c_id}/leagues/{l_id}/draft-summary', [CommunityLeagues::class, 'draftSummary'])
             ->middleware('auth')
             ->name('community.leagues.draft-summary');
+        Route::get('/communities/{c_id}/leagues/{l_id}/draft-settings', [CommunityLeagues::class, 'draftSettings'])
+            ->middleware('auth')
+            ->name('community.leagues.draft-settings');
+        Route::get('/communities/{c_id}/leagues/{l_id}/players-payload', [CommunityLeagues::class, 'playersPayload'])
+            ->middleware('auth')
+            ->name('community.leagues.players-payload');
+        Route::get('/communities/{c_id}/leagues/{l_id}/stats-payload', [StatsController::class, 'communityLeaguePayload'])
+            ->middleware('auth')
+            ->name('community.leagues.stats-payload');
         Route::get('/communities/{c_id}/leagues/{l_id}/fantrax-aav-export', [CommunityLeagues::class, 'exportFantraxAav'])
             ->middleware('auth')
             ->name('community.leagues.fantrax-aav-export');

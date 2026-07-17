@@ -26,7 +26,6 @@
         x-transition:leave-end="translate-x-full motion-reduce:translate-x-0"
         class="absolute right-0 top-0 flex h-full w-full {{ $maxWidth }} pointer-events-auto [will-change:transform]"
         @keydown.escape.window="{{ $closeAction }}"
-        @click.away="{{ $closeAction }}"
         aria-modal="true"
         role="dialog"
         aria-labelledby="{{ $titleId }}"
