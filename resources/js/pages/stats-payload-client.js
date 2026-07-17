@@ -80,8 +80,15 @@ export class StatsPayloadClient {
     }
 
     state.selectedLeagues.forEach((value) => params.append('league[]', value));
-    if (state.selectedDraftYear) {
-      params.set('entry_draft_year', String(state.selectedDraftYear));
+    const draftYears = [...new Set((state.selectedDraftYears || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0))]
+      .sort((a, b) => a - b);
+    if (draftYears.length === 1) {
+      params.set('entry_draft_year', String(draftYears[0]));
+    } else if (draftYears.length > 1) {
+      params.set('entry_draft_year_min', String(draftYears[0]));
+      params.set('entry_draft_year_max', String(draftYears[draftYears.length - 1]));
     }
     Object.entries(state.numericFilters || {}).forEach(([key, value]) => {
       if (!state.dirtyNumericFilters?.[key]) return;

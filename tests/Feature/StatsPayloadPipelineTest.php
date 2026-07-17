@@ -163,6 +163,7 @@ it('creates an empty filter set without a request', function (): void {
         ->and($filters->positionTypes)->toBe([])
         ->and($filters->teams)->toBe([])
         ->and($filters->leagues)->toBe([])
+        ->and($filters->draftYearRange)->toBe(['min' => null, 'max' => null])
         ->and($filters->numericRanges)->toBe([]);
 });
 
@@ -195,6 +196,15 @@ it('parses numeric min and max query ranges as floats', function (): void {
 
     expect($filters->numericRanges['gp'])->toBe(['min' => 10.0, 'max' => 82.0])
         ->and($filters->numericRanges['contract_value_num'])->toBe(['min' => 1.5, 'max' => null]);
+});
+
+it('parses draft year range query bounds as positive integers', function (): void {
+    $filters = StatsFilterSet::fromRequest(($this->statsRequest)([
+        'entry_draft_year_min' => '2019',
+        'entry_draft_year_max' => '2022',
+    ]));
+
+    expect($filters->draftYearRange)->toBe(['min' => 2019, 'max' => 2022]);
 });
 
 it('keeps non numeric range bounds as null', function (): void {
@@ -363,6 +373,25 @@ it('groups draft context prospect rows by player and keeps the highest games pla
     expect($rows)->toHaveCount(1)
         ->and($rows->first()['gp'])->toBe(20)
         ->and($rows->first()['g'])->toBe(9);
+});
+
+it('uses canonical player draft fields in assembled rows', function (): void {
+    $player = ($this->statsPlayer)([
+        'id' => 12,
+        'nhl_id' => 1012,
+        'draft_year' => 2019,
+        'draft_round' => 1,
+        'draft_round_pick' => 1,
+        'draft_oa' => 1,
+    ]);
+
+    $rows = app(StatsPayloadAssembler::class)->assembleRowsFromCollection(collect([
+        ($this->statsRow)($player),
+    ]), [['key' => 'g', 'label' => 'G']], 'total', true, 'season');
+
+    expect($rows->first()['drafted_year'])->toBe(2019)
+        ->and($rows->first()['drafted_overall_pick'])->toBe(1)
+        ->and($rows->first()['drafted_label'])->toBe('1-2019');
 });
 
 it('decorates existing payload rows with fantasy ownership metadata', function (): void {

@@ -2635,6 +2635,10 @@ Migrations remain the **sole source of truth**.
 | pos_type | string | Yes | Position type, e.g. `F`, `D`, `G` |
 | team_abbrev | string | Yes | NHL team abbreviation |
 | current_league_abbrev | string | Yes | Current league abbreviation |
+| draft_year | unsignedSmallInteger | Yes | NHL entry draft year |
+| draft_round | unsignedSmallInteger | Yes | NHL entry draft round |
+| draft_round_pick | unsignedSmallInteger | Yes | Pick number within NHL entry draft round |
+| draft_oa | unsignedSmallInteger | Yes | Overall NHL entry draft pick |
 | shoots | enum | Yes | `R`, `L` |
 | height | string | Yes | Height string |
 | weight | unsignedSmallInteger | Yes | Weight in pounds |
@@ -2651,6 +2655,7 @@ Migrations remain the **sole source of truth**.
 - Unique: `nhl_id`
 - Index: `nhl_id`
 - Index: `nhl_team_id`
+- Index: `draft_year`
 
 ---
 

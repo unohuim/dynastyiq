@@ -75,7 +75,7 @@ export class StatsPageShell {
       selectedPos: [],
       selectedPosTypes: [],
       selectedLeagues: [],
-      selectedDraftYear: '',
+      selectedDraftYears: [],
       numericFilters: {},
       dirtyNumericFilters: {},
       leagueAutoSkaterFilter: false,
@@ -84,6 +84,8 @@ export class StatsPageShell {
       loading: Boolean(this.config.initialLoading),
       error: '',
       isFilterDrawerOpen: false,
+      isDraftYearDropdownOpen: false,
+      draftYearDropdownRect: null,
       isMobile: this.isMobile(),
     };
     this.filterState = new StatsFilterState(this.state);
@@ -117,6 +119,14 @@ export class StatsPageShell {
           this.render();
         }
       }, 120);
+    });
+    document.addEventListener('click', (event) => {
+      if (!this.state.isDraftYearDropdownOpen) return;
+      if (event.target instanceof Element && event.target.closest('[data-draft-year-dropdown]')) return;
+
+      this.state.isDraftYearDropdownOpen = false;
+      this.state.draftYearDropdownRect = null;
+      this.renderControls();
     });
   }
 
@@ -284,10 +294,7 @@ export class StatsPageShell {
       this.state.selectedLeagues = meta.appliedFilters.league.map(String);
     }
     if (meta.appliedFilters?.entry_draft_year != null) {
-      const selectedDraftYears = Array.isArray(meta.appliedFilters.entry_draft_year)
-        ? meta.appliedFilters.entry_draft_year
-        : [meta.appliedFilters.entry_draft_year];
-      this.state.selectedDraftYear = selectedDraftYears[0] != null ? String(selectedDraftYears[0]) : '';
+      this.state.selectedDraftYears = this.draftYearsFromAppliedFilter(meta.appliedFilters.entry_draft_year);
     }
     if (!this.supportsDateRange()) {
       this.state.period = 'season';
@@ -372,7 +379,8 @@ export class StatsPageShell {
     this.state.selectedPosTypes = [];
     this.state.leagueAutoSkaterFilter = false;
     this.state.selectedLeagues = [];
-    this.state.selectedDraftYear = '';
+    this.state.selectedDraftYears = [];
+    this.state.isDraftYearDropdownOpen = false;
     this.state.numericFilters = {};
     this.state.dirtyNumericFilters = {};
     this.state.nhleLens = value === 'prospects' ? this.state.nhleLens : false;
@@ -384,9 +392,86 @@ export class StatsPageShell {
     this.fetchPayload();
   }
 
-  setDraftYear(value) {
-    this.state.selectedDraftYear = value || '';
+  setDraftYears(values) {
+    this.state.selectedDraftYears = this.normalizeDraftYears(values);
     this.fetchPayload();
+  }
+
+  normalizeDraftYears(values) {
+    return [...new Set((values || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0))]
+      .sort((a, b) => a - b)
+      .map(String);
+  }
+
+  draftYearsFromAppliedFilter(value) {
+    if (Array.isArray(value)) {
+      return this.normalizeDraftYears(value);
+    }
+
+    if (value && typeof value === 'object') {
+      const min = Number(value.min);
+      const max = Number(value.max);
+      if (Number.isFinite(min) && Number.isFinite(max) && min > 0 && max > 0) {
+        const start = Math.min(min, max);
+        const end = Math.max(min, max);
+        const years = [];
+        for (let year = start; year <= end; year += 1) {
+          years.push(String(year));
+        }
+
+        return years;
+      }
+
+      return this.normalizeDraftYears([value.min, value.max]);
+    }
+
+    return this.normalizeDraftYears([value]);
+  }
+
+  draftYearButtonLabel() {
+    const years = this.normalizeDraftYears(this.state.selectedDraftYears);
+    if (years.length === 0) return 'Drafted';
+    if (years.length === 1) return years[0];
+
+    return `${years[0]}-${years[years.length - 1]}`;
+  }
+
+  toggleDraftYearDropdown(event = null) {
+    event?.stopPropagation?.();
+    const nextOpen = !this.state.isDraftYearDropdownOpen;
+    this.state.isDraftYearDropdownOpen = nextOpen;
+    this.state.draftYearDropdownRect = nextOpen && event?.currentTarget instanceof Element
+      ? event.currentTarget.getBoundingClientRect()
+      : null;
+    this.renderControls();
+  }
+
+  onDraftYearClick(year, event = null) {
+    event?.stopPropagation?.();
+    const normalizedYear = String(year);
+    if (this.state.selectedDraftYears.includes(normalizedYear)) {
+      this.setDraftYears([]);
+      return;
+    }
+
+    if (this.state.selectedDraftYears.length === 0) {
+      this.setDraftYears([normalizedYear]);
+      return;
+    }
+
+    const selected = this.normalizeDraftYears([...this.state.selectedDraftYears, normalizedYear])
+      .map((value) => Number(value));
+    const min = Math.min(...selected);
+    const max = Math.max(...selected);
+    const range = [];
+
+    for (let value = min; value <= max; value += 1) {
+      range.push(String(value));
+    }
+
+    this.setDraftYears(range);
   }
 
   setSeason(value) {
@@ -481,6 +566,7 @@ export class StatsPageShell {
 
   renderControls() {
     this.controlsEl.innerHTML = '';
+    this.removeDraftYearDropdownPortal();
 
     if (this.resource === 'teams' || this.settings.teamAggregate === true) {
       return;
@@ -540,10 +626,7 @@ export class StatsPageShell {
       ], this.state.selectedLeagues[0] || '', (value) => this.setLeague(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
     }
     if (this.draftYearOptions().length > 0) {
-      selects.appendChild(this.renderSelect([
-        { label: 'Drafted', value: '' },
-        ...this.draftYearOptions().map((year) => ({ label: year, value: year })),
-      ], this.state.selectedDraftYear, (value) => this.setDraftYear(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
+      selects.appendChild(this.renderDraftYearDropdown('h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500'));
     }
     selects.appendChild(this.renderSelect(this.availableGameTypes().map((type) => ({ label: this.gameTypeLabel(type), value: type })), this.state.gameType, (value) => this.setGameType(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
 
@@ -741,10 +824,7 @@ export class StatsPageShell {
       ], this.state.selectedLeagues[0] || '', (value) => this.setLeague(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
     }
     if (this.draftYearOptions().length > 0) {
-      row.appendChild(this.renderSelect([
-        { label: 'Drafted', value: '' },
-        ...this.draftYearOptions().map((year) => ({ label: year, value: year })),
-      ], this.state.selectedDraftYear, (value) => this.setDraftYear(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
+      row.appendChild(this.renderDraftYearDropdown('h-10 rounded-full bg-white px-4 pr-9 text-sm text-gray-900 ring-1 ring-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500'));
     }
 
     if (this.canSlice()) {
@@ -799,6 +879,85 @@ export class StatsPageShell {
     wrapper.appendChild(icon);
 
     return wrapper;
+  }
+
+  renderDraftYearDropdown(buttonClassName) {
+    const wrapper = createElement('div', 'relative');
+    wrapper.dataset.draftYearDropdown = 'true';
+
+    const button = createElement('button', `${buttonClassName} inline-flex items-center justify-between gap-2`, '');
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', this.state.isDraftYearDropdownOpen ? 'true' : 'false');
+    button.addEventListener('click', (event) => this.toggleDraftYearDropdown(event));
+
+    const label = createElement('span', 'truncate', this.draftYearButtonLabel());
+    const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    chevron.setAttribute('viewBox', '0 0 20 20');
+    chevron.setAttribute('fill', 'currentColor');
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.classList.add('size-4', 'shrink-0', 'text-gray-400');
+    const chevronPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    chevronPath.setAttribute('fill-rule', 'evenodd');
+    chevronPath.setAttribute('clip-rule', 'evenodd');
+    chevronPath.setAttribute('d', 'M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z');
+    chevron.appendChild(chevronPath);
+    button.appendChild(label);
+    button.appendChild(chevron);
+    wrapper.appendChild(button);
+
+    if (!this.state.isDraftYearDropdownOpen) {
+      return wrapper;
+    }
+
+    const menu = createElement('div', 'fixed z-[1000] max-h-72 w-44 origin-top-right overflow-y-auto rounded-md bg-white py-1 shadow-lg ring-1 ring-black/5 focus:outline-none');
+    menu.dataset.draftYearDropdown = 'true';
+    menu.dataset.draftYearDropdownPortal = 'true';
+    menu.setAttribute('role', 'menu');
+    const rect = this.state.draftYearDropdownRect;
+    if (rect) {
+      menu.style.top = `${rect.bottom + 8}px`;
+      menu.style.left = `${Math.max(8, rect.right - 176)}px`;
+    }
+
+    this.draftYearOptions().forEach((year) => {
+      const selected = this.state.selectedDraftYears.includes(String(year));
+      const item = createElement(
+        'button',
+        [
+          'group flex w-full items-center gap-3 px-4 py-2 text-left text-sm',
+          selected ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-50',
+        ].join(' '),
+        '',
+      );
+      item.type = 'button';
+      item.setAttribute('role', 'menuitemcheckbox');
+      item.setAttribute('aria-checked', selected ? 'true' : 'false');
+      item.addEventListener('click', (event) => this.onDraftYearClick(year, event));
+
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.setAttribute('viewBox', '0 0 20 20');
+      check.setAttribute('fill', 'currentColor');
+      check.setAttribute('aria-hidden', 'true');
+      check.classList.add('size-4', 'shrink-0', selected ? 'text-indigo-600' : 'text-transparent');
+      const checkPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      checkPath.setAttribute('fill-rule', 'evenodd');
+      checkPath.setAttribute('clip-rule', 'evenodd');
+      checkPath.setAttribute('d', 'M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z');
+      check.appendChild(checkPath);
+
+      item.appendChild(check);
+      item.appendChild(createElement('span', 'truncate', String(year)));
+      menu.appendChild(item);
+    });
+
+    document.body.appendChild(menu);
+
+    return wrapper;
+  }
+
+  removeDraftYearDropdownPortal() {
+    document.querySelectorAll('[data-draft-year-dropdown-portal="true"]').forEach((node) => node.remove());
   }
 
   renderSegmented(options, selectedValue, onChange) {

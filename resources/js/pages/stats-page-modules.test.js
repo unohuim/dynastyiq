@@ -29,7 +29,7 @@ const state = (overrides = {}) => ({
   selectedPos: [],
   selectedPosTypes: [],
   selectedLeagues: [],
-  selectedDraftYear: '',
+  selectedDraftYears: [],
   numericFilters: {},
   dirtyNumericFilters: {},
   ...overrides,
@@ -109,10 +109,20 @@ describe('stats page payload modules', () => {
 
   it('adds selected drafted year params', () => {
     const params = new StatsPayloadClient({ apiUrl: '/stats' }).buildParams(state({
-      selectedDraftYear: '2024',
+      selectedDraftYears: ['2024'],
     }));
 
     expect(params.get('entry_draft_year')).toBe('2024');
+  });
+
+  it('adds selected drafted year range params', () => {
+    const params = new StatsPayloadClient({ apiUrl: '/stats' }).buildParams(state({
+      selectedDraftYears: ['2022', '2019', '2021', '2020'],
+    }));
+
+    expect(params.has('entry_draft_year')).toBe(false);
+    expect(params.get('entry_draft_year_min')).toBe('2019');
+    expect(params.get('entry_draft_year_max')).toBe('2022');
   });
 
   it('sends only dirty numeric filters', () => {
@@ -210,7 +220,7 @@ describe('stats page payload modules', () => {
       selectedPos: ['C'],
       selectedPosTypes: ['F'],
       selectedLeagues: ['OHL'],
-      selectedDraftYear: '2024',
+      selectedDraftYears: ['2024'],
       dirtyNumericFilters: { gp: true },
       numericFilters: { gp: { min: 10, max: 82 } },
     });
@@ -226,7 +236,7 @@ describe('stats page payload modules', () => {
     expect(current.selectedPos).toEqual([]);
     expect(current.selectedPosTypes).toEqual([]);
     expect(current.selectedLeagues).toEqual([]);
-    expect(current.selectedDraftYear).toBe('');
+    expect(current.selectedDraftYears).toEqual([]);
     expect(current.dirtyNumericFilters).toEqual({});
     expect(current.numericFilters.gp).toEqual({ min: 0, max: 82 });
   });

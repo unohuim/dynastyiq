@@ -83,6 +83,9 @@ class ImportNHLPlayer
         $player->position              = $data['position'] ?? null;
         $player->pos_type              = in_array($player->position, ['L', 'R', 'C'], true) ? 'F' : $player->position;
         $player->current_league_abbrev = 'NHL';
+        if (is_array($data['draftDetails'] ?? null)) {
+            $this->applyDraftDetails($player, $data['draftDetails']);
+        }
         $player->is_prospect           = $isProspect;
         $player->head_shot_url         = $data['headshot'] ?? null;
         $player->hero_image_url        = $data['heroImage'] ?? null;
@@ -95,6 +98,17 @@ class ImportNHLPlayer
         $this->syncProspectFlags($player);
 
         return $player;
+    }
+
+    /**
+     * @param array<string,mixed> $draftDetails
+     */
+    private function applyDraftDetails(Player $player, array $draftDetails): void
+    {
+        $player->draft_year = $this->nullableInt($draftDetails, ['year']);
+        $player->draft_round = $this->nullableInt($draftDetails, ['round']);
+        $player->draft_round_pick = $this->nullableInt($draftDetails, ['pickInRound']);
+        $player->draft_oa = $this->nullableInt($draftDetails, ['overallPick']);
     }
 
 

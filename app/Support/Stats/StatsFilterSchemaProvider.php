@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
-use App\Models\PlayerExternalIdentity;
+use App\Models\Player;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -22,11 +22,13 @@ final class StatsFilterSchemaProvider
      */
     public function schemaForBase($base, array $columns, array $context = []): array
     {
-        return Cache::remember(
+        $schema = Cache::remember(
             $this->cacheKeyForBase($base, $columns, $context),
             now()->addMinutes(5),
             fn (): array => $this->buildSchemaForBase($base, $columns),
         );
+
+        return $this->withFreshDraftYearOptions($schema);
     }
 
     /**
@@ -55,7 +57,7 @@ final class StatsFilterSchemaProvider
             'key' => 'entry_draft_year',
             'label' => 'Drafted',
             'type' => 'enum',
-            'options' => $this->draftYearOptionsForBase($base),
+            'options' => $this->draftYearOptions(),
         ];
 
         foreach ($columns as $column) {
@@ -213,21 +215,36 @@ final class StatsFilterSchemaProvider
     /**
      * @return array<int,string>
      */
-    private function draftYearOptionsForBase($base): array
+    private function draftYearOptions(): array
     {
-        $draftYearExpression = "COALESCE(raw_payload->>'draft_year', "
-            . "raw_payload->>'draftYear', raw_payload->>'year')";
-
-        return PlayerExternalIdentity::query()
-            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
-            ->whereRaw($draftYearExpression . " ~ '^[0-9]+$'")
-            ->selectRaw('(' . $draftYearExpression . ')::int as draft_year')
+        return Player::query()
+            ->whereNotNull('draft_year')
             ->distinct()
             ->pluck('draft_year')
             ->map(static fn (mixed $year): string => (string) $year)
             ->filter()
             ->unique()
             ->sortDesc()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $schema
+     * @return array<int,array<string,mixed>>
+     */
+    private function withFreshDraftYearOptions(array $schema): array
+    {
+        $draftYearOptions = $this->draftYearOptions();
+
+        return collect($schema)
+            ->map(function (array $definition) use ($draftYearOptions): array {
+                if (($definition['key'] ?? null) === 'entry_draft_year') {
+                    $definition['options'] = $draftYearOptions;
+                }
+
+                return $definition;
+            })
             ->values()
             ->all();
     }

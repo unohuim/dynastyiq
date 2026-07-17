@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
-use App\Models\PlayerExternalIdentity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -83,21 +82,28 @@ final class StatsQueryFilterApplier
         }
 
         if ($filterSet->draftYears !== []) {
-            $draftYearExpression = "COALESCE(draft_filter.raw_payload->>'draft_year', "
-                . "draft_filter.raw_payload->>'draftYear', draft_filter.raw_payload->>'year')";
-
-            $base->whereExists(function ($query) use ($draftYearExpression, $filterSet): void {
-                $query->selectRaw('1')
-                    ->from('player_external_identities as draft_filter')
-                    ->whereColumn('draft_filter.player_id', 'pf.id')
-                    ->where('draft_filter.provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
-                    ->whereRaw($draftYearExpression . " ~ '^[0-9]+$'")
-                    ->whereIn(
-                        DB::raw('(' . $draftYearExpression . ')::int'),
-                        $filterSet->draftYears,
-                    );
-            });
+            $base->whereIn('pf.draft_year', $filterSet->draftYears);
             $applied['filters']['entry_draft_year'] = $filterSet->draftYears;
+        } elseif ($filterSet->draftYearRange['min'] !== null || $filterSet->draftYearRange['max'] !== null) {
+            $min = $filterSet->draftYearRange['min'];
+            $max = $filterSet->draftYearRange['max'];
+
+            if ($min !== null && $max !== null) {
+                if ($min > $max) {
+                    [$min, $max] = [$max, $min];
+                }
+
+                $base->whereBetween('pf.draft_year', [$min, $max]);
+            } elseif ($min !== null) {
+                $base->where('pf.draft_year', '>=', $min);
+            } elseif ($max !== null) {
+                $base->where('pf.draft_year', '<=', $max);
+            }
+
+            $applied['filters']['entry_draft_year'] = [
+                'min' => $min,
+                'max' => $max,
+            ];
         }
 
         $ageRange = $filterSet->numericRanges['age'] ?? null;

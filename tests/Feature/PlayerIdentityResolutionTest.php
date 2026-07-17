@@ -499,7 +499,13 @@ it('keeps the prospect flag when importing a prospect', function () {
 
     app(ImportNHLPlayer::class)->import('8478402', true);
 
-    expect((bool)Player::first()->is_prospect)->toBeTrue();
+    $player = Player::first();
+
+    expect((bool) $player->is_prospect)->toBeTrue()
+        ->and($player->draft_year)->toBe(2025)
+        ->and($player->draft_round)->toBe(1)
+        ->and($player->draft_round_pick)->toBe(1)
+        ->and($player->draft_oa)->toBe(1);
 });
 
 it('updates current league from prospect stats', function () {
@@ -1054,6 +1060,8 @@ it('nhl draft import uses player ids to import landing stats after creating the 
     expect(Player::query()->count())->toBe(1);
     expect(Player::first()->nhl_id)->toBe(900001);
     expect(Player::first()->full_name)->toBe('Resolvable Pick');
+    expect(Player::first()->draft_year)->toBe(2026);
+    expect(Player::first()->draft_oa)->toBe(1);
     expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)->count())->toBe(1);
     expect(PlayerExternalIdentity::query()->where('provider', PlayerExternalIdentity::PROVIDER_NHL)->count())->toBe(1);
     expect(PlayerExternalIdentity::query()
@@ -1151,6 +1159,8 @@ it('nhl draft import creates a minimal canonical prospect for picks without nhl 
     expect($player->country_code)->toBe('CAN');
     expect($player->position)->toBe('LD');
     expect($player->pos_type)->toBe('D');
+    expect($player->draft_year)->toBe(2026);
+    expect($player->draft_oa)->toBe(12);
     expect($player->is_prospect)->toBeTrue();
     expect($identity->provider)->toBe(PlayerExternalIdentity::PROVIDER_NHL_DRAFT);
     expect($identity->provider_player_id)->toBe('2026:12');
@@ -1429,6 +1439,10 @@ it('nhl draft import links an existing player by name and position type and refr
     expect($identity->player_id)->toBe($existingPlayer->id);
     expect($identity->match_status)->toBe(PlayerExternalIdentity::STATUS_MATCHED);
     expect($identity->match_confidence)->toBe(95);
+    expect($existingPlayer->refresh()->draft_year)->toBe(2026)
+        ->and($existingPlayer->draft_round)->toBe(1)
+        ->and($existingPlayer->draft_round_pick)->toBe(21)
+        ->and($existingPlayer->draft_oa)->toBe(21);
     expect(Stat::query()
         ->where('player_id', $existingPlayer->id)
         ->where('league_abbrev', 'WHL')

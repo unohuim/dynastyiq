@@ -190,12 +190,16 @@ class ImportNhlDraftPicksJob implements ShouldQueue
         $identity = $resolver->upsertNhlDraftIdentity($providerPlayerId, $this->normalizedDraftPayload($pick, $year));
 
         if ($identity->player_id !== null) {
+            $this->applyDraftFields($identity->player, $pick, $year);
+
             return $identity->player === null ? null : ['player' => $identity->player, 'identity' => $identity];
         }
 
         $identity = $resolver->resolveNonAuthorityIdentity($identity);
 
         if ($identity->player_id !== null) {
+            $this->applyDraftFields($identity->player, $pick, $year);
+
             return $identity->player === null ? null : ['player' => $identity->player, 'identity' => $identity];
         }
 
@@ -219,6 +223,7 @@ class ImportNhlDraftPicksJob implements ShouldQueue
             'position' => $position,
             'pos_type' => $this->positionType($position),
             'current_league_abbrev' => $this->currentLeague($pick),
+            ...$this->draftFields($pick, $year),
             'is_prospect' => true,
             'is_goalie' => $this->positionType($position) === 'G',
         ]);
@@ -252,6 +257,34 @@ class ImportNhlDraftPicksJob implements ShouldQueue
         if ($refreshedPlayer->id !== $player->id) {
             app(PlayerIdentityResolver::class)->linkIdentityToPlayer($draftIdentity, $refreshedPlayer);
         }
+
+        $this->applyDraftFields($refreshedPlayer, $pick, (int) ($draftIdentity->raw_payload['draft_year'] ?? 0));
+    }
+
+    /**
+     * @param array<string,mixed> $pick
+     */
+    private function applyDraftFields(?Player $player, array $pick, int $year): void
+    {
+        if ($player === null) {
+            return;
+        }
+
+        $player->forceFill($this->draftFields($pick, $year))->save();
+    }
+
+    /**
+     * @param array<string,mixed> $pick
+     * @return array{draft_year:int|null,draft_round:int|null,draft_round_pick:int|null,draft_oa:int|null}
+     */
+    private function draftFields(array $pick, int $year): array
+    {
+        return [
+            'draft_year' => $year > 0 ? $year : null,
+            'draft_round' => $this->round($pick),
+            'draft_round_pick' => $this->pickInRound($pick),
+            'draft_oa' => $this->overallPick($pick),
+        ];
     }
 
     /**

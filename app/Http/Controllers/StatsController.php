@@ -134,6 +134,8 @@ class StatsController extends BaseController
             'availability'  => 'nullable|integer',
             'draft_context' => 'nullable|boolean',
             'entry_draft_year' => 'nullable|integer',
+            'entry_draft_year_min' => 'nullable|integer',
+            'entry_draft_year_max' => 'nullable|integer',
             'column_group'  => 'nullable|in:goalie',
             'nhle'          => 'nullable|boolean',
         ]);
@@ -450,6 +452,8 @@ class StatsController extends BaseController
             'to'            => 'nullable|date',
             'availability'  => 'nullable|integer',
             'entry_draft_year' => 'nullable|integer',
+            'entry_draft_year_min' => 'nullable|integer',
+            'entry_draft_year_max' => 'nullable|integer',
         ]);
 
         \Log::info('post validate request: ', ['request' => $request]);
