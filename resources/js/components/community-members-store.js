@@ -24,7 +24,10 @@ const emptyTierForm = () => ({
 
 let createLeagueHandlerRegistered = false;
 let detachLeagueHandlerRegistered = false;
-let refreshDiscordMembersHandlerRegistered = false;
+let refreshCommunityMembersHandlerRegistered = false;
+let detachDiscordServerHandlerRegistered = false;
+let discordBotInstallHandlerRegistered = false;
+let pendingDiscordServerDetachButton = null;
 
 function csrfToken() {
     return (
@@ -43,6 +46,96 @@ function showToast(type, message) {
     if (window.toast?.show) {
         window.toast.show(message, { type });
     }
+}
+
+function setDiscordBotInstalled(row) {
+    row.querySelectorAll("[data-discord-bot-installed-badge]").forEach((node) => {
+        node.classList.remove("hidden");
+    });
+
+    row.querySelectorAll("[data-discord-bot-install], [data-discord-bot-needs-badge]").forEach((node) => {
+        node.classList.add("hidden");
+    });
+}
+
+export async function refreshDiscordBotStatus(discordServerId) {
+    const row = document.querySelector(`[data-discord-server-row="${discordServerId}"]`);
+    const url = row?.dataset.discordBotStatusUrl || "";
+
+    if (!row || !url) {
+        return false;
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            credentials: "same-origin",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data?.ok !== true) {
+            showToast("error", data?.message || `Bot status check failed (${response.status})`);
+            return false;
+        }
+
+        if (data?.installed === true) {
+            setDiscordBotInstalled(row);
+            showToast("success", "DIQ bot installed.");
+            return true;
+        }
+
+        showToast("error", "DIQ bot install has not been detected yet.");
+        return false;
+    } catch (error) {
+        console.error("[discordBotStatus] Network or JavaScript error:", error);
+        showToast("error", "Could not check DIQ bot install status.");
+        return false;
+    }
+}
+
+function registerDiscordBotInstallHandler() {
+    if (discordBotInstallHandlerRegistered) return;
+
+    discordBotInstallHandlerRegistered = true;
+
+    document.addEventListener("click", (event) => {
+        const link = event.target.closest("[data-discord-bot-install]");
+
+        if (!(link instanceof HTMLAnchorElement)) {
+            return;
+        }
+
+        event.preventDefault();
+
+        window.open(
+            link.href,
+            `diq-discord-bot-install-${link.dataset.discordServerId || "server"}`,
+            "popup,width=620,height=760"
+        );
+    });
+
+    window.addEventListener("message", (event) => {
+        if (event.origin !== window.location.origin) {
+            return;
+        }
+
+        const data = event.data || {};
+        if (data.type !== "diq:discord-bot-installed") {
+            return;
+        }
+
+        const discordServerId = String(data.discordServerId || "");
+        if (discordServerId === "") {
+            return;
+        }
+
+        refreshDiscordBotStatus(discordServerId);
+    });
 }
 
 const teamGradients = {
@@ -82,6 +175,13 @@ const teamGradients = {
 };
 
 const fallbackTeamGradient = "linear-gradient(to bottom, #e5e7eb, #9ca3af)";
+const communityTabs = new Set(["home", "members", "leagues", "connections"]);
+
+export function initialCommunityTab(search = window.location.search) {
+    const tab = new URLSearchParams(search).get("tab") || "";
+
+    return communityTabs.has(tab) ? tab : "home";
+}
 
 function resolveCreateLeagueAction(form) {
     const dataAction = form.dataset?.action?.trim() || "";
@@ -277,15 +377,242 @@ function registerDetachLeagueHandler() {
     });
 }
 
-async function refreshDiscordMembers(button) {
-    const url = button.dataset.url || "";
+export function updateDiscordServerEmptyStates() {
+    const remaining = document.querySelectorAll("[data-discord-server-row]").length;
 
-    if (!url) {
-        showToast("error", "Cannot refresh Discord members: missing endpoint.");
+    document.querySelectorAll("[data-discord-server-count]").forEach((node) => {
+        node.textContent = String(remaining);
+    });
+
+    document.querySelectorAll("[data-discord-servers-empty]").forEach((node) => {
+        node.classList.toggle("hidden", remaining > 0);
+    });
+}
+
+function discordServerDetachModal() {
+    return document.querySelector("[data-discord-server-detach-modal]");
+}
+
+export function openDiscordServerDetachModal(button) {
+    pendingDiscordServerDetachButton = button;
+
+    const modal = discordServerDetachModal();
+    const nameNode = modal?.querySelector("[data-discord-server-detach-name]");
+
+    if (nameNode) {
+        nameNode.textContent = button.dataset.discordServerName || "this Discord server";
+    }
+
+    if (!modal) {
+        detachDiscordServer(button, false);
+        return;
+    }
+
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+
+    const cancelButton = modal.querySelector("[data-discord-server-detach-cancel]");
+    if (cancelButton instanceof HTMLButtonElement) {
+        cancelButton.focus();
+    }
+}
+
+export function closeDiscordServerDetachModal() {
+    pendingDiscordServerDetachButton = null;
+
+    const modal = discordServerDetachModal();
+    if (!modal) return;
+
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+}
+
+export async function confirmDiscordServerDetach(removeMembers) {
+    const button = pendingDiscordServerDetachButton;
+
+    if (!button) {
+        closeDiscordServerDetachModal();
+        return;
+    }
+
+    closeDiscordServerDetachModal();
+    await detachDiscordServer(button, removeMembers);
+}
+
+export async function detachDiscordServer(button, removeMembers = false) {
+    const url = button.dataset.url || "";
+    const discordServerId = button.dataset.discordServerId || "";
+
+    if (!url || !discordServerId) {
+        showToast("error", "Cannot remove Discord server: missing endpoint.");
         return;
     }
 
     button.disabled = true;
+
+    try {
+        const response = await fetch(url, {
+            method: "DELETE",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-CSRF-TOKEN": csrfToken(),
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            body: JSON.stringify({
+                remove_members: removeMembers,
+            }),
+            credentials: "same-origin",
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok || data?.ok !== true) {
+            showToast(
+                "error",
+                data?.message || `Remove failed (${response.status})`
+            );
+            return;
+        }
+
+        document
+            .querySelectorAll(`[data-discord-server-row="${discordServerId}"]`)
+            .forEach((node) => node.remove());
+
+        updateDiscordServerEmptyStates();
+        const removedMembersCount = Number(data?.removed_members_count || 0);
+        showToast(
+            "success",
+            removedMembersCount > 0
+                ? `Discord server removed with ${removedMembersCount} member${removedMembersCount === 1 ? "" : "s"}.`
+                : "Discord server removed from this community."
+        );
+
+        if (removeMembers) {
+            window.dispatchEvent(new CustomEvent("community-members:refresh"));
+        }
+    } catch (error) {
+        console.error("[discordServerDetach] Network or JavaScript error:", error);
+        showToast("error", "Could not remove Discord server from this community.");
+    } finally {
+        button.disabled = false;
+    }
+}
+
+function registerDetachDiscordServerHandler() {
+    if (detachDiscordServerHandlerRegistered) return;
+
+    detachDiscordServerHandlerRegistered = true;
+
+    document.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-discord-server-detach]");
+
+        if (!(button instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        event.preventDefault();
+        openDiscordServerDetachModal(button);
+    });
+
+    document.addEventListener("click", (event) => {
+        const cancel = event.target.closest("[data-discord-server-detach-cancel]");
+
+        if (!cancel) {
+            return;
+        }
+
+        event.preventDefault();
+        closeDiscordServerDetachModal();
+    });
+
+    document.addEventListener("click", (event) => {
+        const confirm = event.target.closest("[data-discord-server-detach-confirm]");
+
+        if (!(confirm instanceof HTMLButtonElement)) {
+            return;
+        }
+
+        event.preventDefault();
+        confirmDiscordServerDetach(confirm.dataset.discordServerDetachConfirm === "with-members");
+    });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") {
+            return;
+        }
+
+        const modal = discordServerDetachModal();
+        if (!modal || modal.classList.contains("hidden")) {
+            return;
+        }
+
+        closeDiscordServerDetachModal();
+    });
+}
+
+export function communityMembersRefreshMessage(summary = {}) {
+    const discord = summary.discord || summary;
+    const patreon = summary.patreon || {};
+    const discordSyncedCount = Number(discord?.synced_count || 0);
+    const discordServerCount = Number(discord?.server_count || 0);
+    const patreonSyncedCount = Number(patreon?.members_synced || 0);
+    const parts = [];
+
+    if (discordSyncedCount > 0 || discordServerCount > 0) {
+        const serverLabel = discordServerCount > 1 ? ` across ${discordServerCount} servers` : "";
+        parts.push(
+            discordSyncedCount === 1
+                ? `1 Discord member${serverLabel}`
+                : `${discordSyncedCount} Discord members${serverLabel}`
+        );
+    }
+
+    if (patreon?.connected === true) {
+        parts.push(
+            patreonSyncedCount === 1
+                ? "1 Patreon member"
+                : `${patreonSyncedCount} Patreon members`
+        );
+    }
+
+    if (parts.length === 0) {
+        return "Community members refreshed.";
+    }
+
+    return `${parts.join(" and ")} refreshed.`;
+}
+
+export function setCommunityMembersRefreshLoading(button, isLoading) {
+    const icon = button.querySelector("[data-community-members-refresh-icon]");
+
+    button.disabled = isLoading;
+    button.setAttribute("aria-busy", isLoading ? "true" : "false");
+
+    if (isLoading) {
+        button.title = button.dataset.loadingTitle || "Refreshing community members";
+        button.setAttribute(
+            "aria-label",
+            button.dataset.loadingLabel || "Refreshing community members"
+        );
+        icon?.classList.add("animate-spin");
+        return;
+    }
+
+    button.title = button.dataset.idleTitle || button.title;
+    button.setAttribute("aria-label", button.dataset.idleLabel || button.getAttribute("aria-label") || "");
+    icon?.classList.remove("animate-spin");
+}
+
+async function refreshCommunityMembers(button) {
+    const url = button.dataset.url || "";
+
+    if (!url) {
+        showToast("error", "Cannot refresh community members: missing endpoint.");
+        return;
+    }
+
+    setCommunityMembersRefreshLoading(button, true);
 
     try {
         const response = await fetch(url, {
@@ -303,41 +630,35 @@ async function refreshDiscordMembers(button) {
         if (!response.ok || data?.ok !== true) {
             showToast(
                 "error",
-                data?.message || `Discord refresh failed (${response.status})`
+                data?.message || `Community member refresh failed (${response.status})`
             );
             return;
         }
 
-        const syncedCount = Number(data?.summary?.synced_count || 0);
-        showToast(
-            "success",
-            syncedCount === 1
-                ? "1 Discord member refreshed."
-                : `${syncedCount} Discord members refreshed.`
-        );
+        showToast("success", communityMembersRefreshMessage(data?.summary || {}));
         window.dispatchEvent(new CustomEvent("community-members:refresh"));
     } catch (error) {
-        console.error("[discordMembersRefresh] Network or JavaScript error:", error);
-        showToast("error", "Could not refresh Discord members.");
+        console.error("[communityMembersRefresh] Network or JavaScript error:", error);
+        showToast("error", "Could not refresh community members.");
     } finally {
-        button.disabled = false;
+        setCommunityMembersRefreshLoading(button, false);
     }
 }
 
-function registerRefreshDiscordMembersHandler() {
-    if (refreshDiscordMembersHandlerRegistered) return;
+function registerRefreshCommunityMembersHandler() {
+    if (refreshCommunityMembersHandlerRegistered) return;
 
-    refreshDiscordMembersHandlerRegistered = true;
+    refreshCommunityMembersHandlerRegistered = true;
 
     document.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-discord-members-refresh]");
+        const button = event.target.closest("[data-community-members-refresh], [data-discord-members-refresh]");
 
         if (!(button instanceof HTMLButtonElement)) {
             return;
         }
 
         event.preventDefault();
-        refreshDiscordMembers(button);
+        refreshCommunityMembers(button);
     });
 }
 
@@ -732,11 +1053,13 @@ document.addEventListener("alpine:init", registerCommunityMembersStore);
 
 registerCreateLeagueHandler();
 registerDetachLeagueHandler();
-registerRefreshDiscordMembersHandler();
+registerRefreshCommunityMembersHandler();
+registerDetachDiscordServerHandler();
+registerDiscordBotInstallHandler();
 
 function communityMembersHub(config) {
     return {
-        activeTab: "home",
+        activeTab: initialCommunityTab(),
         activeLeagueTab: "draft",
         activeCommunityDraftTab: "live",
         theme: "light",

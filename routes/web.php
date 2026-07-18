@@ -17,7 +17,10 @@ use App\Http\Controllers\FantraxController;
 use App\Http\Controllers\StatsUnitsController;
 use App\Http\Controllers\StatsController;
 use App\Http\Controllers\CommunitiesController;
+use App\Http\Controllers\CommunityMemberProviderRefreshController;
+use App\Http\Controllers\DiscordBotInstallController;
 use App\Http\Controllers\DiscordCommunityMemberRefreshController;
+use App\Http\Controllers\DiscordServerController;
 use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
 use App\Http\Controllers\CommunityMemberController;
@@ -92,6 +95,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/auth/discord-server/callback', \App\Http\Controllers\Auth\DiscordServerCallbackController::class)
         ->name('discord-server.callback');
 
+    Route::get('/auth/discord-bot-installed', [DiscordBotInstallController::class, 'callback'])
+        ->name('discord-server.bot-installed.callback');
+
     Route::get('/discord/join', fn () => Redirect::away(config('services.discord.invite')))
         ->name('discord.join');
 
@@ -138,6 +144,36 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         )
             ->middleware('auth')
             ->name('organizations.discord-servers.members.refresh');
+        Route::post(
+            '/organizations/{organization}/discord-servers/members/refresh',
+            [DiscordCommunityMemberRefreshController::class, 'storeAll']
+        )
+            ->middleware('auth')
+            ->name('organizations.discord-servers.members.refresh-all');
+        Route::post(
+            '/organizations/{organization}/members/refresh',
+            [CommunityMemberProviderRefreshController::class, 'store']
+        )
+            ->middleware('auth')
+            ->name('organizations.members.refresh');
+        Route::delete(
+            '/organizations/{organization}/discord-servers/{discordServer}',
+            [DiscordServerController::class, 'destroy']
+        )
+            ->middleware('auth')
+            ->name('organizations.discord-servers.destroy');
+        Route::get(
+            '/organizations/{organization}/discord-servers/{discordServer}/bot/install',
+            [DiscordBotInstallController::class, 'redirect']
+        )
+            ->middleware('auth')
+            ->name('organizations.discord-servers.bot.install');
+        Route::get(
+            '/organizations/{organization}/discord-servers/{discordServer}/bot/status',
+            [DiscordBotInstallController::class, 'status']
+        )
+            ->middleware('auth')
+            ->name('organizations.discord-servers.bot.status');
 
         // Community Leagues
         Route::get('/communities/{c_id}/leagues/{l_id}', [CommunityLeagues::class, 'show'])

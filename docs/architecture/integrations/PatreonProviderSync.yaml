@@ -1,6 +1,7 @@
 name: Patreon Provider Sync
 type: External Provider Sync Pattern
 location:
+  - app/Http/Controllers/CommunityMemberProviderRefreshController.php
   - app/Http/Controllers/PatreonConnectController.php
   - app/Http/Controllers/PatreonSyncController.php
   - app/Http/Controllers/PatreonWebhookController.php
@@ -15,6 +16,7 @@ purpose: Connect organization-owned Patreon accounts, sync campaign tiers and me
 when_to_use:
   - Patreon OAuth.
   - Manual Patreon sync.
+  - Manual community member refresh for connected Patreon accounts.
   - Nightly Patreon sync.
   - Patreon webhook handling.
   - Patreon tier mapping.
@@ -25,11 +27,14 @@ when_not_to_use:
 rules:
   - Patreon provider state belongs to ProviderAccount.
   - Provider sync may update membership and tier records through sync services.
+  - Manual community member refresh may invoke Patreon provider sync for the connected community account.
+  - Patreon pull sync must upsert provider members and tiers and must not delete missing members unless a destructive cleanup policy is explicitly approved.
   - Patreon enum-like statuses must remain documented in docs/ENUMS.md.
   - Webhooks must be processed server-side.
 public_interface:
   - patreon.redirect
   - patreon.callback
+  - organizations.members.refresh
   - patreon.sync
   - patreon.webhook
   - PatreonSyncService::syncProviderAccount()
@@ -37,4 +42,3 @@ public_interface:
   - MembershipSyncService
 example_usage: |
   app(PatreonSyncService::class)->syncProviderAccount($providerAccount);
-

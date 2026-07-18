@@ -501,12 +501,39 @@
                     <div>
                         <h3 class="text-lg font-semibold">Members</h3>
                         <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
-                            Discord-connected members will appear here after the community has a connected Discord server and member sync is enabled.
+                            Provider-connected members will appear here after the community has a connected provider and member sync is enabled.
                         </p>
                     </div>
-                    <span class="rounded-full px-3 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'">
-                        <span x-text="$store.communityMembers.memberMeta.total || {{ $totalMembers }}"></span> total
-                    </span>
+                    <div class="flex items-center gap-2">
+                        @if($canEdit && $currentOrg)
+                            @php($canRefreshCommunityMembers = $guilds->isNotEmpty() || (bool) $patreonAccount)
+                            <button
+                                type="button"
+                                @disabled(!$canRefreshCommunityMembers)
+                                @if($canRefreshCommunityMembers)
+                                    data-community-members-refresh
+                                    data-url="{{ route('organizations.members.refresh', ['organization' => $currentOrg->id]) }}"
+                                @endif
+                                class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border {{ $canRefreshCommunityMembers ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200' : 'cursor-not-allowed border-slate-200 bg-white text-slate-300' }}"
+                                title="{{ $canRefreshCommunityMembers ? 'Refresh community members' : 'Connect Discord or Patreon before refreshing members' }}"
+                                aria-label="{{ $canRefreshCommunityMembers ? 'Refresh community members from connected providers' : 'Community member refresh unavailable' }}"
+                                data-idle-title="{{ $canRefreshCommunityMembers ? 'Refresh community members' : 'Connect Discord or Patreon before refreshing members' }}"
+                                data-idle-label="{{ $canRefreshCommunityMembers ? 'Refresh community members from connected providers' : 'Community member refresh unavailable' }}"
+                                data-loading-title="Refreshing community members"
+                                data-loading-label="Refreshing community members from connected providers"
+                            >
+                                <svg data-community-members-refresh-icon class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M20 20v-6h-6" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M20 9a8 8 0 0 0-13.657-3.657L4 7.686" />
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 15a8 8 0 0 0 13.657 3.657L20 16.314" />
+                                </svg>
+                            </button>
+                        @endif
+                        <span class="rounded-full px-3 py-1 text-xs font-semibold" :class="theme === 'dark' ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'">
+                            <span x-text="$store.communityMembers.memberMeta.total || {{ $totalMembers }}"></span> total
+                        </span>
+                    </div>
                 </div>
 
                 <div class="mt-5 overflow-hidden rounded-lg border" :class="theme === 'dark' ? 'border-slate-800' : 'border-slate-200'">
@@ -514,7 +541,7 @@
                         <div class="p-8 text-center">
                             <h4 class="text-base font-semibold">No synced members yet</h4>
                             <p class="mx-auto mt-2 max-w-xl text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
-                                Connect Discord in the Connections tab. Once Discord member import is wired, server members will populate this roster automatically.
+                                Connect Discord or Patreon in the Connections tab, then refresh members to populate this roster.
                             </p>
                             <button type="button" class="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white" @click="activeTab = 'connections'">
                                 Open Connections

@@ -3,6 +3,9 @@ type: External Platform Connection Pattern
 location:
   - app/Models/DiscordServer.php
   - app/Http/Controllers/Auth/DiscordServerCallbackController.php
+  - app/Http/Controllers/CommunityMemberProviderRefreshController.php
+  - app/Http/Controllers/DiscordBotInstallController.php
+  - app/Http/Controllers/DiscordServerController.php
   - app/Http/Controllers/DiscordCommunityMemberRefreshController.php
   - app/Http/Controllers/Api/DiscordWebhookController.php
   - app/Services/DiscordCommunityMemberSyncService.php
@@ -13,6 +16,9 @@ when_to_use:
   - Guild connection OAuth.
   - Discord member join webhooks.
   - Manual Discord guild member refresh for a connected community server.
+  - Manual Discord member refresh for all connected community servers.
+  - Manual community member refresh across connected providers.
+  - Bot install callback coordination for connected community servers.
   - Server-aware community features.
 when_not_to_use:
   - General OAuth login.
@@ -20,15 +26,26 @@ when_not_to_use:
   - Non-Discord provider data.
 rules:
   - Discord server records represent organization-connected guilds.
-  - Initial Discord server connection should attempt a best-effort member import using the same member sync service as manual refresh.
+  - Initial Discord server connection must not import members automatically; member import is triggered by explicit manual refresh actions.
   - Discord member events must enter through server-side webhook handling.
   - Manual Discord member refresh must verify that the connected guild belongs to the organization and that the bot can access the guild.
+  - Community-level Discord member refresh must run the same server sync service for each Discord server connected to the community.
+  - Community-level provider refresh may run Discord server sync alongside non-Discord provider sync.
   - Discord member refresh may upsert community memberships, but must not deactivate missing Discord members until that destructive policy is explicitly approved.
+  - Discord bot install links should route through DynastyIQ so the callback page can notify the opener tab and refresh bot-installed UI state without a full page reload.
+  - Removing a Discord server from a community must delete the community Discord server record and clear that Discord server from organization league associations without detaching the leagues from the community.
+  - Discord server removal may also remove Discord memberships only when explicitly requested by the user, and must scope that removal to memberships imported from that stable Discord guild identity.
   - Discord connection state must not replace app authorization.
 public_interface:
   - discord-server.redirect
   - discord-server.callback
   - organizations.discord-servers.members.refresh
+  - organizations.discord-servers.members.refresh-all
+  - organizations.members.refresh
+  - organizations.discord-servers.destroy
+  - organizations.discord-servers.bot.install
+  - organizations.discord-servers.bot.status
+  - discord-server.bot-installed.callback
   - discord.webhooks.memberJoined
   - DiscordServer
   - DiscordCommunityMemberSyncService

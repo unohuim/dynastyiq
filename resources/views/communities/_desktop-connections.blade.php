@@ -6,7 +6,6 @@
     $patreonIdentity = $patreonAccount?->patreonIdentity() ?? [];
     $patreonDisplay = $patreonIdentity['display'] ?? [];
     $patreonName = $patreonDisplay['name'] ?? $patreonAccount?->display_name ?? 'Patreon';
-    $fantraxSecret = auth()->user()?->fantraxSecret?->secret;
 
     if ($discordBotToken !== '' && $guilds->isNotEmpty()) {
         $botInstalledGuildIds = $guilds
@@ -61,26 +60,13 @@
                 $avatar = $icon ? "https://cdn.discordapp.com/icons/{$g->discord_guild_id}/{$icon}.{$ext}?size=64" : null;
                 $botInstalled = $botInstalledGuildIds->contains((string) $g->discord_guild_id);
             @endphp
-            <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
+            <div
+                class="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3"
+                :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'"
+                data-discord-server-row="{{ $g->id }}"
+                data-discord-bot-status-url="{{ route('organizations.discord-servers.bot.status', ['organization' => $currentOrg->id, 'discordServer' => $g->id]) }}"
+            >
                 <div class="flex min-w-0 items-center gap-3">
-                    <button
-                        type="button"
-                        @disabled(! $botInstalled)
-                        @if($botInstalled)
-                            data-discord-members-refresh
-                            data-url="{{ route('organizations.discord-servers.members.refresh', ['organization' => $currentOrg->id, 'discordServer' => $g->id]) }}"
-                        @endif
-                        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border {{ $botInstalled ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-200' : 'cursor-not-allowed border-slate-200 bg-white text-slate-300' }}"
-                        title="{{ $botInstalled ? 'Refresh Discord members' : 'Install the bot before refreshing members' }}"
-                        aria-label="{{ $botInstalled ? 'Refresh Discord members for ' . ($g->discord_guild_name ?? 'server') : 'Discord member refresh unavailable' }}"
-                    >
-                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v6h6" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 20v-6h-6" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M20 9a8 8 0 0 0-13.657-3.657L4 7.686" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 15a8 8 0 0 0 13.657 3.657L20 16.314" />
-                        </svg>
-                    </button>
                     @if($avatar)
                         <img src="{{ $avatar }}" alt="" class="h-10 w-10 shrink-0 rounded-lg object-cover ring-1 ring-slate-200" loading="lazy">
                     @else
@@ -97,20 +83,54 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
-                    @if($botInstalled)
-                        <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">Bot installed</span>
-                    @elseif($diqInstallUrl)
-                        <a href="{{ $diqInstallUrl }}" target="_blank" rel="noopener noreferrer" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100">Install bot</a>
+                    <span
+                        class="{{ $botInstalled ? '' : 'hidden ' }}rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700"
+                        data-discord-bot-installed-badge
+                    >
+                        Bot installed
+                    </span>
+                    @if($diqInstallUrl)
+                        <a
+                            href="{{ route('organizations.discord-servers.bot.install', ['organization' => $currentOrg->id, 'discordServer' => $g->id]) }}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="{{ $botInstalled ? 'hidden ' : '' }}rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                            data-discord-bot-install
+                            data-discord-server-id="{{ $g->id }}"
+                        >
+                            Install bot
+                        </a>
                     @else
-                        <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">Needs bot</span>
+                        <span class="{{ $botInstalled ? 'hidden ' : '' }}rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500" data-discord-bot-needs-badge>Needs bot</span>
+                    @endif
+                    @if($canEdit && $currentOrg)
+                        <button
+                            type="button"
+                            class="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-200 disabled:cursor-not-allowed disabled:opacity-60"
+                            data-discord-server-detach
+                            data-discord-server-id="{{ $g->id }}"
+                            data-discord-server-name="{{ $g->discord_guild_name ?? 'Discord server' }}"
+                            data-url="{{ route('organizations.discord-servers.destroy', ['organization' => $currentOrg->id, 'discordServer' => $g->id]) }}"
+                            title="Remove Discord server"
+                            aria-label="Remove {{ $g->discord_guild_name ?? 'Discord server' }} from this community"
+                        >
+                            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
                     @endif
                 </div>
             </div>
         @empty
-            <div class="rounded-lg border border-dashed px-3 py-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'">
+            <div class="rounded-lg border border-dashed px-3 py-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'" data-discord-servers-empty>
                 No Discord servers connected.
             </div>
         @endforelse
+        @if($guilds->isNotEmpty())
+            <div class="hidden rounded-lg border border-dashed px-3 py-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'" data-discord-servers-empty>
+                No Discord servers connected.
+            </div>
+        @endif
 
         <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-slate-50'">
             <div class="min-w-0">
@@ -141,13 +161,42 @@
                     {{ $fantraxConnected ? $fantraxOptions->count() . ' available league(s)' : 'Not connected' }}
                 </p>
             </div>
-            @if($canEdit)
-                <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50" @click="connectionDrawer = true; connectionType = 'fantrax'">
-                    {{ $fantraxConnected ? 'Manage' : 'Connect' }}
+            <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">{{ $fantraxConnected ? 'Connected' : 'Not connected' }}</span>
+        </div>
+    </div>
+
+    <div
+        class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/40 px-4 py-6"
+        data-discord-server-detach-modal
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="discord-server-detach-modal-title"
+    >
+        <div class="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 id="discord-server-detach-modal-title" class="text-base font-semibold text-slate-900">Remove Discord server?</h3>
+                    <p class="mt-2 text-sm text-slate-600">
+                        Choose whether to also remove members imported from <span class="font-semibold" data-discord-server-detach-name>this Discord server</span>.
+                    </p>
+                </div>
+                <button type="button" class="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" data-discord-server-detach-cancel aria-label="Cancel Discord server removal">
+                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
                 </button>
-            @else
-                <span class="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">{{ $fantraxConnected ? 'Connected' : 'Not connected' }}</span>
-            @endif
+            </div>
+            <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" data-discord-server-detach-cancel>
+                    Cancel
+                </button>
+                <button type="button" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50" data-discord-server-detach-confirm="without-members">
+                    Remove Discord only
+                </button>
+                <button type="button" class="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-200" data-discord-server-detach-confirm="with-members">
+                    Remove Discord + members
+                </button>
+            </div>
         </div>
     </div>
 
@@ -165,10 +214,9 @@
         </div>
 
         <div class="border-b border-slate-200 px-5 py-3">
-            <div class="grid grid-cols-3 gap-2">
+            <div class="grid grid-cols-2 gap-2">
                 <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold" :class="connectionType === 'discord' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" @click="connectionType = 'discord'">Discord</button>
                 <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold" :class="connectionType === 'patreon' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" @click="connectionType = 'patreon'">Patreon</button>
-                <button type="button" class="rounded-lg px-3 py-2 text-sm font-semibold" :class="connectionType === 'fantrax' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'" @click="connectionType = 'fantrax'">Fantrax</button>
             </div>
         </div>
 
@@ -181,11 +229,6 @@
                 @if($canEdit && $currentOrg)
                     <a href="{{ route('discord-server.redirect', $currentOrg->id) }}" class="inline-flex w-full items-center justify-center rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
                         Connect Discord server
-                    </a>
-                @endif
-                @if($diqInstallUrl)
-                    <a href="{{ $diqInstallUrl }}" target="_blank" rel="noopener noreferrer" class="inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                        Install DIQ bot
                     </a>
                 @endif
             </div>
@@ -212,33 +255,6 @@
                     @endif
                 @else
                     <p class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">You need community edit access to manage Patreon.</p>
-                @endif
-            </div>
-
-            <div x-show="connectionType === 'fantrax'" x-cloak class="space-y-4">
-                <div>
-                    <h4 class="text-sm font-semibold text-slate-900">Fantrax</h4>
-                    <p class="mt-1 text-sm text-slate-600">Connect a Fantrax Secret Key to discover your platform leagues.</p>
-                </div>
-                @if($canEdit)
-                    <form method="POST" action="{{ route('integrations.fantrax.save') }}" class="space-y-3">
-                        @csrf
-                        <div>
-                            <label class="block text-xs font-semibold text-slate-700">Secret Key ID</label>
-                            <input name="fantrax_secret_key" type="password" value="{{ $fantraxSecret }}" placeholder="Enter your Fantrax Secret Key" class="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-200">
-                        </div>
-                        <button type="submit" class="inline-flex w-full items-center justify-center rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-                            Save Fantrax connection
-                        </button>
-                    </form>
-                    @if($fantraxConnected)
-                        <form method="POST" action="{{ route('integrations.fantrax.disconnect') }}">
-                            @csrf
-                            <button type="submit" class="inline-flex w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Disconnect Fantrax</button>
-                        </form>
-                    @endif
-                @else
-                    <p class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">You need community edit access to manage Fantrax.</p>
                 @endif
             </div>
         </div>

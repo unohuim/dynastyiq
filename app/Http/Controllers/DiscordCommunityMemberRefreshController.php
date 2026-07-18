@@ -48,4 +48,63 @@ class DiscordCommunityMemberRefreshController extends Controller
             'summary' => $summary,
         ]);
     }
+
+    /**
+     * Refresh Discord members for every connected Discord server in a community.
+     */
+    public function storeAll(
+        Request $request,
+        Organization $organization,
+        DiscordCommunityMemberSyncService $syncService
+    ): JsonResponse {
+        $user = $request->user();
+
+        abort_unless($user, 403);
+
+        $roleLevel = (int) ($user->roles()
+            ->wherePivot('organization_id', $organization->id)
+            ->max('level') ?? 0);
+
+        abort_unless($roleLevel >= 10, 403);
+
+        $servers = $organization->discordServers()->orderBy('id')->get();
+        $summaries = [];
+        $syncedCount = 0;
+
+        foreach ($servers as $server) {
+            try {
+                $summary = $syncService->sync($server);
+            } catch (RuntimeException $e) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => $e->getMessage(),
+                    'summary' => [
+                        'server_count' => $servers->count(),
+                        'synced_count' => $syncedCount,
+                        'servers' => $summaries,
+                    ],
+                ], 422);
+            }
+
+            $serverSyncedCount = (int) ($summary['synced_count'] ?? 0);
+            $syncedCount += $serverSyncedCount;
+            $summaries[] = [
+                'discord_server_id' => $server->id,
+                'discord_guild_id' => $server->discord_guild_id,
+                'discord_guild_name' => $server->discord_guild_name,
+                'synced_count' => $serverSyncedCount,
+                'summary' => $summary,
+            ];
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Discord members refreshed.',
+            'summary' => [
+                'server_count' => $servers->count(),
+                'synced_count' => $syncedCount,
+                'servers' => $summaries,
+            ],
+        ]);
+    }
 }
