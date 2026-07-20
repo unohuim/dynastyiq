@@ -6,16 +6,16 @@ namespace App\Jobs;
 
 use App\Services\NhlGameImportRebuilder;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 
 /**
  * Performs the heavy game-scoped rebuild setup before the canonical NHL import jobs run.
  */
-class RebuildNhlGameImportJob implements ShouldQueue
+class RebuildNhlGameImportJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -25,12 +25,17 @@ class RebuildNhlGameImportJob implements ShouldQueue
     /**
      * @var int
      */
-    public int $tries = 1;
+    public int $tries = 3;
 
     /**
      * @var int
      */
     public int $timeout = 600;
+
+    /**
+     * @var int
+     */
+    public int $uniqueFor = 900;
 
     public function __construct(
         public int $gameId,
@@ -39,17 +44,9 @@ class RebuildNhlGameImportJob implements ShouldQueue
         $this->afterCommit = true;
     }
 
-    /**
-     * Prevent concurrent rebuild setup for the same NHL game.
-     *
-     * @return array<int,WithoutOverlapping>
-     */
-    public function middleware(): array
+    public function uniqueId(): string
     {
-        return [
-            (new WithoutOverlapping('nhl-game-import-rebuild:' . $this->gameId))
-                ->expireAfter(900),
-        ];
+        return (string) $this->gameId;
     }
 
     /**

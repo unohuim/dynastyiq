@@ -17,6 +17,7 @@ when_not_to_use:
 rules:
   - Game rebuilds must be explicit admin-triggered operations.
   - Admin HTTP endpoints must dispatch RebuildNhlGameImportJob instead of running rebuild deletion and reseeding inline.
+  - RebuildNhlGameImportJob must be unique by game id so repeated clicks do not enqueue competing rebuild setup jobs for the same game.
   - Rebuilds must delete dependent game-scoped rows before deleting raw game-scoped rows.
   - Rebuilds must delete play-by-play rows for the game so parser changes that reduce row counts remove stale records.
   - Rebuilds must reseed all canonical import progress stages for the game.
