@@ -1313,9 +1313,9 @@ class ImportNhlShifts
     {
         return (int) $keptShift['player_id'] === (int) $candidateShift['player_id']
             && (int) ($keptShift['shift']['period'] ?? 0) === (int) ($candidateShift['shift']['period'] ?? 0)
+            && (int) $keptShift['shift_number'] === (int) $candidateShift['shift_number']
             && (int) $candidateShift['shift_start_seconds'] >= (int) $keptShift['shift_start_seconds']
             && (int) $candidateShift['shift_end_seconds'] <= (int) $keptShift['shift_end_seconds']
-            && (int) $candidateShift['shift_end_seconds'] === (int) $keptShift['shift_end_seconds']
             && (int) $candidateShift['shift_duration_seconds'] < (int) $keptShift['shift_duration_seconds'];
     }
 

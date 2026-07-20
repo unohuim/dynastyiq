@@ -61,6 +61,7 @@ rules:
   - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
   - Shift imports may use already-imported official boxscore shifts and time on ice to choose between provider shiftchart alternatives, including exact duplicate-row TOI credits that do not change shift count, but must not mutate raw provider event fields.
+  - Shift imports may replace a contained provider shift row with another row for the same player, period, and shift number only when the normalized shift count already matches official boxscore shifts and the replacement exactly reconciles official boxscore time on ice.
   - Goalie shift imports may use official goalie boxscore time on ice as a reconciliation target for dropping exact-duration malformed shiftchart artifacts because official goalie boxscore shift counts are zero; they must still store time on ice from the remaining normalized raw shift rows.
   - Goalie decision summaries must preserve regulation, overtime, and shootout win/loss splits at the game-summary level before season aggregation.
   - Goalie decision backfills may refresh game-summary decisions from official boxscore goalie rows without rerunning play-by-play, shift, or unit stages, and may dispatch one queue job per game for large windows.
