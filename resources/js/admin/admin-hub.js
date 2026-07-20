@@ -56,7 +56,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'platform-imports', 'users', 'activity', 'game-imports', 'triage', 'validations'];
+    const validInitialTabs = ['imports', 'platform-imports', 'users', 'activity', 'game-imports', 'triage', 'validations', 'shift-mismatches'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
@@ -71,6 +71,7 @@ export default function adminHub(options = {}) {
         hasFantrax: fantraxAvailable,
         triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
         validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
+        shiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
@@ -85,6 +86,9 @@ export default function adminHub(options = {}) {
         validationsLoaded: false,
         validationsLoading: false,
         validationsError: '',
+        shiftMismatchesLoaded: false,
+        shiftMismatchesLoading: false,
+        shiftMismatchesError: '',
         validationRebuilds: {},
         validationDetails: {},
         gameImports: {
@@ -197,6 +201,10 @@ export default function adminHub(options = {}) {
                 await this.loadValidations();
             }
 
+            if (tab === 'shift-mismatches') {
+                await this.loadShiftMismatches();
+            }
+
             if (tab === 'game-imports') {
                 await this.loadGameImports();
                 await this.loadGameImportSourceGaps();
@@ -306,6 +314,51 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async loadShiftMismatches(options = {}) {
+            const force = Boolean(options.force);
+            const background = Boolean(options.background);
+
+            if ((!force && this.shiftMismatchesLoaded) || this.shiftMismatchesLoading) {
+                return;
+            }
+
+            if (!background) {
+                this.shiftMismatchesLoading = true;
+            }
+            this.shiftMismatchesError = '';
+
+            try {
+                const response = await fetch(this.shiftMismatchesUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load shift mismatches');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Shift mismatch response did not include a page fragment');
+                }
+
+                const mount = this.$refs?.shiftMismatchesMount ?? document.querySelector('[data-admin-shift-mismatches-mount]');
+                if (!mount) {
+                    throw new Error('Shift mismatch mount was not found');
+                }
+
+                mount.innerHTML = payload.html;
+                this.bindValidationDetailToggles(mount);
+                this.shiftMismatchesLoaded = true;
+                this.validationDetails = {};
+            } catch (error) {
+                this.shiftMismatchesError = error.message ?? 'Unable to load shift mismatches';
+            } finally {
+                if (!background) {
+                    this.shiftMismatchesLoading = false;
+                }
+            }
+        },
+
         bindValidationDetailToggles(mount) {
             if (!mount || mount.dataset.validationTogglesBound === 'true') {
                 return;
@@ -355,6 +408,7 @@ export default function adminHub(options = {}) {
             try {
                 await this.sendGameImportRequest(url, {});
                 await this.loadValidations({ force: true, background: true });
+                await this.loadShiftMismatches({ force: true, background: true });
                 await this.loadGameImports({ background: true });
             } catch (error) {
                 this.validationsError = error.message ?? 'Unable to queue game rebuild';

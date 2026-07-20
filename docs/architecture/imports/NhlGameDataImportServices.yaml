@@ -44,7 +44,7 @@ rules:
   - Raw shift imports must update player game summary time on ice and shift counts for the same game and player.
   - Raw shift imports must ignore provider shift rows whose team abbreviation is not one of the stored game home or away teams.
   - Play-by-play and shiftcharts are the processing sources for derived game summaries; official boxscore rows are validation and reconciliation targets, not substitute source rows except for documented goalie-facing stat reconciliation and tiny skater TOI-only reconciliation.
-  - Import services must not copy official boxscore values into derived summaries solely to silence validation deltas, except for goalie-facing totals whose PBP events can omit goalieInNetId, or when a skater has only a time-on-ice delta under 20 seconds, shift count matches, and raw shiftcharts are available.
+  - Import services must not copy official boxscore values into derived summaries solely to silence validation deltas, except for goalie-facing totals whose PBP events can omit goalieInNetId, when a skater has only a time-on-ice delta under 20 seconds, shift count matches, and raw shiftcharts are available, or when summary validation marks an auditable shiftchart mismatch after all documented reconciliation attempts.
   - PBP game summarization must reconcile goalie-facing goals against, saves, shots against, strength splits, save percentage, goals-against average, and time on ice from official boxscore rows after PBP-derived summaries are persisted.
   - Goalie empty-net shiftchart artifacts must be excluded from normalized shift-derived outputs when play-by-play goalie and situation state proves the goalie was no longer on ice, while raw provider payload files remain preserved for audit.
   - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
@@ -57,6 +57,7 @@ rules:
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
   - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
   - Summary validation may return invalidated for game type 1 when preseason provider deltas exist but the game import should continue.
+  - Summary validation may return shiftchart-mismatch for non-preseason games when all remaining deltas are limited to time on ice or shifts after documented reconciliation; official boxscore time on ice and shifts must be used in summaries while the original deltas remain persisted for admin review.
   - Explicit reprocess runs must delete game-scoped stage-owned rows before importing or recalculating that stage so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data.
   - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.

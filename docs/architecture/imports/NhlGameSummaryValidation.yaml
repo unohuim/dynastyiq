@@ -7,6 +7,7 @@ location:
   - app/Models/NhlGameValidation.php
   - app/Models/NhlGameValidationDelta.php
   - database/migrations/2026_06_29_010000_create_nhl_game_validations_table.php
+  - database/migrations/2026_07_20_000001_add_shiftchart_mismatch_nhl_game_validation_status.php
 purpose: Persist an auditable validation result comparing computed NHL player game summaries against official NHL boxscore totals.
 when_to_use:
   - Validating a fully processed NHL game before downstream stat trust.
@@ -19,9 +20,11 @@ when_not_to_use:
 rules:
   - Exact comparable fields may auto-approve only when no blocking deltas exist.
   - Failed validations must persist deltas before the pipeline stage is marked failed.
-  - Validation deltas must drive processing fixes, source-gap handling, preseason invalidation, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values outside documented import-stage reconciliation rules.
+  - Validation deltas must drive processing fixes, source-gap handling, preseason invalidation, auditable shiftchart mismatch handling, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values outside documented import-stage reconciliation rules.
   - Preseason game type 1 validations with deltas must persist deltas as invalidated and may continue without marking the pipeline stage failed.
-  - Regular season and playoff game types must keep validation deltas as failed hard stops.
+  - Regular season and playoff game types must keep validation deltas as failed hard stops unless all remaining deltas are documented shiftchart mismatch fields.
+  - Shiftchart mismatch status may be used only after all documented reconciliation attempts have run, stored shiftcharts are available, the game is not preseason, and every remaining delta is limited to skater or goalie time-on-ice or shift count.
+  - Shiftchart mismatch validations must preserve the original deltas for audit while allowing the pipeline to continue and using official boxscore time-on-ice and shift counts in player game summaries.
   - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.
   - Skater blocking validation fields are goals, assists, points, penalty minutes, hits, power-play goals, shots on goal, faceoff percentage, time on ice with tolerance, shifts, and blocked shots.
   - Penalty-minute validation must tolerate the NHL boxscore gap for match penalties only when a player's computed summary exceeds the official boxscore by exactly ten minutes per committed match-penalty event in the imported play-by-play.

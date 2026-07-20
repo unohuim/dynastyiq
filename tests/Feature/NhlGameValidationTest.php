@@ -1806,6 +1806,107 @@ it('keeps validation deltas as failed hard stops for regular season games', func
         ->and($validation->mismatch_count)->toBe(1);
 });
 
+it('marks regular season shift-only deltas as shiftchart mismatch and uses official boxscore totals', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_SHIFTCHART_MISMATCH)
+        ->and($validation->mismatch_count)->toBe(2)
+        ->and($validation->approved_at)->toBeNull();
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8478402,
+        'toi' => 1080,
+        'shifts' => 18,
+    ]);
+    $this->assertDatabaseHas('nhl_game_validation_deltas', [
+        'validation_id' => $validation->id,
+        'nhl_player_id' => 8478402,
+        'field' => 'toi_seconds',
+        'boxscore_value' => '1080',
+        'summary_value' => '1120',
+    ]);
+    $this->assertDatabaseHas('nhl_game_validation_deltas', [
+        'validation_id' => $validation->id,
+        'nhl_player_id' => 8478402,
+        'field' => 'shifts',
+        'boxscore_value' => '18',
+        'summary_value' => '20',
+    ]);
+});
+
+it('keeps shiftchart mismatch status after official boxscore totals have already been applied', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+
+    $firstValidation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+    $secondValidation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($firstValidation->status)->toBe(NhlGameValidation::STATUS_SHIFTCHART_MISMATCH)
+        ->and($secondValidation->status)->toBe(NhlGameValidation::STATUS_SHIFTCHART_MISMATCH)
+        ->and($secondValidation->mismatch_count)->toBe(2);
+
+    $this->assertDatabaseHas('nhl_game_validation_deltas', [
+        'validation_id' => $secondValidation->id,
+        'nhl_player_id' => 8478402,
+        'field' => 'toi_seconds',
+        'boxscore_value' => '1080',
+        'summary_value' => '1120',
+    ]);
+    $this->assertDatabaseHas('nhl_game_validation_deltas', [
+        'validation_id' => $secondValidation->id,
+        'nhl_player_id' => 8478402,
+        'field' => 'shifts',
+        'boxscore_value' => '18',
+        'summary_value' => '20',
+    ]);
+});
+
+it('keeps mixed shift and scoring deltas as failed hard stops without overwriting summaries', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'goals' => 2,
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and($validation->mismatch_count)->toBe(3);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8478402,
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+});
+
 it('keeps validation deltas as failed hard stops for playoff games', function (): void {
     ($this->insertGame)(2026030001, ['game_type' => 3]);
     ($this->makePlayer)(8478402);
@@ -1837,6 +1938,36 @@ it('lets preseason invalidated validation jobs complete without failing the stag
     ]);
     $this->assertDatabaseHas('nhl_import_progress', [
         'game_id' => '2026010001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'completed',
+    ]);
+});
+
+it('lets shiftchart mismatch validation jobs complete without failing the stage', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+    ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
+
+    (new ValidateNhlGameSummaryJob(2026020001))->handle(
+        app(NhlImportOrchestrator::class),
+        app(NhlGameImportEligibility::class)
+    );
+
+    $this->assertDatabaseHas('nhl_game_validations', [
+        'nhl_game_id' => 2026020001,
+        'status' => NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
+        'mismatch_count' => 2,
+    ]);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
         'status' => 'completed',
     ]);
@@ -4260,6 +4391,38 @@ it('reruns invalidated preseason validation and marks validation progress comple
 
     $this->assertDatabaseHas('nhl_import_progress', [
         'game_id' => '2026010001',
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'status' => 'completed',
+    ]);
+});
+
+it('reruns shiftchart mismatch validation and marks validation progress completed', function (): void {
+    ($this->insertGame)(2026020001, ['game_type' => 2]);
+    ($this->makePlayer)(8478402);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'toi_seconds' => 1080,
+        'shifts' => 18,
+    ]);
+    ($this->insertSummary)(2026020001, 8478402, [
+        'toi' => 1120,
+        'shifts' => 20,
+    ]);
+    ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'error');
+    $validation = NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 2,
+        'checked_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-validations.rerun', $validation))
+        ->assertOk()
+        ->assertJsonPath('status', NhlGameValidation::STATUS_SHIFTCHART_MISMATCH);
+
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
         'status' => 'completed',
     ]);

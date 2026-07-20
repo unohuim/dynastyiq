@@ -1,7 +1,7 @@
 <div class="{{ ($embedded ?? false) ? '' : 'py-6' }}">
     <div class="{{ ($embedded ?? false) ? '' : 'mx-auto max-w-7xl px-4 sm:px-6 lg:px-8' }}">
         <div class="mb-4 flex flex-wrap gap-2">
-            @foreach(['failed' => 'Failed', 'invalidated' => 'Invalidated', 'incomplete' => 'Incomplete', 'approved' => 'Approved', 'accepted_exception' => 'Accepted', 'all' => 'All'] as $value => $label)
+            @foreach(['failed' => 'Failed', 'shiftchart-mismatch' => 'Shifts Mismatch', 'invalidated' => 'Invalidated', 'incomplete' => 'Incomplete', 'approved' => 'Approved', 'accepted_exception' => 'Accepted', 'all' => 'All'] as $value => $label)
                 <a
                     href="{{ route('admin.nhl-validations.index', array_filter(['status' => $value, 'admin_panel' => ($embedded ?? false) ? 1 : null])) }}"
                     class="inline-flex min-h-9 items-center rounded px-3 text-sm font-medium {{ $status === $value ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50' }}"

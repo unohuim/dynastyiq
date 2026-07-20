@@ -40,9 +40,26 @@ class ValidateNhlGameSummary
             $deltas = $this->comparator->compare($gameId);
         }
 
-        $status = $this->validationStatus($gameId, $deltas);
+        $shiftchartMismatchDeltas = [];
 
-        $validation = DB::transaction(function () use ($gameId, $deltas, $status): NhlGameValidation {
+        if ($this->isShiftchartMismatch($gameId, $deltas)) {
+            $shiftchartMismatchDeltas = $deltas;
+
+            if ($this->applyOfficialShiftchartMismatchTotals($gameId, $deltas)) {
+                $deltas = $this->comparator->compare($gameId);
+            }
+        }
+
+        if ($shiftchartMismatchDeltas === [] && empty($deltas)) {
+            $shiftchartMismatchDeltas = $this->existingShiftchartMismatchDeltas($gameId);
+        }
+
+        $status = $shiftchartMismatchDeltas === []
+            ? $this->validationStatus($gameId, $deltas)
+            : NhlGameValidation::STATUS_SHIFTCHART_MISMATCH;
+        $persistedDeltas = $shiftchartMismatchDeltas === [] ? $deltas : $shiftchartMismatchDeltas;
+
+        $validation = DB::transaction(function () use ($gameId, $persistedDeltas, $status): NhlGameValidation {
             $validation = NhlGameValidation::updateOrCreate(
                 [
                     'nhl_game_id' => $gameId,
@@ -50,7 +67,7 @@ class ValidateNhlGameSummary
                 ],
                 [
                     'status' => $status,
-                    'mismatch_count' => count($deltas),
+                    'mismatch_count' => count($persistedDeltas),
                     'checked_at' => now(),
                     'approved_at' => $status === NhlGameValidation::STATUS_APPROVED ? now() : null,
                     'approved_by' => null,
@@ -59,7 +76,7 @@ class ValidateNhlGameSummary
 
             $validation->deltas()->delete();
 
-            foreach ($deltas as $delta) {
+            foreach ($persistedDeltas as $delta) {
                 NhlGameValidationDelta::create([
                     'validation_id' => $validation->id,
                     'nhl_player_id' => $delta['nhl_player_id'] ?? null,
@@ -74,7 +91,7 @@ class ValidateNhlGameSummary
             return $validation->refresh();
         });
 
-        if (!empty($deltas)) {
+        if (!empty($persistedDeltas)) {
             try {
                 $this->troubleshootingExporter->export($validation);
             } catch (\Throwable $exception) {
@@ -257,6 +274,121 @@ class ValidateNhlGameSummary
             ->where('nhl_game_id', $gameId)
             ->where('goalie_in_net_player_id', $playerId)
             ->exists();
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function isShiftchartMismatch(int $gameId, array $deltas): bool
+    {
+        if (empty($deltas) || ! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
+            return false;
+        }
+
+        $gameType = NhlGame::query()
+            ->where('nhl_game_id', $gameId)
+            ->value('game_type');
+
+        if ((int) $gameType === 1) {
+            return false;
+        }
+
+        foreach ($deltas as $delta) {
+            if (
+                ! isset($delta['nhl_player_id'])
+                || ! in_array($delta['field'] ?? null, ['toi_seconds', 'shifts'], true)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Accept official boxscore TOI and shift totals once remaining deltas prove
+     * only unreconcilable shiftchart disagreement.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function applyOfficialShiftchartMismatchTotals(int $gameId, array $deltas): bool
+    {
+        $changed = false;
+        $playerIds = collect($deltas)
+            ->pluck('nhl_player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values();
+
+        foreach ($playerIds as $playerId) {
+            $boxscore = NhlBoxscore::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['shifts', 'toi_seconds']);
+
+            $summary = NhlGameSummary::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['id', 'shifts', 'toi']);
+
+            if (! $boxscore || ! $summary || $boxscore->toi_seconds === null) {
+                continue;
+            }
+
+            $summary->forceFill([
+                'toi' => (int) $boxscore->toi_seconds,
+                'shifts' => (int) $boxscore->shifts,
+            ])->save();
+
+            $changed = true;
+        }
+
+        if ($changed) {
+            Log::info('Accepted official boxscore TOI and shifts for NHL shiftchart mismatch validation.', [
+                'game_id' => $gameId,
+                'player_count' => $playerIds->count(),
+                'delta_count' => count($deltas),
+            ]);
+        }
+
+        return $changed;
+    }
+
+    /**
+     * Keep an auditable shiftchart mismatch when a later validation sees no
+     * deltas only because official boxscore TOI and shifts were already applied.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function existingShiftchartMismatchDeltas(int $gameId): array
+    {
+        $validation = NhlGameValidation::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('validation_type', NhlGameValidation::TYPE_SUMMARY_BOXSCORE)
+            ->with('deltas')
+            ->first();
+
+        if (! $validation || ! in_array($validation->status, [
+            NhlGameValidation::STATUS_FAILED,
+            NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
+        ], true)) {
+            return [];
+        }
+
+        $deltas = $validation->deltas
+            ->map(static fn (NhlGameValidationDelta $delta): array => [
+                'nhl_player_id' => $delta->nhl_player_id,
+                'field' => $delta->field,
+                'boxscore_value' => $delta->boxscore_value,
+                'summary_value' => $delta->summary_value,
+                'delta' => $delta->delta,
+                'severity' => $delta->severity,
+            ])
+            ->values()
+            ->all();
+
+        return $this->isShiftchartMismatch($gameId, $deltas) ? $deltas : [];
     }
 
     private function stringValue(mixed $value): ?string

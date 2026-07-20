@@ -14,6 +14,7 @@
             hasFantrax: {{ $hasFantraxPlayers ? 'true' : 'false' }},
             triageUrl: @js(route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1])),
             validationsUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1])),
+            shiftMismatchesUrl: @js(route('admin.nhl-validations.index', ['admin_panel' => 1, 'status' => \App\Models\NhlGameValidation::STATUS_SHIFTCHART_MISMATCH])),
             gameImportStatusUrl: @js(route('admin.nhl-game-imports.status')),
             gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),
             gameImportGameRerunUrl: @js(url('/admin/nhl-game-imports/games')),
@@ -81,6 +82,15 @@
                     :class="activeTab === 'validations' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
                     Game Validations
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.shift-mismatches"
+                    @click="setTab('shift-mismatches')"
+                    :class="activeTab === 'shift-mismatches' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    Shifts Mismatch
                 </button>
                 <button
                     type="button"
@@ -949,6 +959,34 @@
                         x-show="validationsError"
                         class="border-y border-gray-200 bg-white px-4 py-6 text-sm text-red-600"
                         x-text="validationsError"
+                    ></div>
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'shift-mismatches'" x-cloak>
+                <div
+                    x-ref="shiftMismatchesMount"
+                    data-admin-shift-mismatches-mount
+                    class="min-h-64"
+                >
+                    <div
+                        x-show="shiftMismatchesLoading"
+                        class="border-y border-gray-200 bg-white px-4 py-10"
+                    >
+                        <div class="mx-auto max-w-3xl space-y-4">
+                            <div class="h-4 w-40 animate-pulse rounded bg-gray-200"></div>
+                            <div class="space-y-3">
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                                <div class="h-12 animate-pulse rounded bg-gray-100"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="shiftMismatchesError"
+                        class="border-y border-gray-200 bg-white px-4 py-6 text-sm text-red-600"
+                        x-text="shiftMismatchesError"
                     ></div>
                 </div>
             </div>

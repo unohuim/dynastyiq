@@ -219,6 +219,7 @@ class NhlGameValidationController extends Controller
         if (in_array($validation->status, [
             NhlGameValidation::STATUS_APPROVED,
             NhlGameValidation::STATUS_INVALIDATED,
+            NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
         ], true)) {
             $orchestrator->onSuccess(
                 (int) $validation->nhl_game_id,

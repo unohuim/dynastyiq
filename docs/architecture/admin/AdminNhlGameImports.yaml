@@ -47,6 +47,7 @@ rules:
   - Game-data reset requests must queue nhl:empty --games through the admin import runner and must not run destructive deletion synchronously during the web request.
   - Reverb updates should be lightweight invalidation signals and the browser must reload status from the admin status endpoint.
   - Game import UI behavior must remain page-local in the adminHub module.
+  - Admin operational validation tabs may show failed validations and shiftchart mismatches as separate lazy-loaded panels backed by the NHL validations index filter.
   - Admin NHL game import routes must remain protected by admin middleware.
 public_interface:
   - admin.nhl-game-imports.status

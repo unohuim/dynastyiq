@@ -20,6 +20,7 @@ class NhlGameValidation extends Model
     public const STATUS_ACCEPTED_EXCEPTION = 'accepted_exception';
     public const STATUS_INCOMPLETE = 'incomplete';
     public const STATUS_INVALIDATED = 'invalidated';
+    public const STATUS_SHIFTCHART_MISMATCH = 'shiftchart-mismatch';
 
     protected $guarded = [];
 

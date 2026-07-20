@@ -234,6 +234,24 @@ describe('admin-hub import listeners', () => {
         expect(instance.activeTab).toBe('validations');
     });
 
+    it('opens the admin shifts mismatch tab from the tab query parameter', async () => {
+        global.window = {
+            location: {
+                search: '?tab=shift-mismatches',
+                href: 'http://localhost/admin?tab=shift-mismatches',
+            },
+            history: {
+                replaceState: vi.fn(),
+                state: null,
+            },
+        };
+
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ hasPlayers: true, hasFantrax: true });
+
+        expect(instance.activeTab).toBe('shift-mismatches');
+    });
+
     it('opens the admin game imports tab from the tab query parameter', async () => {
         global.window = {
             location: {
@@ -306,6 +324,37 @@ describe('admin-hub import listeners', () => {
 
         await instance.setTab('imports');
         await instance.setTab('validations');
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('lazy loads shift mismatches when the shift mismatches tab is selected', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<div data-admin-shift-mismatches-mount></div>';
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-triage-page>Shift Mismatch Triage</div>',
+                }),
+            })
+        );
+
+        const instance = adminHub({
+            shiftMismatchesUrl: '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
+        });
+
+        await instance.setTab('shift-mismatches');
+
+        expect(instance.activeTab).toBe('shift-mismatches');
+        expect(fetch).toHaveBeenCalledWith('/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-validation-triage-page]')).not.toBeNull();
+        expect(instance.shiftMismatchesLoaded).toBe(true);
+
+        await instance.setTab('imports');
+        await instance.setTab('shift-mismatches');
 
         expect(fetch).toHaveBeenCalledTimes(1);
     });
@@ -412,6 +461,12 @@ describe('admin-hub import listeners', () => {
             })
             .mockResolvedValueOnce({
                 ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-triage-page>Reloaded shift mismatches</div>',
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
                 json: () => Promise.resolve({ runs: [{ id: 28, action: 'process' }] }),
             });
 
@@ -440,7 +495,10 @@ describe('admin-hub import listeners', () => {
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-validations?admin_panel=1', {
             headers: { Accept: 'application/json' },
         });
-        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-game-imports/status', {
+        expect(fetch).toHaveBeenNthCalledWith(3, '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(fetch).toHaveBeenNthCalledWith(4, '/admin/nhl-game-imports/status', {
             headers: { Accept: 'application/json' },
         });
         expect(document.querySelector('[data-validation-triage-page]')).not.toBeNull();
