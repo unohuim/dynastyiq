@@ -93,6 +93,13 @@ class ImportNhlShifts
         }
 
         $boxscoreTargets = $this->boxscoreShiftTargets($nhlGameId);
+        $allowedPlayerIds = $this->boxscoreOrPbpPlayerIds($nhlGameId);
+
+        if ($allowedPlayerIds !== null) {
+            $resolvedShifts = $this->filterShiftchartOnlyPlayers($resolvedShifts, $allowedPlayerIds);
+            $candidateShifts = $this->filterShiftchartOnlyPlayers($candidateShifts, $allowedPlayerIds);
+        }
+
         $containedFilteredShifts = $this->removeContainedShiftIntervals($resolvedShifts);
         $normalizedShifts = $this->reconcileWithBoxscoreTargets(
             $this->removeReusedShortShiftNumbers($containedFilteredShifts, $boxscoreTargets),
@@ -909,6 +916,87 @@ class ImportNhlShifts
                     'is_goalie' => strtoupper((string) ($boxscore->position ?? '')) === 'G',
                 ],
             ])
+            ->all();
+    }
+
+    /**
+     * Return player ids proven by boxscore or PBP, or null when either source is unavailable.
+     *
+     * @return array<int,bool>|null
+     */
+    private function boxscoreOrPbpPlayerIds(string $nhlGameId): ?array
+    {
+        $boxscorePlayerIds = NhlBoxscore::query()
+            ->where('nhl_game_id', $nhlGameId)
+            ->whereNotNull('nhl_player_id')
+            ->pluck('nhl_player_id')
+            ->map(fn ($playerId): int => (int) $playerId)
+            ->filter(fn (int $playerId): bool => $playerId > 0)
+            ->values();
+
+        if ($boxscorePlayerIds->isEmpty()) {
+            return null;
+        }
+
+        $pbpRows = PlayByPlay::query()
+            ->where('nhl_game_id', $nhlGameId)
+            ->get([
+                'nhl_player_id',
+                'fo_winning_player_id',
+                'fo_losing_player_id',
+                'scoring_player_id',
+                'assist1_player_id',
+                'assist2_player_id',
+                'committed_by_player_id',
+                'drawn_by_player_id',
+                'shooting_player_id',
+                'goalie_in_net_player_id',
+                'blocking_player_id',
+                'hitting_player_id',
+                'hittee_player_id',
+            ]);
+
+        if ($pbpRows->isEmpty()) {
+            return null;
+        }
+
+        $pbpPlayerIds = $pbpRows
+            ->flatMap(fn (PlayByPlay $play): array => [
+                $play->nhl_player_id,
+                $play->fo_winning_player_id,
+                $play->fo_losing_player_id,
+                $play->scoring_player_id,
+                $play->assist1_player_id,
+                $play->assist2_player_id,
+                $play->committed_by_player_id,
+                $play->drawn_by_player_id,
+                $play->shooting_player_id,
+                $play->goalie_in_net_player_id,
+                $play->blocking_player_id,
+                $play->hitting_player_id,
+                $play->hittee_player_id,
+            ])
+            ->map(fn ($playerId): int => (int) $playerId)
+            ->filter(fn (int $playerId): bool => $playerId > 0);
+
+        return $boxscorePlayerIds
+            ->merge($pbpPlayerIds)
+            ->unique()
+            ->mapWithKeys(fn (int $playerId): array => [$playerId => true])
+            ->all();
+    }
+
+    /**
+     * Remove shiftchart rows for players that neither boxscore nor PBP recognizes for the game.
+     *
+     * @param array<string|int,array<string,mixed>> $resolvedShifts
+     * @param array<int,bool> $allowedPlayerIds
+     * @return array<string|int,array<string,mixed>>
+     */
+    private function filterShiftchartOnlyPlayers(array $resolvedShifts, array $allowedPlayerIds): array
+    {
+        return collect($resolvedShifts)
+            ->filter(fn (array $resolvedShift): bool => isset($allowedPlayerIds[(int) $resolvedShift['player_id']]))
             ->all();
     }
 

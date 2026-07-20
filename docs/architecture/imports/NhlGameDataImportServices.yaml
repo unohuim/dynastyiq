@@ -60,6 +60,7 @@ rules:
   - Explicit reprocess runs must delete game-scoped stage-owned rows before importing or recalculating that stage so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data.
   - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.
+  - Shift imports may drop shiftchart-only player rows only when both official boxscore rows and imported play-by-play rows exist for the game and neither source references that player.
   - Shift imports may use already-imported official boxscore shifts and time on ice to choose between provider shiftchart alternatives, including exact duplicate-row TOI credits that do not change shift count, but must not mutate raw provider event fields.
   - Shift imports may replace a contained provider shift row with another row for the same player, period, and shift number only when the normalized shift count already matches official boxscore shifts and the replacement exactly reconciles official boxscore time on ice.
   - Shift imports may trim or drop overtime-only shiftchart time after an early OT game-end boundary when imported play-by-play proves the overtime period ended before its scheduled limit.
