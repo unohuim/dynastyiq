@@ -1,8 +1,10 @@
 name: NHL Game Import Rebuilder
 type: Operational Import Repair Service
 location:
+  - app/Jobs/RebuildNhlGameImportJob.php
   - app/Services/NhlGameImportRebuilder.php
   - app/Http/Controllers/Admin/NhlGameValidationController.php
+  - app/Http/Controllers/Admin/NhlGameImportController.php
 purpose: Provide an explicit admin repair path that clears game-scoped NHL import artifacts and requeues the canonical game pipeline from play-by-play.
 when_to_use:
   - Reprocessing a game after parser semantics changed and stale rows may remain.
@@ -14,13 +16,16 @@ when_not_to_use:
   - Automatically deleting data from validation checks without explicit admin action.
 rules:
   - Game rebuilds must be explicit admin-triggered operations.
+  - Admin HTTP endpoints must dispatch RebuildNhlGameImportJob instead of running rebuild deletion and reseeding inline.
   - Rebuilds must delete dependent game-scoped rows before deleting raw game-scoped rows.
   - Rebuilds must delete play-by-play rows for the game so parser changes that reduce row counts remove stale records.
   - Rebuilds must reseed all canonical import progress stages for the game.
   - Rebuilds must dispatch the pipeline from the PBP stage.
   - Rebuilds must not delete nhl_games rows or global NHL unit composition rows.
 public_interface:
+  - RebuildNhlGameImportJob
   - NhlGameImportRebuilder::rebuild()
+  - admin.nhl-game-imports.games.rerun
   - admin.nhl-validations.rebuild-game
 example_usage: |
-  app(NhlGameImportRebuilder::class)->rebuild($gameId);
+  RebuildNhlGameImportJob::dispatch($gameId, $runId);

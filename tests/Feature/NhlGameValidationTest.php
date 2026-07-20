@@ -7,6 +7,7 @@ use App\Jobs\ImportPbpNhlJob;
 use App\Jobs\ImportShiftsNhlJob;
 use App\Jobs\MakeShiftUnitsNhlJob;
 use App\Jobs\BaseNhlJob;
+use App\Jobs\RebuildNhlGameImportJob;
 use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
 use App\Models\NhlGameSourceStatus;
@@ -1559,12 +1560,10 @@ it('rebuilds the full game when a missing core source recovers', function (): vo
         ->assertJsonPath('status', 'game_rebuild_queued')
         ->assertJsonCount(0, 'gaps');
 
-    Bus::assertDispatched(ImportPbpNhlJob::class);
-    $this->assertDatabaseHas('nhl_import_progress', [
-        'game_id' => '2026020001',
-        'import_type' => NhlImportStages::PBP,
-        'status' => 'running',
-    ]);
+    Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
+        return $job->gameId === 2026020001 && $job->runId === null;
+    });
+    Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });
 
 it('keeps a game in source gaps when a rerun still finds a missing core source', function (): void {
@@ -1615,12 +1614,10 @@ it('rebuilds a stopped game import from the admin rerun endpoint', function (): 
         ->assertJsonPath('status', 'game_rebuild_queued')
         ->assertJsonPath('game_id', 2026020001);
 
-    Bus::assertDispatched(ImportPbpNhlJob::class);
-    $this->assertDatabaseHas('nhl_import_progress', [
-        'game_id' => '2026020001',
-        'import_type' => NhlImportStages::PBP,
-        'status' => 'running',
-    ]);
+    Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
+        return $job->gameId === 2026020001 && $job->runId === null;
+    });
+    Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });
 
 it('writes raw provider troubleshooting files when a game import stage stops', function (): void {
@@ -3920,7 +3917,7 @@ it('rejects unsupported play-by-play game types before storing events', function
     $this->assertDatabaseMissing('nhl_games', ['nhl_game_id' => 2026020001]);
 });
 
-it('rebuilds a validation game by clearing game-scoped imports and requeueing from pbp', function (): void {
+it('queues validation game rebuild setup without doing rebuild work in the request', function (): void {
     Bus::fake();
     ($this->insertGame)();
     ($this->fakeSourcePreflight)([]);
@@ -4024,32 +4021,16 @@ it('rebuilds a validation game by clearing game-scoped imports and requeueing fr
         ->assertOk()
         ->assertJsonPath('status', 'game_rebuild_queued');
 
-    foreach ([
-        'event_unit_shifts',
-        'nhl_unit_game_summaries',
-        'nhl_unit_shifts',
-        'nhl_shifts',
-        'nhl_game_validation_deltas',
-        'nhl_game_validations',
-        'nhl_boxscores',
-        'nhl_game_summaries',
-        'play_by_plays',
-    ] as $table) {
-        $this->assertDatabaseCount($table, 0);
-    }
-
     $this->assertDatabaseHas('nhl_units', ['id' => $unitId]);
-    $this->assertDatabaseCount('nhl_import_progress', count(NhlImportStages::ordered()));
     $this->assertDatabaseHas('nhl_import_progress', [
         'game_id' => '2026020001',
         'import_type' => NhlImportStages::PBP,
-        'status' => 'running',
+        'status' => 'completed',
     ]);
-    $this->assertDatabaseHas('nhl_import_progress', [
-        'game_id' => '2026020001',
-        'import_type' => NhlImportStages::SHIFTS,
-        'status' => 'scheduled',
-    ]);
+    $this->assertDatabaseHas('nhl_game_validations', ['id' => $validation->id]);
 
-    Bus::assertDispatched(ImportPbpNhlJob::class);
+    Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
+        return $job->gameId === 2026020001 && $job->runId === null;
+    });
+    Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });

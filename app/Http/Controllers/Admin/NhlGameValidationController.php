@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\RebuildNhlGameImportJob;
 use App\Models\NhlGameValidation;
 use App\Models\PlayByPlay;
 use App\Repositories\NhlImportProgressRepo;
-use App\Services\NhlGameImportRebuilder;
 use App\Services\NhlImportOrchestrator;
 use App\Services\NhlPbpEventNormalizer;
 use App\Services\ValidateNhlGameSummary;
@@ -282,18 +282,10 @@ class NhlGameValidationController extends Controller
 
     public function rebuildGame(
         Request $request,
-        NhlGameValidation $validation,
-        NhlGameImportRebuilder $rebuilder
+        NhlGameValidation $validation
     ): RedirectResponse|JsonResponse
     {
-        $queued = $rebuilder->rebuild((int) $validation->nhl_game_id);
-
-        if (! $queued && $request->expectsJson()) {
-            return response()->json([
-                'status' => 'game_rebuild_not_queued',
-                'message' => 'Game rebuild was not queued because the NHL source check blocked it.',
-            ], 409);
-        }
+        RebuildNhlGameImportJob::dispatch((int) $validation->nhl_game_id);
 
         if ($request->expectsJson()) {
             return response()->json(['status' => 'game_rebuild_queued']);

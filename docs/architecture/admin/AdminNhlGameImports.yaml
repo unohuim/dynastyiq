@@ -5,6 +5,7 @@ location:
   - app/Console/Commands/NhlProcessCommand.php
   - app/Console/Commands/EmptyNhlCommand.php
   - app/Jobs/SeasonSumJob.php
+  - app/Jobs/RebuildNhlGameImportJob.php
   - app/Models/NhlGameImportRun.php
   - app/Events/NhlGameImportStatusUpdated.php
   - database/migrations/2026_06_29_030000_create_nhl_game_import_runs_table.php
@@ -32,7 +33,7 @@ rules:
   - Processing should be launched from a discovery run row so the selected date range is explicit.
   - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
   - Game-level reruns launched from a run card must preserve that run_id when reseeding progress rows so the same card reflects the rerun.
-  - Rerun endpoints must not report a game rebuild as queued when source preflight prevents dispatching the first import job.
+  - Game-level rerun endpoints must queue rebuild setup work and return before deleting or reseeding game-scoped import rows.
   - Processed discovery runs must not fall back to date-window progress after their run-scoped stage rows are reassigned to a newer reprocess run.
   - Stale per-game rows that completed successfully must be omitted from the admin status payload after a short UI transition grace window; failed, skipped, active, and source-blocked games must remain visible for review.
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
@@ -51,6 +52,7 @@ public_interface:
   - NhlGameImportController
   - NhlGameImportRun
   - NhlGameImportStatusUpdated
+  - RebuildNhlGameImportJob
   - adminHub gameImports state
 example_usage: |
   NhlDiscoveryJob::dispatch($start, $end);

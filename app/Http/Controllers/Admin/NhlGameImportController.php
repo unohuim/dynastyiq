@@ -8,12 +8,12 @@ use App\Http\Controllers\Controller;
 use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\RebuildNhlGameImportJob;
 use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameSourceStatus;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\AdminImports;
-use App\Services\NhlGameImportRebuilder;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
@@ -74,7 +74,6 @@ class NhlGameImportController extends Controller
     public function rerunSourceGap(
         int $gameId,
         NhlGameSourcePreflight $preflight,
-        NhlGameImportRebuilder $rebuilder,
         NhlImportProgressRepo $progress,
         NhlImportOrchestrator $orchestrator
     ): JsonResponse {
@@ -90,7 +89,8 @@ class NhlGameImportController extends Controller
         $action = 'source_checked';
 
         if ($result['core_allowed'] && $this->hasCoreGap($previousBlockedSources)) {
-            $action = $rebuilder->rebuild($gameId) ? 'game_rebuild_queued' : 'game_rebuild_not_queued';
+            RebuildNhlGameImportJob::dispatch($gameId);
+            $action = 'game_rebuild_queued';
         } elseif (
             $result['core_allowed']
             && $result['on_ice_allowed']
@@ -114,18 +114,10 @@ class NhlGameImportController extends Controller
     /**
      * Queue a full rebuild for a stopped game import.
      */
-    public function rerunStoppedGame(Request $request, int $gameId, NhlGameImportRebuilder $rebuilder): JsonResponse
+    public function rerunStoppedGame(Request $request, int $gameId): JsonResponse
     {
         $runId = $request->integer('run_id') ?: null;
-        $queued = $rebuilder->rebuild($gameId, $runId);
-
-        if (! $queued) {
-            return response()->json([
-                'status' => 'game_rebuild_not_queued',
-                'game_id' => $gameId,
-                'message' => 'Game rebuild was not queued because the NHL source check blocked it.',
-            ], 409);
-        }
+        RebuildNhlGameImportJob::dispatch($gameId, $runId);
 
         return response()->json([
             'status' => 'game_rebuild_queued',
