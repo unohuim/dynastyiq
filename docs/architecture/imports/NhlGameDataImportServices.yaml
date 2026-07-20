@@ -68,6 +68,7 @@ rules:
   - Goalie decision summaries must preserve regulation, overtime, and shootout win/loss splits at the game-summary level before season aggregation.
   - Goalie decision backfills may refresh game-summary decisions from official boxscore goalie rows without rerunning play-by-play, shift, or unit stages, and may dispatch one queue job per game for large windows.
   - Special-teams split backfills may rebuild PBP-derived game summaries from already imported play-by-play rows without refetching provider data or rerunning shift and unit stages, and may dispatch one queue job per game for large windows.
+  - PBP summary imports may skip a missing player summary row when the NHL player landing endpoint returns 404 while trying to create that player record; non-404 landing failures remain fatal.
   - Goalie season games played must count only game-summary rows with time on ice greater than zero so dressed-backup summary rows do not inflate goalie GP.
   - Shift imports may drop skater rows that create impossible team skater counts under play-by-play situation codes only when the same row also exactly reconciles that player's official boxscore shift count and time on ice.
   - Shift imports may drop skater rows fully inside that skater's own major, misconduct, game misconduct, or match penalty window only when those rows exactly reconcile that player's official boxscore shift count and time on ice.

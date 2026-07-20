@@ -682,6 +682,96 @@ it('counts match penalties as duration plus ten penalty minutes in player summar
     ]);
 });
 
+it('skips summary players whose landing payload returns not found', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478402, [
+        'first_name' => 'Known',
+        'last_name' => 'Player',
+        'full_name' => 'Known Player',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8478402, [
+        'nhl_team_id' => 1,
+        'goals' => 1,
+        'points' => 1,
+    ]);
+    ($this->insertBoxscore)(2026020001, 9010805, [
+        'nhl_team_id' => 2,
+        'position' => 'G',
+        'toi' => '60:00',
+        'toi_seconds' => 3600,
+        'shifts' => 0,
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/player/9010805/landing' => Http::response(['message' => 'Not Found'], 404),
+        'https://api-web.nhle.com/v1/player/9010806/landing' => Http::response(['message' => 'Not Found'], 404),
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => '10730',
+            'period' => 1,
+            'period_type' => 'REG',
+            'time_in_period' => '01:58',
+            'time_remaining' => '18:02',
+            'seconds_in_period' => 118,
+            'seconds_in_game' => 118,
+            'seconds_remaining' => 1082,
+            'situation_code' => '1551',
+            'type_code' => 509,
+            'type_desc_key' => 'penalty',
+            'desc_key' => 'tripping',
+            'sort_order' => 118,
+            'event_owner_team_id' => 2,
+            'committed_by_player_id' => 9010806,
+            'duration' => 2,
+            'penalty_type_code' => 'MIN',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => '10731',
+            'period' => 1,
+            'period_type' => 'REG',
+            'time_in_period' => '07:46',
+            'time_remaining' => '12:14',
+            'seconds_in_period' => 466,
+            'seconds_in_game' => 466,
+            'seconds_remaining' => 734,
+            'situation_code' => '1551',
+            'type_code' => 505,
+            'type_desc_key' => 'goal',
+            'sort_order' => 466,
+            'event_owner_team_id' => 1,
+            'scoring_player_id' => 8478402,
+            'goalie_in_net_player_id' => 9010805,
+            'away_score' => 1,
+            'home_score' => 0,
+            'strength' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    expect(app(SumNHLPlayByPlay::class)->summarize(2026020001))->toBe(1);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8478402,
+        'g' => 1,
+    ]);
+    $this->assertDatabaseMissing('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 9010806,
+    ]);
+    $this->assertDatabaseMissing('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 9010805,
+    ]);
+});
+
 it('excludes shootout attempts from boxscore comparable shot and goalie summaries', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8473419, [

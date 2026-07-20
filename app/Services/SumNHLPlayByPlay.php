@@ -10,7 +10,9 @@ use App\Models\NhlGameSummary;
 use App\Models\PlayByPlay;
 use App\Models\Player;
 use App\Services\ImportNHLPlayer;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 
 class SumNHLPlayByPlay
 {
@@ -205,8 +207,8 @@ class SumNHLPlayByPlay
                 $evsog_p = $this->pct($evg, $evsog);
                 $pksog_p = $this->pct($pkg, $pksog);
 
-                if (!ImportNHLPlayer::playerExists((string)$playerId)) {
-                    app(ImportNHLPlayer::class)->import((string)$playerId);
+                if (! $this->ensurePlayerExistsForSummary($nhlGameId, $playerId)) {
+                    continue;
                 }
 
                 $summary = [
@@ -469,8 +471,8 @@ class SumNHLPlayByPlay
                     return;
                 }
 
-                if (! ImportNHLPlayer::playerExists((string) $boxscore->nhl_player_id)) {
-                    app(ImportNHLPlayer::class)->import((string) $boxscore->nhl_player_id);
+                if (! $this->ensurePlayerExistsForSummary($nhlGameId, (int) $boxscore->nhl_player_id)) {
+                    return;
                 }
 
                 $toiSeconds = $this->boxscoreToiSeconds($boxscore);
@@ -503,6 +505,34 @@ class SumNHLPlayByPlay
                     ]
                 );
             });
+    }
+
+    /**
+     * Ensure summary rows only reference player records that can be resolved.
+     */
+    private function ensurePlayerExistsForSummary(int $nhlGameId, int $playerId): bool
+    {
+        if (ImportNHLPlayer::playerExists((string) $playerId)) {
+            return true;
+        }
+
+        try {
+            app(ImportNHLPlayer::class)->import((string) $playerId);
+        } catch (RequestException $exception) {
+            if ($exception->response->status() !== 404) {
+                throw $exception;
+            }
+
+            Log::info('Skipping NHL game summary row for player with unavailable landing payload.', [
+                'nhl_game_id' => $nhlGameId,
+                'nhl_player_id' => $playerId,
+                'status' => 404,
+            ]);
+
+            return ImportNHLPlayer::playerExists((string) $playerId);
+        }
+
+        return ImportNHLPlayer::playerExists((string) $playerId);
     }
 
     private function boxscoreToiSeconds(NhlBoxscore $boxscore): int
