@@ -1345,6 +1345,86 @@ it('persists an incomplete validation when core deltas pass but shifts are unava
         ->and($validation->approved_at)->toBeNull();
 });
 
+it('reconciles tiny zero appearance goalie toi artifacts when pbp does not show the goalie in net', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8476914, [
+        'first_name' => 'Joonas',
+        'last_name' => 'Korpisalo',
+        'full_name' => 'Joonas Korpisalo',
+        'position' => 'G',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8476914, [
+        'toi' => '00:00',
+        'toi_seconds' => 0,
+        'shifts' => 0,
+        'position' => 'G',
+    ]);
+    ($this->insertSummary)(2026020001, 8476914, [
+        'toi' => 9,
+        'shifts' => 1,
+    ]);
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '993',
+        'period' => 3,
+        'period_type' => 'REG',
+        'time_in_period' => '03:21',
+        'time_remaining' => '16:39',
+        'seconds_in_period' => 201,
+        'seconds_in_game' => 2601,
+        'seconds_remaining' => 999,
+        'type_desc_key' => 'hit',
+        'sort_order' => 648,
+        'hitting_player_id' => 8473419,
+        'hittee_player_id' => 8481582,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
+        ->and($validation->mismatch_count)->toBe(0)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026020001)
+            ->where('nhl_player_id', 8476914)
+            ->value('toi'))->toBe(0)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026020001)
+            ->where('nhl_player_id', 8476914)
+            ->value('shifts'))->toBe(0);
+});
+
+it('keeps zero appearance goalie toi artifacts at thirty seconds failed for review', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8476914, [
+        'first_name' => 'Joonas',
+        'last_name' => 'Korpisalo',
+        'full_name' => 'Joonas Korpisalo',
+        'position' => 'G',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8476914, [
+        'toi' => '00:00',
+        'toi_seconds' => 0,
+        'shifts' => 0,
+        'position' => 'G',
+    ]);
+    ($this->insertSummary)(2026020001, 8476914, [
+        'toi' => 30,
+        'shifts' => 1,
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and($validation->mismatch_count)->toBe(1)
+        ->and($validation->deltas()->first()?->field)->toBe('toi_seconds')
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026020001)
+            ->where('nhl_player_id', 8476914)
+            ->value('toi'))->toBe(30);
+});
+
 it('lists games with missing source records for admin rerun triage', function (): void {
     $admin = ($this->makeSuperAdmin)();
     ($this->insertGame)();

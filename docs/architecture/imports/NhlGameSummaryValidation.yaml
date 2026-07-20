@@ -27,6 +27,7 @@ rules:
   - Penalty-minute validation must tolerate the NHL boxscore gap for match penalties only when a player's computed summary exceeds the official boxscore by exactly ten minutes per committed match-penalty event in the imported play-by-play.
   - Skater faceoffs won, faceoffs lost, giveaways, takeaways, and missing summary records must not be blocking validation fields.
   - Goalie blocking validation fields are goals against, shots against, saves, save percentage, even-strength/power-play/shorthanded saves and shots against, derived even-strength/power-play/shorthanded goals against, penalty minutes, and time on ice with tolerance.
+  - Zero-appearance goalie shiftchart artifacts may be auto-reconciled only when the official boxscore has zero goalie time on ice and zero shifts, play-by-play never names that goalie in net, the only goalie deltas are shift-derived time-on-ice or shifts fields, and the time-on-ice delta is under 30 seconds; deltas of 30 seconds or more must remain failed hard stops for review.
   - Goalie offensive fields such as goals, assists, points, and shots on goal must not be blocking validation fields because NHL boxscore goalie rows do not provide them consistently.
   - Starter and decision metadata must not be blocking validation fields.
   - Admin Game Validations should use embedded row-level detail disclosure in the admin control panel, keyed by nhl_game_validations.id, while standalone validation routes may remain for direct access.

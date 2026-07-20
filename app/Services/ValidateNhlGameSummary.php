@@ -9,6 +9,7 @@ use App\Models\NhlGameValidationDelta;
 use App\Models\NhlGame;
 use App\Models\NhlBoxscore;
 use App\Models\NhlGameSummary;
+use App\Models\PlayByPlay;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -32,6 +33,10 @@ class ValidateNhlGameSummary
         $deltas = $this->comparator->compare($gameId);
 
         if ($this->applyTinySkaterToiReconciliations($gameId, $deltas)) {
+            $deltas = $this->comparator->compare($gameId);
+        }
+
+        if ($this->applyTinyZeroAppearanceGoalieShiftReconciliations($gameId, $deltas)) {
             $deltas = $this->comparator->compare($gameId);
         }
 
@@ -170,6 +175,88 @@ class ValidateNhlGameSummary
         }
 
         return $changed;
+    }
+
+    /**
+     * Accept official zero-appearance goalie totals for tiny shiftchart-only artifacts.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function applyTinyZeroAppearanceGoalieShiftReconciliations(int $gameId, array $deltas): bool
+    {
+        if (empty($deltas) || ! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
+            return false;
+        }
+
+        $changed = false;
+        $deltasByPlayer = collect($deltas)
+            ->filter(fn (array $delta): bool => isset($delta['nhl_player_id']))
+            ->groupBy(fn (array $delta): int => (int) $delta['nhl_player_id']);
+
+        foreach ($deltasByPlayer as $playerId => $playerDeltas) {
+            $fields = $playerDeltas
+                ->pluck('field')
+                ->map(static fn (mixed $field): string => (string) $field)
+                ->unique()
+                ->values()
+                ->all();
+
+            if (array_diff($fields, ['toi_seconds', 'shifts']) !== []) {
+                continue;
+            }
+
+            $toiDelta = $playerDeltas->firstWhere('field', 'toi_seconds');
+
+            if (! is_array($toiDelta) || abs((float) ($toiDelta['delta'] ?? 0)) >= 30) {
+                continue;
+            }
+
+            $boxscore = NhlBoxscore::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['position', 'shifts', 'toi_seconds']);
+
+            $summary = NhlGameSummary::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['id', 'shifts', 'toi']);
+
+            if (
+                ! $boxscore
+                || ! $summary
+                || strtoupper((string) $boxscore->position) !== 'G'
+                || (int) ($boxscore->toi_seconds ?? 0) !== 0
+                || (int) ($boxscore->shifts ?? 0) !== 0
+                || $this->playByPlayShowsGoalieInNet($gameId, (int) $playerId)
+            ) {
+                continue;
+            }
+
+            $summary->forceFill([
+                'toi' => 0,
+                'shifts' => 0,
+            ])->save();
+
+            $changed = true;
+
+            Log::info('Applied tiny NHL zero-appearance goalie shiftchart reconciliation from official boxscore.', [
+                'game_id' => $gameId,
+                'nhl_player_id' => (int) $playerId,
+                'summary_toi_seconds' => (int) ($toiDelta['summary_value'] ?? $summary->toi),
+                'boxscore_toi_seconds' => (int) ($boxscore->toi_seconds ?? 0),
+                'delta_seconds' => (float) ($toiDelta['delta'] ?? 0),
+            ]);
+        }
+
+        return $changed;
+    }
+
+    private function playByPlayShowsGoalieInNet(int $gameId, int $playerId): bool
+    {
+        return PlayByPlay::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('goalie_in_net_player_id', $playerId)
+            ->exists();
     }
 
     private function stringValue(mixed $value): ?string
