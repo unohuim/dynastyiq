@@ -25,9 +25,20 @@ class NhlGameImportRebuilder
      */
     public function rebuild(int $gameId, ?int $runId = null): bool
     {
-        DB::transaction(function () use ($gameId, $runId): void {
-            $context = $this->gameContext($gameId);
+        $context = $this->gameContext($gameId);
 
+        $this->clearGameScopedData($gameId);
+        $this->seedProgressRows($gameId, $context, $runId);
+
+        return $this->orchestrator->dispatchJob($gameId, NhlImportStages::PBP, $runId);
+    }
+
+    /**
+     * Clear raw and derived rows owned by one NHL game.
+     */
+    public function clearGameScopedData(int $gameId): void
+    {
+        DB::transaction(function () use ($gameId): void {
             $unitShiftIds = DB::table('nhl_unit_shifts')
                 ->where('nhl_game_id', $gameId)
                 ->pluck('id');
@@ -60,26 +71,32 @@ class NhlGameImportRebuilder
             DB::table('play_by_plays')->where('nhl_game_id', $gameId)->delete();
 
             DB::table('nhl_import_progress')->where('game_id', (string) $gameId)->delete();
-
-            $now = now();
-            $rows = collect(NhlImportStages::ordered())->map(fn (string $stage): array => [
-                'run_id' => $runId,
-                'season_id' => (string) $context['season_id'],
-                'game_date' => $context['game_date'],
-                'game_id' => (string) $gameId,
-                'game_type' => $context['game_type'],
-                'import_type' => $stage,
-                'items_count' => 0,
-                'status' => 'scheduled',
-                'discovered_at' => $now,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ])->all();
-
-            $this->progress->insertScheduledRows($rows);
         });
+    }
 
-        return $this->orchestrator->dispatchJob($gameId, NhlImportStages::PBP, $runId);
+    /**
+     * Reseed scheduled progress rows for one game.
+     *
+     * @param array{season_id:string,game_date:string,game_type:int|null} $context
+     */
+    public function seedProgressRows(int $gameId, array $context, ?int $runId = null): void
+    {
+        $now = now();
+        $rows = collect(NhlImportStages::ordered())->map(fn (string $stage): array => [
+            'run_id' => $runId,
+            'season_id' => (string) $context['season_id'],
+            'game_date' => $context['game_date'],
+            'game_id' => (string) $gameId,
+            'game_type' => $context['game_type'],
+            'import_type' => $stage,
+            'items_count' => 0,
+            'status' => 'scheduled',
+            'discovered_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ])->all();
+
+        $this->progress->insertScheduledRows($rows);
     }
 
     /**
@@ -87,7 +104,7 @@ class NhlGameImportRebuilder
      *
      * @return array{season_id:string,game_date:string,game_type:int|null}
      */
-    private function gameContext(int $gameId): array
+    public function gameContext(int $gameId): array
     {
         $progress = DB::table('nhl_import_progress')
             ->where('game_id', (string) $gameId)

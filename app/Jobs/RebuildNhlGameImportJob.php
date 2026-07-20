@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Services\NhlGameImportRebuilder;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -30,7 +29,7 @@ class RebuildNhlGameImportJob implements ShouldQueue, ShouldBeUnique
     /**
      * @var int
      */
-    public int $timeout = 600;
+    public int $timeout = 60;
 
     /**
      * @var int
@@ -61,8 +60,8 @@ class RebuildNhlGameImportJob implements ShouldQueue, ShouldBeUnique
         ];
     }
 
-    public function handle(NhlGameImportRebuilder $rebuilder): void
+    public function handle(): void
     {
-        $rebuilder->rebuild($this->gameId, $this->runId);
+        PreflightNhlGameImportRebuildJob::dispatch($this->gameId, $this->runId);
     }
 }

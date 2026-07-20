@@ -2,6 +2,10 @@ name: NHL Game Import Rebuilder
 type: Operational Import Repair Service
 location:
   - app/Jobs/RebuildNhlGameImportJob.php
+  - app/Jobs/PreflightNhlGameImportRebuildJob.php
+  - app/Jobs/ClearNhlGameImportJob.php
+  - app/Jobs/SeedNhlGameImportProgressJob.php
+  - app/Jobs/DispatchNhlGameImportPipelineJob.php
   - app/Services/NhlGameImportRebuilder.php
   - app/Http/Controllers/Admin/NhlGameValidationController.php
   - app/Http/Controllers/Admin/NhlGameImportController.php
@@ -18,6 +22,9 @@ rules:
   - Game rebuilds must be explicit admin-triggered operations.
   - Admin HTTP endpoints must dispatch RebuildNhlGameImportJob instead of running rebuild deletion and reseeding inline.
   - RebuildNhlGameImportJob must be unique by game id so repeated clicks do not enqueue competing rebuild setup jobs for the same game.
+  - Rebuild setup must run as separate queued jobs for source preflight, game-scoped cleanup, progress reseeding, and PBP pipeline dispatch.
+  - Rebuild setup phases must share an active game lock from preflight through pipeline dispatch so repeated clicks cannot start a second rebuild while a previous rebuild phase is still running.
+  - Source preflight must complete before game-scoped data is deleted.
   - Rebuilds must delete dependent game-scoped rows before deleting raw game-scoped rows.
   - Rebuilds must delete play-by-play rows for the game so parser changes that reduce row counts remove stale records.
   - Rebuilds must reseed all canonical import progress stages for the game.
@@ -25,6 +32,10 @@ rules:
   - Rebuilds must not delete nhl_games rows or global NHL unit composition rows.
 public_interface:
   - RebuildNhlGameImportJob
+  - PreflightNhlGameImportRebuildJob
+  - ClearNhlGameImportJob
+  - SeedNhlGameImportProgressJob
+  - DispatchNhlGameImportPipelineJob
   - NhlGameImportRebuilder::rebuild()
   - admin.nhl-game-imports.games.rerun
   - admin.nhl-validations.rebuild-game

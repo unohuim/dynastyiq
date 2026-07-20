@@ -7,6 +7,7 @@ use App\Jobs\ImportPbpNhlJob;
 use App\Jobs\ImportShiftsNhlJob;
 use App\Jobs\MakeShiftUnitsNhlJob;
 use App\Jobs\BaseNhlJob;
+use App\Jobs\PreflightNhlGameImportRebuildJob;
 use App\Jobs\RebuildNhlGameImportJob;
 use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
@@ -1563,6 +1564,7 @@ it('rebuilds the full game when a missing core source recovers', function (): vo
     Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
         return $job->gameId === 2026020001 && $job->runId === null;
     });
+    Bus::assertNotDispatched(PreflightNhlGameImportRebuildJob::class);
     Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });
 
@@ -1617,6 +1619,7 @@ it('rebuilds a stopped game import from the admin rerun endpoint', function (): 
     Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
         return $job->gameId === 2026020001 && $job->runId === null;
     });
+    Bus::assertNotDispatched(PreflightNhlGameImportRebuildJob::class);
     Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });
 
@@ -4032,5 +4035,6 @@ it('queues validation game rebuild setup without doing rebuild work in the reque
     Bus::assertDispatched(RebuildNhlGameImportJob::class, function (RebuildNhlGameImportJob $job): bool {
         return $job->gameId === 2026020001 && $job->runId === null;
     });
+    Bus::assertNotDispatched(PreflightNhlGameImportRebuildJob::class);
     Bus::assertNotDispatched(ImportPbpNhlJob::class);
 });
