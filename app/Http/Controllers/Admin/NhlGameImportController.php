@@ -28,6 +28,8 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGameImportController extends Controller
 {
+    private const COMPLETED_SUCCESSFUL_GAME_RETENTION_SECONDS = 30;
+
     private const SHIFT_RERUN_STAGES = [
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
@@ -623,6 +625,7 @@ class NhlGameImportController extends Controller
                 'progress.import_type',
                 'progress.status',
                 'progress.last_error',
+                'progress.updated_at',
             ])
             ->orderBy('progress.game_date')
             ->orderBy('progress.game_id')
@@ -684,12 +687,43 @@ class NhlGameImportController extends Controller
                     'total_stage_rows' => $total,
                     'percentage' => $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0,
                     'last_error' => $gameRows->where('status', 'error')->pluck('last_error')->filter()->first(),
+                    'latest_stage_updated_at' => $gameRows->pluck('updated_at')->filter()->max(),
                     'source_statuses' => $statuses,
                     'blocked_sources' => $blockedSources,
                 ];
             })
+            ->reject(fn (array $game): bool => $this->shouldHideCompletedSuccessfulGame($game))
             ->values()
             ->all();
+    }
+
+    /**
+     * Hide stale successful games from run details while leaving fresh completions available for UI fade-out.
+     *
+     * @param array<string, mixed> $game
+     */
+    private function shouldHideCompletedSuccessfulGame(array $game): bool
+    {
+        if (
+            (int) ($game['total_stage_rows'] ?? 0) <= 0
+            || (int) ($game['percentage'] ?? 0) < 100
+            || (int) ($game['failed_stage_rows'] ?? 0) > 0
+            || (int) ($game['skipped_stage_rows'] ?? 0) > 0
+            || (int) ($game['scheduled_stage_rows'] ?? 0) > 0
+            || (int) ($game['running_stage_rows'] ?? 0) > 0
+            || ! empty($game['last_error'])
+            || ! empty($game['blocked_sources'])
+        ) {
+            return false;
+        }
+
+        $updatedAt = $game['latest_stage_updated_at'] ?? null;
+
+        if (! is_string($updatedAt) || trim($updatedAt) === '') {
+            return false;
+        }
+
+        return Carbon::parse($updatedAt)->lt(now()->subSeconds(self::COMPLETED_SUCCESSFUL_GAME_RETENTION_SECONDS));
     }
 
     private function hasRunScopedProgress(NhlGameImportRun $run): bool

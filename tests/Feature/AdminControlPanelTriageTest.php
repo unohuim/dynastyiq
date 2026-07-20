@@ -568,6 +568,81 @@ it('does not show reassigned reprocess progress on older processed discovery run
         ->and($reprocessPayload['progress']['scheduled_stage_rows'])->toBe(1);
 });
 
+it('hides stale successful game imports while keeping failed games visible', function () {
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-01-16',
+        'end_date' => '2026-01-15',
+        'date_count' => 2,
+        'queued_jobs' => 2,
+        'payload' => [
+            'start' => '2026-01-16',
+            'end' => '2026-01-15',
+            'processing_started_at' => $now->copy()->subDay()->toIso8601String(),
+        ],
+        'created_at' => $now->copy()->subDay(),
+        'updated_at' => $now->copy()->subDay(),
+    ]);
+
+    foreach ([2025020001, 2025020002] as $index => $gameId) {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $gameId,
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => '2026-01-' . (15 + $index),
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now->copy()->subDay(),
+            'updated_at' => $now->copy()->subDay(),
+        ]);
+    }
+
+    foreach (NhlImportStages::ordered() as $stage) {
+        DB::table('nhl_import_progress')->insert([
+            'run_id' => $run->id,
+            'season_id' => '20252026',
+            'game_date' => '2026-01-15',
+            'game_id' => '2025020001',
+            'game_type' => 2,
+            'import_type' => $stage,
+            'status' => 'completed',
+            'created_at' => $now->copy()->subDay(),
+            'updated_at' => $now->copy()->subMinute(),
+        ]);
+    }
+
+    foreach (NhlImportStages::ordered() as $index => $stage) {
+        DB::table('nhl_import_progress')->insert([
+            'run_id' => $run->id,
+            'season_id' => '20252026',
+            'game_date' => '2026-01-16',
+            'game_id' => '2025020002',
+            'game_type' => 2,
+            'import_type' => $stage,
+            'status' => $index === 0 ? 'error' : 'completed',
+            'last_error' => $index === 0 ? 'Validation failed.' : null,
+            'created_at' => $now->copy()->subDay(),
+            'updated_at' => $now->copy()->subMinute(),
+        ]);
+    }
+
+    $payload = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->json('runs.0');
+
+    expect(collect($payload['games'])->pluck('game_id')->all())->toBe(['2025020002'])
+        ->and($payload['games'][0]['failed_stage_rows'])->toBe(1)
+        ->and($payload['games'][0]['last_error'])->toBe('Validation failed.');
+});
+
 it('returns discovered NHL game import runs as completed once pipeline rows exist', function () {
     $now = now();
     $run = NhlGameImportRun::create([

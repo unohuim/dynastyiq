@@ -31,6 +31,7 @@ rules:
   - Processing should be launched from a discovery run row so the selected date range is explicit.
   - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
   - Processed discovery runs must not fall back to date-window progress after their run-scoped stage rows are reassigned to a newer reprocess run.
+  - Stale per-game rows that completed successfully must be omitted from the admin status payload after a short UI transition grace window; failed, skipped, active, and source-blocked games must remain visible for review.
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
   - Direct command processing for an explicit date may remain as an operator escape hatch without creating an admin run.
   - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.
