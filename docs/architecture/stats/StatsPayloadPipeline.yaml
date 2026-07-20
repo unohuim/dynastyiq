@@ -48,6 +48,9 @@ rules:
   - Fantrax league scoring perspectives may add read-time computed Fantasy Pts and Fantasy Pts/G columns only when persisted league scoring metadata identifies the league as a points league.
   - Read-time fantasy point totals must use persisted provider scoring category weights and supported DynastyIQ stat/formula mappings; category or rotisserie leagues must continue to show category columns without a combined fantasy point total.
   - League Players may expose report-level presentation perspectives such as Basic, Advanced, and Prospects while the backend maps them to concrete saved skater or goalie perspectives based on goalie column-group state.
+  - League Players may expose synthetic perspectives such as My Queue, Entry Draft, Entry Draft - Goalies, Prospects - Goalies, and NHL Current/Last Season through LeagueStatsPerspectiveFactory; backend request normalization must map those slugs to concrete stats filters before payload building.
+  - Community draft player stats payloads must force league availability filtering server-side so perspective rows only include players not on an active fantasy roster in that league.
+  - Community draft NHL Current/Last Season payloads must use the linked fantasy league's scoring-column contract, including computed fantasy point columns for points leagues when mapped scoring settings exist.
   - League prospect payloads must show one row per player for the selected season, using the non-NHL league where that player had the most games played and summing rows only within that league.
   - League prospect presentation must suppress roster-status row coloring and sectioning while using normalized position order C, L, R, D, G only for the default sort before the user selects a stat column.
   - Platform player-universe filtering must remain a dedicated backend payload filter before ownership hydration.

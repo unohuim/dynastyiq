@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Support\Stats;
 
+use App\Models\Player;
+use App\Models\PlayerExternalIdentity;
 use App\Models\PlatformLeague;
 use App\Services\PlatformLeagueScoringCategoryService;
 
@@ -98,7 +100,74 @@ final class LeagueStatsPerspectiveFactory
                 'name' => 'Prospects',
                 'is_slicable' => false,
             ],
+            ...$this->draftPerspectiveOptions($this->latestEntryDraftYear(), true),
         ];
+    }
+
+    /**
+     * Return draft-centered perspective options shared by league draft player views.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public function draftPerspectiveOptions(?int $latestEntryDraftYear, bool $includeQueue = false): array
+    {
+        return [
+            ...($includeQueue ? [[
+                'id' => 'my-queue',
+                'slug' => 'my-queue',
+                'name' => 'My Queue',
+                'is_slicable' => false,
+            ]] : []),
+            [
+                'id' => 'nhl-current-or-last-season',
+                'slug' => 'nhl-current-or-last-season',
+                'name' => 'NHL Current/Last Season',
+                'is_slicable' => true,
+            ],
+            ...($latestEntryDraftYear ? [[
+                'id' => 'entry-draft',
+                'slug' => 'entry-draft',
+                'name' => $latestEntryDraftYear . ' Entry Draft',
+                'is_slicable' => false,
+                'entry_draft_year' => $latestEntryDraftYear,
+            ], [
+                'id' => 'entry-draft-goalies',
+                'slug' => 'entry-draft-goalies',
+                'name' => $latestEntryDraftYear . ' Entry Draft - Goalies',
+                'is_slicable' => false,
+                'entry_draft_year' => $latestEntryDraftYear,
+            ]] : []),
+            [
+                'id' => 'prospects-goalies',
+                'slug' => 'prospects-goalies',
+                'name' => 'Prospects - Goalies',
+                'is_slicable' => false,
+            ],
+        ];
+    }
+
+    /**
+     * Return the newest known NHL entry draft year.
+     */
+    public function latestEntryDraftYear(): ?int
+    {
+        $playerDraftYear = Player::query()
+            ->whereNotNull('draft_year')
+            ->max('draft_year');
+
+        if ((int) $playerDraftYear > 0) {
+            return (int) $playerDraftYear;
+        }
+
+        $identityDraftYear = PlayerExternalIdentity::query()
+            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
+            ->get(['raw_payload'])
+            ->pluck('raw_payload')
+            ->map(static fn (mixed $payload): int => (int) data_get($payload, 'draft_year', 0))
+            ->filter(static fn (int $year): bool => $year > 0)
+            ->max();
+
+        return (int) $identityDraftYear > 0 ? (int) $identityDraftYear : null;
     }
 
     /**

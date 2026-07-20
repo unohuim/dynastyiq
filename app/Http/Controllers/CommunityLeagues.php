@@ -21,6 +21,7 @@ use App\Services\DraftPickCardRenderer;
 use App\Services\FantraxLogoSyncService;
 use App\Services\LeagueProviderBindingService;
 use App\Services\YahooFantasyLeagueService;
+use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Traits\HasAPITrait;
 use App\ViewModels\LeagueShowViewModel;
 use Carbon\CarbonImmutable;
@@ -438,7 +439,7 @@ class CommunityLeagues extends Controller
 
         abort_unless($platformLeague instanceof PlatformLeague, 404);
 
-        $latestEntryDraftYear = $this->latestEntryDraftYear();
+        $latestEntryDraftYear = app(LeagueStatsPerspectiveFactory::class)->latestEntryDraftYear();
 
         return response()->json([
             'ok' => true,
@@ -599,30 +600,6 @@ class CommunityLeagues extends Controller
     }
 
     /**
-     * Return the newest known NHL entry draft year.
-     */
-    private function latestEntryDraftYear(): ?int
-    {
-        $playerDraftYear = Player::query()
-            ->whereNotNull('draft_year')
-            ->max('draft_year');
-
-        if ((int) $playerDraftYear > 0) {
-            return (int) $playerDraftYear;
-        }
-
-        $identityDraftYear = PlayerExternalIdentity::query()
-            ->where('provider', PlayerExternalIdentity::PROVIDER_NHL_DRAFT)
-            ->get(['raw_payload'])
-            ->pluck('raw_payload')
-            ->map(static fn (mixed $payload): int => (int) data_get($payload, 'draft_year', 0))
-            ->filter(static fn (int $year): bool => $year > 0)
-            ->max();
-
-        return (int) $identityDraftYear > 0 ? (int) $identityDraftYear : null;
-    }
-
-    /**
      * Build draft player perspective options for the community management view.
      *
      * @return array<int,array<string,mixed>>
@@ -631,22 +608,12 @@ class CommunityLeagues extends Controller
     {
         return [
             [
+                'id' => 'prospects',
                 'slug' => 'prospects',
                 'name' => 'Prospects',
+                'is_slicable' => false,
             ],
-            ...($latestEntryDraftYear ? [[
-                'slug' => 'entry-draft',
-                'name' => $latestEntryDraftYear . ' Entry Draft',
-                'entry_draft_year' => $latestEntryDraftYear,
-            ], [
-                'slug' => 'entry-draft-goalies',
-                'name' => $latestEntryDraftYear . ' Entry Draft - Goalies',
-                'entry_draft_year' => $latestEntryDraftYear,
-            ]] : []),
-            [
-                'slug' => 'prospects-goalies',
-                'name' => 'Prospects - Goalies',
-            ],
+            ...app(LeagueStatsPerspectiveFactory::class)->draftPerspectiveOptions($latestEntryDraftYear, false),
         ];
     }
 
@@ -690,7 +657,7 @@ class CommunityLeagues extends Controller
      */
     private function draftTestingEntryDraftees(): array
     {
-        $latestEntryDraftYear = $this->latestEntryDraftYear();
+        $latestEntryDraftYear = app(LeagueStatsPerspectiveFactory::class)->latestEntryDraftYear();
 
         if (! $latestEntryDraftYear) {
             return [];

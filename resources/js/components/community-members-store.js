@@ -1753,6 +1753,7 @@ function communityMembersHub(config) {
 
             const selectedPerspective = this.communityDraftSelectedPerspective || "prospects";
             const isEntryDraftPerspective = ["entry-draft", "entry-draft-goalies"].includes(selectedPerspective);
+            const isNhlCurrentOrLastSeasonPerspective = selectedPerspective === "nhl-current-or-last-season";
             const entryDraftYear = isEntryDraftPerspective
                 ? Number(this.communityDraftLatestEntryDraftYear || 0)
                 : 0;
@@ -1783,7 +1784,9 @@ function communityMembersHub(config) {
             params.set("slice", "total");
             params.set("game_type", "2");
             params.set("availability", "0");
-            params.set("draft_context", "1");
+            if (!isNhlCurrentOrLastSeasonPerspective) {
+                params.set("draft_context", "1");
+            }
 
             if (isEntryDraftPerspective && entryDraftYear > 0) {
                 params.set("entry_draft_year", String(entryDraftYear));

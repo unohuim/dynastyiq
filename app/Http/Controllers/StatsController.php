@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\Draft;
+use App\Models\DraftPick;
+use App\Models\DraftQueueItem;
 use App\Models\Perspective;
+use App\Models\Player;
 use App\Models\PlatformLeague;
 use App\Services\FantasyLeagueAccess;
 use App\Support\FantraxViewerScope;
@@ -159,6 +163,7 @@ class StatsController extends BaseController
         $mark('league_lookup_ms');
 
         $leaguePerspectiveFactory = app(LeagueStatsPerspectiveFactory::class);
+        $syntheticDraftPerspective = $this->applySyntheticDraftPerspectiveRequest($request, $leaguePerspectiveFactory);
         $leaguePerspectiveSlug = $leaguePerspectiveFactory->leagueScoringPerspectiveSlug($league);
         $fantraxPerspectiveSlug = $leaguePerspectiveFactory->fantraxLeaguePerspectiveSlug($league);
         $defaultPerspectiveSlug = $leaguePerspectiveFactory->defaultPerspectiveSlug(
@@ -175,6 +180,12 @@ class StatsController extends BaseController
         $period = $context->period;
         $requestedColumnGroup = (string) ($context->columnGroup ?? '');
         $requestedPerspective = $context->requestedPerspective;
+        $queuePlayerIds = $syntheticDraftPerspective === 'my-queue'
+            ? $this->draftQueuePlayerIdsForLeague($league, (int) $user->id)
+            : null;
+        $nhlCurrentOrLastSeasonPlayerIds = $syntheticDraftPerspective === 'nhl-current-or-last-season'
+            ? $this->nhlCurrentOrLastSeasonPlayerIds()
+            : null;
         $leagueReportPerspective = $this->leagueReportPerspectiveSlug($requestedPerspective);
         $leagueReportUnderlyingPerspective = $leagueReportPerspective !== null
             ? $this->leagueReportUnderlyingPerspectiveSlug($leagueReportPerspective, $requestedColumnGroup)
@@ -189,7 +200,21 @@ class StatsController extends BaseController
             && ($requestedPerspective === '' || $requestedPerspective === $fantraxPerspectiveSlug);
         $mark('request_context_ms');
 
-        if ($leagueReportUnderlyingPerspective !== null) {
+        if ($syntheticDraftPerspective === 'nhl-current-or-last-season') {
+            $basePerspective = $this->defaultSavedStatsPerspective($user);
+            $settings = is_array($basePerspective->settings)
+                ? $basePerspective->settings
+                : (json_decode($basePerspective->settings ?? '[]', true) ?: []);
+            $settings['filters'] = is_array($settings['filters'] ?? null) ? $settings['filters'] : [];
+            unset($settings['filters']['is_goalie'], $settings['filters']['pos'], $settings['filters']['pos_type']);
+
+            $perspective = (object) [
+                'slug' => 'nhl-current-or-last-season',
+                'name' => 'NHL Current/Last Season',
+                'is_slicable' => (bool) ($basePerspective->is_slicable ?? true),
+            ];
+            $canSlice = (bool) ($basePerspective->is_slicable ?? true);
+        } elseif ($leagueReportUnderlyingPerspective !== null) {
             $perspective = $this->resolveStatsPerspective($request, $user, $leagueReportUnderlyingPerspective);
             $settings = is_array($perspective->settings)
                 ? $perspective->settings
@@ -300,7 +325,14 @@ class StatsController extends BaseController
         }
         $mark('payload_settings_ms');
 
-        $payload = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);
+        if (! in_array($syntheticDraftPerspective, [
+            'entry-draft',
+            'entry-draft-goalies',
+            'my-queue',
+            'nhl-current-or-last-season',
+        ], true)) {
+            $payload = app(LeagueStatsPlayerUniverseFilter::class)->filter($payload, $league);
+        }
         $mark('platform_filter_ms');
 
         $ownershipTimings = $logStatsTiming ? [] : null;
@@ -322,11 +354,23 @@ class StatsController extends BaseController
                 is_string($season) ? $season : null,
             );
         }
+        if (is_array($queuePlayerIds)) {
+            $payload = $this->filterLeaguePayloadToPlayerIds($payload, $queuePlayerIds);
+        }
+        if (is_array($nhlCurrentOrLastSeasonPlayerIds)) {
+            $payload = $this->filterLeaguePayloadToPlayerIds(
+                $payload,
+                $nhlCurrentOrLastSeasonPlayerIds,
+                'nhl_current_or_last_season_player_ids',
+                true,
+            );
+        }
         $mark('provider_stats_overlay_ms');
 
         $payload['connectedLeagues'] = $this->connectedLeaguesForUser($user);
         $payload['perspectives'] = $leaguePerspectiveFactory->perspectives($user, $league);
-        $payload['selectedPerspective'] = $leagueReportPerspective
+        $payload['selectedPerspective'] = $syntheticDraftPerspective
+            ?? $leagueReportPerspective
             ?? $perspective->slug
             ?? $perspective->name
             ?? $defaultPerspectiveSlug;
@@ -391,6 +435,62 @@ class StatsController extends BaseController
         $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
 
         abort_unless($platformLeague instanceof PlatformLeague, 404);
+
+        $leaguePerspectiveFactory = app(LeagueStatsPerspectiveFactory::class);
+        $syntheticDraftPerspective = $this->applySyntheticDraftPerspectiveRequest($request, $leaguePerspectiveFactory);
+        $request->query->set('availability', (string) $platformLeague->id);
+
+        if ($syntheticDraftPerspective === 'nhl-current-or-last-season') {
+            $basePerspective = null;
+            $settings = $leaguePerspectiveFactory->leagueScoringPerspectiveSettings($platformLeague);
+
+            if ($settings === null) {
+                $basePerspective = $this->defaultSavedStatsPerspective($user);
+                $settings = is_array($basePerspective->settings)
+                    ? $basePerspective->settings
+                    : (json_decode($basePerspective->settings ?? '[]', true) ?: []);
+            }
+            $settings['filters'] = is_array($settings['filters'] ?? null) ? $settings['filters'] : [];
+            unset($settings['filters']['is_goalie'], $settings['filters']['pos'], $settings['filters']['pos_type']);
+
+            $season = $request->input('season_id', $request->input('season'));
+            $slice = (string) $request->input('slice', 'total');
+            $gameType = (int) $request->input('game_type', 2);
+
+            [$payload] = $this->buildAndFormatPlayersPayloadFromSettings(
+                $user,
+                (object) [
+                    'slug' => 'nhl-current-or-last-season',
+                    'name' => 'NHL Current/Last Season',
+                    'is_slicable' => (bool) ($basePerspective?->is_slicable ?? true),
+                ],
+                $settings,
+                (bool) ($basePerspective?->is_slicable ?? true),
+                is_string($season) ? $season : null,
+                in_array($slice, ['total', 'pgp', 'p60'], true) ? $slice : 'total',
+                in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
+                $request,
+                StatsFilterSet::fromRequest($request),
+            );
+
+            $payload = app(PlatformLeaguePlayerStatService::class)->overlayStatsPayload(
+                $payload,
+                $platformLeague,
+                is_string($season) ? $season : null,
+            );
+            $payload = $this->filterLeaguePayloadToPlayerIds(
+                $payload,
+                $this->withoutFantasyRosteredPlayers(
+                    $this->nhlCurrentOrLastSeasonPlayerIds(),
+                    $platformLeague,
+                ),
+                'nhl_current_or_last_season_player_ids',
+                true,
+            );
+            $payload['selectedPerspective'] = 'nhl-current-or-last-season';
+
+            return response()->json($payload);
+        }
 
         return $this->payload($request);
     }
@@ -690,6 +790,258 @@ class StatsController extends BaseController
             'prospects' => $isGoalie ? 'prospects-goalies' : 'prospects',
             default => $isGoalie ? 'goalies' : 'skaters',
         };
+    }
+
+    /**
+     * Translate league-only draft perspective slugs into the existing stats payload request contract.
+     */
+    private function applySyntheticDraftPerspectiveRequest(
+        Request $request,
+        LeagueStatsPerspectiveFactory $perspectiveFactory
+    ): ?string {
+        $requestedPerspective = strtolower(trim((string) $request->query('perspective', '')));
+
+        if (! in_array($requestedPerspective, [
+            'entry-draft',
+            'entry-draft-goalies',
+            'my-queue',
+            'nhl-current-or-last-season',
+        ], true)) {
+            return null;
+        }
+
+        $request->query->set('period', 'season');
+        $request->query->set('availability', '0');
+
+        if ($requestedPerspective !== 'nhl-current-or-last-season') {
+            $request->query->set('draft_context', '1');
+        }
+
+        if ($requestedPerspective === 'entry-draft') {
+            $request->query->set('perspective', 'prospects');
+        }
+
+        if ($requestedPerspective === 'entry-draft-goalies') {
+            $request->query->set('perspective', 'prospects-goalies');
+        }
+
+        if ($requestedPerspective === 'my-queue') {
+            $request->query->set('perspective', 'prospects');
+        }
+
+        $latestEntryDraftYear = $perspectiveFactory->latestEntryDraftYear();
+        if (in_array($requestedPerspective, ['entry-draft', 'entry-draft-goalies'], true) && $latestEntryDraftYear) {
+            $request->query->set('entry_draft_year', (string) $latestEntryDraftYear);
+        }
+
+        return $requestedPerspective;
+    }
+
+    /**
+     * Return players currently in the NHL or represented in the newest completed NHL regular season.
+     *
+     * @return array<int,int>
+     */
+    private function nhlCurrentOrLastSeasonPlayerIds(): array
+    {
+        $latestSeason = DB::table('nhl_season_stats')
+            ->where('game_type', 2)
+            ->max('season_id');
+
+        $currentNhlPlayerIds = DB::table('players')
+            ->where('current_league_abbrev', 'NHL')
+            ->pluck('id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId);
+
+        $lastSeasonPlayerIds = $latestSeason
+            ? DB::table('nhl_season_stats as nss')
+                ->join('players as p', 'p.nhl_id', '=', 'nss.nhl_player_id')
+                ->where('nss.season_id', (string) $latestSeason)
+                ->where('nss.game_type', 2)
+                ->pluck('p.id')
+                ->map(static fn (mixed $playerId): int => (int) $playerId)
+            : collect();
+
+        return $currentNhlPlayerIds
+            ->concat($lastSeasonPlayerIds)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Remove players already on an active fantasy roster in the selected league.
+     *
+     * @param array<int,int> $playerIds
+     * @return array<int,int>
+     */
+    private function withoutFantasyRosteredPlayers(array $playerIds, PlatformLeague $league): array
+    {
+        if ($playerIds === []) {
+            return [];
+        }
+
+        $rosteredPlayerIds = DB::table('platform_roster_memberships as prm')
+            ->join('platform_teams as pt', 'pt.id', '=', 'prm.platform_team_id')
+            ->where('pt.platform_league_id', $league->id)
+            ->whereNull('prm.ends_at')
+            ->whereIn('prm.player_id', $playerIds)
+            ->pluck('prm.player_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->all();
+
+        if ($rosteredPlayerIds === []) {
+            return $playerIds;
+        }
+
+        $rosteredLookup = array_flip($rosteredPlayerIds);
+
+        return collect($playerIds)
+            ->filter(static fn (int $playerId): bool => ! isset($rosteredLookup[$playerId]))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Return queued player ids for the user's latest league draft, excluding drafted players.
+     *
+     * @return array<int,int>
+     */
+    private function draftQueuePlayerIdsForLeague(PlatformLeague $league, int $userId): array
+    {
+        $draft = $this->latestDraftForLeague($league);
+
+        if (! $draft instanceof Draft) {
+            return [];
+        }
+
+        $draftedPlayerIds = DraftPick::query()
+            ->where('draft_id', $draft->id)
+            ->whereNotNull('player_id')
+            ->pluck('player_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->all();
+
+        return DraftQueueItem::query()
+            ->where('draft_id', $draft->id)
+            ->where('user_id', $userId)
+            ->when($draftedPlayerIds !== [], static function ($query) use ($draftedPlayerIds): void {
+                $query->whereNotIn('player_id', $draftedPlayerIds);
+            })
+            ->orderBy('rank')
+            ->pluck('player_id')
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->values()
+            ->all();
+    }
+
+    private function latestDraftForLeague(PlatformLeague $league): ?Draft
+    {
+        return $league->drafts()
+            ->where('source_type', 'platform_mirror')
+            ->latest('updated_at')
+            ->first()
+            ?? $league->drafts()
+                ->latest('updated_at')
+                ->first();
+    }
+
+    /**
+     * Keep only stats rows matching a set of player ids.
+     *
+     * @param array<string,mixed> $payload
+     * @param array<int,int> $playerIds
+     * @return array<string,mixed>
+     */
+    private function filterLeaguePayloadToPlayerIds(
+        array $payload,
+        array $playerIds,
+        string $metaKey = 'queue_player_ids',
+        bool $appendMissingRows = false,
+    ): array
+    {
+        $lookup = array_flip($playerIds);
+        $payload['data'] = collect($payload['data'] ?? [])
+            ->filter(static function (mixed $row) use ($lookup): bool {
+                $playerId = (int) data_get($row, 'player_id', data_get($row, 'id', 0));
+
+                return $playerId > 0 && isset($lookup[$playerId]);
+            })
+            ->values()
+            ->all();
+
+        if ($appendMissingRows) {
+            $existingPlayerIds = collect($payload['data'])
+                ->map(static fn (mixed $row): int => (int) data_get($row, 'player_id', data_get($row, 'id', 0)))
+                ->filter(static fn (int $playerId): bool => $playerId > 0)
+                ->all();
+            $missingPlayerIds = array_values(array_diff($playerIds, $existingPlayerIds));
+
+            if ($missingPlayerIds !== []) {
+                $payload['data'] = collect($payload['data'])
+                    ->concat($this->emptyStatsRowsForPlayers($missingPlayerIds, $payload['headings'] ?? []))
+                    ->values()
+                    ->all();
+            }
+        }
+
+        $payload['meta'] = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
+        $payload['meta'][$metaKey] = $playerIds;
+
+        return $payload;
+    }
+
+    /**
+     * Build zero-stat rows for players that belong in a synthetic player universe but lack selected-season stats.
+     *
+     * @param array<int,int> $playerIds
+     * @param array<int,array<string,mixed>> $headings
+     * @return array<int,array<string,mixed>>
+     */
+    private function emptyStatsRowsForPlayers(array $playerIds, array $headings): array
+    {
+        $sortOrder = array_flip($playerIds);
+
+        return Player::query()
+            ->whereIn('id', $playerIds)
+            ->get()
+            ->sortBy(static fn (Player $player): int => (int) ($sortOrder[(int) $player->id] ?? PHP_INT_MAX))
+            ->map(function (Player $player) use ($headings): array {
+                $row = [
+                    'name' => (string) ($player->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? ''))),
+                    'player_id' => (int) $player->id,
+                    'avatar_url' => $player->head_shot_url,
+                    'age' => $player->age(),
+                    'team' => $player->team_abbrev,
+                    'league' => null,
+                    'pos' => (bool) $player->is_goalie ? 'G' : $player->position,
+                    'pos_type' => (bool) $player->is_goalie ? 'G' : $player->pos_type,
+                    'is_goalie' => (bool) $player->is_goalie,
+                    'contract_value' => '$0.00m',
+                    'contract_value_num' => 0,
+                    'contract_last_year' => null,
+                    'contract_last_year_num' => null,
+                    'drafted_overall_pick' => $player->draft_oa,
+                    'drafted_year' => $player->draft_year,
+                    'drafted_label' => null,
+                    'gp' => 0,
+                    'nhl_player_id' => $player->nhl_id,
+                    'toi_seconds' => 0,
+                    'toi' => '0:00',
+                ];
+
+                foreach ($headings as $heading) {
+                    $key = trim((string) ($heading['key'] ?? ''));
+
+                    if ($key !== '' && ! array_key_exists($key, $row)) {
+                        $row[$key] = 0;
+                    }
+                }
+
+                return $row;
+            })
+            ->values()
+            ->all();
     }
 
     /**

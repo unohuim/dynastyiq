@@ -3,7 +3,12 @@
 declare(strict_types=1);
 
 use App\Models\IntegrationSecret;
+use App\Models\Draft;
+use App\Models\DraftPick;
+use App\Models\DraftQueueItem;
+use App\Models\League;
 use App\Models\NhlSeasonStat;
+use App\Models\Organization;
 use App\Models\Perspective;
 use App\Models\PlatformLeague;
 use App\Models\PlatformLeaguePlayerStat;
@@ -1228,6 +1233,438 @@ it('passes goalie column group requests through fantrax league payload settings'
         ->assertJsonPath('meta.pos_type', ['G'])
         ->assertJsonPath('settings.filters.pos_type.value', ['G'])
         ->assertJsonPath('settings.columns.0.key', 'gp');
+});
+
+it('adds community draft perspectives to league player stats payload options', function (): void {
+    [$user, $league] = ($this->createConnectedLeagueFixture)();
+    Player::create([
+        'nhl_id' => 9011,
+        'first_name' => 'Entry',
+        'last_name' => 'Prospect',
+        'full_name' => 'Entry Prospect',
+        'dob' => '2007-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'NHL',
+        'is_goalie' => false,
+        'draft_year' => 2026,
+    ]);
+
+    app()->instance(StatsPayloadBuilder::class, new class {
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            expect($request->request?->query('perspective'))->toBe('prospects')
+                ->and($request->request?->query('entry_draft_year'))->toBe('2026')
+                ->and($request->request?->boolean('draft_context'))->toBeTrue();
+
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'perspective' => 'entry-draft',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('selectedPerspective', 'entry-draft');
+
+    $slugs = collect($response->json('perspectives'))->pluck('slug')->all();
+
+    expect($slugs)->toContain('my-queue')
+        ->and($slugs)->toContain('nhl-current-or-last-season')
+        ->and($slugs)->toContain('entry-draft')
+        ->and($slugs)->toContain('entry-draft-goalies')
+        ->and($slugs)->toContain('prospects-goalies');
+});
+
+it('filters league player stats to current nhl players and last season nhl players', function (): void {
+    [$user, $league, , , $perspective] = ($this->createConnectedLeagueFixture)([
+        'perspective_slug' => 'skaters',
+    ]);
+    $settings = $perspective->settings;
+    $settings['filters'] = [
+        'pos_type' => [
+            'operator' => '=',
+            'value' => ['F', 'D'],
+        ],
+    ];
+    $perspective->update(['settings' => $settings]);
+    $currentNhlPlayer = Player::create([
+        'nhl_id' => 9021,
+        'first_name' => 'Current',
+        'last_name' => 'NHLer',
+        'full_name' => 'Current NHLer',
+        'dob' => '2001-01-01',
+        'position' => 'G',
+        'pos_type' => 'G',
+        'team_abbrev' => 'TOR',
+        'current_league_abbrev' => 'NHL',
+        'is_goalie' => true,
+    ]);
+    $lastSeasonPlayer = Player::create([
+        'nhl_id' => 9022,
+        'first_name' => 'Last',
+        'last_name' => 'Season',
+        'full_name' => 'Last Season',
+        'dob' => '2001-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'BOS',
+        'current_league_abbrev' => 'AHL',
+        'is_goalie' => false,
+    ]);
+    $otherPlayer = Player::create([
+        'nhl_id' => 9023,
+        'first_name' => 'Other',
+        'last_name' => 'Player',
+        'full_name' => 'Other Player',
+        'dob' => '2001-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'AHL',
+        'current_league_abbrev' => 'AHL',
+        'is_goalie' => false,
+    ]);
+    NhlSeasonStat::create([
+        'season_id' => '20252026',
+        'nhl_player_id' => $lastSeasonPlayer->nhl_id,
+        'nhl_team_id' => 1,
+        'game_type' => 2,
+        'gp' => 82,
+        'g' => 20,
+        'a' => 30,
+    ]);
+
+    app()->instance(StatsPayloadBuilder::class, new class ($currentNhlPlayer, $lastSeasonPlayer, $otherPlayer) {
+        public function __construct(
+            private readonly Player $currentNhlPlayer,
+            private readonly Player $lastSeasonPlayer,
+            private readonly Player $otherPlayer
+        ) {
+        }
+
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            expect($request->perspective->slug)->toBe('nhl-current-or-last-season')
+                ->and(array_key_exists('pos_type', $request->settings['filters'] ?? []))->toBeFalse();
+
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [
+                    ['player_id' => $this->lastSeasonPlayer->id, 'g' => 20],
+                    ['player_id' => $this->otherPlayer->id, 'g' => 12],
+                ],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'perspective' => 'nhl-current-or-last-season',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('selectedPerspective', 'nhl-current-or-last-season')
+        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('meta.nhl_current_or_last_season_player_ids', [
+            $currentNhlPlayer->id,
+            $lastSeasonPlayer->id,
+        ]);
+
+    expect(collect($response->json('data'))->pluck('player_id')->sort()->values()->all())
+        ->toBe(collect([$currentNhlPlayer->id, $lastSeasonPlayer->id])->sort()->values()->all())
+        ->and(collect($response->json('data'))->firstWhere('player_id', $currentNhlPlayer->id)['gp'])->toBe(0);
+});
+
+it('includes nhl current or last season in shared draft player perspective options', function (): void {
+    $perspectives = app(LeagueStatsPerspectiveFactory::class)->draftPerspectiveOptions(2026, false);
+
+    expect(collect($perspectives)->pluck('slug')->all())
+        ->toContain('nhl-current-or-last-season');
+});
+
+it('serves unrostered nhl current or last season players with league scoring columns from the community league stats payload route', function (): void {
+    [$user, $platformLeague, $team, , $perspective] = ($this->createConnectedLeagueFixture)([
+        'perspective_slug' => 'skaters',
+    ]);
+    $platformLeague->update([
+        'scoring_settings' => [
+            'type' => 'points',
+            'categories' => [
+                [
+                    'id' => 'HOCKEY_SKATING:G',
+                    'short' => 'G',
+                    'label' => 'Goals',
+                    'stat_key' => 'g',
+                    'value' => 3,
+                    'is_supported' => true,
+                    'alignment_status' => 'direct',
+                ],
+                [
+                    'id' => 'HOCKEY_SKATING:A',
+                    'short' => 'A',
+                    'label' => 'Assists',
+                    'stat_key' => 'a',
+                    'value' => 2,
+                    'is_supported' => true,
+                    'alignment_status' => 'direct',
+                ],
+            ],
+        ],
+    ]);
+    $settings = $perspective->settings;
+    $settings['filters'] = [
+        'pos_type' => [
+            'operator' => '=',
+            'value' => ['F', 'D'],
+        ],
+    ];
+    $perspective->update(['settings' => $settings]);
+    $organization = Organization::create([
+        'name' => 'Community Stats',
+        'slug' => 'community-stats',
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $user->organizations()->attach($organization->id);
+    $league = League::create([
+        'name' => 'Community League',
+        'sport' => 'hockey',
+    ]);
+    $organization->leagues()->attach($league->id, ['linked_at' => now()]);
+    $league->platformLeagues()->attach($platformLeague->id, [
+        'status' => 'active',
+        'linked_at' => now(),
+    ]);
+    $currentNhlPlayer = Player::create([
+        'nhl_id' => 9031,
+        'first_name' => 'Community',
+        'last_name' => 'NHLer',
+        'full_name' => 'Community NHLer',
+        'dob' => '2001-01-01',
+        'position' => 'G',
+        'pos_type' => 'G',
+        'team_abbrev' => 'TOR',
+        'current_league_abbrev' => 'NHL',
+        'is_goalie' => true,
+    ]);
+    $rosteredCurrentNhlPlayer = Player::create([
+        'nhl_id' => 9032,
+        'first_name' => 'Rostered',
+        'last_name' => 'NHLer',
+        'full_name' => 'Rostered NHLer',
+        'dob' => '2001-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'TOR',
+        'current_league_abbrev' => 'NHL',
+        'is_goalie' => false,
+    ]);
+    $team->roster()->attach($rosteredCurrentNhlPlayer->id, [
+        'platform' => $platformLeague->platform,
+        'platform_player_id' => 'platform-rostered-current-nhler',
+        'slot' => 'C',
+        'status' => 'active',
+        'eligibility' => json_encode(['C'], JSON_THROW_ON_ERROR),
+        'starts_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    app()->instance(StatsPayloadBuilder::class, new class {
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            $columnKeys = collect($request->settings['columns'] ?? [])->pluck('key')->all();
+
+            expect($request->perspective->slug)->toBe('nhl-current-or-last-season')
+                ->and($request->request?->boolean('draft_context'))->toBeFalse()
+                ->and(array_key_exists('pos_type', $request->settings['filters'] ?? []))->toBeFalse()
+                ->and($columnKeys)->toBe(['fantasy_pts', 'fantasy_pts_pg', 'g', 'a']);
+
+            return [[
+                'headings' => collect($request->settings['columns'] ?? [])
+                    ->map(static fn (array $column): array => [
+                        'key' => (string) $column['key'],
+                        'label' => (string) $column['label'],
+                    ])
+                    ->values()
+                    ->all(),
+                'data' => [],
+                'settings' => [
+                    'sortable' => $columnKeys,
+                    'defaultSort' => $request->settings['sort']['sortKey'] ?? 'fantasy_pts',
+                    'defaultSortDirection' => $request->settings['sort']['sortDirection'] ?? 'desc',
+                ],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('community.leagues.stats-payload', [
+        'c_id' => $organization->id,
+        'l_id' => $league->id,
+        'perspective' => 'nhl-current-or-last-season',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('selectedPerspective', 'nhl-current-or-last-season')
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.player_id', $currentNhlPlayer->id)
+        ->assertJsonPath('data.0.fantasy_pts', 0)
+        ->assertJsonPath('data.0.fantasy_pts_pg', 0)
+        ->assertJsonPath('data.0.g', 0)
+        ->assertJsonPath('data.0.a', 0)
+        ->assertJsonPath('meta.nhl_current_or_last_season_player_ids', [$currentNhlPlayer->id]);
+
+    expect(collect($response->json('headings'))->pluck('key')->all())
+        ->toBe(['fantasy_pts', 'fantasy_pts_pg', 'g', 'a']);
+});
+
+it('forces community draft stats payloads to exclude fantasy rostered players', function (): void {
+    [$user, $platformLeague, , , $perspective] = ($this->createConnectedLeagueFixture)([
+        'perspective_slug' => 'prospects',
+    ]);
+    $organization = Organization::create([
+        'name' => 'Community Draft Availability',
+        'slug' => 'community-draft-availability',
+        'settings' => ['commissioner_tools' => true],
+    ]);
+    $user->organizations()->attach($organization->id);
+    $league = League::create([
+        'name' => 'Community Draft League',
+        'sport' => 'hockey',
+    ]);
+    $organization->leagues()->attach($league->id, ['linked_at' => now()]);
+    $league->platformLeagues()->attach($platformLeague->id, [
+        'status' => 'active',
+        'linked_at' => now(),
+    ]);
+
+    app()->instance(StatsPayloadBuilder::class, new class($platformLeague) {
+        public function __construct(private PlatformLeague $league)
+        {
+        }
+
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            expect($request->request?->input('availability'))->toBe((string) $this->league->id);
+
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('community.leagues.stats-payload', [
+        'c_id' => $organization->id,
+        'l_id' => $league->id,
+        'perspective' => $perspective->slug,
+        'availability' => '0',
+    ]));
+
+    $response->assertOk();
+});
+
+it('filters the league player stats payload to the current users draft queue', function (): void {
+    [$user, $league, , $queuedPlayer] = ($this->createConnectedLeagueFixture)();
+    $otherPlayer = Player::create([
+        'nhl_id' => 9012,
+        'first_name' => 'Other',
+        'last_name' => 'Prospect',
+        'full_name' => 'Other Prospect',
+        'dob' => '2007-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'NHL',
+        'is_goalie' => false,
+        'draft_year' => 2026,
+    ]);
+    $draftedPlayer = Player::create([
+        'nhl_id' => 9013,
+        'first_name' => 'Drafted',
+        'last_name' => 'Prospect',
+        'full_name' => 'Drafted Prospect',
+        'dob' => '2007-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'NHL',
+        'is_goalie' => false,
+        'draft_year' => 2026,
+    ]);
+    $draft = Draft::create([
+        'platform_league_id' => $league->id,
+        'source_type' => 'hybrid',
+        'platform' => 'fantrax',
+        'external_draft_id' => 'dynastyiq:test-draft',
+        'name' => 'Test Draft',
+        'status' => 'scheduled',
+    ]);
+    DraftQueueItem::create([
+        'draft_id' => $draft->id,
+        'user_id' => $user->id,
+        'player_id' => $queuedPlayer->id,
+        'rank' => 1,
+    ]);
+    DraftQueueItem::create([
+        'draft_id' => $draft->id,
+        'user_id' => $user->id,
+        'player_id' => $draftedPlayer->id,
+        'rank' => 2,
+    ]);
+    DraftPick::create([
+        'draft_id' => $draft->id,
+        'player_id' => $draftedPlayer->id,
+        'provider_pick_key' => 'pick-1',
+        'overall_pick' => 1,
+        'round' => 1,
+        'pick_in_round' => 1,
+    ]);
+
+    app()->instance(StatsPayloadBuilder::class, new class ($queuedPlayer, $otherPlayer, $draftedPlayer) {
+        public function __construct(
+            private readonly Player $queuedPlayer,
+            private readonly Player $otherPlayer,
+            private readonly Player $draftedPlayer
+        ) {
+        }
+
+        public function buildSeasonPayload(SeasonStatsPayloadRequest $request): array
+        {
+            expect($request->request?->query('perspective'))->toBe('prospects');
+
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [
+                    ['player_id' => $this->queuedPlayer->id, 'g' => 7],
+                    ['player_id' => $this->otherPlayer->id, 'g' => 6],
+                    ['player_id' => $this->draftedPlayer->id, 'g' => 5],
+                ],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['season' => '20252026', 'game_type' => 2],
+            ], null, null, []];
+        }
+    });
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'perspective' => 'my-queue',
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('selectedPerspective', 'my-queue')
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.player_id', $queuedPlayer->id)
+        ->assertJsonPath('meta.queue_player_ids', [$queuedPlayer->id]);
 });
 
 it('aggregates league team payload rows across pro roster players', function (): void {
