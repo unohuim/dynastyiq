@@ -632,7 +632,7 @@ export default function adminHub(options = {}) {
             }
         },
 
-        async rerunStoppedGameImport(game) {
+        async rerunStoppedGameImport(game, run = null) {
             const gameId = game?.game_id;
 
             if (!gameId) {
@@ -646,7 +646,9 @@ export default function adminHub(options = {}) {
             };
 
             try {
-                await this.sendGameImportRequest(`${this.gameImportGameRerunUrl}/${gameId}/rerun`, {});
+                await this.sendGameImportRequest(`${this.gameImportGameRerunUrl}/${gameId}/rerun`, {
+                    run_id: run?.id ?? null,
+                });
                 await this.loadGameImportSourceGaps({ background: true });
                 await this.loadGameImports({ background: true });
             } catch (error) {

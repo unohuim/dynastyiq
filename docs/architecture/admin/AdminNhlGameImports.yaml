@@ -27,9 +27,12 @@ rules:
   - Processing requests must ask the NHL import orchestrator to fill active game slots and must not directly call import services.
   - NhlGameImportRun records describe admin requests, not individual NHL stage rows.
   - The admin status payload must derive pipeline progress from nhl_import_progress.
-  - Discovery rows should present known discovery facts until processing starts.
+  - Discovery rows should present known discovery facts until processing starts, but discovery status must come from the discovery run lifecycle instead of treating newly seeded stage rows as proof that discovery is complete.
+  - Discovery day jobs must mark their date resolved on the run payload so range discovery remains running until every queued discovery date has resolved.
   - Processing should be launched from a discovery run row so the selected date range is explicit.
   - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
+  - Game-level reruns launched from a run card must preserve that run_id when reseeding progress rows so the same card reflects the rerun.
+  - Rerun endpoints must not report a game rebuild as queued when source preflight prevents dispatching the first import job.
   - Processed discovery runs must not fall back to date-window progress after their run-scoped stage rows are reassigned to a newer reprocess run.
   - Stale per-game rows that completed successfully must be omitted from the admin status payload after a short UI transition grace window; failed, skipped, active, and source-blocked games must remain visible for review.
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.

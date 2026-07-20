@@ -2670,6 +2670,112 @@ it('reconciles shiftchart artifacts against boxscore shift targets when availabl
     }
 });
 
+it('drops skater shiftchart artifacts inside a committed major penalty window', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8473994, [
+        'first_name' => 'Jamie',
+        'last_name' => 'Benn',
+        'full_name' => 'Jamie Benn',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8473994, [
+        'toi' => '12:38',
+        'toi_seconds' => 758,
+        'shifts' => 17,
+        'penalty_minutes' => 7,
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => 25,
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '12:45',
+        'seconds_in_period' => 765,
+        'seconds_in_game' => 765,
+        'type_desc_key' => 'penalty',
+        'desc_key' => 'fighting',
+        'committed_by_player_id' => 8473994,
+        'drawn_by_player_id' => 8477507,
+        'duration' => 5,
+        'penalty_type_code' => 'MAJ',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(1, 1, '00:25', '00:44', '00:19', 105),
+                    $this->shift(2, 1, '02:21', '03:02', '00:41', 128),
+                    $this->shift(3, 1, '05:05', '05:46', '00:41', 216),
+                    $this->shift(4, 1, '08:29', '09:13', '00:44', 249),
+                    $this->shift(5, 1, '12:01', '12:45', '00:44', 285),
+                    $this->shift(6, 1, '13:09', '13:46', '00:37', 455),
+                    $this->shift(7, 1, '13:49', '14:45', '00:56', 468),
+                    $this->shift(8, 2, '02:30', '03:40', '01:10', 648),
+                    $this->shift(9, 2, '05:18', '06:25', '01:07', 676),
+                    $this->shift(10, 2, '09:02', '09:57', '00:55', 724),
+                    $this->shift(11, 2, '12:37', '13:13', '00:36', 764),
+                    $this->shift(12, 2, '13:42', '14:15', '00:33', 779),
+                    $this->shift(13, 2, '17:34', '18:00', '00:26', 819),
+                    $this->shift(14, 3, '01:16', '02:08', '00:52', 864),
+                    $this->shift(15, 3, '04:05', '04:45', '00:40', 906),
+                    $this->shift(16, 3, '07:21', '08:16', '00:55', 947),
+                    $this->shift(17, 3, '10:53', '11:29', '00:36', 994),
+                    $this->shift(18, 3, '14:11', '15:04', '00:53', 1087),
+                    $this->shift(19, 3, '19:14', '20:00', '00:46', 1148),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        private function shift(
+            int $shiftNumber,
+            int $period,
+            string $start,
+            string $end,
+            string $duration,
+            int $eventNumber
+        ): array {
+            return [
+                'gameId' => 2026020001,
+                'playerId' => 8473994,
+                'shiftNumber' => $shiftNumber,
+                'period' => $period,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => 'TOR',
+                'teamName' => 'Toronto Maple Leafs',
+                'firstName' => 'Jamie',
+                'lastName' => 'Benn',
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(17);
+
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8473994,
+        'toi' => 758,
+        'shifts' => 17,
+    ]);
+    foreach ([455, 468] as $eventNumber) {
+        $this->assertDatabaseMissing('nhl_shifts', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => 8473994,
+            'event_number' => $eventNumber,
+        ]);
+    }
+});
+
 it('uses a duplicate shift alternative when it exactly fixes boxscore time on ice undercount', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8484471, [

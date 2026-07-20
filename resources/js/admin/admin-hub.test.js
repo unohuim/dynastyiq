@@ -1237,7 +1237,7 @@ describe('admin-hub import listeners', () => {
             gameImportStatusUrl: '/admin/nhl-game-imports/status',
         });
 
-        await instance.rerunStoppedGameImport({ game_id: 2026020001 });
+        await instance.rerunStoppedGameImport({ game_id: 2026020001 }, { id: 25 });
 
         expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/games/2026020001/rerun', {
             method: 'POST',
@@ -1246,7 +1246,7 @@ describe('admin-hub import listeners', () => {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': 'csrf-token-value',
             },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ run_id: 25 }),
         });
         expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/source-gaps', {
             headers: { Accept: 'application/json' },

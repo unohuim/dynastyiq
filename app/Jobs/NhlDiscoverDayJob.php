@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Events\NhlGameImportStatusUpdated;
+use App\Models\NhlGameImportRun;
 use App\Services\NhlDiscoverGames;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -11,6 +13,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 
 class NhlDiscoverDayJob implements ShouldQueue
 {
@@ -37,10 +40,12 @@ class NhlDiscoverDayJob implements ShouldQueue
         try {
             \Log::warning('Start discovering the day:', ['date'=>$this->date]);
             $service->discoverDay($this->date, $this->runId);
+            $this->markDiscoveryDateResolved();
         } catch (RequestException $e) {
             $status = $e->response?->status();
 
             if ($status === 404) {
+                $this->markDiscoveryDateResolved();
                 return; // no schedule for this date
             }
 
@@ -49,6 +54,7 @@ class NhlDiscoverDayJob implements ShouldQueue
                     'date' => $this->date,
                     'status' => $status,
                 ]);
+                $this->markDiscoveryDateResolved();
                 return; // don’t retry
             }
 
@@ -65,5 +71,57 @@ class NhlDiscoverDayJob implements ShouldQueue
     public function tags(): array
     {
         return [self::TAG_DISCOVERY_DAY, "date:{$this->date}", 'run-id:' . ($this->runId ?? 'none')];
+    }
+
+    /**
+     * Mark one date in a discovery run as resolved.
+     */
+    private function markDiscoveryDateResolved(): void
+    {
+        if ($this->runId === null) {
+            return;
+        }
+
+        $completed = DB::transaction(function (): bool {
+            $run = NhlGameImportRun::query()
+                ->whereKey($this->runId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $run || $run->action !== NhlGameImportRun::ACTION_DISCOVER) {
+                return false;
+            }
+
+            $payload = $run->payload ?? [];
+            $dates = collect($payload['discovery_completed_dates'] ?? [])
+                ->map(fn ($date): string => (string) $date)
+                ->push($this->date)
+                ->unique()
+                ->values()
+                ->all();
+
+            $payload['discovery_completed_dates'] = $dates;
+
+            $updates = [
+                'status' => NhlGameImportRun::STATUS_RUNNING,
+                'payload' => $payload,
+                'updated_at' => now(),
+            ];
+
+            if (count($dates) >= (int) $run->date_count) {
+                $payload['completed_at'] = now()->toIso8601String();
+                $updates['status'] = NhlGameImportRun::STATUS_COMPLETED;
+                $updates['payload'] = $payload;
+            }
+
+            $run->forceFill($updates)->save();
+
+            return $updates['status'] === NhlGameImportRun::STATUS_COMPLETED;
+        });
+
+        broadcast(new NhlGameImportStatusUpdated(
+            $completed ? 'discovery-completed' : 'discovery-day-completed',
+            $this->runId
+        ));
     }
 }

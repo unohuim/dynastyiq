@@ -67,6 +67,7 @@ rules:
   - Special-teams split backfills may rebuild PBP-derived game summaries from already imported play-by-play rows without refetching provider data or rerunning shift and unit stages, and may dispatch one queue job per game for large windows.
   - Goalie season games played must count only game-summary rows with time on ice greater than zero so dressed-backup summary rows do not inflate goalie GP.
   - Shift imports may drop skater rows that create impossible team skater counts under play-by-play situation codes only when the same row also exactly reconciles that player's official boxscore shift count and time on ice.
+  - Shift imports may drop skater rows fully inside that skater's own major, misconduct, game misconduct, or match penalty window only when those rows exactly reconcile that player's official boxscore shift count and time on ice.
   - Shift summary persistence may borrow a non-goalie official boxscore shift count when normalized shiftcharts are exactly one shift short, time on ice is within one second of official, and no raw shift row is available to add.
   - Shift summary persistence may transfer time on ice and one shift between same-team non-goalie summaries when official boxscore totals prove an equal-and-opposite provider misallocation and raw shift rows do not expose a clean row to move.
   - Summary validation compares official boxscore totals against computed summaries before downstream trust.

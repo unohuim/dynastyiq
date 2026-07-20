@@ -90,8 +90,7 @@ class NhlGameImportController extends Controller
         $action = 'source_checked';
 
         if ($result['core_allowed'] && $this->hasCoreGap($previousBlockedSources)) {
-            $rebuilder->rebuild($gameId);
-            $action = 'game_rebuild_queued';
+            $action = $rebuilder->rebuild($gameId) ? 'game_rebuild_queued' : 'game_rebuild_not_queued';
         } elseif (
             $result['core_allowed']
             && $result['on_ice_allowed']
@@ -115,13 +114,23 @@ class NhlGameImportController extends Controller
     /**
      * Queue a full rebuild for a stopped game import.
      */
-    public function rerunStoppedGame(int $gameId, NhlGameImportRebuilder $rebuilder): JsonResponse
+    public function rerunStoppedGame(Request $request, int $gameId, NhlGameImportRebuilder $rebuilder): JsonResponse
     {
-        $rebuilder->rebuild($gameId);
+        $runId = $request->integer('run_id') ?: null;
+        $queued = $rebuilder->rebuild($gameId, $runId);
+
+        if (! $queued) {
+            return response()->json([
+                'status' => 'game_rebuild_not_queued',
+                'game_id' => $gameId,
+                'message' => 'Game rebuild was not queued because the NHL source check blocked it.',
+            ], 409);
+        }
 
         return response()->json([
             'status' => 'game_rebuild_queued',
             'game_id' => $gameId,
+            'run_id' => $runId,
         ], 202);
     }
 
@@ -880,8 +889,8 @@ class NhlGameImportController extends Controller
 
         $processingStarted = (bool) (($run->payload ?? [])['processing_started_at'] ?? false);
 
-        if ($run->action === NhlGameImportRun::ACTION_DISCOVER && ! $processingStarted && $total > 0) {
-            return NhlGameImportRun::STATUS_COMPLETED;
+        if ($run->action === NhlGameImportRun::ACTION_DISCOVER && ! $processingStarted) {
+            return $run->status;
         }
 
         if ($run->action === NhlGameImportRun::ACTION_DISCOVER && $processingStarted && $total === 0) {

@@ -286,7 +286,14 @@ class NhlGameValidationController extends Controller
         NhlGameImportRebuilder $rebuilder
     ): RedirectResponse|JsonResponse
     {
-        $rebuilder->rebuild((int) $validation->nhl_game_id);
+        $queued = $rebuilder->rebuild((int) $validation->nhl_game_id);
+
+        if (! $queued && $request->expectsJson()) {
+            return response()->json([
+                'status' => 'game_rebuild_not_queued',
+                'message' => 'Game rebuild was not queued because the NHL source check blocked it.',
+            ], 409);
+        }
 
         if ($request->expectsJson()) {
             return response()->json(['status' => 'game_rebuild_queued']);

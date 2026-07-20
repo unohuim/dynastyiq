@@ -643,7 +643,7 @@ it('hides stale successful game imports while keeping failed games visible', fun
         ->and($payload['games'][0]['last_error'])->toBe('Validation failed.');
 });
 
-it('returns discovered NHL game import runs as completed once pipeline rows exist', function () {
+it('does not complete discovered NHL game import runs until discovery finishes', function () {
     $now = now();
     $run = NhlGameImportRun::create([
         'action' => NhlGameImportRun::ACTION_DISCOVER,
@@ -654,6 +654,44 @@ it('returns discovered NHL game import runs as completed once pipeline rows exis
         'date_count' => 1,
         'queued_jobs' => 1,
         'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020001',
+        'game_type' => 2,
+        'import_type' => 'pbp',
+        'status' => 'scheduled',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->assertJsonPath('runs.0.id', $run->id)
+        ->assertJsonPath('runs.0.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('runs.0.status', NhlGameImportRun::STATUS_QUEUED)
+        ->assertJsonPath('runs.0.facts.total_stage_rows', 1)
+        ->assertJsonPath('runs.0.facts.scheduled_stage_rows', 1);
+});
+
+it('returns discovered NHL game import runs as completed after discovery finishes', function () {
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => [
+            'date' => '2026-01-15',
+            'discovery_completed_dates' => ['2026-01-15'],
+            'completed_at' => $now->toIso8601String(),
+        ],
     ]);
 
     DB::table('nhl_import_progress')->insert([

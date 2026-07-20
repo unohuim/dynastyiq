@@ -757,7 +757,7 @@
                                                                 x-show="canRerunStoppedGameImport(game)"
                                                                 x-cloak
                                                                 class="inline-flex size-7 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                @click="rerunStoppedGameImport(game)"
+                                                                @click="rerunStoppedGameImport(game, run)"
                                                                 :disabled="gameImports.rerunningGames[game.game_id] === true"
                                                                 :aria-label="`Rerun ${gameImportGameLabel(game)}`"
                                                             >

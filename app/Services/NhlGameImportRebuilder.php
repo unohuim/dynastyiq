@@ -23,9 +23,9 @@ class NhlGameImportRebuilder
     /**
      * Clear raw and derived game data, then queue the game pipeline from PBP.
      */
-    public function rebuild(int $gameId): void
+    public function rebuild(int $gameId, ?int $runId = null): bool
     {
-        DB::transaction(function () use ($gameId): void {
+        DB::transaction(function () use ($gameId, $runId): void {
             $context = $this->gameContext($gameId);
 
             $unitShiftIds = DB::table('nhl_unit_shifts')
@@ -63,6 +63,7 @@ class NhlGameImportRebuilder
 
             $now = now();
             $rows = collect(NhlImportStages::ordered())->map(fn (string $stage): array => [
+                'run_id' => $runId,
                 'season_id' => (string) $context['season_id'],
                 'game_date' => $context['game_date'],
                 'game_id' => (string) $gameId,
@@ -78,7 +79,7 @@ class NhlGameImportRebuilder
             $this->progress->insertScheduledRows($rows);
         });
 
-        $this->orchestrator->dispatchJob($gameId, NhlImportStages::PBP);
+        return $this->orchestrator->dispatchJob($gameId, NhlImportStages::PBP, $runId);
     }
 
     /**

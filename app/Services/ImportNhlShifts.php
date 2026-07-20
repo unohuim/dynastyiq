@@ -10,6 +10,7 @@ use App\Classes\ImportNHLPlayer;
 use App\Models\NhlGame;
 use App\Models\NhlBoxscore;
 use App\Models\PlayByPlay;
+use Illuminate\Support\Facades\DB;
 
 class ImportNhlShifts
 {
@@ -870,6 +871,7 @@ class ImportNhlShifts
                     $target
                 );
                 $normalized = $this->dropShortRowsForTarget($normalized, $target);
+                $normalized = $this->dropPenaltyWindowRowsForTarget($normalized, $target);
 
                 return $this->replaceDuplicateAlternativesForTarget(
                     $normalized,
@@ -1126,6 +1128,109 @@ class ImportNhlShifts
             ->reject(fn (array $shift): bool => isset($dropKeys[$this->resolvedShiftIdentity($shift)]))
             ->values()
             ->all();
+    }
+
+    /**
+     * Drop exact overage rows that are fully inside the player's own major penalty window.
+     *
+     * @param array<int,array<string,mixed>> $playerShifts
+     * @param array{shifts:int,toi:int} $target
+     * @return array<int,array<string,mixed>>
+     */
+    private function dropPenaltyWindowRowsForTarget(array $playerShifts, array $target): array
+    {
+        $excessShifts = count($playerShifts) - $target['shifts'];
+        $excessToi = $this->shiftDurationTotal($playerShifts) - $target['toi'];
+
+        if ($excessShifts <= 0 || $excessToi <= 0 || $excessShifts > 5 || $playerShifts === []) {
+            return $playerShifts;
+        }
+
+        $playerId = (int) ($playerShifts[0]['player_id'] ?? 0);
+        $gameId = (int) ($playerShifts[0]['shift']['gameId'] ?? 0);
+
+        if ($playerId <= 0 || $gameId <= 0) {
+            return $playerShifts;
+        }
+
+        $windows = $this->majorPenaltyWindows($gameId, $playerId);
+
+        if ($windows === []) {
+            return $playerShifts;
+        }
+
+        $candidateRows = collect($playerShifts)
+            ->filter(fn (array $shift): bool => $this->shiftInsideAnyWindow($shift, $windows))
+            ->values()
+            ->all();
+        $dropRows = $this->findExactDurationSubset($candidateRows, $excessShifts, $excessToi);
+
+        if ($dropRows === []) {
+            return $playerShifts;
+        }
+
+        $dropKeys = collect($dropRows)
+            ->mapWithKeys(fn (array $shift): array => [$this->resolvedShiftIdentity($shift) => true])
+            ->all();
+
+        return collect($playerShifts)
+            ->reject(fn (array $shift): bool => isset($dropKeys[$this->resolvedShiftIdentity($shift)]))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,array{start:int,end:int}>
+     */
+    private function majorPenaltyWindows(int $gameId, int $playerId): array
+    {
+        return PlayByPlay::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('type_desc_key', 'penalty')
+            ->where('committed_by_player_id', $playerId)
+            ->where(function ($query): void {
+                $query->where('duration', '>=', 5)
+                    ->orWhereIn(DB::raw("UPPER(COALESCE(penalty_type_code, ''))"), ['MAJ', 'MIS', 'GAM', 'MAT']);
+            })
+            ->get(['seconds_in_game', 'duration'])
+            ->map(function (PlayByPlay $penalty): ?array {
+                $start = $penalty->seconds_in_game;
+                $duration = $penalty->duration;
+
+                if ($start === null || $duration === null || (int) $duration <= 0) {
+                    return null;
+                }
+
+                return [
+                    'start' => (int) $start,
+                    'end' => (int) $start + ((int) $duration * 60),
+                ];
+            })
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<string,mixed> $shift
+     * @param array<int,array{start:int,end:int}> $windows
+     */
+    private function shiftInsideAnyWindow(array $shift, array $windows): bool
+    {
+        $start = (int) ($shift['shift_start_seconds'] ?? 0);
+        $end = (int) ($shift['shift_end_seconds'] ?? 0);
+
+        if ($end <= $start) {
+            return false;
+        }
+
+        foreach ($windows as $window) {
+            if ($start >= $window['start'] && $end <= $window['end']) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

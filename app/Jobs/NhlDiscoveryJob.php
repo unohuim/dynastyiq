@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\NhlDiscovery;
+use App\Models\NhlGameImportRun;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -51,6 +52,16 @@ class NhlDiscoveryJob implements ShouldQueue
 
     public function handle(NhlDiscovery $discovery): void
     {
+        if ($this->runId !== null) {
+            NhlGameImportRun::query()
+                ->whereKey($this->runId)
+                ->where('status', NhlGameImportRun::STATUS_QUEUED)
+                ->update([
+                    'status' => NhlGameImportRun::STATUS_RUNNING,
+                    'updated_at' => now(),
+                ]);
+        }
+
         $discovery->discoverRange($this->start, $this->end, $this->runId);
     }
 
