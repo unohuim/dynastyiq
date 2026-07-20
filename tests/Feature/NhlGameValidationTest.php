@@ -2334,6 +2334,157 @@ it('drops goalie shiftchart artifacts when pbp proves the goalie was empty net a
     ]);
 });
 
+it('trims overtime shiftchart rows after pbp proves the game ended early', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478048, [
+        'first_name' => 'Igor',
+        'last_name' => 'Shesterkin',
+        'full_name' => 'Igor Shesterkin',
+        'position' => 'G',
+        'team_abbrev' => 'MTL',
+    ]);
+    ($this->makePlayer)(8481533, [
+        'first_name' => 'Trevor',
+        'last_name' => 'Zegras',
+        'full_name' => 'Trevor Zegras',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->makePlayer)(8482118, [
+        'first_name' => 'Sam',
+        'last_name' => 'Colangelo',
+        'full_name' => 'Sam Colangelo',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8478048, [
+        'nhl_team_id' => 2,
+        'toi' => '00:59',
+        'toi_seconds' => 59,
+        'shifts' => 0,
+        'position' => 'G',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8481533, [
+        'toi' => '00:59',
+        'toi_seconds' => 59,
+        'shifts' => 1,
+    ]);
+    ($this->insertBoxscore)(2026020001, 8482118, [
+        'toi' => '00:59',
+        'toi_seconds' => 59,
+        'shifts' => 1,
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => 1082,
+            'period' => 4,
+            'period_type' => 'OT',
+            'time_in_period' => '00:59',
+            'time_remaining' => '04:01',
+            'seconds_in_period' => 59,
+            'seconds_remaining' => 241,
+            'seconds_in_game' => 3659,
+            'type_desc_key' => 'goal',
+            'situation_code' => '1331',
+            'sort_order' => 821,
+            'goalie_in_net_player_id' => 8478048,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => 370,
+            'period' => 4,
+            'period_type' => 'OT',
+            'time_in_period' => '00:59',
+            'time_remaining' => '04:01',
+            'seconds_in_period' => 59,
+            'seconds_remaining' => 241,
+            'seconds_in_game' => 3659,
+            'type_desc_key' => 'game-end',
+            'situation_code' => '0431',
+            'sort_order' => 826,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return [
+                'data' => [
+                    $this->shift(8478048, 'Igor', 'Shesterkin', 'MTL', 1, '00:00', '05:00', '05:00', 1081),
+                    $this->shift(8481533, 'Trevor', 'Zegras', 'TOR', 1, '00:00', '00:59', '00:59', 1082),
+                    $this->shift(8481533, 'Trevor', 'Zegras', 'TOR', 2, '00:59', '05:00', '04:01', 1083),
+                    $this->shift(8482118, 'Sam', 'Colangelo', 'TOR', 1, '00:00', '00:59', '00:59', 1082),
+                    $this->shift(8482118, 'Sam', 'Colangelo', 'TOR', 2, '00:59', '05:00', '04:01', 1083),
+                ],
+            ];
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        private function shift(
+            int $playerId,
+            string $firstName,
+            string $lastName,
+            string $teamAbbrev,
+            int $shiftNumber,
+            string $start,
+            string $end,
+            string $duration,
+            int $eventNumber
+        ): array {
+            return [
+                'gameId' => 2026020001,
+                'playerId' => $playerId,
+                'shiftNumber' => $shiftNumber,
+                'period' => 4,
+                'startTime' => $start,
+                'endTime' => $end,
+                'duration' => $duration,
+                'teamAbbrev' => $teamAbbrev,
+                'teamName' => $teamAbbrev,
+                'firstName' => $firstName,
+                'lastName' => $lastName,
+                'eventNumber' => $eventNumber,
+                'typeCode' => 517,
+            ];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(3);
+
+    $this->assertDatabaseHas('nhl_shifts', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8478048,
+        'shift_number' => 1,
+        'end_time' => '00:59',
+        'duration' => '00:59',
+        'shift_duration_seconds' => 59,
+    ]);
+    foreach ([8481533, 8482118] as $playerId) {
+        $this->assertDatabaseMissing('nhl_shifts', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'event_number' => 1083,
+        ]);
+        $this->assertDatabaseHas('nhl_game_summaries', [
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'toi' => 59,
+            'shifts' => 1,
+        ]);
+    }
+    $this->assertDatabaseHas('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 8478048,
+        'toi' => 59,
+    ]);
+});
+
 it('drops a malformed goalie shift row when official goalie toi exactly proves the overage', function (): void {
     ($this->insertGame)(2025020634, [
         'season_id' => '20252026',

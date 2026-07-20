@@ -99,6 +99,7 @@ class ImportNhlShifts
             $candidateShifts,
             $boxscoreTargets
         );
+        $normalizedShifts = $this->trimOvertimeShiftsAfterGameEnd($normalizedShifts, $nhlGame);
         $normalizedShifts = $this->removeGoalieEmptyNetArtifacts($normalizedShifts, $nhlGame);
         $normalizedShifts = $this->removeImpossibleOverCapSkaterArtifacts($normalizedShifts, $nhlGame, $boxscoreTargets);
         $duplicateToiCredits = $this->duplicateToiCreditsForTargets(
@@ -620,6 +621,86 @@ class ImportNhlShifts
         }
 
         return null;
+    }
+
+    /**
+     * Trim shiftchart rows after PBP proves an overtime game ended before the period limit.
+     *
+     * @param array<int,array<string,mixed>> $resolvedShifts
+     * @return array<int,array<string,mixed>>
+     */
+    private function trimOvertimeShiftsAfterGameEnd(array $resolvedShifts, NhlGame $game): array
+    {
+        $boundaries = $this->overtimeFinalBoundaries($game);
+
+        if ($boundaries === []) {
+            return $resolvedShifts;
+        }
+
+        return collect($resolvedShifts)
+            ->map(fn (array $resolvedShift): ?array => $this->trimShiftToOvertimeBoundary($resolvedShift, $boundaries))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function overtimeFinalBoundaries(NhlGame $game): array
+    {
+        return PlayByPlay::query()
+            ->where('nhl_game_id', $game->nhl_game_id)
+            ->where('period_type', 'OT')
+            ->whereIn('type_desc_key', ['game-end', 'period-end'])
+            ->whereNotNull('period')
+            ->whereNotNull('seconds_in_game')
+            ->where('seconds_remaining', '>', 0)
+            ->orderBy('seconds_in_game')
+            ->get(['period', 'seconds_in_game'])
+            ->groupBy(fn (PlayByPlay $play): int => (int) $play->period)
+            ->map(fn ($plays): int => (int) $plays->min('seconds_in_game'))
+            ->all();
+    }
+
+    /**
+     * @param array<string,mixed> $resolvedShift
+     * @param array<int,int> $boundaries
+     * @return array<string,mixed>|null
+     */
+    private function trimShiftToOvertimeBoundary(array $resolvedShift, array $boundaries): ?array
+    {
+        $period = (int) ($resolvedShift['shift']['period'] ?? 0);
+        $boundary = $boundaries[$period] ?? null;
+
+        if ($boundary === null || (int) $resolvedShift['shift_end_seconds'] <= $boundary) {
+            return $resolvedShift;
+        }
+
+        if ((int) $resolvedShift['shift_start_seconds'] >= $boundary) {
+            return null;
+        }
+
+        $resolvedShift['shift_end_seconds'] = $boundary;
+        $resolvedShift['shift_duration_seconds'] = $boundary - (int) $resolvedShift['shift_start_seconds'];
+        $resolvedShift['shift']['endTime'] = $this->formatPeriodSeconds(
+            $boundary - (($period - 1) * 1200)
+        );
+        $resolvedShift['shift']['duration'] = $this->formatPeriodSeconds(
+            (int) $resolvedShift['shift_duration_seconds']
+        );
+
+        return $resolvedShift;
+    }
+
+    /**
+     * Format elapsed seconds within a period as mm:ss.
+     */
+    private function formatPeriodSeconds(int $seconds): string
+    {
+        $seconds = max(0, $seconds);
+
+        return sprintf('%02d:%02d', intdiv($seconds, 60), $seconds % 60);
     }
 
     /**
