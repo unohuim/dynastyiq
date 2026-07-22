@@ -131,7 +131,11 @@ class NhlGameImportController extends Controller
      */
     public function discover(Request $request): JsonResponse
     {
-        $range = $this->normalizeDateSelection($this->validatedInput($request), true);
+        $input = $this->validatedInput($request);
+        $rerunSourceRun = $this->rerunSourceRunFromInput($input);
+        $range = $rerunSourceRun
+            ? $this->rerunRangeFromRun($rerunSourceRun)
+            : $this->normalizeDateSelection($input, true);
 
         $run = NhlGameImportRun::create([
             'action' => NhlGameImportRun::ACTION_DISCOVER,
@@ -298,6 +302,30 @@ class NhlGameImportController extends Controller
     }
 
     /**
+     * Resolve an optional source run id for rerun.
+     *
+     * @param array<string, mixed> $input
+     */
+    private function rerunSourceRunFromInput(array $input): ?NhlGameImportRun
+    {
+        $runId = (int) ($input['run_id'] ?? 0);
+
+        if ($runId <= 0) {
+            return null;
+        }
+
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run || $run->action === NhlGameImportRun::ACTION_SEASON_SYNC) {
+            throw ValidationException::withMessages([
+                'run_id' => 'Choose a game import run to rerun.',
+            ]);
+        }
+
+        return $run;
+    }
+
+    /**
      * Resolve an optional discovery run id from the process request.
      *
      * @param array<string, mixed> $input
@@ -334,6 +362,29 @@ class NhlGameImportController extends Controller
             'date_count' => (int) $run->date_count,
             'mode' => (string) $run->mode,
             'payload' => $run->payload ?? [],
+        ];
+    }
+
+    /**
+     * Build a rerun date range from an existing game import run.
+     *
+     * @return array{start: Carbon, end: Carbon, date_count: int, mode: string, payload: array<string, mixed>}
+     */
+    private function rerunRangeFromRun(NhlGameImportRun $run): array
+    {
+        $start = Carbon::parse($run->start_date)->startOfDay();
+        $end = Carbon::parse($run->end_date)->startOfDay();
+
+        return [
+            'start' => $start,
+            'end' => $end,
+            'date_count' => (int) $run->date_count,
+            'mode' => (string) $run->mode,
+            'payload' => [
+                'start' => $start->toDateString(),
+                'end' => $end->toDateString(),
+                'rerun_from_run_id' => $run->id,
+            ],
         ];
     }
 

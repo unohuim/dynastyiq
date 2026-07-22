@@ -1358,7 +1358,7 @@ Migrations remain the **sole source of truth**.
 | game_date | date | No | Game date |
 | game_id | string(10) | No | NHL game ID as string |
 | game_type | unsignedTinyInteger | Yes | NHL game type |
-| import_type | enum | No | `pbp`, `summary`, `boxscore`, `shifts`, `shift-units`, `connect-events`, `sum-game-units`, `validate-summary` |
+| import_type | enum | No | `pbp`, `summary`, `boxscore`, `shifts`, `shift-units`, `connect-events`, `html-pbp-verify`, `sum-game-units`, `validate-summary` |
 | items_count | unsignedInteger | No | Defaults to `0` |
 | status | enum | No | `scheduled`, `running`, `error`, `completed`, `skipped`; defaults to `scheduled` |
 | discovered_at | timestamp | Yes | Discovery timestamp |
@@ -1380,7 +1380,7 @@ Migrations remain the **sole source of truth**.
 
 ### Behavioral Notes
 
-- `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> game unit summaries -> validation.
+- `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> HTML PBP verification -> game unit summaries -> validation.
 - New scheduled rows created by admin or CLI discovery are linked to `nhl_game_import_runs` through `run_id`; null `run_id` rows remain legacy-compatible and are read by date range.
 
 ---
@@ -1427,7 +1427,7 @@ Migrations remain the **sole source of truth**.
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
 | nhl_game_id | unsignedBigInteger | No | NHL game ID |
-| source | string(32) | No | `pbp`, `boxscore`, or `shifts` |
+| source | string(32) | No | `pbp`, `boxscore`, `shifts`, `right-rail`, or `html-pbp` |
 | status | string(32) | No | `available`, `empty`, or `unavailable` |
 | reason | string(120) | Yes | Source-specific block reason |
 | url | text | No | Exact provider URL checked |
@@ -1501,12 +1501,14 @@ Migrations remain the **sole source of truth**.
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
 | nhl_game_id | bigint | No | FK to `nhl_games.nhl_game_id` |
-| validation_type | string | No | `summary_boxscore` |
-| status | enum | No | `approved`, `failed`, `accepted_exception`, `incomplete` |
+| validation_type | string | No | `summary_boxscore` or `pbp_html_report` |
+| status | enum | No | `approved`, `failed`, `accepted_exception`, `incomplete`, `invalidated`, `shiftchart-mismatch` |
 | mismatch_count | unsignedInteger | No | Count of persisted blocking deltas |
 | checked_at | timestamp | Yes | Validation execution timestamp |
 | approved_at | timestamp | Yes | Approval or exception timestamp |
 | approved_by | bigint | Yes | FK to `users.id` |
+| resolution | string(64) | Yes | Admin resolution for reviewable validation records |
+| resolution_note | text | Yes | Optional admin resolution note |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
@@ -1543,6 +1545,41 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Index: `nhl_player_id`
 - Index: `(validation_id, nhl_player_id)`
+
+---
+
+## nhl_pbp_source_mismatches
+
+**Organization-owned:** No
+**Purpose:** Persist event-level differences between imported API PBP and official NHL HTML PBP report rows.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| validation_id | bigint | No | FK to `nhl_game_validations.id` |
+| play_by_play_id | bigint | Yes | FK to `play_by_plays.id` |
+| nhl_event_id | string | Yes | NHL event identifier from API or HTML row |
+| mismatch_type | string(64) | No | Event count, event field, on-ice, parser, or source availability mismatch type |
+| severity | string(16) | No | `high`, `medium`, `low`, or `info` |
+| period | unsignedTinyInteger | Yes | Event period when known |
+| time_in_period | string(16) | Yes | Event clock when known |
+| source_url | string(500) | Yes | Official HTML source URL |
+| api_event | json | Yes | Comparable API PBP snapshot |
+| html_event | json | Yes | Parsed HTML PBP snapshot |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `validation_id` -> `nhl_game_validations.id` (`cascadeOnDelete`)
+- FK: `play_by_play_id` -> `play_by_plays.id` (`nullOnDelete`)
+- Index: `nhl_event_id`
+- Index: `mismatch_type`
+- Index: `severity`
+- Index: `(validation_id, severity)`
 
 ---
 
@@ -1993,6 +2030,32 @@ Migrations remain the **sole source of truth**.
 - PK: `id`
 - Unique: `(unit_id, player_id)`
 - Implicit (FK index): `unit_id`
+- Implicit (FK index): `player_id`
+
+---
+
+## nhl_unit_shift_players
+
+**Organization-owned:** No
+**Purpose:** Contextual player-position rows for a specific NHL unit shift.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| unit_shift_id | bigint | No | FK -> nhl_unit_shifts.id (CASCADE) |
+| player_id | bigint | No | FK -> players.id (CASCADE) |
+| position_code | string | Yes | Contextual unit-shift position code from imported/enriched source; see `docs/ENUMS.md` |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(unit_shift_id, player_id)`
+- Index: `position_code`
+- Implicit (FK index): `unit_shift_id`
 - Implicit (FK index): `player_id`
 
 ---

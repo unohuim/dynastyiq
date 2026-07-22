@@ -1,0 +1,376 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/goalie-landing/now",
+    "payload": {
+        "seasonsWithEdgeStats": [
+            {
+                "id": 20212022,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20222023,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20232024,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20242025,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20252026,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            }
+        ],
+        "minimumGamesPlayed": 25,
+        "leaders": {
+            "highDangerSavePctg": {
+                "player": {
+                    "id": 8478009,
+                    "firstName": {
+                        "default": "Ilya",
+                        "cs": "Ilja",
+                        "fi": "Ilja",
+                        "sk": "Ilja"
+                    },
+                    "lastName": {
+                        "default": "Sorokin"
+                    },
+                    "sweaterNumber": 30,
+                    "position": "G",
+                    "slug": "ilya-sorokin-8478009",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/NYI/8478009.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Islanders"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "New York",
+                            "fr": "de New York"
+                        },
+                        "abbrev": "NYI",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/NYI_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/NYI_dark.svg"
+                        }
+                    }
+                },
+                "savePctg": 0.864245,
+                "shotLocationDetails": [
+                    {
+                        "area": "Behind the Net",
+                        "savePctg": 0.818182,
+                        "savePctgPercentile": 0.1186
+                    },
+                    {
+                        "area": "Beyond Red Line",
+                        "savePctg": 1,
+                        "savePctgPercentile": 1
+                    },
+                    {
+                        "area": "Center Point",
+                        "savePctg": 0.962963,
+                        "savePctgPercentile": 0.6441
+                    },
+                    {
+                        "area": "Crease",
+                        "savePctg": 0.830986,
+                        "savePctgPercentile": 0.8305
+                    },
+                    {
+                        "area": "High Slot",
+                        "savePctg": 0.854015,
+                        "savePctgPercentile": 0.5085
+                    },
+                    {
+                        "area": "L Circle",
+                        "savePctg": 0.89726,
+                        "savePctgPercentile": 0.4407
+                    },
+                    {
+                        "area": "L Corner",
+                        "savePctg": 1,
+                        "savePctgPercentile": 1
+                    },
+                    {
+                        "area": "L Net Side",
+                        "savePctg": 0.934783,
+                        "savePctgPercentile": 0.678
+                    },
+                    {
+                        "area": "L Point",
+                        "savePctg": 0.954545,
+                        "savePctgPercentile": 0.1864
+                    },
+                    {
+                        "area": "Low Slot",
+                        "savePctg": 0.869469,
+                        "savePctgPercentile": 1
+                    },
+                    {
+                        "area": "Offensive Neutral Zone",
+                        "savePctg": 1,
+                        "savePctgPercentile": 1
+                    },
+                    {
+                        "area": "Outside L",
+                        "savePctg": 0.974684,
+                        "savePctgPercentile": 0.6441
+                    },
+                    {
+                        "area": "Outside R",
+                        "savePctg": 0.972973,
+                        "savePctgPercentile": 0.6949
+                    },
+                    {
+                        "area": "R Circle",
+                        "savePctg": 0.88,
+                        "savePctgPercentile": 0.3729
+                    },
+                    {
+                        "area": "R Corner",
+                        "savePctg": 0,
+                        "savePctgPercentile": 0.2542
+                    },
+                    {
+                        "area": "R Net Side",
+                        "savePctg": 0.833333,
+                        "savePctgPercentile": 0.1864
+                    },
+                    {
+                        "area": "R Point",
+                        "savePctg": 1,
+                        "savePctgPercentile": 1
+                    }
+                ]
+            },
+            "highDangerSaves": {
+                "player": {
+                    "id": 8478009,
+                    "firstName": {
+                        "default": "Ilya",
+                        "cs": "Ilja",
+                        "fi": "Ilja",
+                        "sk": "Ilja"
+                    },
+                    "lastName": {
+                        "default": "Sorokin"
+                    },
+                    "sweaterNumber": 30,
+                    "position": "G",
+                    "slug": "ilya-sorokin-8478009",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/NYI/8478009.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Islanders"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "New York",
+                            "fr": "de New York"
+                        },
+                        "abbrev": "NYI",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/NYI_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/NYI_dark.svg"
+                        }
+                    }
+                },
+                "saves": 452,
+                "shotLocationDetails": [
+                    {
+                        "area": "Behind the Net",
+                        "saves": 9,
+                        "savesPercentile": 0.8367
+                    },
+                    {
+                        "area": "Beyond Red Line",
+                        "saves": 33,
+                        "savesPercentile": 0.7959
+                    },
+                    {
+                        "area": "Center Point",
+                        "saves": 104,
+                        "savesPercentile": 0.8265
+                    },
+                    {
+                        "area": "Crease",
+                        "saves": 59,
+                        "savesPercentile": 1
+                    },
+                    {
+                        "area": "High Slot",
+                        "saves": 117,
+                        "savesPercentile": 0.8878
+                    },
+                    {
+                        "area": "L Circle",
+                        "saves": 131,
+                        "savesPercentile": 0.9082
+                    },
+                    {
+                        "area": "L Corner",
+                        "saves": 3,
+                        "savesPercentile": 0.9082
+                    },
+                    {
+                        "area": "L Net Side",
+                        "saves": 43,
+                        "savesPercentile": 0.9796
+                    },
+                    {
+                        "area": "L Point",
+                        "saves": 84,
+                        "savesPercentile": 0.8469
+                    },
+                    {
+                        "area": "Low Slot",
+                        "saves": 393,
+                        "savesPercentile": 1
+                    },
+                    {
+                        "area": "Offensive Neutral Zone",
+                        "saves": 37,
+                        "savesPercentile": 0.9592
+                    },
+                    {
+                        "area": "Outside L",
+                        "saves": 77,
+                        "savesPercentile": 0.8571
+                    },
+                    {
+                        "area": "Outside R",
+                        "saves": 72,
+                        "savesPercentile": 0.8673
+                    },
+                    {
+                        "area": "R Circle",
+                        "saves": 110,
+                        "savesPercentile": 0.8061
+                    },
+                    {
+                        "area": "R Corner",
+                        "saves": 0,
+                        "savesPercentile": 0.4694
+                    },
+                    {
+                        "area": "R Net Side",
+                        "saves": 30,
+                        "savesPercentile": 0.9082
+                    },
+                    {
+                        "area": "R Point",
+                        "saves": 84,
+                        "savesPercentile": 0.8265
+                    }
+                ]
+            },
+            "highDangerGoalsAgainst": {
+                "player": {
+                    "id": 8481020,
+                    "firstName": {
+                        "default": "Justus"
+                    },
+                    "lastName": {
+                        "default": "Annunen"
+                    },
+                    "sweaterNumber": 29,
+                    "position": "G",
+                    "slug": "justus-annunen-8481020",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/NSH/8481020.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Predators"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Nashville",
+                            "fr": "de Nashville"
+                        },
+                        "abbrev": "NSH",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/NSH_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/NSH_dark.svg"
+                        }
+                    }
+                },
+                "goalsAgainst": 32
+            },
+            "savePctg5v5": {
+                "player": {
+                    "id": 8475809,
+                    "firstName": {
+                        "default": "Scott"
+                    },
+                    "lastName": {
+                        "default": "Wedgewood"
+                    },
+                    "sweaterNumber": 41,
+                    "position": "G",
+                    "slug": "scott-wedgewood-8475809",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/COL/8475809.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Avalanche"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Colorado",
+                            "fr": "du Colorado"
+                        },
+                        "abbrev": "COL",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/COL_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/COL_dark.svg"
+                        }
+                    }
+                },
+                "savePctg": 0.9274
+            },
+            "gamesAbove900": {
+                "player": {
+                    "id": 8480280,
+                    "firstName": {
+                        "default": "Jeremy"
+                    },
+                    "lastName": {
+                        "default": "Swayman"
+                    },
+                    "sweaterNumber": 1,
+                    "position": "G",
+                    "slug": "jeremy-swayman-8480280",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/BOS/8480280.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Bruins"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Boston",
+                            "fr": "de Boston"
+                        },
+                        "abbrev": "BOS",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/BOS_light.svg?season=20252026",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/BOS_dark.svg?season=20252026"
+                        }
+                    }
+                },
+                "games": 38
+            }
+        }
+    }
+}

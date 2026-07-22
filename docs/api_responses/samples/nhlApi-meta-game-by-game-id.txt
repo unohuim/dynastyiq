@@ -1,0 +1,1 @@
+{"teams":[{"name":{"default":"Minnesota Wild","fr":"Wild du Minnesota"},"tricode":"MIN","teamId":30,"teamSlug":"minnesota-wild-30"},{"name":{"default":"Buffalo Sabres","fr":"Sabres de Buffalo"},"tricode":"BUF","teamId":7,"teamSlug":"buffalo-sabres-7"}],"seasonStates":{"date":"2023-11-10","gameType":2,"season":20232024},"gameState":"OFF"}

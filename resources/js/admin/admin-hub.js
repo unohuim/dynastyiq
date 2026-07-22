@@ -96,12 +96,14 @@ export default function adminHub(options = {}) {
             loading: false,
             discovering: false,
             processing: false,
+            processingRuns: {},
             syncingSeason: false,
             emptyingGames: false,
             error: '',
             runs: [],
             seasons: [],
             expandedRuns: {},
+            rerunningRuns: {},
             rerunningGames: {},
             completedGameFadeSteps: {},
             completedGameFadeTimers: {},
@@ -374,6 +376,14 @@ export default function adminHub(options = {}) {
                     return;
                 }
 
+                const fragmentLink = event.target?.closest?.('a[href]');
+
+                if (fragmentLink && this.isValidationFragmentLink(fragmentLink)) {
+                    event.preventDefault();
+                    void this.loadValidationFragmentFromLink(fragmentLink);
+                    return;
+                }
+
                 const trigger = event.target?.closest?.('[data-validation-toggle]');
 
                 if (!trigger) {
@@ -383,6 +393,56 @@ export default function adminHub(options = {}) {
                 event.preventDefault();
                 void this.toggleValidationDetail(trigger);
             });
+        },
+
+        isValidationFragmentLink(link) {
+            try {
+                const url = new URL(link.href, window.location?.origin ?? 'http://localhost');
+
+                return url.pathname.includes('/admin/nhl-validations');
+            } catch {
+                return false;
+            }
+        },
+
+        async loadValidationFragmentFromLink(link) {
+            const mount = link.closest('[data-admin-validations-mount], [data-admin-shift-mismatches-mount]');
+
+            if (!mount) {
+                return;
+            }
+
+            const url = new URL(link.href, window.location?.origin ?? 'http://localhost');
+            url.searchParams.set('admin_panel', '1');
+
+            try {
+                const response = await fetch(`${url.pathname}${url.search}`, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load validation fragment');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Validation fragment response did not include HTML');
+                }
+
+                mount.innerHTML = payload.html;
+                mount.dataset.validationTogglesBound = 'false';
+                this.bindValidationDetailToggles(mount);
+
+                if (mount.matches('[data-admin-validations-mount]')) {
+                    this.validationsLoaded = true;
+                } else if (mount.matches('[data-admin-shift-mismatches-mount]')) {
+                    this.shiftMismatchesLoaded = true;
+                }
+
+                this.validationDetails = {};
+            } catch (error) {
+                this.setActiveValidationError(error.message ?? 'Unable to load validation fragment');
+            }
         },
 
         async rebuildValidationGame(trigger) {
@@ -470,9 +530,126 @@ export default function adminHub(options = {}) {
 
                 target.innerHTML = payload.html;
                 this.validationDetails[validationId] = { loaded: true };
+                this.bindValidationActionForms(target);
             } catch (error) {
                 target.innerHTML = `<div class="px-4 py-6 text-sm text-red-600">${this.escapeHtml(error.message ?? 'Unable to load validation details')}</div>`;
             }
+        },
+
+        bindValidationActionForms(root) {
+            if (!root || root.dataset.validationActionFormsBound === 'true') {
+                return;
+            }
+
+            root.dataset.validationActionFormsBound = 'true';
+            root.addEventListener('submit', (event) => {
+                const form = event.target?.closest?.('[data-validation-action]');
+
+                if (!form) {
+                    return;
+                }
+
+                event.preventDefault();
+                void this.submitValidationAction(form);
+            });
+        },
+
+        async submitValidationAction(form) {
+            const validationId = form.dataset.validationId;
+            const detailUrl = form.dataset.validationUrl;
+
+            if (!validationId || !form.action) {
+                return;
+            }
+
+            const button = form.querySelector('button[type="submit"]');
+            const label = form.querySelector('[data-validation-action-label]');
+            const previousLabel = label?.textContent ?? '';
+
+            if (button) {
+                button.disabled = true;
+            }
+
+            if (label) {
+                label.textContent = 'Working...';
+            }
+
+            try {
+                const response = await fetch(form.action, {
+                    method: 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'X-CSRF-TOKEN': document
+                            .querySelector('meta[name="csrf-token"]')
+                            ?.getAttribute('content'),
+                    },
+                    body: new FormData(form),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(this.validationMessage(payload) ?? payload.message ?? 'Validation action failed');
+                }
+
+                await this.refreshValidationContainers();
+
+                if (detailUrl) {
+                    await this.reloadVisibleValidationDetail(validationId, detailUrl);
+                }
+            } catch (error) {
+                this.setActiveValidationError(error.message ?? 'Validation action failed');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                }
+
+                if (label) {
+                    label.textContent = previousLabel;
+                }
+            }
+        },
+
+        async refreshValidationContainers() {
+            await this.loadValidations({ force: true, background: true });
+            await this.loadShiftMismatches({ force: true, background: true });
+        },
+
+        async reloadVisibleValidationDetail(validationId, url) {
+            const targets = [
+                ...document.querySelectorAll(`[data-validation-detail-content="${validationId}"]`),
+            ];
+
+            for (const target of targets) {
+                if (!target.offsetParent && target.innerHTML.trim() === '') {
+                    continue;
+                }
+
+                const response = await fetch(url, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to reload validation details');
+                }
+
+                if (!payload.html) {
+                    throw new Error('Validation detail response did not include a page fragment');
+                }
+
+                target.innerHTML = payload.html;
+                target.dataset.validationActionFormsBound = 'false';
+                this.bindValidationActionForms(target);
+            }
+        },
+
+        setActiveValidationError(message) {
+            if (this.activeTab === 'shift-mismatches') {
+                this.shiftMismatchesError = message;
+                return;
+            }
+
+            this.validationsError = message;
         },
 
         setValidationDetailOpen(trigger, row, shell, open) {
@@ -733,13 +910,53 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async rerunGameImportRun(run) {
+            if (!this.canRerunGameImportRun(run)) {
+                return;
+            }
+
+            this.gameImports.error = '';
+            this.gameImports.rerunningRuns = {
+                ...this.gameImports.rerunningRuns,
+                [run.id]: true,
+            };
+
+            try {
+                const url = run.action === 'season-sync'
+                    ? this.gameImportSeasonSyncUrl
+                    : this.gameImportDiscoverUrl;
+                const payload = run.action === 'season-sync'
+                    ? { season: run.payload?.season }
+                    : this.gameImportRunPayload(run);
+
+                await this.sendGameImportRequest(
+                    url,
+                    payload
+                );
+
+                await this.loadGameImports({ background: true });
+                await this.refreshValidationContainers();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue rerun';
+            } finally {
+                const next = { ...this.gameImports.rerunningRuns };
+                delete next[run.id];
+                this.gameImports.rerunningRuns = next;
+            }
+        },
+
         async processGameImports(run = null, options = {}) {
             this.gameImports.processing = true;
+            const runId = run?.id ?? '__form__';
+            this.gameImports.processingRuns = {
+                ...this.gameImports.processingRuns,
+                [runId]: true,
+            };
             this.gameImports.error = '';
 
             try {
                 const payload = run ? this.gameImportRunPayload(run) : this.gameImportPayload();
-                if (options.reprocessExisting) {
+                if (options.reprocessExisting || this.shouldReprocessGameImportRun(run)) {
                     payload.reprocess_existing = true;
                 }
 
@@ -748,11 +965,14 @@ export default function adminHub(options = {}) {
                     payload
                 );
 
-                await this.loadGameImports();
+                await this.loadGameImports({ background: true });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue processing';
             } finally {
                 this.gameImports.processing = false;
+                const next = { ...this.gameImports.processingRuns };
+                delete next[runId];
+                this.gameImports.processingRuns = next;
             }
         },
 
@@ -1285,16 +1505,38 @@ export default function adminHub(options = {}) {
         canProcessGameImportRun(run) {
             return run?.action === 'discover'
                 && !run.processing_started
-                && !this.gameImports.processing
-                && Number(run?.facts?.scheduled_stage_rows || 0) > 0;
+                && !this.gameImports.processingRuns[run.id]
+                && (
+                    Number(run?.facts?.scheduled_stage_rows || 0) > 0
+                    || this.shouldReprocessGameImportRun(run)
+                );
         },
 
-        canReprocessGameImportRun(run) {
+        gameImportProcessButtonText(run) {
+            return this.gameImports.processingRuns[run?.id] === true ? 'Queuing...' : 'Process';
+        },
+
+        shouldReprocessGameImportRun(run) {
             return run?.action === 'discover'
                 && !run.processing_started
-                && !this.gameImports.processing
                 && Number(run?.facts?.discovered_game_count || 0) > 0
-                && Number(run?.facts?.scheduled_stage_rows || 0) === 0;
+                && (
+                    Number(run?.facts?.scheduled_stage_rows || 0) === 0
+                    || Boolean(run?.payload?.rerun_from_run_id)
+                    || Boolean(run?.payload?.rediscovered_from_run_id)
+                );
+        },
+
+        canRerunGameImportRun(run) {
+            if (!run?.id) {
+                return false;
+            }
+
+            if (run.action === 'season-sync') {
+                return Boolean(run?.payload?.season);
+            }
+
+            return Boolean(run?.start_date) && Boolean(run?.end_date);
         },
 
         discoveryFactsText(run) {
@@ -1483,12 +1725,18 @@ export default function adminHub(options = {}) {
         },
 
         handleGameImportStatusUpdated() {
-            if (this.activeTab !== 'game-imports') {
-                return;
+            if (this.activeTab === 'game-imports') {
+                void this.loadGameImports({ background: true });
+                void this.loadGameImportSourceGaps({ background: true });
             }
 
-            void this.loadGameImports({ background: true });
-            void this.loadGameImportSourceGaps({ background: true });
+            if (this.activeTab === 'validations' || this.validationsLoaded) {
+                void this.loadValidations({ force: true, background: true });
+            }
+
+            if (this.activeTab === 'shift-mismatches' || this.shiftMismatchesLoaded) {
+                void this.loadShiftMismatches({ force: true, background: true });
+            }
         },
 
         ensureStream(key) {

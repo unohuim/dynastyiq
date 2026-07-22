@@ -260,6 +260,44 @@ it('allows super admins to queue NHL game discovery for a range', function () {
     });
 });
 
+it('allows super admins to rerun discovery for a previous NHL game import run range', function () {
+    Bus::fake();
+
+    $sourceRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_PROCESS,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 3,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.mode', NhlGameImportRun::MODE_RANGE)
+        ->assertJsonPath('run.start_date', '2026-01-17')
+        ->assertJsonPath('run.end_date', '2026-01-15')
+        ->assertJsonPath('run.date_count', 3)
+        ->assertJsonPath('run.payload.rerun_from_run_id', $sourceRun->id);
+
+    $run = NhlGameImportRun::query()
+        ->where('id', '!=', $sourceRun->id)
+        ->firstOrFail();
+
+    expect($run->payload['rerun_from_run_id'])->toBe($sourceRun->id);
+
+    Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job): bool {
+        return $job->start->toDateString() === '2026-01-17'
+            && $job->end->toDateString() === '2026-01-15';
+    });
+});
+
 it('allows super admins to queue NHL game processing for each date in a range', function () {
     Bus::fake();
     Event::fake([NhlGameImportStatusUpdated::class]);

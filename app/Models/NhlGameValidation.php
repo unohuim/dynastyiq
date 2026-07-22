@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class NhlGameValidation extends Model
 {
     public const TYPE_SUMMARY_BOXSCORE = 'summary_boxscore';
+    public const TYPE_PBP_HTML_REPORT = 'pbp_html_report';
 
     public const STATUS_APPROVED = 'approved';
     public const STATUS_FAILED = 'failed';
@@ -37,6 +38,11 @@ class NhlGameValidation extends Model
     public function deltas(): HasMany
     {
         return $this->hasMany(NhlGameValidationDelta::class, 'validation_id');
+    }
+
+    public function pbpSourceMismatches(): HasMany
+    {
+        return $this->hasMany(NhlPbpSourceMismatch::class, 'validation_id');
     }
 
     public function approver(): BelongsTo

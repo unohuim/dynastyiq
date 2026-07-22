@@ -1,0 +1,445 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/skater-landing/now",
+    "payload": {
+        "seasonsWithEdgeStats": [
+            {
+                "id": 20212022,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20222023,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20232024,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20242025,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20252026,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            }
+        ],
+        "leaders": {
+            "hardestShot": {
+                "player": {
+                    "id": 8482095,
+                    "firstName": {
+                        "default": "Tyler"
+                    },
+                    "lastName": {
+                        "default": "Kleven"
+                    },
+                    "sweaterNumber": 43,
+                    "position": "D",
+                    "slug": "tyler-kleven-8482095",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/OTT/8482095.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Senators",
+                            "fr": "Sénateurs"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Ottawa",
+                            "fr": "d'Ottawa"
+                        },
+                        "abbrev": "OTT",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                        }
+                    }
+                },
+                "overlay": {
+                    "player": {
+                        "firstName": {
+                            "default": "Tyler"
+                        },
+                        "lastName": {
+                            "default": "Kleven"
+                        }
+                    },
+                    "gameDate": "2026-01-31",
+                    "awayTeam": {
+                        "abbrev": "NJD",
+                        "score": 1
+                    },
+                    "homeTeam": {
+                        "abbrev": "OTT",
+                        "score": 4
+                    },
+                    "gameOutcome": {
+                        "lastPeriodType": "REG"
+                    },
+                    "periodDescriptor": {
+                        "maxRegulationPeriods": 3,
+                        "number": 3,
+                        "periodType": "REG"
+                    },
+                    "timeInPeriod": "12:37",
+                    "gameType": 2
+                },
+                "shotSpeed": {
+                    "imperial": 103.51,
+                    "metric": 166.5832
+                }
+            },
+            "maxSkatingSpeed": {
+                "player": {
+                    "id": 8479359,
+                    "firstName": {
+                        "default": "Beck"
+                    },
+                    "lastName": {
+                        "default": "Malenstyn"
+                    },
+                    "sweaterNumber": 29,
+                    "position": "L",
+                    "slug": "beck-malenstyn-8479359",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/BUF/8479359.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Sabres"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Buffalo",
+                            "fr": "de Buffalo"
+                        },
+                        "abbrev": "BUF",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/BUF_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/BUF_dark.svg"
+                        }
+                    }
+                },
+                "overlay": {
+                    "player": {
+                        "firstName": {
+                            "default": "Beck"
+                        },
+                        "lastName": {
+                            "default": "Malenstyn"
+                        }
+                    },
+                    "gameDate": "2026-03-12",
+                    "awayTeam": {
+                        "abbrev": "WSH",
+                        "score": 2
+                    },
+                    "homeTeam": {
+                        "abbrev": "BUF",
+                        "score": 1
+                    },
+                    "gameOutcome": {
+                        "lastPeriodType": "REG"
+                    },
+                    "periodDescriptor": {
+                        "maxRegulationPeriods": 3,
+                        "number": 3,
+                        "periodType": "REG"
+                    },
+                    "timeInPeriod": "12:05",
+                    "gameType": 2
+                },
+                "skatingSpeed": {
+                    "imperial": 24.9389,
+                    "metric": 40.1352
+                }
+            },
+            "totalDistanceSkated": {
+                "player": {
+                    "id": 8478402,
+                    "firstName": {
+                        "default": "Connor"
+                    },
+                    "lastName": {
+                        "default": "McDavid"
+                    },
+                    "sweaterNumber": 97,
+                    "position": "C",
+                    "slug": "connor-mcdavid-8478402",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/EDM/8478402.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Oilers"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Edmonton",
+                            "fr": "d'Edmonton"
+                        },
+                        "abbrev": "EDM",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/EDM_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/EDM_dark.svg"
+                        }
+                    }
+                },
+                "distanceSkated": {
+                    "imperial": 330.2671,
+                    "metric": 531.4875
+                }
+            },
+            "distanceMaxGame": {
+                "player": {
+                    "id": 8480039,
+                    "firstName": {
+                        "default": "Martin"
+                    },
+                    "lastName": {
+                        "default": "Necas",
+                        "cs": "Nečas",
+                        "sk": "Nečas"
+                    },
+                    "sweaterNumber": 88,
+                    "position": "C",
+                    "slug": "martin-necas-8480039",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/COL/8480039.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Avalanche"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Colorado",
+                            "fr": "du Colorado"
+                        },
+                        "abbrev": "COL",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/COL_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/COL_dark.svg"
+                        }
+                    }
+                },
+                "distanceSkated": {
+                    "imperial": 5.0908,
+                    "metric": 8.1924
+                },
+                "overlay": {
+                    "player": {
+                        "firstName": {
+                            "default": "Martin"
+                        },
+                        "lastName": {
+                            "default": "Necas",
+                            "cs": "Nečas",
+                            "sk": "Nečas"
+                        }
+                    },
+                    "gameDate": "2026-04-13",
+                    "awayTeam": {
+                        "abbrev": "COL",
+                        "score": 2
+                    },
+                    "homeTeam": {
+                        "abbrev": "EDM",
+                        "score": 1
+                    },
+                    "gameOutcome": {
+                        "lastPeriodType": "SO"
+                    },
+                    "periodDescriptor": {
+                        "maxRegulationPeriods": 3,
+                        "number": 3,
+                        "periodType": "REG"
+                    },
+                    "gameType": 2
+                }
+            },
+            "highDangerSOG": {
+                "player": {
+                    "id": 8478498,
+                    "firstName": {
+                        "default": "Jake"
+                    },
+                    "lastName": {
+                        "default": "DeBrusk"
+                    },
+                    "sweaterNumber": 74,
+                    "position": "L",
+                    "slug": "jake-debrusk-8478498",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/VAN/8478498.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Canucks"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Vancouver",
+                            "fr": "de Vancouver"
+                        },
+                        "abbrev": "VAN",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/VAN_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/VAN_dark.svg"
+                        }
+                    }
+                },
+                "sog": 121,
+                "shotLocationDetails": [
+                    {
+                        "area": "Behind the Net",
+                        "sog": 3,
+                        "sogPercentile": 0.935
+                    },
+                    {
+                        "area": "Beyond Red Line",
+                        "sog": 4,
+                        "sogPercentile": 0.7572
+                    },
+                    {
+                        "area": "Center Point",
+                        "sog": 7,
+                        "sogPercentile": 0.721
+                    },
+                    {
+                        "area": "Crease",
+                        "sog": 24,
+                        "sogPercentile": 0.9989
+                    },
+                    {
+                        "area": "High Slot",
+                        "sog": 11,
+                        "sogPercentile": 0.7167
+                    },
+                    {
+                        "area": "L Circle",
+                        "sog": 19,
+                        "sogPercentile": 0.8988
+                    },
+                    {
+                        "area": "L Corner",
+                        "sog": 0,
+                        "sogPercentile": 0
+                    },
+                    {
+                        "area": "L Net Side",
+                        "sog": 2,
+                        "sogPercentile": 0.6017
+                    },
+                    {
+                        "area": "L Point",
+                        "sog": 4,
+                        "sogPercentile": 0.6358
+                    },
+                    {
+                        "area": "Low Slot",
+                        "sog": 97,
+                        "sogPercentile": 0.9957
+                    },
+                    {
+                        "area": "Offensive Neutral Zone",
+                        "sog": 14,
+                        "sogPercentile": 0.9957
+                    },
+                    {
+                        "area": "Outside L",
+                        "sog": 9,
+                        "sogPercentile": 0.8232
+                    },
+                    {
+                        "area": "Outside R",
+                        "sog": 4,
+                        "sogPercentile": 0.607
+                    },
+                    {
+                        "area": "R Circle",
+                        "sog": 12,
+                        "sogPercentile": 0.7689
+                    },
+                    {
+                        "area": "R Corner",
+                        "sog": 0,
+                        "sogPercentile": 0
+                    },
+                    {
+                        "area": "R Net Side",
+                        "sog": 4,
+                        "sogPercentile": 0.8349
+                    },
+                    {
+                        "area": "R Point",
+                        "sog": 5,
+                        "sogPercentile": 0.7039
+                    }
+                ]
+            },
+            "offensiveZoneTime": {
+                "player": {
+                    "id": 8476906,
+                    "firstName": {
+                        "default": "Shayne"
+                    },
+                    "lastName": {
+                        "default": "Gostisbehere"
+                    },
+                    "sweaterNumber": 4,
+                    "position": "D",
+                    "slug": "shayne-gostisbehere-8476906",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/CAR/8476906.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Hurricanes"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Carolina",
+                            "fr": "de la Caroline"
+                        },
+                        "abbrev": "CAR",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/CAR_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/CAR_dark.svg"
+                        }
+                    }
+                },
+                "zoneTime": 0.49576938
+            },
+            "defensiveZoneTime": {
+                "player": {
+                    "id": 8476906,
+                    "firstName": {
+                        "default": "Shayne"
+                    },
+                    "lastName": {
+                        "default": "Gostisbehere"
+                    },
+                    "sweaterNumber": 4,
+                    "position": "D",
+                    "slug": "shayne-gostisbehere-8476906",
+                    "headshot": "https://assets.nhle.com/mugs/nhl/20252026/CAR/8476906.png",
+                    "team": {
+                        "commonName": {
+                            "default": "Hurricanes"
+                        },
+                        "placeNameWithPreposition": {
+                            "default": "Carolina",
+                            "fr": "de la Caroline"
+                        },
+                        "abbrev": "CAR",
+                        "teamLogo": {
+                            "light": "https://assets.nhle.com/logos/nhl/svg/CAR_light.svg",
+                            "dark": "https://assets.nhle.com/logos/nhl/svg/CAR_dark.svg"
+                        }
+                    }
+                },
+                "zoneTime": 0.32600889
+            }
+        }
+    }
+}

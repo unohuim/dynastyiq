@@ -220,6 +220,13 @@ class ImportNHLPlayByPlay
 
                 $secondsInGame = $secondsInPeriod !== null ? $secondsInPeriod + ($period - 1) * $periodLengthSeconds : null;
 
+                $isPenaltyShotAttempt = $this->penaltyShotAttemptSituationCode($event, $penaltyShotSituationCodes) !== null;
+                $descKey = $details['descKey'] ?? null;
+
+                if ($isPenaltyShotAttempt && $descKey === null) {
+                    $descKey = 'penalty-shot-attempt';
+                }
+
                 $data = [
                     'nhl_game_id' => $gameId,
                     'nhl_event_id' => $event['eventId'] ?? null,
@@ -238,7 +245,7 @@ class ImportNHLPlayByPlay
                     'situation_code' => isset($event['situationCode']) ? (string)$event['situationCode'] : null,
                     'type_code' => $event['typeCode'] ?? null,
                     'type_desc_key' => $event['typeDescKey'] ?? null,
-                    'desc_key' => $details['descKey'] ?? null,
+                    'desc_key' => $descKey,
                     'sort_order' => $event['sortOrder'] ?? null,
                     'event_owner_team_id' => $details['eventOwnerTeamId'] ?? null,
                     'home_team_defending_side' => $event['homeTeamDefendingSide'] ?? null,
@@ -277,6 +284,7 @@ class ImportNHLPlayByPlay
                     'highlight_clip_sharing_url' => $details['highlightClipSharingUrl'] ?? null,
                     'highlight_clip_id' => $details['highlightClip'] ?? null,
                     'metadata' => [
+                        'is_penalty_shot_attempt' => $isPenaltyShotAttempt,
                         'event' => $event,
                         'details' => $details,
                     ],

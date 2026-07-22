@@ -1,0 +1,211 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/skater-shot-location-detail/8482116/now",
+    "payload": {
+        "shotLocationDetails": [
+            {
+                "area": "Behind the Net",
+                "sog": 0,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "Beyond Red Line",
+                "sog": 2,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.5912,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "Center Point",
+                "sog": 6,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.8127,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "Crease",
+                "sog": 9,
+                "goals": 2,
+                "shootingPctg": 0.2222,
+                "sogPercentile": 0.8697,
+                "goalsPercentile": 0.728,
+                "shootingPctgPercentile": 0.4659
+            },
+            {
+                "area": "High Slot",
+                "sog": 27,
+                "goals": 4,
+                "shootingPctg": 0.1481,
+                "sogPercentile": 0.9446,
+                "goalsPercentile": 0.8632,
+                "shootingPctgPercentile": 0.4839
+            },
+            {
+                "area": "L Circle",
+                "sog": 19,
+                "goals": 3,
+                "shootingPctg": 0.1579,
+                "sogPercentile": 0.8632,
+                "goalsPercentile": 0.8795,
+                "shootingPctgPercentile": 0.7527
+            },
+            {
+                "area": "L Corner",
+                "sog": 0,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "L Net Side",
+                "sog": 6,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.8632,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "L Point",
+                "sog": 1,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.3013,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "Low Slot",
+                "sog": 72,
+                "goals": 18,
+                "shootingPctg": 0.25,
+                "sogPercentile": 0.956,
+                "goalsPercentile": 0.9821,
+                "shootingPctgPercentile": 0.8208
+            },
+            {
+                "area": "Offensive Neutral Zone",
+                "sog": 3,
+                "goals": 1,
+                "shootingPctg": 0.3333,
+                "sogPercentile": 0.6645,
+                "goalsPercentile": 0.9039,
+                "shootingPctgPercentile": 0.8925
+            },
+            {
+                "area": "Outside L",
+                "sog": 10,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.8567,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "Outside R",
+                "sog": 9,
+                "goals": 1,
+                "shootingPctg": 0.1111,
+                "sogPercentile": 0.8257,
+                "goalsPercentile": 0.8485,
+                "shootingPctgPercentile": 0.8065
+            },
+            {
+                "area": "R Circle",
+                "sog": 22,
+                "goals": 4,
+                "shootingPctg": 0.1818,
+                "sogPercentile": 0.8811,
+                "goalsPercentile": 0.9397,
+                "shootingPctgPercentile": 0.8351
+            },
+            {
+                "area": "R Corner",
+                "sog": 0,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            },
+            {
+                "area": "R Net Side",
+                "sog": 6,
+                "goals": 1,
+                "shootingPctg": 0.1667,
+                "sogPercentile": 0.8876,
+                "goalsPercentile": 0.8192,
+                "shootingPctgPercentile": 0.7348
+            },
+            {
+                "area": "R Point",
+                "sog": 2,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.5033,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0
+            }
+        ],
+        "shotLocationTotals": [
+            {
+                "locationCode": "all",
+                "sog": 194,
+                "goals": 34,
+                "shootingPctg": 0.1753,
+                "sogPercentile": 0.9121,
+                "goalsPercentile": 0.9577,
+                "shootingPctgPercentile": 0.8853,
+                "sogLeagueAvg": 85.9138,
+                "goalsLeagueAvg": 11.1545,
+                "shootingPctgLeagueAvg": 0.1298
+            },
+            {
+                "locationCode": "high",
+                "sog": 81,
+                "goals": 20,
+                "shootingPctg": 0.2469,
+                "sogPercentile": 0.9528,
+                "goalsPercentile": 0.9707,
+                "shootingPctgPercentile": 0.7563,
+                "sogLeagueAvg": 31.6244,
+                "goalsLeagueAvg": 6.1935,
+                "shootingPctgLeagueAvg": 0.1958
+            },
+            {
+                "locationCode": "long",
+                "sog": 9,
+                "goals": 0,
+                "shootingPctg": 0,
+                "sogPercentile": 0.6564,
+                "goalsPercentile": 0,
+                "shootingPctgPercentile": 0,
+                "sogLeagueAvg": 8.0081,
+                "goalsLeagueAvg": 0.3106,
+                "shootingPctgLeagueAvg": 0.0388
+            },
+            {
+                "locationCode": "mid",
+                "sog": 68,
+                "goals": 11,
+                "shootingPctg": 0.1618,
+                "sogPercentile": 0.9039,
+                "goalsPercentile": 0.9365,
+                "shootingPctgPercentile": 0.7957,
+                "sogLeagueAvg": 27.2195,
+                "goalsLeagueAvg": 3.3008,
+                "shootingPctgLeagueAvg": 0.1213
+            }
+        ]
+    }
+}

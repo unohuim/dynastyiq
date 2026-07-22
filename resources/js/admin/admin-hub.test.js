@@ -164,7 +164,7 @@ describe('admin-hub import listeners', () => {
         expect(instance.loadGameImports).toHaveBeenCalledWith({ background: true });
     });
 
-    it('ignores game import status events when another tab is active', async () => {
+    it('refreshes validations when a game import status event arrives on the validations tab', async () => {
         let gameImportHandler;
 
         const listen = vi.fn((event, handler) => {
@@ -180,8 +180,10 @@ describe('admin-hub import listeners', () => {
 
         const adminHub = await loadAdminHub();
         const instance = adminHub();
-        instance.activeTab = 'imports';
+        instance.activeTab = 'validations';
         instance.loadGameImports = vi.fn();
+        instance.loadValidations = vi.fn();
+        instance.loadShiftMismatches = vi.fn();
 
         instance.registerImportListeners();
         gameImportHandler?.call(instance, {
@@ -189,6 +191,8 @@ describe('admin-hub import listeners', () => {
         });
 
         expect(instance.loadGameImports).not.toHaveBeenCalled();
+        expect(instance.loadValidations).toHaveBeenCalledWith({ force: true, background: true });
+        expect(instance.loadShiftMismatches).not.toHaveBeenCalled();
     });
 
     it('opens the admin hub on data imports by default', async () => {
@@ -359,6 +363,106 @@ describe('admin-hub import listeners', () => {
         expect(fetch).toHaveBeenCalledTimes(1);
     });
 
+    it('submits embedded validation action forms over AJAX', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = `
+            <meta name="csrf-token" content="csrf-token-value">
+            <div data-validation-detail-content="77">
+                <form
+                    action="/admin/nhl-validations/77/accept-api-pbp"
+                    method="POST"
+                    data-validation-action
+                    data-validation-id="77"
+                    data-validation-url="/admin/nhl-validations/77?admin_panel=1"
+                >
+                    <button type="submit"><span data-validation-action-label>Accept API</span></button>
+                </form>
+            </div>
+            <div data-admin-validations-mount></div>
+            <div data-admin-shift-mismatches-mount></div>
+        `;
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ status: 'accepted_exception' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validation-detail-reloaded>Reloaded detail</div>',
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validations-reloaded>Validations</div>',
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-shift-reloaded>Shifts</div>',
+                }),
+            });
+
+        const instance = adminHub({
+            validationsUrl: '/admin/nhl-validations?admin_panel=1',
+        });
+        const target = document.querySelector('[data-validation-detail-content="77"]');
+        const form = document.querySelector('[data-validation-action]');
+
+        instance.bindValidationActionForms(target);
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fetch).toHaveBeenNthCalledWith(1, 'http://localhost/admin/nhl-validations/77/accept-api-pbp', expect.objectContaining({
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+        }));
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-validations/77?admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-validations-reloaded]')).not.toBeNull();
+    });
+
+    it('loads embedded validation filter links as fragments', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = `
+            <div data-admin-validations-mount>
+                <a href="/admin/nhl-validations?status=approved">Approved</a>
+            </div>
+        `;
+        global.fetch = vi.fn(() =>
+            Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({
+                    html: '<div data-validations-filtered>Approved validations</div>',
+                }),
+            })
+        );
+
+        const instance = adminHub();
+        const mount = document.querySelector('[data-admin-validations-mount]');
+        const link = document.querySelector('a');
+
+        instance.bindValidationDetailToggles(mount);
+        link.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(fetch).toHaveBeenCalledWith('/admin/nhl-validations?status=approved&admin_panel=1', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(document.querySelector('[data-validations-filtered]')).not.toBeNull();
+    });
+
     it('toggles embedded game validation details from a caret row action', async () => {
         vi.useFakeTimers();
         const adminHub = await loadAdminHub();
@@ -482,6 +586,7 @@ describe('admin-hub import listeners', () => {
         await Promise.resolve();
         await Promise.resolve();
         await Promise.resolve();
+        await Promise.resolve();
 
         expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-validations/7/rebuild-game', {
             method: 'POST',
@@ -574,6 +679,7 @@ describe('admin-hub import listeners', () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();
         const run = {
+            id: 12,
             action: 'discover',
             facts: {
                 scheduled_stage_rows: 0,
@@ -585,14 +691,15 @@ describe('admin-hub import listeners', () => {
         run.facts.scheduled_stage_rows = 8;
         expect(instance.canProcessGameImportRun(run)).toBe(true);
 
-        instance.gameImports.processing = true;
+        instance.gameImports.processingRuns = { [run.id]: true };
         expect(instance.canProcessGameImportRun(run)).toBe(false);
     });
 
-    it('enables discovery row reprocessing when games exist with no scheduled stage rows', async () => {
+    it('enables discovery row processing as a replay when games exist with no scheduled stage rows', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();
         const run = {
+            id: 12,
             action: 'discover',
             processing_started: false,
             facts: {
@@ -601,14 +708,49 @@ describe('admin-hub import listeners', () => {
             },
         };
 
-        expect(instance.canReprocessGameImportRun(run)).toBe(true);
+        expect(instance.shouldReprocessGameImportRun(run)).toBe(true);
+        expect(instance.canProcessGameImportRun(run)).toBe(true);
 
         run.facts.scheduled_stage_rows = 8;
-        expect(instance.canReprocessGameImportRun(run)).toBe(false);
+        expect(instance.shouldReprocessGameImportRun(run)).toBe(false);
+        expect(instance.canProcessGameImportRun(run)).toBe(true);
+
+        run.payload = { rerun_from_run_id: 40 };
+        expect(instance.shouldReprocessGameImportRun(run)).toBe(true);
 
         run.facts.scheduled_stage_rows = 0;
-        instance.gameImports.processing = true;
-        expect(instance.canReprocessGameImportRun(run)).toBe(false);
+        run.payload = {};
+        instance.gameImports.processingRuns = { [run.id]: true };
+        expect(instance.shouldReprocessGameImportRun(run)).toBe(true);
+        expect(instance.canProcessGameImportRun(run)).toBe(false);
+    });
+
+    it('enables rerun for all import row types when the stored payload can be replayed', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            id: 41,
+            action: 'process',
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        expect(instance.canRerunGameImportRun(run)).toBe(true);
+
+        instance.gameImports.rerunningRuns[41] = true;
+        expect(instance.canRerunGameImportRun(run)).toBe(true);
+
+        instance.gameImports.rerunningRuns = {};
+        run.end_date = '';
+        expect(instance.canRerunGameImportRun(run)).toBe(false);
+
+        run.end_date = '2026-01-15';
+        run.action = 'season-sync';
+        run.payload = { season: '20252026' };
+        expect(instance.canRerunGameImportRun(run)).toBe(true);
+
+        run.payload = {};
+        expect(instance.canRerunGameImportRun(run)).toBe(false);
     });
 
     it('formats discovery facts for pending and discovered ranges', async () => {
@@ -1185,9 +1327,95 @@ describe('admin-hub import listeners', () => {
             body: JSON.stringify({ run_id: 23, start: '2026-01-17', end: '2026-01-15' }),
         });
         expect(instance.gameImports.runs[0].id).toBe(23);
+        expect(instance.gameImports.processingRuns[23]).toBeUndefined();
     });
 
-    it('submits reprocess games using the selected discovery run range', async () => {
+    it('submits game import rerun using the selected run range', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Discovery queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 25, action: 'discover' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportDiscoverUrl: '/admin/nhl-game-imports/discover',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        instance.refreshValidationContainers = vi.fn(() => Promise.resolve());
+        const run = {
+            id: 24,
+            action: 'process',
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        await instance.rerunGameImportRun(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/discover', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ run_id: 24, start: '2026-01-17', end: '2026-01-15' }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
+        expect(instance.gameImports.rerunningRuns[24]).toBeUndefined();
+    });
+
+    it('submits season sync rerun using the stored season payload', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Season sync queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 31, action: 'season-sync' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportSeasonSyncUrl: '/admin/nhl-game-imports/season-sync',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        instance.refreshValidationContainers = vi.fn(() => Promise.resolve());
+        const run = {
+            id: 31,
+            action: 'season-sync',
+            payload: { season: '20252026' },
+        };
+
+        await instance.rerunGameImportRun(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/season-sync', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ season: '20252026' }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
+        expect(instance.gameImports.rerunningRuns[31]).toBeUndefined();
+    });
+
+    it('submits replay processing from a discovered range with no scheduled rows', async () => {
         const adminHub = await loadAdminHub();
         document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
         global.fetch = vi.fn()
@@ -1206,11 +1434,20 @@ describe('admin-hub import listeners', () => {
         });
         const run = {
             id: 24,
+            action: 'discover',
+            processing_started: false,
             start_date: '2026-01-17',
             end_date: '2026-01-15',
+            payload: {
+                rerun_from_run_id: 12,
+            },
+            facts: {
+                discovered_game_count: 3,
+                scheduled_stage_rows: 21,
+            },
         };
 
-        await instance.processGameImports(run, { reprocessExisting: true });
+        await instance.processGameImports(run);
 
         expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/process', {
             method: 'POST',

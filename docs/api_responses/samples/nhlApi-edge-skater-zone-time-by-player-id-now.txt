@@ -1,0 +1,64 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/skater-zone-time/8482116/now",
+    "payload": {
+        "zoneTimeDetails": [
+            {
+                "strengthCode": "all",
+                "offensiveZonePctg": 0.46505416,
+                "offensiveZonePercentile": 0.9505882352941,
+                "offensiveZoneLeagueAvg": 0.43087924,
+                "neutralZonePctg": 0.17121101,
+                "neutralZonePercentile": 0.1035294117647,
+                "neutralZoneLeagueAvg": 0.16794965,
+                "defensiveZonePctg": 0.36373482,
+                "defensiveZonePercentile": 0.9247058823529,
+                "defensiveZoneLeagueAvg": 0.4011711
+            },
+            {
+                "strengthCode": "es",
+                "offensiveZonePctg": 0.45043614,
+                "offensiveZonePercentile": 0.9623529411765,
+                "offensiveZoneLeagueAvg": 0.42022407,
+                "neutralZonePctg": 0.1778703,
+                "neutralZonePercentile": 0.0964705882353,
+                "neutralZoneLeagueAvg": 0.17878403,
+                "defensiveZonePctg": 0.37169356,
+                "defensiveZonePercentile": 0.9552941176471,
+                "defensiveZoneLeagueAvg": 0.4009919
+            },
+            {
+                "strengthCode": "pp",
+                "offensiveZonePctg": 0.60245031,
+                "offensiveZonePercentile": 0.734375,
+                "offensiveZoneLeagueAvg": 0.55503782,
+                "neutralZonePctg": 0.1476542,
+                "neutralZonePercentile": 0.7,
+                "neutralZoneLeagueAvg": 0.12248349,
+                "defensiveZonePctg": 0.2498955,
+                "defensiveZonePercentile": 0.828125,
+                "defensiveZoneLeagueAvg": 0.32247869
+            },
+            {
+                "strengthCode": "pk",
+                "offensiveZonePctg": 0.33218794,
+                "offensiveZonePercentile": 0.8695652173913,
+                "offensiveZoneLeagueAvg": 0.33855384,
+                "neutralZonePctg": 0.16123469,
+                "neutralZonePercentile": 0.8869565217391,
+                "neutralZoneLeagueAvg": 0.11552608,
+                "defensiveZonePctg": 0.50657738,
+                "defensiveZonePercentile": 0.8782608695652,
+                "defensiveZoneLeagueAvg": 0.54592008
+            }
+        ],
+        "zoneStarts": {
+            "offensiveZoneStartsPctg": 0.4821,
+            "offensiveZoneStartsPctgPercentile": 0.9934,
+            "neutralZoneStartsPctg": 0.3086,
+            "neutralZoneStartsPctgPercentile": 0.1586,
+            "defensiveZoneStartsPctg": 0.2093,
+            "defensiveZoneStartsPctgPercentile": 0.9934
+        }
+    }
+}

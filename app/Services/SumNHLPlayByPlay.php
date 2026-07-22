@@ -162,10 +162,12 @@ class SumNHLPlayByPlay
                 $th = $playerPlays->where('hittee_player_id', $playerId)->count();
 
                 // Goalie stats
-                $sv   = $nonSO->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $evsv = $nonSOForStrength('EV')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $ppsv = $nonSOForStrength('PP')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
-                $pksv = $nonSOForStrength('PK')->where('goalie_in_net_player_id', $playerId)->where('type_desc_key', 'shot-on-goal')->count();
+                $isSavedShot = fn ($p) => ($p->type_desc_key ?? null) === 'shot-on-goal'
+                    && ! $this->normalizer->isPenaltyShotAttempt($p);
+                $sv = $nonSO->where('goalie_in_net_player_id', $playerId)->filter($isSavedShot)->count();
+                $evsv = $nonSOForStrength('EV')->where('goalie_in_net_player_id', $playerId)->filter($isSavedShot)->count();
+                $ppsv = $nonSOForStrength('PP')->where('goalie_in_net_player_id', $playerId)->filter($isSavedShot)->count();
+                $pksv = $nonSOForStrength('PK')->where('goalie_in_net_player_id', $playerId)->filter($isSavedShot)->count();
 
                 $ga = $nonSO
                     ->where('goalie_in_net_player_id', $playerId)

@@ -216,6 +216,38 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 
 ---
 
+### NHL HTML PBP Verification
+
+**Name:** NHL HTML PBP Verification
+**Type:** NHL Import Enrichment Pattern
+**Location:**
+- `app/Services/NhlHtmlPbpReportLocator.php`
+- `app/Services/NhlHtmlPbpReportParser.php`
+- `app/Services/VerifyNhlHtmlPlayByPlay.php`
+- `app/Jobs/VerifyHtmlPbpNhlJob.php`
+
+**Purpose:**
+Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions.
+
+**When to Use:**
+After API PBP rows are imported and linked to unit shifts, when source verification or shift-level position enrichment is needed.
+
+**When Not to Use:**
+Replacing API PBP as the canonical event source, replacing stats REST shiftcharts, or blocking the core game import pipeline.
+
+**Public Interface:**
+- `VerifyHtmlPbpNhlJob`
+- `VerifyNhlHtmlPlayByPlay::verify()`
+- `NhlHtmlPbpReportLocator::playByPlayUrl()`
+- `NhlHtmlPbpReportParser::parse()`
+
+**Example Usage:**
+```php
+app(VerifyNhlHtmlPlayByPlay::class)->verify($gameId);
+```
+
+---
+
 ### Fantrax Draft State Sync
 
 **Name:** Fantrax Draft State Sync

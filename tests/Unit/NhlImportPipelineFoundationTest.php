@@ -10,6 +10,7 @@ use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\SumNhlGameUnitsJob;
 use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
+use App\Jobs\VerifyHtmlPbpNhlJob;
 use App\Models\NhlGameImportRun;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\NhlDiscoverGames;
@@ -92,6 +93,7 @@ it('defines the canonical NHL import stages in pipeline order', function (): voi
         'shifts',
         'shift-units',
         'connect-events',
+        'html-pbp-verify',
         'sum-game-units',
         'validate-summary',
     ]);
@@ -115,13 +117,16 @@ it('defines all upstream dependencies for the terminal validation stage', functi
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
         NhlImportStages::CONNECT_EVENTS,
+        NhlImportStages::HTML_PBP_VERIFY,
         NhlImportStages::SUM_GAME_UNITS,
     ]);
 });
 
 it('returns the next stage for a middle pipeline stage', function (): void {
     expect(NhlImportStages::nextAfter(NhlImportStages::BOXSCORE))->toBe(NhlImportStages::SHIFTS)
-        ->and(NhlImportStages::nextAfter(NhlImportStages::SHIFTS))->toBe(NhlImportStages::SHIFT_UNITS);
+        ->and(NhlImportStages::nextAfter(NhlImportStages::SHIFTS))->toBe(NhlImportStages::SHIFT_UNITS)
+        ->and(NhlImportStages::nextAfter(NhlImportStages::CONNECT_EVENTS))->toBe(NhlImportStages::HTML_PBP_VERIFY)
+        ->and(NhlImportStages::nextAfter(NhlImportStages::HTML_PBP_VERIFY))->toBe(NhlImportStages::SUM_GAME_UNITS);
 });
 
 it('returns null for the next stage after the terminal stage', function (): void {
@@ -133,6 +138,7 @@ it('maps stage names to their queue job classes', function (): void {
         ->and(NhlImportStages::jobClassFor(NhlImportStages::SHIFTS))->toBe(ImportShiftsNhlJob::class)
         ->and(NhlImportStages::jobClassFor(NhlImportStages::VALIDATE_SUMMARY))->toBe(ValidateNhlGameSummaryJob::class)
         ->and(NhlImportStages::jobClassFor(NhlImportStages::SHIFT_UNITS))->toBe(MakeShiftUnitsNhlJob::class)
+        ->and(NhlImportStages::jobClassFor(NhlImportStages::HTML_PBP_VERIFY))->toBe(VerifyHtmlPbpNhlJob::class)
         ->and(NhlImportStages::jobClassFor(NhlImportStages::SUM_GAME_UNITS))->toBe(SumNhlGameUnitsJob::class);
 });
 
@@ -142,7 +148,9 @@ it('maps stage names to the actual NHL import timeout config keys', function ():
         ->and(NhlImportStages::timeoutConfigKeyFor(NhlImportStages::VALIDATE_SUMMARY))
         ->toBe('apiImportNhl.max_validate_summary_seconds')
         ->and(NhlImportStages::timeoutConfigKeyFor(NhlImportStages::CONNECT_EVENTS))
-        ->toBe('apiImportNhl.max_connect_events_seconds');
+        ->toBe('apiImportNhl.max_connect_events_seconds')
+        ->and(NhlImportStages::timeoutConfigKeyFor(NhlImportStages::HTML_PBP_VERIFY))
+        ->toBe('apiImportNhl.max_html_pbp_verify_seconds');
 });
 
 it('atomically claims a scheduled progress row by marking it running', function (): void {
@@ -268,7 +276,7 @@ it('skips on-ice stages and still dispatches validation when only the shifts sou
     app(NhlImportOrchestrator::class)->dispatchJob(2026020001, NhlImportStages::SHIFTS);
 
     Bus::assertDispatched(ValidateNhlGameSummaryJob::class);
-    foreach ([NhlImportStages::SHIFTS, NhlImportStages::SHIFT_UNITS, NhlImportStages::CONNECT_EVENTS, NhlImportStages::SUM_GAME_UNITS] as $stage) {
+    foreach ([NhlImportStages::SHIFTS, NhlImportStages::SHIFT_UNITS, NhlImportStages::CONNECT_EVENTS, NhlImportStages::HTML_PBP_VERIFY, NhlImportStages::SUM_GAME_UNITS] as $stage) {
         $this->assertDatabaseHas('nhl_import_progress', [
             'game_id' => '2026020001',
             'import_type' => $stage,

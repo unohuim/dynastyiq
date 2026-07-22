@@ -1,0 +1,1 @@
+{"seriesTitle":"1st Round","teams":{"topSeed":{"name":{"default":"Boston Bruins","fr":"Bruins de Boston"},"commonName":{"default":"Bruins"},"tricode":"BOS","teamSlug":"boston-bruins-6"},"bottomSeed":{"name":{"default":"Florida Panthers","fr":"Panthers de la Floride"},"commonName":{"default":"Panthers"},"tricode":"FLA","teamSlug":"florida-panthers-13"}}}

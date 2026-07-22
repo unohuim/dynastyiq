@@ -94,6 +94,17 @@ class NhlGameSourcePreflight
             ->where('source', NhlGameSourceStatus::SOURCE_SHIFTS)
             ->value('status');
 
+        if ($status !== NhlGameSourceStatus::STATUS_AVAILABLE) {
+            $htmlToiStatus = NhlGameSourceStatus::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('source', NhlGameSourceStatus::SOURCE_HTML_TOI)
+                ->value('status');
+
+            if ($htmlToiStatus === NhlGameSourceStatus::STATUS_AVAILABLE) {
+                return true;
+            }
+        }
+
         return $status === null || $status === NhlGameSourceStatus::STATUS_AVAILABLE;
     }
 
@@ -248,8 +259,8 @@ class NhlGameSourcePreflight
                 && $status['status'] !== NhlGameSourceStatus::STATUS_AVAILABLE
         ));
         $coreAllowed = $blockedCore === [];
-        $onIceAllowed = $blockedOnIce === [];
-        $blocked = array_merge($blockedCore, $blockedOnIce);
+        $onIceAllowed = true;
+        $blocked = $blockedCore;
 
         return [
             'allowed' => $coreAllowed,

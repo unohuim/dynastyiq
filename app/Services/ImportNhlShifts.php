@@ -44,7 +44,7 @@ class ImportNhlShifts
         );
 
         if (empty($response['data'])) {
-            return 0;
+            return app(ImportNhlHtmlToiShifts::class)->import((int) $nhlGameId);
         }
 
         $shiftsData = $response['data'];

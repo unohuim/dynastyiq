@@ -14,12 +14,16 @@ location:
   - app/Services/NhlPlusMinusCalculator.php
   - app/Services/SumNHLPlayByPlay.php
   - app/Services/ImportNhlShifts.php
+  - app/Services/ImportNhlHtmlToiShifts.php
   - app/Services/ImportNhlBoxscore.php
   - app/Services/CompareNhlPbPBoxscore.php
   - app/Services/ValidateNhlGameSummary.php
   - app/Services/NhlValidationTroubleshootingExporter.php
   - app/Services/MakeNhlGameShiftUnits.php
   - app/Services/ConnectEventsToUnitShifts.php
+  - app/Services/NhlHtmlPbpReportLocator.php
+  - app/Services/NhlHtmlPbpReportParser.php
+  - app/Services/VerifyNhlHtmlPlayByPlay.php
   - app/Services/SumNhlGameUnits.php
   - app/Services/SumNhlGameStrengthUnits.php
   - app/Services/SumNhlSeasonStats.php
@@ -52,8 +56,10 @@ rules:
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.
   - Penalty-shot attempts must preserve the raw attempt situation code but derive stored strength from the same-clock penalty-shot penalty row when the attempt situation is reset to penalty-shot-only manpower.
+  - Penalty-shot attempts must be preserved as trackable events, but must not count as normal shots on goal, normal saves, normal shot attempts, or normal event-unit links.
   - Core NHL game import stages require PBP and boxscore feeds.
-  - Shift-derived on-ice stages additionally require the shiftcharts feed.
+  - Shiftcharts remain the primary source for shift windows, but missing or empty shiftcharts may fall back to official HTML TV/TH time-on-ice reports when those reports can produce player shift windows.
+  - HTML TV/TH fallback shift imports must store an auditable `html-toi` source status and must continue to preserve the original missing or empty `shifts` source status.
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
   - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
   - Summary validation may return invalidated for game type 1 when preseason provider deltas exist but the game import should continue.
@@ -80,6 +86,15 @@ rules:
   - Failed or invalidated summary validations should write per-game troubleshooting snapshots and raw provider payload text files for boxscore, play-by-play, and shifts when a troubleshooting path is configured.
   - Unit shifts are naturally identified by unit_id plus nhl_game_id plus start_game_seconds.
   - Event-unit links are naturally identified by event_id plus unit_shift_id.
+  - Event-unit linking must treat shiftchart rows that start or end exactly at an event timestamp as ambiguous, and may use the matched HTML play-by-play event row as the event-level on-ice authority when the parsed HTML players fully resolve to existing unit shifts.
+  - HTML play-by-play verification runs only after API play-by-play rows have been linked to unit shifts.
+  - HTML play-by-play verification may enrich unit-shift player position rows but must not overwrite canonical API play-by-play fields.
+  - HTML play-by-play verification must not report on-ice player mismatches for `period-end` or `game-end` rows because those rows can carry presentation-only player groups after the meaningful same-clock event.
+  - HTML play-by-play verification must treat shootout `MISS` failed-attempt rows as equivalent to API `failed-shot-attempt` rows.
+  - Missing right-rail or HTML play-by-play reports must create non-fatal review context rather than failing the core game import.
+  - HTML/API play-by-play disagreements must be persisted for admin review without blocking downstream summaries.
+  - HTML TV/TH time-on-ice reports may be captured for troubleshooting source disagreements, compared against official boxscore, raw shiftcharts, and derived summaries, and used as fallback shift windows when shiftcharts are missing, but must not replace API play-by-play as the event source.
+  - Unit-shift player positions are naturally identified by unit_shift_id plus player_id.
   - Skater plus/minus must be calculated from eligible linked goal events after event-unit links exist.
   - Plus/minus calculations must count even-strength and shorthanded goals, exclude power-play goals, exclude shootout goals, exclude penalty-shot goals, and deduplicate a player once per goal event.
   - Persisted player-game plus/minus must reconcile to official boxscore values when available because exact goal-time shift boundaries can be provider-ambiguous.
@@ -101,12 +116,16 @@ public_interface:
   - NhlPlusMinusCalculator
   - SumNHLPlayByPlay
   - ImportNhlShifts
+  - ImportNhlHtmlToiShifts
   - ImportNhlBoxscore
   - CompareNhlPbPBoxscore
   - ValidateNhlGameSummary
   - NhlValidationTroubleshootingExporter
   - MakeNhlGameShiftUnits
   - ConnectEventsToUnitShifts
+  - NhlHtmlPbpReportLocator
+  - NhlHtmlPbpReportParser
+  - VerifyNhlHtmlPlayByPlay
   - SumNhlGameUnits
   - SumNhlGameStrengthUnits
   - SumNhlSeasonStats

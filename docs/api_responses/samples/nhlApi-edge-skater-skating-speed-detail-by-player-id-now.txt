@@ -1,0 +1,533 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/skater-skating-speed-detail/8482116/now",
+    "payload": {
+        "topSkatingSpeeds": [
+            {
+                "gameCenterLink": "/gamecenter/col-vs-ott/2026/01/28/2025020841",
+                "gameDate": "2026-01-28",
+                "gameType": 2,
+                "playerOnHomeTeam": true,
+                "skatingSpeed": {
+                    "imperial": 23.5373,
+                    "metric": 37.8796
+                },
+                "timeInPeriod": "02:13",
+                "periodDescriptor": {
+                    "number": 2,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Avalanche"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Colorado",
+                        "fr": "du Colorado"
+                    },
+                    "abbrev": "COL",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/COL_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/COL_dark.svg"
+                    },
+                    "slug": "colorado-avalanche-21"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-ana/2025/11/20/2025020329",
+                "gameDate": "2025-11-20",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 23.4749,
+                    "metric": 37.7792
+                },
+                "timeInPeriod": "14:40",
+                "periodDescriptor": {
+                    "number": 1,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Ducks"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Anaheim",
+                        "fr": "d'Anaheim"
+                    },
+                    "abbrev": "ANA",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/ANA_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/ANA_dark.svg"
+                    },
+                    "slug": "anaheim-ducks-24"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/pit-vs-ott/2025/12/18/2025020537",
+                "gameDate": "2025-12-18",
+                "gameType": 2,
+                "playerOnHomeTeam": true,
+                "skatingSpeed": {
+                    "imperial": 23.4317,
+                    "metric": 37.7097
+                },
+                "timeInPeriod": "15:12",
+                "periodDescriptor": {
+                    "number": 2,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Penguins"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Pittsburgh",
+                        "fr": "de Pittsburgh"
+                    },
+                    "abbrev": "PIT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/PIT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/PIT_dark.svg"
+                    },
+                    "slug": "pittsburgh-penguins-5"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-fla/2026/03/31/2025021181",
+                "gameDate": "2026-03-31",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 23.3899,
+                    "metric": 37.6424
+                },
+                "timeInPeriod": "16:20",
+                "periodDescriptor": {
+                    "number": 3,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Panthers"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Florida",
+                        "fr": "de la Floride"
+                    },
+                    "abbrev": "FLA",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/FLA_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/FLA_dark.svg"
+                    },
+                    "slug": "florida-panthers-13"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/mtl-vs-ott/2026/03/11/2025021025",
+                "gameDate": "2026-03-11",
+                "gameType": 2,
+                "playerOnHomeTeam": true,
+                "skatingSpeed": {
+                    "imperial": 23.282,
+                    "metric": 37.4687
+                },
+                "timeInPeriod": "16:34",
+                "periodDescriptor": {
+                    "number": 3,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Canadiens"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Montréal",
+                        "fr": "de Montréal"
+                    },
+                    "abbrev": "MTL",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/MTL_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/MTL_dark.svg"
+                    },
+                    "slug": "montreal-canadiens-8"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-nyi/2026/04/11/2025021262",
+                "gameDate": "2026-04-11",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 22.9702,
+                    "metric": 36.967
+                },
+                "timeInPeriod": "11:34",
+                "periodDescriptor": {
+                    "number": 3,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Islanders"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "New York",
+                        "fr": "de New York"
+                    },
+                    "abbrev": "NYI",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/NYI_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/NYI_dark.svg"
+                    },
+                    "slug": "new-york-islanders-2"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-nsh/2026/01/22/2025020798",
+                "gameDate": "2026-01-22",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 22.9374,
+                    "metric": 36.9142
+                },
+                "timeInPeriod": "14:11",
+                "periodDescriptor": {
+                    "number": 3,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Predators"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Nashville",
+                        "fr": "de Nashville"
+                    },
+                    "abbrev": "NSH",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/NSH_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/NSH_dark.svg"
+                    },
+                    "slug": "nashville-predators-18"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-wsh/2026/03/18/2025021079",
+                "gameDate": "2026-03-18",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 22.8714,
+                    "metric": 36.808
+                },
+                "timeInPeriod": "17:56",
+                "periodDescriptor": {
+                    "number": 3,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Capitals"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Washington",
+                        "fr": "de Washington"
+                    },
+                    "abbrev": "WSH",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/WSH_secondary_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/WSH_secondary_dark.svg"
+                    },
+                    "slug": "washington-capitals-15"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-cbj/2025/12/11/2025020486",
+                "gameDate": "2025-12-11",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 22.7739,
+                    "metric": 36.651
+                },
+                "timeInPeriod": "10:14",
+                "periodDescriptor": {
+                    "number": 2,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Blue Jackets"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Columbus",
+                        "fr": "de Columbus"
+                    },
+                    "abbrev": "CBJ",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/CBJ_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/CBJ_dark.svg"
+                    },
+                    "slug": "columbus-blue-jackets-29"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-tbl/2025/10/09/2025020011",
+                "gameDate": "2025-10-09",
+                "gameType": 2,
+                "playerOnHomeTeam": false,
+                "skatingSpeed": {
+                    "imperial": 22.7712,
+                    "metric": 36.6467
+                },
+                "timeInPeriod": "19:12",
+                "periodDescriptor": {
+                    "number": 2,
+                    "periodType": "REG",
+                    "maxRegulationPeriods": 3
+                },
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Lightning"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Tampa Bay",
+                        "fr": "de Tampa Bay"
+                    },
+                    "abbrev": "TBL",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/TBL_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/TBL_dark.svg"
+                    },
+                    "slug": "tampa-bay-lightning-14"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            }
+        ],
+        "skatingSpeedDetails": {
+            "maxSkatingSpeed": {
+                "imperial": 23.5373,
+                "metric": 37.8795,
+                "percentile": 0.956,
+                "leagueAvg": {
+                    "imperial": 22.1684,
+                    "metric": 35.6765
+                },
+                "overlay": {
+                    "player": {
+                        "firstName": {
+                            "default": "Tim"
+                        },
+                        "lastName": {
+                            "default": "Stützle"
+                        }
+                    },
+                    "gameDate": "2026-01-28",
+                    "awayTeam": {
+                        "abbrev": "COL",
+                        "score": 2
+                    },
+                    "homeTeam": {
+                        "abbrev": "OTT",
+                        "score": 5
+                    },
+                    "gameOutcome": {
+                        "lastPeriodType": "REG"
+                    },
+                    "periodDescriptor": {
+                        "maxRegulationPeriods": 3,
+                        "number": 2,
+                        "periodType": "REG"
+                    },
+                    "timeInPeriod": "02:13",
+                    "gameType": 2
+                }
+            },
+            "burstsOver22": {
+                "value": 46,
+                "percentile": 0.9967,
+                "leagueAvg": 3.8472
+            },
+            "bursts20To22": {
+                "value": 318,
+                "percentile": 0.9935,
+                "leagueAvg": 71.3528
+            },
+            "bursts18To20": {
+                "value": 756,
+                "percentile": 0.9805,
+                "leagueAvg": 313.7463
+            }
+        }
+    }
+}

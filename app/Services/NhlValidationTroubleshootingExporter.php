@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\NhlBoxscore;
 use App\Models\NhlGameValidation;
+use App\Models\NhlPbpSourceMismatch;
 use App\Models\NhlShift;
 use App\Models\PlayByPlay;
 use Illuminate\Support\Collection;
@@ -68,6 +69,58 @@ class NhlValidationTroubleshootingExporter
 
         $this->writeFile($directory, "stoppage_{$gameId}.md", fn (): string => $this->stoppageMarkdown($gameId, $context));
         $this->writeRawProviderFiles($directory, $gameId);
+    }
+
+    /**
+     * Export raw API/HTML PBP payloads and first mismatch details for HTML PBP verification failures.
+     */
+    public function exportHtmlPbpVerification(
+        NhlGameValidation $validation,
+        string $apiUrl,
+        ?string $htmlUrl
+    ): void {
+        $root = (string) config('apiImportNhl.validation_troubleshooting_path');
+        if ($root === '') {
+            return;
+        }
+
+        $gameId = (int) $validation->nhl_game_id;
+        $directory = $root . '/' . $gameId;
+
+        try {
+            File::ensureDirectoryExists($directory);
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to create NHL HTML PBP troubleshooting directory.', [
+                'game_id' => $gameId,
+                'directory' => $directory,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return;
+        }
+
+        $this->writeFileIfMissing(
+            $directory,
+            "raw_api_pbp_{$gameId}.json",
+            fn (): string => $this->rawJsonPayload('api_pbp', $apiUrl)
+        );
+
+        $this->writeFileIfMissing(
+            $directory,
+            "raw_html_pbp_{$gameId}.html",
+            fn (): string => $htmlUrl !== null && $htmlUrl !== ''
+                ? $this->rawTextPayload('html_pbp', $htmlUrl, 'text/html')
+                : "source: html_pbp\nurl: N/A\nerror: HTML play-by-play report URL was not available.\n"
+        );
+
+        $validation->loadMissing([
+            'pbpSourceMismatches' => fn ($query) => $query
+                ->orderByRaw("CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END")
+                ->orderBy('period')
+                ->orderBy('time_in_period'),
+        ]);
+
+        $this->writeFile($directory, 'errors.txt', fn (): string => $this->htmlPbpErrorsText($validation, $apiUrl, $htmlUrl));
     }
 
     /**
@@ -155,6 +208,273 @@ class NhlValidationTroubleshootingExporter
                 'error' => $exception->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Fetch one raw text provider payload.
+     */
+    private function rawTextPayload(string $source, string $url, string $accept): string
+    {
+        try {
+            $response = Http::timeout(30)->accept($accept)->get($url)->throw();
+
+            return $response->body();
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to fetch raw NHL validation troubleshooting text payload.', [
+                'source' => $source,
+                'url' => $url,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return "source: {$source}\nurl: {$url}\nerror: {$exception->getMessage()}\n";
+        }
+    }
+
+    /**
+     * Fetch one raw JSON provider payload.
+     */
+    private function rawJsonPayload(string $source, string $url): string
+    {
+        try {
+            $response = Http::timeout(30)->acceptJson()->get($url)->throw();
+
+            return $response->body();
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to fetch raw NHL validation troubleshooting JSON payload.', [
+                'source' => $source,
+                'url' => $url,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return $this->prettyJson([
+                'source' => $source,
+                'url' => $url,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Write a file only when it does not already exist.
+     */
+    private function writeFileIfMissing(string $directory, string $filename, callable $content): void
+    {
+        if (File::exists($directory . '/' . $filename)) {
+            return;
+        }
+
+        $this->writeFile($directory, $filename, $content);
+    }
+
+    /**
+     * Render the first five HTML/API PBP mismatches for offline review.
+     */
+    private function htmlPbpErrorsText(NhlGameValidation $validation, string $apiUrl, ?string $htmlUrl): string
+    {
+        $lines = [
+            "HTML/API PBP Review {$validation->nhl_game_id}",
+            '',
+            'Status: ' . $validation->status,
+            'Mismatch count: ' . (int) $validation->mismatch_count,
+            'Checked: ' . (optional($validation->checked_at)->toDateTimeString() ?? 'N/A'),
+            'HTML: ' . ($htmlUrl ?: 'N/A'),
+            'API: ' . $apiUrl,
+            '',
+        ];
+
+        $mismatches = $validation->pbpSourceMismatches->take(5);
+
+        if ($mismatches->isEmpty()) {
+            $lines[] = 'No mismatch rows stored.';
+
+            return implode("\n", $lines) . "\n";
+        }
+
+        foreach ($mismatches as $index => $mismatch) {
+            /** @var NhlPbpSourceMismatch $mismatch */
+            $apiEvent = $this->fullApiEventPayload($mismatch);
+            $htmlEvent = is_array($mismatch->html_event) ? $mismatch->html_event : null;
+            $shiftchartDifference = $this->shiftchartDifference($mismatch);
+
+            $lines[] = '---';
+            $lines[] = 'Error ' . ($index + 1);
+            $lines[] = 'Severity: ' . ($mismatch->severity ?? 'N/A');
+            $lines[] = 'Type: ' . ($mismatch->mismatch_type ?? 'N/A');
+            $lines[] = 'Event: ' . ($mismatch->nhl_event_id ?? 'N/A');
+            $lines[] = 'Time: P' . ($mismatch->period ?? 'N/A') . ' ' . ($mismatch->time_in_period ?? 'N/A');
+            $lines[] = 'Source: ' . ($mismatch->source_url ?? 'N/A');
+            $lines[] = 'API event payload:';
+            $lines[] = $this->jsonBlock($apiEvent);
+            $lines[] = 'HTML PBP event payload:';
+            $lines[] = $this->jsonBlock($htmlEvent);
+            $lines[] = 'Shiftchart player comparison:';
+            $lines[] = $this->jsonBlock([
+                'missing_from_shiftcharts' => $shiftchartDifference['missing_from_shiftcharts'],
+                'extra_in_shiftcharts' => $shiftchartDifference['extra_in_shiftcharts'],
+            ]);
+
+            if ($shiftchartDifference['players'] !== []) {
+                $lines[] = 'Shift context for missing/extra players:';
+                $lines[] = $this->jsonBlock($shiftchartDifference['players']);
+            }
+
+            $lines[] = '';
+        }
+
+        return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * Return the full local API event row when available.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function fullApiEventPayload(NhlPbpSourceMismatch $mismatch): ?array
+    {
+        if ($mismatch->play_by_play_id === null) {
+            return is_array($mismatch->api_event) ? $mismatch->api_event : null;
+        }
+
+        $event = PlayByPlay::query()->find($mismatch->play_by_play_id);
+
+        return $event instanceof PlayByPlay
+            ? $event->attributesToArray()
+            : (is_array($mismatch->api_event) ? $mismatch->api_event : null);
+    }
+
+    /**
+     * Calculate HTML-vs-shiftchart player differences and nearby shift rows.
+     *
+     * @return array{
+     *     missing_from_shiftcharts:array<int,int>,
+     *     extra_in_shiftcharts:array<int,int>,
+     *     players:array<int,array<string,mixed>>
+     * }
+     */
+    private function shiftchartDifference(NhlPbpSourceMismatch $mismatch): array
+    {
+        $htmlEvent = is_array($mismatch->html_event) ? $mismatch->html_event : [];
+        $htmlIds = collect($htmlEvent['resolved_html_on_ice_player_ids'] ?? [])
+            ->map(fn (mixed $id): int => (int) $id)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+        $shiftchartIds = collect($htmlEvent['linked_on_ice_player_ids'] ?? [])
+            ->map(fn (mixed $id): int => (int) $id)
+            ->filter()
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $missingFromShiftcharts = array_values(array_diff($htmlIds, $shiftchartIds));
+        $extraInShiftcharts = array_values(array_diff($shiftchartIds, $htmlIds));
+        $playerIds = array_values(array_unique([...$missingFromShiftcharts, ...$extraInShiftcharts]));
+        $htmlPlayers = collect($htmlEvent['resolved_html_on_ice_players'] ?? [])
+            ->filter(fn (mixed $player): bool => is_array($player))
+            ->groupBy(fn (array $player): int => (int) ($player['nhl_player_id'] ?? 0));
+        $linkedPlayers = collect($htmlEvent['linked_on_ice_players'] ?? [])
+            ->filter(fn (mixed $player): bool => is_array($player))
+            ->groupBy(fn (array $player): int => (int) ($player['nhl_player_id'] ?? 0));
+
+        if ($playerIds === []) {
+            return [
+                'missing_from_shiftcharts' => $missingFromShiftcharts,
+                'extra_in_shiftcharts' => $extraInShiftcharts,
+                'players' => [],
+            ];
+        }
+
+        $eventSecond = $this->eventSecond($mismatch);
+        $gameId = (int) $mismatch->validation->nhl_game_id;
+
+        return [
+            'missing_from_shiftcharts' => $missingFromShiftcharts,
+            'extra_in_shiftcharts' => $extraInShiftcharts,
+            'players' => collect($playerIds)
+                ->map(fn (int $playerId): array => [
+                    'nhl_player_id' => $playerId,
+                    'classification' => in_array($playerId, $missingFromShiftcharts, true) ? 'missing_from_shiftcharts' : 'extra_in_shiftcharts',
+                    'html_player_payloads' => $htmlPlayers->get($playerId, collect())->values()->all(),
+                    'linked_shiftchart_player_payloads' => $linkedPlayers->get($playerId, collect())->values()->all(),
+                    'previous_shift' => $eventSecond !== null ? $this->shiftSnapshot(
+                        NhlShift::query()
+                            ->where('nhl_game_id', $gameId)
+                            ->where('nhl_player_id', $playerId)
+                            ->where('shift_end_seconds', '<=', $eventSecond)
+                            ->orderByDesc('shift_end_seconds')
+                            ->orderByDesc('shift_start_seconds')
+                            ->first()
+                    ) : null,
+                    'active_shifts' => $eventSecond !== null ? NhlShift::query()
+                        ->where('nhl_game_id', $gameId)
+                        ->where('nhl_player_id', $playerId)
+                        ->where('shift_start_seconds', '<=', $eventSecond)
+                        ->where('shift_end_seconds', '>', $eventSecond)
+                        ->orderBy('shift_start_seconds')
+                        ->limit(3)
+                        ->get()
+                        ->map(fn (NhlShift $shift): array => $this->shiftSnapshot($shift))
+                        ->all() : [],
+                    'next_shift' => $eventSecond !== null ? $this->shiftSnapshot(
+                        NhlShift::query()
+                            ->where('nhl_game_id', $gameId)
+                            ->where('nhl_player_id', $playerId)
+                            ->where('shift_start_seconds', '>', $eventSecond)
+                            ->orderBy('shift_start_seconds')
+                            ->orderBy('shift_end_seconds')
+                            ->first()
+                    ) : null,
+                ])
+                ->values()
+                ->all(),
+        ];
+    }
+
+    private function eventSecond(NhlPbpSourceMismatch $mismatch): ?int
+    {
+        if ($mismatch->play_by_play_id !== null) {
+            $seconds = PlayByPlay::query()
+                ->whereKey($mismatch->play_by_play_id)
+                ->value('seconds_in_game');
+
+            if ($seconds !== null) {
+                return (int) $seconds;
+            }
+        }
+
+        $period = (int) ($mismatch->period ?? 0);
+        $clock = (string) ($mismatch->time_in_period ?? '');
+
+        if ($period < 1 || ! preg_match('/^(\d{1,2}):(\d{2})$/', $clock, $matches)) {
+            return null;
+        }
+
+        return (($period - 1) * 1200) + ((int) $matches[1] * 60) + (int) $matches[2];
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function shiftSnapshot(?NhlShift $shift): ?array
+    {
+        if (! $shift instanceof NhlShift) {
+            return null;
+        }
+
+        return $shift->attributesToArray();
+    }
+
+    /**
+     * @param mixed $value
+     */
+    private function jsonBlock(mixed $value): string
+    {
+        $json = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+        return $json === false ? 'null' : $json;
     }
 
     /**

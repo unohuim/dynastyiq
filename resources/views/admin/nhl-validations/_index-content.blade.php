@@ -1,9 +1,13 @@
 <div class="{{ ($embedded ?? false) ? '' : 'py-6' }}">
     <div class="{{ ($embedded ?? false) ? '' : 'mx-auto max-w-7xl px-4 sm:px-6 lg:px-8' }}">
+        @php
+            $validationType = $validationType ?? null;
+            $isPbpHtmlReport = $validationType === \App\Models\NhlGameValidation::TYPE_PBP_HTML_REPORT;
+        @endphp
         <div class="mb-4 flex flex-wrap gap-2">
             @foreach(['failed' => 'Failed', 'shiftchart-mismatch' => 'Shifts Mismatch', 'invalidated' => 'Invalidated', 'incomplete' => 'Incomplete', 'approved' => 'Approved', 'accepted_exception' => 'Accepted', 'all' => 'All'] as $value => $label)
                 <a
-                    href="{{ route('admin.nhl-validations.index', array_filter(['status' => $value, 'admin_panel' => ($embedded ?? false) ? 1 : null])) }}"
+                    href="{{ route('admin.nhl-validations.index', array_filter(['status' => $value, 'validation_type' => $validationType, 'admin_panel' => ($embedded ?? false) ? 1 : null])) }}"
                     class="inline-flex min-h-9 items-center rounded px-3 text-sm font-medium {{ $status === $value ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 hover:bg-gray-50' }}"
                 >
                     {{ $label }}
@@ -17,7 +21,7 @@
                     <tr>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Game</th>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Status</th>
-                        <th class="px-4 py-3 text-left font-semibold text-gray-700">Deltas</th>
+                        <th class="px-4 py-3 text-left font-semibold text-gray-700">{{ $isPbpHtmlReport ? 'Mismatches' : 'Deltas' }}</th>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Checked</th>
                         <th class="px-4 py-3 text-right font-semibold text-gray-700">Action</th>
                     </tr>
@@ -35,8 +39,11 @@
                                 <span class="inline-flex rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
                                     {{ str_replace('_', ' ', $validation->status) }}
                                 </span>
+                                @if($validation->resolution)
+                                    <div class="mt-1 text-xs text-gray-500">{{ str_replace('_', ' ', $validation->resolution) }}</div>
+                                @endif
                             </td>
-                            <td class="px-4 py-3 text-gray-900">{{ $validation->mismatch_count }}</td>
+                            <td class="px-4 py-3 text-gray-900">{{ $isPbpHtmlReport ? $validation->pbp_source_mismatches_count : $validation->mismatch_count }}</td>
                             <td class="px-4 py-3 text-gray-600">{{ optional($validation->checked_at)->toDateTimeString() ?? 'N/A' }}</td>
                             <td class="px-4 py-3 text-right">
                                 @if($embedded ?? false)
@@ -46,9 +53,9 @@
                                             class="inline-flex min-h-8 items-center justify-center rounded border border-gray-300 bg-white px-2 text-xs font-semibold text-gray-700 shadow-sm transition-colors duration-150 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                                             data-validation-rebuild
                                             data-validation-id="{{ $validation->id }}"
-                                            data-validation-rebuild-url="{{ route('admin.nhl-validations.rebuild-game', $validation) }}"
+                                            data-validation-rebuild-url="{{ $isPbpHtmlReport ? route('admin.nhl-validations.rerun-html-pbp', $validation) : route('admin.nhl-validations.rebuild-game', $validation) }}"
                                         >
-                                            <span data-validation-rebuild-label>Re Run</span>
+                                            <span data-validation-rebuild-label>{{ $isPbpHtmlReport ? 'Verify' : 'Re Run' }}</span>
                                         </button>
                                         <button
                                             type="button"

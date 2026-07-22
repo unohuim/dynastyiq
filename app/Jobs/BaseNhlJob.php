@@ -147,6 +147,7 @@ abstract class BaseNhlJob implements ShouldQueue
             NhlImportStages::SHIFTS => $this->clearRawShifts($gameId),
             NhlImportStages::SHIFT_UNITS => $this->clearUnitShiftOutputs($gameId),
             NhlImportStages::CONNECT_EVENTS => $this->clearEventUnitLinks($gameId),
+            NhlImportStages::HTML_PBP_VERIFY => $this->clearHtmlPbpVerification($gameId),
             NhlImportStages::SUM_GAME_UNITS => $this->clearUnitSummaryOutputs($gameId),
             default => null,
         };
@@ -157,6 +158,7 @@ abstract class BaseNhlJob implements ShouldQueue
      */
     private function clearFullGameSyncData(int $gameId): void
     {
+        $this->clearHtmlPbpVerification($gameId);
         $this->clearEventUnitLinks($gameId);
         $this->clearUnitSummaryOutputs($gameId);
         DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
@@ -189,7 +191,30 @@ abstract class BaseNhlJob implements ShouldQueue
     {
         $this->clearEventUnitLinks($gameId);
         $this->clearUnitSummaryOutputs($gameId);
+        DB::table('nhl_unit_shift_players')
+            ->whereIn('unit_shift_id', function ($query) use ($gameId): void {
+                $query->select('id')
+                    ->from('nhl_unit_shifts')
+                    ->where('nhl_game_id', $gameId);
+            })
+            ->delete();
         DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
+    }
+
+    private function clearHtmlPbpVerification(int $gameId): void
+    {
+        DB::table('nhl_unit_shift_players')
+            ->whereIn('unit_shift_id', function ($query) use ($gameId): void {
+                $query->select('id')
+                    ->from('nhl_unit_shifts')
+                    ->where('nhl_game_id', $gameId);
+            })
+            ->delete();
+
+        DB::table('nhl_game_validations')
+            ->where('nhl_game_id', $gameId)
+            ->where('validation_type', \App\Models\NhlGameValidation::TYPE_PBP_HTML_REPORT)
+            ->delete();
     }
 
     private function clearUnitSummaryOutputs(int $gameId): void

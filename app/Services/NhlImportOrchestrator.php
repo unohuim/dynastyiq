@@ -19,6 +19,7 @@ class NhlImportOrchestrator
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
         NhlImportStages::CONNECT_EVENTS,
+        NhlImportStages::HTML_PBP_VERIFY,
         NhlImportStages::SUM_GAME_UNITS,
     ];
 

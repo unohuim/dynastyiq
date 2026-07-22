@@ -6,6 +6,7 @@ namespace App\Support;
 
 use App\Jobs\BaseNhlJob;
 use App\Jobs\ConnectEventsShiftUnitsNhlJob;
+use App\Jobs\VerifyHtmlPbpNhlJob;
 use App\Jobs\ImportBoxscoreNhlJob;
 use App\Jobs\ImportPbpNhlJob;
 use App\Jobs\ImportShiftsNhlJob;
@@ -25,6 +26,7 @@ final class NhlImportStages
     public const SHIFTS = 'shifts';
     public const SHIFT_UNITS = 'shift-units';
     public const CONNECT_EVENTS = 'connect-events';
+    public const HTML_PBP_VERIFY = 'html-pbp-verify';
     public const SUM_GAME_UNITS = 'sum-game-units';
     public const VALIDATE_SUMMARY = 'validate-summary';
 
@@ -42,6 +44,7 @@ final class NhlImportStages
             self::SHIFTS,
             self::SHIFT_UNITS,
             self::CONNECT_EVENTS,
+            self::HTML_PBP_VERIFY,
             self::SUM_GAME_UNITS,
             self::VALIDATE_SUMMARY,
         ];
@@ -72,6 +75,14 @@ final class NhlImportStages
                 self::SHIFTS,
                 self::SHIFT_UNITS,
             ],
+            self::HTML_PBP_VERIFY => [
+                self::PBP,
+                self::SUMMARY,
+                self::BOXSCORE,
+                self::SHIFTS,
+                self::SHIFT_UNITS,
+                self::CONNECT_EVENTS,
+            ],
             self::SUM_GAME_UNITS => [
                 self::PBP,
                 self::SUMMARY,
@@ -79,6 +90,7 @@ final class NhlImportStages
                 self::SHIFTS,
                 self::SHIFT_UNITS,
                 self::CONNECT_EVENTS,
+                self::HTML_PBP_VERIFY,
             ],
             self::VALIDATE_SUMMARY => [
                 self::PBP,
@@ -87,6 +99,7 @@ final class NhlImportStages
                 self::SHIFTS,
                 self::SHIFT_UNITS,
                 self::CONNECT_EVENTS,
+                self::HTML_PBP_VERIFY,
                 self::SUM_GAME_UNITS,
             ],
             default => [],
@@ -122,6 +135,7 @@ final class NhlImportStages
             self::SHIFTS => ImportShiftsNhlJob::class,
             self::SHIFT_UNITS => MakeShiftUnitsNhlJob::class,
             self::CONNECT_EVENTS => ConnectEventsShiftUnitsNhlJob::class,
+            self::HTML_PBP_VERIFY => VerifyHtmlPbpNhlJob::class,
             self::SUM_GAME_UNITS => SumNhlGameUnitsJob::class,
             self::VALIDATE_SUMMARY => ValidateNhlGameSummaryJob::class,
             default => null,
@@ -140,6 +154,7 @@ final class NhlImportStages
             self::SHIFTS => 'apiImportNhl.max_shifts_seconds',
             self::SHIFT_UNITS => 'apiImportNhl.max_shift_units_seconds',
             self::CONNECT_EVENTS => 'apiImportNhl.max_connect_events_seconds',
+            self::HTML_PBP_VERIFY => 'apiImportNhl.max_html_pbp_verify_seconds',
             self::SUM_GAME_UNITS => 'apiImportNhl.max_sum_game_units_seconds',
             self::VALIDATE_SUMMARY => 'apiImportNhl.max_validate_summary_seconds',
             default => null,

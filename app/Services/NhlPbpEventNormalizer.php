@@ -19,6 +19,25 @@ class NhlPbpEventNormalizer
         return ! $this->isShootout($event);
     }
 
+    public function isPenaltyShotAttempt(mixed $event): bool
+    {
+        $metadata = $event->metadata ?? [];
+
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true) ?: [];
+        }
+
+        if (is_array($metadata) && ($metadata['is_penalty_shot_attempt'] ?? false) === true) {
+            return true;
+        }
+
+        $details = is_array($metadata) ? ($metadata['details'] ?? []) : [];
+        $description = strtolower((string) ($event->description ?? $event->html_description ?? ''));
+
+        return str_starts_with(strtolower((string) ($event->desc_key ?? $details['descKey'] ?? '')), 'ps-')
+            || str_contains($description, 'penalty shot');
+    }
+
     public function isShotOnGoal(mixed $event): bool
     {
         if (! $this->isBoxscoreComparable($event)) {
@@ -96,18 +115,22 @@ class NhlPbpEventNormalizer
 
     public function boxscoreSogSqlPredicate(string $alias = 'p'): string
     {
-        return "(COALESCE({$alias}.period_type,'') <> 'SO' AND {$this->shotOnGoalSql($alias)})";
+        return "(COALESCE({$alias}.period_type,'') <> 'SO' "
+            . "AND NOT {$this->penaltyShotAttemptSql($alias)} "
+            . "AND {$this->shotOnGoalSql($alias)})";
     }
 
     public function shotAttemptSqlPredicate(string $alias = 'p'): string
     {
         return "(COALESCE({$alias}.period_type,'') <> 'SO' "
+            . "AND NOT {$this->penaltyShotAttemptSql($alias)} "
             . "AND ({$this->shotOnGoalSql($alias)} OR {$alias}.type_desc_key IN ('missed-shot','blocked-shot')))";
     }
 
     public function unblockedShotAttemptSqlPredicate(string $alias = 'p'): string
     {
         return "(COALESCE({$alias}.period_type,'') <> 'SO' "
+            . "AND NOT {$this->penaltyShotAttemptSql($alias)} "
             . "AND ({$this->shotOnGoalSql($alias)} OR {$alias}.type_desc_key = 'missed-shot'))";
     }
 
@@ -121,5 +144,10 @@ class NhlPbpEventNormalizer
         return "({$alias}.type_desc_key = 'shot-on-goal' "
             . "OR ({$alias}.type_desc_key = 'goal' "
             . "AND {$alias}.shot_type IS NOT NULL))";
+    }
+
+    private function penaltyShotAttemptSql(string $alias): string
+    {
+        return 'FALSE';
     }
 }

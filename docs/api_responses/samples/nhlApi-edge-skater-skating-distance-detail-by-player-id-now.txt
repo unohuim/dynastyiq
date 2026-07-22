@@ -1,0 +1,945 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/edge/skater-skating-distance-detail/8482116/now",
+    "payload": {
+        "skatingDistanceLast10": [
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-nyi/2026/04/11/2025021262",
+                "gameDate": "2026-04-11",
+                "playerOnHomeTeam": false,
+                "distanceSkatedAll": {
+                    "imperial": 3.2175,
+                    "metric": 5.1781
+                },
+                "toiAll": 1260,
+                "distanceSkatedEven": {
+                    "imperial": 1.6765,
+                    "metric": 2.698
+                },
+                "toiEven": 631,
+                "distanceSkatedPP": {
+                    "imperial": 0.9879,
+                    "metric": 1.5899
+                },
+                "toiPP": 381,
+                "distanceSkatedPK": {
+                    "imperial": 0.5532,
+                    "metric": 0.8903
+                },
+                "toiPK": 248,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Islanders"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "New York",
+                        "fr": "de New York"
+                    },
+                    "abbrev": "NYI",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/NYI_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/NYI_dark.svg"
+                    },
+                    "slug": "new-york-islanders-2"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/fla-vs-ott/2026/04/09/2025021249",
+                "gameDate": "2026-04-09",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 2.8003,
+                    "metric": 4.5066
+                },
+                "toiAll": 1009,
+                "distanceSkatedEven": {
+                    "imperial": 2.5391,
+                    "metric": 4.0863
+                },
+                "toiEven": 916,
+                "distanceSkatedPP": {
+                    "imperial": 0.1984,
+                    "metric": 0.3192
+                },
+                "toiPP": 56,
+                "distanceSkatedPK": {
+                    "imperial": 0.0628,
+                    "metric": 0.101
+                },
+                "toiPK": 37,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Panthers"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Florida",
+                        "fr": "de la Floride"
+                    },
+                    "abbrev": "FLA",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/FLA_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/FLA_dark.svg"
+                    },
+                    "slug": "florida-panthers-13"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/tbl-vs-ott/2026/04/07/2025021234",
+                "gameDate": "2026-04-07",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 3.0165,
+                    "metric": 4.8546
+                },
+                "toiAll": 1111,
+                "distanceSkatedEven": {
+                    "imperial": 2.6976,
+                    "metric": 4.3413
+                },
+                "toiEven": 953,
+                "distanceSkatedPP": {
+                    "imperial": 0.2363,
+                    "metric": 0.3803
+                },
+                "toiPP": 117,
+                "distanceSkatedPK": {
+                    "imperial": 0.0826,
+                    "metric": 0.133
+                },
+                "toiPK": 41,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Lightning"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Tampa Bay",
+                        "fr": "de Tampa Bay"
+                    },
+                    "abbrev": "TBL",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/TBL_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/TBL_dark.svg"
+                    },
+                    "slug": "tampa-bay-lightning-14"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/car-vs-ott/2026/04/05/2025021225",
+                "gameDate": "2026-04-05",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 2.7153,
+                    "metric": 4.3698
+                },
+                "toiAll": 1016,
+                "distanceSkatedEven": {
+                    "imperial": 2.1998,
+                    "metric": 3.5403
+                },
+                "toiEven": 786,
+                "distanceSkatedPP": {
+                    "imperial": 0.3493,
+                    "metric": 0.5621
+                },
+                "toiPP": 132,
+                "distanceSkatedPK": {
+                    "imperial": 0.1662,
+                    "metric": 0.2674
+                },
+                "toiPK": 98,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Hurricanes"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Carolina",
+                        "fr": "de la Caroline"
+                    },
+                    "abbrev": "CAR",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/CAR_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/CAR_dark.svg"
+                    },
+                    "slug": "carolina-hurricanes-12"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/min-vs-ott/2026/04/04/2025021208",
+                "gameDate": "2026-04-04",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 2.8515,
+                    "metric": 4.5891
+                },
+                "toiAll": 991,
+                "distanceSkatedEven": {
+                    "imperial": 2.3479,
+                    "metric": 3.7786
+                },
+                "toiEven": 808,
+                "distanceSkatedPP": {
+                    "imperial": 0.4357,
+                    "metric": 0.7012
+                },
+                "toiPP": 154,
+                "distanceSkatedPK": {
+                    "imperial": 0.0679,
+                    "metric": 0.1092
+                },
+                "toiPK": 29,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Wild"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Minnesota",
+                        "fr": "du Minnesota"
+                    },
+                    "abbrev": "MIN",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/MIN_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/MIN_dark.svg"
+                    },
+                    "slug": "minnesota-wild-30"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/buf-vs-ott/2026/04/02/2025021191",
+                "gameDate": "2026-04-02",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 3.1125,
+                    "metric": 5.0091
+                },
+                "toiAll": 1197,
+                "distanceSkatedEven": {
+                    "imperial": 2.4356,
+                    "metric": 3.9196
+                },
+                "toiEven": 918,
+                "distanceSkatedPP": {
+                    "imperial": 0.4921,
+                    "metric": 0.792
+                },
+                "toiPP": 169,
+                "distanceSkatedPK": {
+                    "imperial": 0.1848,
+                    "metric": 0.2975
+                },
+                "toiPK": 110,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Sabres"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Buffalo",
+                        "fr": "de Buffalo"
+                    },
+                    "abbrev": "BUF",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/BUF_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/BUF_dark.svg"
+                    },
+                    "slug": "buffalo-sabres-7"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-fla/2026/03/31/2025021181",
+                "gameDate": "2026-03-31",
+                "playerOnHomeTeam": false,
+                "distanceSkatedAll": {
+                    "imperial": 3.4347,
+                    "metric": 5.5276
+                },
+                "toiAll": 1265,
+                "distanceSkatedEven": {
+                    "imperial": 1.9266,
+                    "metric": 3.1006
+                },
+                "toiEven": 698,
+                "distanceSkatedPP": {
+                    "imperial": 1.4211,
+                    "metric": 2.2871
+                },
+                "toiPP": 525,
+                "distanceSkatedPK": {
+                    "imperial": 0.0869,
+                    "metric": 0.1399
+                },
+                "toiPK": 42,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Panthers"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Florida",
+                        "fr": "de la Floride"
+                    },
+                    "abbrev": "FLA",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/FLA_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/FLA_dark.svg"
+                    },
+                    "slug": "florida-panthers-13"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-tbl/2026/03/28/2025021152",
+                "gameDate": "2026-03-28",
+                "playerOnHomeTeam": false,
+                "distanceSkatedAll": {
+                    "imperial": 3.555,
+                    "metric": 5.7213
+                },
+                "toiAll": 1301,
+                "distanceSkatedEven": {
+                    "imperial": 3.1653,
+                    "metric": 5.094
+                },
+                "toiEven": 1122,
+                "distanceSkatedPP": {
+                    "imperial": 0.1861,
+                    "metric": 0.2995
+                },
+                "toiPP": 76,
+                "distanceSkatedPK": {
+                    "imperial": 0.2037,
+                    "metric": 0.3278
+                },
+                "toiPK": 103,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Lightning"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Tampa Bay",
+                        "fr": "de Tampa Bay"
+                    },
+                    "abbrev": "TBL",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/TBL_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/TBL_dark.svg"
+                    },
+                    "slug": "tampa-bay-lightning-14"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/pit-vs-ott/2026/03/26/2025021138",
+                "gameDate": "2026-03-26",
+                "playerOnHomeTeam": true,
+                "distanceSkatedAll": {
+                    "imperial": 4.0227,
+                    "metric": 6.4739
+                },
+                "toiAll": 1401,
+                "distanceSkatedEven": {
+                    "imperial": 3.7675,
+                    "metric": 6.0631
+                },
+                "toiEven": 1297,
+                "distanceSkatedPP": {
+                    "imperial": 0.2552,
+                    "metric": 0.4107
+                },
+                "toiPP": 104,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Penguins"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Pittsburgh",
+                        "fr": "de Pittsburgh"
+                    },
+                    "abbrev": "PIT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/PIT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/PIT_dark.svg"
+                    },
+                    "slug": "pittsburgh-penguins-5"
+                }
+            },
+            {
+                "gameCenterLink": "/gamecenter/ott-vs-det/2026/03/24/2025021122",
+                "gameDate": "2026-03-24",
+                "playerOnHomeTeam": false,
+                "distanceSkatedAll": {
+                    "imperial": 2.7773,
+                    "metric": 4.4697
+                },
+                "toiAll": 1053,
+                "distanceSkatedEven": {
+                    "imperial": 2.1526,
+                    "metric": 3.4643
+                },
+                "toiEven": 754,
+                "distanceSkatedPP": {
+                    "imperial": 0.3431,
+                    "metric": 0.5522
+                },
+                "toiPP": 137,
+                "distanceSkatedPK": {
+                    "imperial": 0.2816,
+                    "metric": 0.4532
+                },
+                "toiPK": 162,
+                "homeTeam": {
+                    "commonName": {
+                        "default": "Red Wings"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Detroit",
+                        "fr": "de Detroit"
+                    },
+                    "abbrev": "DET",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/DET_light.svg?season=20252026",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/DET_dark.svg?season=20252026"
+                    },
+                    "slug": "detroit-red-wings-17"
+                },
+                "awayTeam": {
+                    "commonName": {
+                        "default": "Senators",
+                        "fr": "Sénateurs"
+                    },
+                    "placeNameWithPreposition": {
+                        "default": "Ottawa",
+                        "fr": "d'Ottawa"
+                    },
+                    "abbrev": "OTT",
+                    "teamLogo": {
+                        "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                        "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                    },
+                    "slug": "ottawa-senators-9"
+                }
+            }
+        ],
+        "skatingDistanceDetails": [
+            {
+                "strengthCode": "all",
+                "distanceTotal": {
+                    "imperial": 261.3643,
+                    "metric": 420.6046,
+                    "percentile": 0.9723,
+                    "leagueAvg": {
+                        "imperial": 123.5454,
+                        "metric": 198.8173
+                    }
+                },
+                "distancePer60": {
+                    "imperial": 9.6718,
+                    "metric": 15.5645,
+                    "percentile": 0.5459,
+                    "leagueAvg": {
+                        "imperial": 9.6011,
+                        "metric": 15.4507
+                    }
+                },
+                "distanceMaxGame": {
+                    "imperial": 4.2947,
+                    "metric": 6.9112,
+                    "percentile": 0.9756,
+                    "leagueAvg": {
+                        "imperial": 2.9231,
+                        "metric": 4.7041
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2025-10-16",
+                        "awayTeam": {
+                            "abbrev": "SEA",
+                            "score": 3
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 4
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "SO"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                },
+                "distanceMaxPeriod": {
+                    "imperial": 1.833,
+                    "metric": 2.9498,
+                    "percentile": 0.9951,
+                    "leagueAvg": {
+                        "imperial": 1.1579,
+                        "metric": 1.8633
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2026-01-05",
+                        "awayTeam": {
+                            "abbrev": "DET",
+                            "score": 5
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 3
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "REG"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                }
+            },
+            {
+                "strengthCode": "es",
+                "distanceTotal": {
+                    "imperial": 198.5237,
+                    "metric": 319.4773,
+                    "percentile": 0.9169,
+                    "leagueAvg": {
+                        "imperial": 107.1124,
+                        "metric": 172.3723
+                    }
+                },
+                "distancePer60": {
+                    "imperial": 9.9569,
+                    "metric": 16.0233,
+                    "percentile": 0.6541,
+                    "leagueAvg": {
+                        "imperial": 9.8344,
+                        "metric": 15.8262
+                    }
+                },
+                "distanceMaxGame": {
+                    "imperial": 3.7675,
+                    "metric": 6.0628,
+                    "percentile": 0.9723,
+                    "leagueAvg": {
+                        "imperial": 2.6701,
+                        "metric": 4.2969
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2026-03-26",
+                        "awayTeam": {
+                            "abbrev": "PIT",
+                            "score": 4
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 3
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "SO"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                },
+                "distanceMaxPeriod": {
+                    "imperial": 1.3936,
+                    "metric": 2.2427,
+                    "percentile": 0.93,
+                    "leagueAvg": {
+                        "imperial": 1.0824,
+                        "metric": 1.7419
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2025-12-29",
+                        "awayTeam": {
+                            "abbrev": "CBJ",
+                            "score": 4
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 1
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "REG"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                }
+            },
+            {
+                "strengthCode": "pp",
+                "distanceTotal": {
+                    "imperial": 43.047,
+                    "metric": 69.274,
+                    "percentile": 0.9911,
+                    "leagueAvg": {
+                        "imperial": 11.8653,
+                        "metric": 19.0944
+                    }
+                },
+                "distancePer60": {
+                    "imperial": 9.3439,
+                    "metric": 15.0369,
+                    "percentile": 0.8469,
+                    "leagueAvg": {
+                        "imperial": 8.237,
+                        "metric": 13.2555
+                    }
+                },
+                "distanceMaxGame": {
+                    "imperial": 1.4524,
+                    "metric": 2.3372,
+                    "percentile": 0.9839,
+                    "leagueAvg": {
+                        "imperial": 0.5833,
+                        "metric": 0.9387
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2026-03-23",
+                        "awayTeam": {
+                            "abbrev": "OTT",
+                            "score": 2
+                        },
+                        "homeTeam": {
+                            "abbrev": "NYR",
+                            "score": 1
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "REG"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                },
+                "distanceMaxPeriod": {
+                    "imperial": 0.9763,
+                    "metric": 1.5712,
+                    "percentile": 0.9982,
+                    "leagueAvg": {
+                        "imperial": 0.3722,
+                        "metric": 0.5989
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2026-03-31",
+                        "awayTeam": {
+                            "abbrev": "OTT",
+                            "score": 3
+                        },
+                        "homeTeam": {
+                            "abbrev": "FLA",
+                            "score": 6
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "REG"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 3,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                }
+            },
+            {
+                "strengthCode": "pk",
+                "distanceTotal": {
+                    "imperial": 19.7937,
+                    "metric": 31.8533,
+                    "percentile": 0.8882,
+                    "leagueAvg": {
+                        "imperial": 6.7247,
+                        "metric": 10.8219
+                    }
+                },
+                "distancePer60": {
+                    "imperial": 7.9876,
+                    "metric": 12.8541,
+                    "percentile": 0.2304,
+                    "leagueAvg": {
+                        "imperial": 8.4374,
+                        "metric": 13.578
+                    }
+                },
+                "distanceMaxGame": {
+                    "imperial": 0.6032,
+                    "metric": 0.9708,
+                    "percentile": 0.7275,
+                    "leagueAvg": {
+                        "imperial": 0.3836,
+                        "metric": 0.6173
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2026-01-03",
+                        "awayTeam": {
+                            "abbrev": "WPG",
+                            "score": 2
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 4
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "REG"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 1,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                },
+                "distanceMaxPeriod": {
+                    "imperial": 0.4168,
+                    "metric": 0.6708,
+                    "percentile": 0.8059,
+                    "leagueAvg": {
+                        "imperial": 0.2542,
+                        "metric": 0.4091
+                    },
+                    "overlay": {
+                        "player": {
+                            "firstName": {
+                                "default": "Tim"
+                            },
+                            "lastName": {
+                                "default": "Stützle"
+                            }
+                        },
+                        "gameDate": "2025-10-30",
+                        "awayTeam": {
+                            "abbrev": "CGY",
+                            "score": 3
+                        },
+                        "homeTeam": {
+                            "abbrev": "OTT",
+                            "score": 4
+                        },
+                        "gameOutcome": {
+                            "lastPeriodType": "SO"
+                        },
+                        "periodDescriptor": {
+                            "maxRegulationPeriods": 3,
+                            "number": 1,
+                            "periodType": "REG"
+                        },
+                        "gameType": 2
+                    }
+                }
+            }
+        ]
+    }
+}

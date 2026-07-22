@@ -184,6 +184,36 @@ Do not introduce new enum values without updating this document.
 - `N`: Neutral zone.
 - `D`: Defensive zone.
 
+### NHL Unit Player Position Code
+
+**Name:** NHL unit player position code
+**Storage location(s):** `nhl_unit_shift_players.position_code` (nullable string column)
+**Allowed values:**
+
+- `LW`
+- `C`
+- `RW`
+- `D`
+- `LD`
+- `RD`
+- `G`
+
+**Semantic meaning:**
+
+- `LW`: Left wing contextual assignment within the imported/enriched unit source.
+- `C`: Center contextual assignment within the imported/enriched unit source.
+- `RW`: Right wing contextual assignment within the imported/enriched unit source.
+- `D`: Defense contextual assignment when the source identifies defense but does not distinguish left/right.
+- `LD`: Left defense contextual assignment within the imported/enriched unit source.
+- `RD`: Right defense contextual assignment within the imported/enriched unit source.
+- `G`: Goalie contextual assignment within the imported/enriched unit source.
+
+**Notes:**
+
+- This is not the canonical player position or fantasy eligibility.
+- This value is scoped to a specific unit shift, so the same unit composition can store different player-position assignments on different shifts.
+- Null means the source did not provide a contextual unit-shift position or enrichment has not run.
+
 ### NHL Strength State
 
 **Name:** NHL strength state
@@ -220,6 +250,7 @@ Do not introduce new enum values without updating this document.
 **Notes:**
 
 - Other provider penalty type codes may be stored, but only `MAT` has special calculation behavior documented here.
+- `play_by_plays.desc_key = penalty-shot-attempt` is an internal marker for same-clock penalty-shot attempt rows. It preserves the attempt for penalty-shot tracking while excluding the row from normal SOG, save, shot-attempt, and event-unit calculations.
 
 ### NHL Game Type
 
@@ -288,6 +319,7 @@ Do not introduce new enum values without updating this document.
 - `shifts`
 - `shift-units`
 - `connect-events`
+- `html-pbp-verify`
 - `sum-game-units`
 - `validate-summary`
 
@@ -299,6 +331,7 @@ Do not introduce new enum values without updating this document.
 - `shifts`: Import raw NHL shift data after boxscore targets are available.
 - `shift-units`: Build NHL unit shift windows.
 - `connect-events`: Link play-by-play events to unit shifts.
+- `html-pbp-verify`: Compare imported API PBP against the official HTML PBP report and enrich linked unit shifts with contextual player positions when available.
 - `sum-game-units`: Aggregate per-game unit summaries.
 - `validate-summary`: Compare computed game summaries to official boxscore totals.
 
@@ -349,9 +382,11 @@ Do not introduce new enum values without updating this document.
 
 **Notes:**
 
-- Source names are `pbp`, `boxscore`, and `shifts`.
+- Source names are `pbp`, `boxscore`, `shifts`, `right-rail`, `html-pbp`, and `html-toi`.
 - Empty or unavailable PBP or boxscore source statuses skip the core game import pipeline before PBP dispatch.
-- Empty or unavailable shifts source statuses skip only shift-derived on-ice stages.
+- Empty or unavailable shifts source statuses remain visible as source gaps, but shift-derived on-ice stages may continue and use `html-toi` fallback coverage when official TV/TH reports are parseable.
+- Empty or unavailable right-rail or HTML PBP statuses create non-fatal validation review context and do not skip the core game import pipeline.
+- Empty or unavailable `html-toi` statuses mean no TV/TH fallback shift windows were available; shift-dependent validation may remain incomplete when shiftcharts are also unavailable.
 
 ### NHL Game Import Run Action
 
@@ -418,10 +453,12 @@ Do not introduce new enum values without updating this document.
 **Allowed values:**
 
 - `summary_boxscore`
+- `pbp_html_report`
 
 **Semantic meaning:**
 
 - `summary_boxscore`: Computed `nhl_game_summaries` rows compared against official `nhl_boxscores` rows.
+- `pbp_html_report`: Imported API play-by-play rows compared against the NHL official HTML play-by-play report.
 
 **Notes:**
 
@@ -472,6 +509,42 @@ Do not introduce new enum values without updating this document.
 **Notes:**
 
 - Current summary-boxscore validation persists blocking deltas as `error`.
+
+### NHL PBP Source Mismatch Severity
+
+**Name:** NHL PBP source mismatch severity
+**Storage location(s):** `nhl_pbp_source_mismatches.severity`
+**Allowed values:**
+
+- `high`
+- `medium`
+- `low`
+- `info`
+
+**Semantic meaning:**
+
+- `high`: Source mismatch may affect scoring, penalties, player attribution, or broad event alignment.
+- `medium`: Source mismatch may affect on-ice unit attribution or plus/minus confidence.
+- `low`: Source mismatch is limited to contextual position data or another non-stat field.
+- `info`: Source availability or parser coverage note that does not indicate a source disagreement.
+
+### NHL Game Validation Resolution
+
+**Name:** NHL game validation resolution
+**Storage location(s):** `nhl_game_validations.resolution`
+**Allowed values currently emitted:**
+
+- `accepted_exception`
+- `accepted_api`
+- `accepted_positions_only`
+- `acknowledged`
+
+**Semantic meaning:**
+
+- `accepted_exception`: Existing summary validation exception accepted by an admin.
+- `accepted_api`: Admin accepted API PBP as canonical for an HTML/API mismatch.
+- `accepted_positions_only`: Admin accepted HTML position enrichment without treating HTML event data as canonical.
+- `acknowledged`: Admin acknowledged a known HTML/API source mismatch.
 
 ---
 

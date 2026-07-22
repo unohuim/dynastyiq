@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Support\NhlImportStages;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -11,9 +12,6 @@ use Illuminate\Support\Facades\DB;
 class TrackGamesImportProgressNhl
 {
     use HasAPITrait;
-
-    /** @var array<string> */
-    private array $importTypes = ['pbp', 'shifts', 'boxscore', 'summary'];
 
     /** Full backfill from config('nhlimport.min_season_id') up to today (iterate from most recent backwards). */
     public function init(): void
@@ -72,7 +70,7 @@ class TrackGamesImportProgressNhl
 
             $dateOnly = Carbon::parse($gameDate)->toDateString();
 
-            foreach ($this->importTypes as $type) {
+            foreach (NhlImportStages::ordered() as $type) {
                 $rows[] = [
                     'season_id'     => $seasonId,
                     'game_date'     => $dateOnly,

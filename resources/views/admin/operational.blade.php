@@ -674,38 +674,32 @@
                                                 ></span>
                                             </div>
                                         </div>
-                                        <div
-                                            x-show="!isGameImportRunCompacted(run)"
-                                            class="flex items-center text-xs text-gray-600 sm:text-right"
-                                        >
+                                        <div class="flex flex-wrap items-center justify-end gap-1.5 text-xs text-gray-600 sm:text-right">
                                             <template x-if="run.action === 'discover' && !run.processing_started">
-                                                <div class="flex items-center justify-end gap-1.5">
-                                                    <button
-                                                        type="button"
-                                                        class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        x-show="!canReprocessGameImportRun(run)"
-                                                        @click="processGameImports(run)"
-                                                        :disabled="!canProcessGameImportRun(run)"
-                                                    >
-                                                        <span x-text="gameImports.processing ? 'Queuing...' : 'Process'"></span>
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        class="inline-flex items-center justify-center rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 shadow-sm hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        x-show="canReprocessGameImportRun(run)"
-                                                        @click="processGameImports(run, { reprocessExisting: true })"
-                                                        :disabled="!canReprocessGameImportRun(run)"
-                                                    >
-                                                        <span x-text="gameImports.processing ? 'Queuing...' : 'Reprocess'"></span>
-                                                    </button>
-                                                </div>
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    @click="processGameImports(run)"
+                                                    :disabled="!canProcessGameImportRun(run)"
+                                                >
+                                                    <span x-text="gameImportProcessButtonText(run)"></span>
+                                                </button>
                                             </template>
-                                            <template x-if="run.action !== 'discover' || run.processing_started">
+                                            <template x-if="run.status !== 'completed' && (run.action !== 'discover' || run.processing_started)">
                                                 <div>
                                                     <div><span x-text="formatNumber(run.queued_jobs)"></span> jobs queued</div>
                                                     <div><span x-text="formatNumber(run.date_count)"></span> dates</div>
                                                 </div>
                                             </template>
+                                            <button
+                                                type="button"
+                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                x-show="canRerunGameImportRun(run)"
+                                                @click.prevent.stop="rerunGameImportRun(run)"
+                                                :disabled="!canRerunGameImportRun(run) || gameImports.rerunningRuns[run.id] === true"
+                                            >
+                                                <span x-text="gameImports.rerunningRuns[run.id] === true ? 'Queuing...' : 'Re Run'"></span>
+                                            </button>
                                         </div>
                                     </div>
 
@@ -990,6 +984,7 @@
                     ></div>
                 </div>
             </div>
+
         </div>
     </div>
 </div>

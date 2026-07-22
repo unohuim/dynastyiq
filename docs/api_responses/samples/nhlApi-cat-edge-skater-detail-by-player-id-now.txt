@@ -1,0 +1,270 @@
+{
+    "source": "nhl:api",
+    "url": "https://api-web.nhle.com/v1/cat/edge/skater-detail/8482116/now",
+    "payload": {
+        "player": {
+            "id": 8482116,
+            "firstName": {
+                "default": "Tim"
+            },
+            "lastName": {
+                "default": "Stützle"
+            },
+            "birthDate": "2002-01-15",
+            "shootsCatches": "L",
+            "sweaterNumber": 18,
+            "position": "C",
+            "slug": "tim-stützle-8482116",
+            "headshot": "https://assets.nhle.com/mugs/nhl/20252026/OTT/8482116.png",
+            "goals": 34,
+            "assists": 49,
+            "points": 83,
+            "gamesPlayed": 80,
+            "team": {
+                "commonName": {
+                    "default": "Senators",
+                    "fr": "Sénateurs"
+                },
+                "placeNameWithPreposition": {
+                    "default": "Ottawa",
+                    "fr": "d'Ottawa"
+                },
+                "abbrev": "OTT",
+                "teamLogo": {
+                    "light": "https://assets.nhle.com/logos/nhl/svg/OTT_light.svg",
+                    "dark": "https://assets.nhle.com/logos/nhl/svg/OTT_dark.svg"
+                }
+            }
+        },
+        "seasonsWithEdgeStats": [
+            {
+                "id": 20212022,
+                "gameTypes": [
+                    2
+                ]
+            },
+            {
+                "id": 20222023,
+                "gameTypes": [
+                    2
+                ]
+            },
+            {
+                "id": 20232024,
+                "gameTypes": [
+                    2
+                ]
+            },
+            {
+                "id": 20242025,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            },
+            {
+                "id": 20252026,
+                "gameTypes": [
+                    2,
+                    3
+                ]
+            }
+        ],
+        "topShotSpeed": {
+            "imperial": 90.1,
+            "metric": 145.0019,
+            "percentile": 0.8377,
+            "leagueAvg": {
+                "imperial": 83.6208,
+                "metric": 134.5747
+            },
+            "overlay": []
+        },
+        "skatingSpeed": {
+            "speedMax": {
+                "imperial": 23.5373,
+                "metric": 37.8795,
+                "percentile": 0.956,
+                "leagueAvg": {
+                    "imperial": 22.1684,
+                    "metric": 35.6765
+                },
+                "overlay": {
+                    "player": {
+                        "firstName": {
+                            "default": "Tim"
+                        },
+                        "lastName": {
+                            "default": "Stützle"
+                        }
+                    },
+                    "timeInPeriod": "02:13"
+                }
+            },
+            "burstsOver20": {
+                "value": 364,
+                "percentile": 0.9935,
+                "leagueAvg": {
+                    "value": 75.2
+                }
+            }
+        },
+        "totalDistanceSkated": {
+            "imperial": 261.3643,
+            "metric": 420.6046,
+            "percentile": 0.9723,
+            "leagueAvg": {
+                "imperial": 123.5454,
+                "metric": 198.8173
+            }
+        },
+        "sogSummary": [
+            {
+                "locationCode": "all",
+                "shots": 194,
+                "shotsPercentile": 0.9121,
+                "shotsLeagueAvg": 85.9138,
+                "goals": 34,
+                "goalsPercentile": 0.9577,
+                "goalsLeagueAvg": 11.1545,
+                "shootingPctg": 0.1753,
+                "shootingPctgPercentile": 0.8853,
+                "shootingPctgLeagueAvg": 0.1298
+            },
+            {
+                "locationCode": "high",
+                "shots": 81,
+                "shotsPercentile": 0.9528,
+                "shotsLeagueAvg": 31.6244,
+                "goals": 20,
+                "goalsPercentile": 0.9707,
+                "goalsLeagueAvg": 6.1935,
+                "shootingPctg": 0.2469,
+                "shootingPctgPercentile": 0.7563,
+                "shootingPctgLeagueAvg": 0.1958
+            },
+            {
+                "locationCode": "long",
+                "shots": 9,
+                "shotsPercentile": 0.6564,
+                "shotsLeagueAvg": 8.0081,
+                "goals": 0,
+                "goalsPercentile": 0,
+                "goalsLeagueAvg": 0.3106,
+                "shootingPctg": 0,
+                "shootingPctgPercentile": 0,
+                "shootingPctgLeagueAvg": 0.0388
+            },
+            {
+                "locationCode": "mid",
+                "shots": 68,
+                "shotsPercentile": 0.9039,
+                "shotsLeagueAvg": 27.2195,
+                "goals": 11,
+                "goalsPercentile": 0.9365,
+                "goalsLeagueAvg": 3.3008,
+                "shootingPctg": 0.1618,
+                "shootingPctgPercentile": 0.7957,
+                "shootingPctgLeagueAvg": 0.1213
+            }
+        ],
+        "sogDetails": [
+            {
+                "area": "Behind the Net",
+                "shots": 0,
+                "shotsPercentile": 0
+            },
+            {
+                "area": "Beyond Red Line",
+                "shots": 2,
+                "shotsPercentile": 0.5912
+            },
+            {
+                "area": "Center Point",
+                "shots": 6,
+                "shotsPercentile": 0.8127
+            },
+            {
+                "area": "Crease",
+                "shots": 9,
+                "shotsPercentile": 0.8697
+            },
+            {
+                "area": "High Slot",
+                "shots": 27,
+                "shotsPercentile": 0.9446
+            },
+            {
+                "area": "L Circle",
+                "shots": 19,
+                "shotsPercentile": 0.8632
+            },
+            {
+                "area": "L Corner",
+                "shots": 0,
+                "shotsPercentile": 0
+            },
+            {
+                "area": "L Net Side",
+                "shots": 6,
+                "shotsPercentile": 0.8632
+            },
+            {
+                "area": "L Point",
+                "shots": 1,
+                "shotsPercentile": 0.3013
+            },
+            {
+                "area": "Low Slot",
+                "shots": 72,
+                "shotsPercentile": 0.956
+            },
+            {
+                "area": "Offensive Neutral Zone",
+                "shots": 3,
+                "shotsPercentile": 0.6645
+            },
+            {
+                "area": "Outside L",
+                "shots": 10,
+                "shotsPercentile": 0.8567
+            },
+            {
+                "area": "Outside R",
+                "shots": 9,
+                "shotsPercentile": 0.8257
+            },
+            {
+                "area": "R Circle",
+                "shots": 22,
+                "shotsPercentile": 0.8811
+            },
+            {
+                "area": "R Corner",
+                "shots": 0,
+                "shotsPercentile": 0
+            },
+            {
+                "area": "R Net Side",
+                "shots": 6,
+                "shotsPercentile": 0.8876
+            },
+            {
+                "area": "R Point",
+                "shots": 2,
+                "shotsPercentile": 0.5033
+            }
+        ],
+        "zoneTimeDetails": {
+            "offensiveZonePctg": 0.46505416,
+            "offensiveZonePercentile": 0.9505882352941,
+            "offensiveZoneLeagueAvg": 0.43087924,
+            "neutralZonePctg": 0.17121101,
+            "neutralZonePercentile": 0.1035294117647,
+            "neutralZoneLeagueAvg": 0.16794965,
+            "defensiveZonePctg": 0.36373482,
+            "defensiveZonePercentile": 0.9247058823529,
+            "defensiveZoneLeagueAvg": 0.4011711
+        }
+    }
+}

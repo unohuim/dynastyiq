@@ -7,6 +7,7 @@ use App\Models\PlayByPlay;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class NhlUnitShift extends Model
 {
@@ -44,6 +45,14 @@ class NhlUnitShift extends Model
             'event_id'              // Foreign key on pivot for related model
         )->orderBy('seconds_in_game')
             ->withTimestamps();
+    }
+
+    /**
+     * The contextual player positions for this unit shift.
+     */
+    public function players(): HasMany
+    {
+        return $this->hasMany(NhlUnitShiftPlayer::class, 'unit_shift_id');
     }
 
 }

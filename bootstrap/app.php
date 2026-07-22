@@ -8,6 +8,7 @@ use App\Console\Commands\ImportCapWagesCommand;
 use App\Console\Commands\AuditNhleLeagueMappingsCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\BackfillLeagueCommissionersCommand;
+use App\Console\Commands\NhlApiCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
 use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
@@ -32,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
         AuditNhleLeagueMappingsCommand::class,
         FantraxDraftsPollCommand::class,
         GenerateDraftPickCardImageCommand::class,
+        NhlApiCommand::class,
         RefreshNhlProspectFlagsCommand::class,
     ])
     ->withRouting(

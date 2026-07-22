@@ -344,6 +344,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // NHL game validation triage
                 Route::get('/nhl-validations', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'index'])
                     ->name('admin.nhl-validations.index');
+                Route::get('/nhl-pbp', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'pbp'])
+                    ->name('admin.nhl-pbp.index');
+                Route::post('/nhl-pbp/{gameId}/enrich', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'enrichPbp'])
+                    ->name('admin.nhl-pbp.enrich');
+                Route::post('/nhl-pbp/{gameId}/event-shifts', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rebuildEventShifts'])
+                    ->name('admin.nhl-pbp.event-shifts');
+                Route::get('/nhl-pbp/{gameId}/full', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'fullPbp'])
+                    ->name('admin.nhl-pbp.full');
                 Route::get('/nhl-validations/{validation}', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'show'])
                     ->name('admin.nhl-validations.show');
                 Route::post('/nhl-validations/{validation}/accept-exception', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acceptException'])
@@ -356,6 +364,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-validations.rerun-boxscore');
                 Route::post('/nhl-validations/{validation}/rebuild-game', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rebuildGame'])
                     ->name('admin.nhl-validations.rebuild-game');
+                Route::post('/nhl-validations/{validation}/rerun-html-pbp', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'rerunHtmlPbp'])
+                    ->name('admin.nhl-validations.rerun-html-pbp');
+                Route::post('/nhl-validations/{validation}/accept-api-pbp', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acceptApiPbp'])
+                    ->name('admin.nhl-validations.accept-api-pbp');
+                Route::post('/nhl-validations/{validation}/accept-html-pbp-positions', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acceptHtmlPbpPositions'])
+                    ->name('admin.nhl-validations.accept-html-pbp-positions');
+                Route::post('/nhl-validations/{validation}/acknowledge-pbp-mismatch', [\App\Http\Controllers\Admin\NhlGameValidationController::class, 'acknowledgePbpMismatch'])
+                    ->name('admin.nhl-validations.acknowledge-pbp-mismatch');
 
                 // Scheduler
                 Route::get('/scheduler', [\App\Http\Controllers\Admin\SchedulerController::class, 'index'])

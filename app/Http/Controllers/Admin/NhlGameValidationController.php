@@ -11,11 +11,15 @@ use App\Models\PlayByPlay;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\NhlImportOrchestrator;
 use App\Services\NhlPbpEventNormalizer;
+use App\Services\NhlSourceOnlyPbpReview;
+use App\Services\RebuildNhlEventShiftLinks;
 use App\Services\ValidateNhlGameSummary;
+use App\Services\VerifyNhlHtmlPlayByPlay;
 use App\Support\NhlImportStages;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
 class NhlGameValidationController extends Controller
@@ -27,14 +31,20 @@ class NhlGameValidationController extends Controller
     public function index(Request $request): View|JsonResponse
     {
         $status = $request->string('status', NhlGameValidation::STATUS_FAILED)->toString();
+        $validationType = $request->string('validation_type')->toString();
 
         $query = NhlGameValidation::query()
             ->with('game')
             ->withCount('deltas')
+            ->withCount('pbpSourceMismatches')
             ->latest('checked_at');
 
         if ($status !== 'all') {
             $query->where('status', $status);
+        }
+
+        if ($validationType !== '') {
+            $query->where('validation_type', $validationType);
         }
 
         $validations = $query->paginate(25)->withQueryString();
@@ -44,6 +54,7 @@ class NhlGameValidationController extends Controller
                 'html' => view('admin.nhl-validations._index-content', [
                     'validations' => $validations,
                     'status' => $status,
+                    'validationType' => $validationType,
                     'embedded' => true,
                 ])->render(),
             ]);
@@ -56,6 +67,7 @@ class NhlGameValidationController extends Controller
         return view('admin.nhl-validations.index', [
             'validations' => $validations,
             'status' => $status,
+            'validationType' => $validationType,
         ]);
     }
 
@@ -67,6 +79,10 @@ class NhlGameValidationController extends Controller
                 ->with('player')
                 ->orderBy('nhl_player_id')
                 ->orderBy('field'),
+            'pbpSourceMismatches' => fn ($query) => $query
+                ->orderByRaw("CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END")
+                ->orderBy('period')
+                ->orderBy('time_in_period'),
         ]);
         $this->attachPbpContext($validation);
 
@@ -86,6 +102,105 @@ class NhlGameValidationController extends Controller
 
         return view('admin.nhl-validations.show', [
             'validation' => $validation,
+        ]);
+    }
+
+    /**
+     * Return the recent imported PBP games fragment for admin enrichment.
+     */
+    public function pbp(): JsonResponse
+    {
+        $latestPbpGames = DB::query()
+            ->fromSub(
+                DB::table('play_by_plays')
+                    ->selectRaw('nhl_game_id, count(*) as events_count, max(updated_at) as last_pbp_at')
+                    ->groupBy('nhl_game_id'),
+                'pbp_games'
+            )
+            ->join('nhl_games as games', 'games.nhl_game_id', '=', 'pbp_games.nhl_game_id')
+            ->leftJoin('nhl_game_validations as validations', function ($join): void {
+                $join->on('validations.nhl_game_id', '=', 'pbp_games.nhl_game_id')
+                    ->where('validations.validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT);
+            })
+            ->select([
+                'pbp_games.nhl_game_id',
+                'pbp_games.events_count',
+                'pbp_games.last_pbp_at',
+                'games.game_date',
+                'games.away_team_abbrev',
+                'games.home_team_abbrev',
+                'validations.id as validation_id',
+                'validations.status as validation_status',
+                'validations.mismatch_count',
+                'validations.checked_at',
+            ])
+            ->orderByDesc('pbp_games.last_pbp_at')
+            ->limit(10)
+            ->get();
+
+        return response()->json([
+            'html' => view('admin.nhl-validations._pbp-content', [
+                'games' => $latestPbpGames,
+            ])->render(),
+        ]);
+    }
+
+    /**
+     * Run HTML PBP enrichment for one imported game.
+     */
+    public function enrichPbp(int $gameId, VerifyNhlHtmlPlayByPlay $verifier): JsonResponse
+    {
+        abort_unless(
+            DB::table('play_by_plays')->where('nhl_game_id', $gameId)->exists(),
+            404
+        );
+
+        $eventsCount = $verifier->verify($gameId);
+        $validation = NhlGameValidation::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)
+            ->first();
+
+        return response()->json([
+            'status' => $validation?->status,
+            'mismatch_count' => $validation?->mismatch_count ?? 0,
+            'events_count' => $eventsCount,
+        ]);
+    }
+
+    /**
+     * Rebuild shiftchart-derived event/unit links for one imported game.
+     */
+    public function rebuildEventShifts(int $gameId, RebuildNhlEventShiftLinks $rebuilder): JsonResponse
+    {
+        abort_unless(
+            DB::table('play_by_plays')->where('nhl_game_id', $gameId)->exists(),
+            404
+        );
+
+        return response()->json($rebuilder->rebuild($gameId));
+    }
+
+    /**
+     * Return one source-only Full PBP review step.
+     */
+    public function fullPbp(Request $request, int $gameId, NhlSourceOnlyPbpReview $reviewer): JsonResponse
+    {
+        abort_unless(
+            DB::table('play_by_plays')->where('nhl_game_id', $gameId)->exists(),
+            404
+        );
+
+        $review = $reviewer->review($gameId, max(0, $request->integer('index')));
+
+        return response()->json([
+            'html' => view('admin.nhl-validations._full-pbp-content', [
+                'review' => $review,
+            ])->render(),
+            'event_count' => $review['event_count'],
+            'mismatch_count' => $review['mismatch_count'],
+            'current_index' => $review['current_index'],
+            'next_mismatch_index' => $review['next_mismatch_index'],
         ]);
     }
 
@@ -189,13 +304,16 @@ class NhlGameValidationController extends Controller
             'status' => NhlGameValidation::STATUS_ACCEPTED_EXCEPTION,
             'approved_at' => now(),
             'approved_by' => $request->user()?->id,
+            'resolution' => 'accepted_exception',
         ]);
 
-        $orchestrator->onSuccess(
-            (int) $validation->nhl_game_id,
-            NhlImportStages::VALIDATE_SUMMARY,
-            ['items_count' => (int) $validation->mismatch_count]
-        );
+        if ($validation->validation_type === NhlGameValidation::TYPE_SUMMARY_BOXSCORE) {
+            $orchestrator->onSuccess(
+                (int) $validation->nhl_game_id,
+                NhlImportStages::VALIDATE_SUMMARY,
+                ['items_count' => (int) $validation->mismatch_count]
+            );
+        }
 
         if ($request->expectsJson()) {
             return response()->json($validation->refresh());
@@ -295,5 +413,78 @@ class NhlGameValidationController extends Controller
         return redirect()
             ->route('admin.nhl-validations.index')
             ->with('status', 'Full game rebuild queued from PBP.');
+    }
+
+    public function rerunHtmlPbp(
+        Request $request,
+        NhlGameValidation $validation,
+        VerifyNhlHtmlPlayByPlay $verifier
+    ): RedirectResponse|JsonResponse
+    {
+        abort_unless($validation->validation_type === NhlGameValidation::TYPE_PBP_HTML_REPORT, 404);
+
+        $verifier->verify((int) $validation->nhl_game_id);
+        $validation = NhlGameValidation::query()
+            ->where('nhl_game_id', $validation->nhl_game_id)
+            ->where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)
+            ->firstOrFail();
+
+        if ($request->expectsJson()) {
+            return response()->json($validation);
+        }
+
+        return redirect()
+            ->route('admin.nhl-validations.show', $validation)
+            ->with('status', 'HTML PBP verification rerun.');
+    }
+
+    public function acceptApiPbp(
+        Request $request,
+        NhlGameValidation $validation
+    ): RedirectResponse|JsonResponse
+    {
+        return $this->resolvePbpValidation($request, $validation, 'accepted_api', 'API PBP accepted as canonical.');
+    }
+
+    public function acceptHtmlPbpPositions(
+        Request $request,
+        NhlGameValidation $validation
+    ): RedirectResponse|JsonResponse
+    {
+        return $this->resolvePbpValidation($request, $validation, 'accepted_positions_only', 'HTML PBP positions accepted only.');
+    }
+
+    public function acknowledgePbpMismatch(
+        Request $request,
+        NhlGameValidation $validation
+    ): RedirectResponse|JsonResponse
+    {
+        return $this->resolvePbpValidation($request, $validation, 'acknowledged', 'HTML/API PBP mismatch acknowledged.');
+    }
+
+    private function resolvePbpValidation(
+        Request $request,
+        NhlGameValidation $validation,
+        string $resolution,
+        string $message
+    ): RedirectResponse|JsonResponse
+    {
+        abort_unless($validation->validation_type === NhlGameValidation::TYPE_PBP_HTML_REPORT, 404);
+
+        $validation->update([
+            'status' => NhlGameValidation::STATUS_ACCEPTED_EXCEPTION,
+            'approved_at' => now(),
+            'approved_by' => $request->user()?->id,
+            'resolution' => $resolution,
+            'resolution_note' => $request->string('note')->toString() ?: null,
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json($validation->refresh());
+        }
+
+        return redirect()
+            ->route('admin.nhl-validations.show', $validation)
+            ->with('status', $message);
     }
 }

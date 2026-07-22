@@ -1,0 +1,1 @@
+{"data":[{"id":45,"component":"StatsHome","gameTypeId":2,"seasonId":20252026}],"total":1}

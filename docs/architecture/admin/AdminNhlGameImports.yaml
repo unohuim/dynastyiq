@@ -36,6 +36,8 @@ rules:
   - Discovery day jobs must mark their date resolved on the run payload so range discovery remains running until every queued discovery date has resolved.
   - Processing should be launched from a discovery run row so the selected date range is explicit.
   - Processing launched from a discovery run must reuse that discovery run card for progress instead of creating a separate visible processing run.
+  - Re-run launched from an existing game import or discovery run must create a new discovery run for the existing run range and tag the payload so later processing replays existing stage rows for the whole range.
+  - Re-run launched from an existing season sync run must queue a new season sync for the same stored season payload.
   - Game-level reruns launched from a run card must preserve that run_id when reseeding progress rows so the same card reflects the rerun.
   - Game-level rerun endpoints must queue rebuild setup work and return before deleting or reseeding game-scoped import rows.
   - Game-level rebuild setup must run as visible queued phases: source preflight, game-scoped cleanup, progress reseeding, and PBP pipeline dispatch.

@@ -14,6 +14,7 @@ use App\Jobs\ValidateNhlGameSummaryJob;
 use App\Models\NhlGameSourceStatus;
 use App\Models\NhlGameValidation;
 use App\Models\NhlGameValidationDelta;
+use App\Models\NhlPbpSourceMismatch;
 use App\Models\Player;
 use App\Models\Role;
 use App\Models\User;
@@ -25,9 +26,11 @@ use App\Services\ImportNhlShifts;
 use App\Services\NhlGameImportEligibility;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
+use App\Services\RebuildNhlEventShiftLinks;
 use App\Services\SumNhlGameUnits;
 use App\Services\SumNHLPlayByPlay;
 use App\Services\ValidateNhlGameSummary;
+use App\Services\VerifyNhlHtmlPlayByPlay;
 use App\Support\NhlImportStages;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -246,16 +249,16 @@ beforeEach(function (): void {
                         && $status['status'] !== NhlGameSourceStatus::STATUS_AVAILABLE
                 ));
                 $coreAllowed = $blockedCore === [];
-                $onIceAllowed = $blockedOnIce === [];
+                $onIceAllowed = true;
 
                 return [
                     'allowed' => $coreAllowed,
                     'core_allowed' => $coreAllowed,
                     'on_ice_allowed' => $onIceAllowed,
                     'statuses' => $statuses,
-                    'message' => $coreAllowed && $onIceAllowed ? null : 'blocked',
+                    'message' => $coreAllowed ? null : 'blocked',
                     'core_message' => $coreAllowed ? null : 'core blocked',
-                    'on_ice_message' => $onIceAllowed ? null : 'on-ice blocked',
+                    'on_ice_message' => $blockedOnIce === [] ? null : 'on-ice fallback needed',
                 ];
             }
         });
@@ -637,6 +640,109 @@ it('uses penalty shot penalty situation to classify same-clock goal strength', f
     expect($goalieSummary)->not->toBeNull()
         ->and((int) $goalieSummary->evga)->toBe(0)
         ->and((int) $goalieSummary->pkga)->toBe(1);
+});
+
+it('tracks saved regulation penalty shots while counting them as normal shots and saves', function (): void {
+    ($this->makePlayer)(8475158, [
+        'first_name' => 'Ryan',
+        'last_name' => "O'Reilly",
+        'full_name' => "Ryan O'Reilly",
+        'team_abbrev' => 'NSH',
+    ]);
+    ($this->makePlayer)(8475311, [
+        'first_name' => 'Darcy',
+        'last_name' => 'Kuemper',
+        'full_name' => 'Darcy Kuemper',
+        'position' => 'G',
+        'team_abbrev' => 'LAK',
+    ]);
+
+    $importer = new class extends ImportNHLPlayByPlay {
+        public function getAPIData(
+            string $service,
+            string $endpointKey,
+            array $replacements = [],
+            array $query = [],
+            bool $decodeJson = true
+        ): array|string {
+            return [
+                'season' => 20262027,
+                'gameType' => 2,
+                'gameDate' => '2026-10-01',
+                'homeTeam' => ['id' => 26, 'score' => 0, 'sog' => 9, 'abbrev' => 'LAK'],
+                'awayTeam' => ['id' => 18, 'score' => 0, 'sog' => 16, 'abbrev' => 'NSH'],
+                'plays' => [
+                    [
+                        'eventId' => 25,
+                        'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                        'timeInPeriod' => '19:51',
+                        'timeRemaining' => '00:09',
+                        'situationCode' => '1451',
+                        'typeCode' => 509,
+                        'typeDescKey' => 'penalty',
+                        'sortOrder' => 299,
+                        'details' => [
+                            'typeCode' => 'PS',
+                            'descKey' => 'ps-throwing-object-at-puck',
+                            'duration' => 0,
+                            'committedByPlayerId' => 8475311,
+                            'eventOwnerTeamId' => 26,
+                        ],
+                    ],
+                    [
+                        'eventId' => 353,
+                        'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                        'timeInPeriod' => '19:51',
+                        'timeRemaining' => '00:09',
+                        'situationCode' => '0101',
+                        'typeCode' => 506,
+                        'typeDescKey' => 'shot-on-goal',
+                        'sortOrder' => 303,
+                        'details' => [
+                            'xCoord' => 80,
+                            'yCoord' => 0,
+                            'zoneCode' => 'O',
+                            'shotType' => 'wrist',
+                            'shootingPlayerId' => 8475158,
+                            'goalieInNetId' => 8475311,
+                            'eventOwnerTeamId' => 18,
+                        ],
+                    ],
+                ],
+            ];
+        }
+    };
+
+    expect($importer->import(2026020001))->toBe(2);
+
+    $attempt = \App\Models\PlayByPlay::where('nhl_game_id', 2026020001)
+        ->where('nhl_event_id', 353)
+        ->firstOrFail();
+
+    expect($attempt->desc_key)->toBe('penalty-shot-attempt')
+        ->and($attempt->metadata['is_penalty_shot_attempt'])->toBeTrue();
+
+    app(SumNHLPlayByPlay::class)->summarize(2026020001);
+
+    $shooterSummary = DB::table('nhl_game_summaries')
+        ->where('nhl_game_id', 2026020001)
+        ->where('nhl_player_id', '8475158')
+        ->first();
+    $goalieSummary = DB::table('nhl_game_summaries')
+        ->where('nhl_game_id', 2026020001)
+        ->where('nhl_player_id', '8475311')
+        ->first();
+
+    expect($shooterSummary)->not->toBeNull()
+        ->and((int) $shooterSummary->ps)->toBe(1)
+        ->and((int) $shooterSummary->psg)->toBe(0)
+        ->and((int) $shooterSummary->sog)->toBe(1)
+        ->and((int) $shooterSummary->pksog)->toBe(1);
+    expect($goalieSummary)->not->toBeNull()
+        ->and((int) $goalieSummary->sv)->toBe(1)
+        ->and((int) $goalieSummary->sa)->toBe(1)
+        ->and((int) $goalieSummary->ppsv)->toBe(1)
+        ->and((int) $goalieSummary->ppsa)->toBe(1);
 });
 
 it('counts match penalties as duration plus ten penalty minutes in player summaries', function (): void {
@@ -1437,6 +1543,104 @@ it('persists an incomplete validation when core deltas pass but shifts are unava
         ->and($validation->approved_at)->toBeNull();
 });
 
+it('allows on-ice stages to run when stored shiftcharts are missing', function (): void {
+    foreach ([
+        NhlGameSourceStatus::SOURCE_PBP => NhlGameSourceStatus::STATUS_AVAILABLE,
+        NhlGameSourceStatus::SOURCE_BOXSCORE => NhlGameSourceStatus::STATUS_AVAILABLE,
+        NhlGameSourceStatus::SOURCE_SHIFTS => NhlGameSourceStatus::STATUS_EMPTY,
+    ] as $source => $status) {
+        DB::table('nhl_game_source_statuses')->insert([
+            'nhl_game_id' => 2026020001,
+            'source' => $source,
+            'status' => $status,
+            'reason' => $status === NhlGameSourceStatus::STATUS_EMPTY ? 'empty_shiftcharts' : null,
+            'url' => "https://example.test/{$source}/2026020001",
+            'details' => json_encode([]),
+            'checked_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    $result = app(NhlGameSourcePreflight::class)->storedOrCheck(2026020001);
+
+    expect($result['core_allowed'])->toBeTrue()
+        ->and($result['on_ice_allowed'])->toBeTrue()
+        ->and($result['on_ice_message'])->toContain('shifts:empty_shiftcharts');
+});
+
+it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8478700, [
+        'first_name' => 'Sidney',
+        'last_name' => 'Crosby',
+        'full_name' => 'Sidney Crosby',
+        'position' => 'C',
+        'team_abbrev' => 'TOR',
+    ]);
+    ($this->makePlayer)(8481100, [
+        'first_name' => 'Away',
+        'last_name' => 'Center',
+        'full_name' => 'Away Center',
+        'position' => 'C',
+        'team_abbrev' => 'MTL',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8478700, [
+        'nhl_team_id' => 1,
+        'sweater_number' => 87,
+    ]);
+    ($this->insertBoxscore)(2026020001, 8481100, [
+        'nhl_team_id' => 2,
+        'sweater_number' => 11,
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM' => Http::response(
+            '<table><tr><td>11 CENTER, AWAY</td></tr><tr><td>1</td><td>1</td><td>0:00 / 20:00</td><td>1:00 / 19:00</td><td>01:00</td></tr></table>',
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM' => Http::response(
+            '<table><tr><td>87 CROSBY, SIDNEY</td></tr><tr><td>1</td><td>1</td><td>0:00 / 20:00</td><td>1:30 / 18:30</td><td>01:30</td></tr></table>',
+            200
+        ),
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        /**
+         * @return array<string,mixed>
+         */
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return ['data' => []];
+        }
+    };
+
+    expect($importer->import('2026020001'))->toBe(2)
+        ->and(DB::table('nhl_shifts')->where('nhl_game_id', 2026020001)->count())->toBe(2)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026020001)
+            ->where('nhl_player_id', 8478700)
+            ->value('toi'))->toBe(90)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026020001)
+            ->where('nhl_player_id', 8481100)
+            ->value('toi'))->toBe(60);
+
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_HTML_TOI,
+        'status' => NhlGameSourceStatus::STATUS_AVAILABLE,
+        'reason' => 'tv_th_fallback',
+        'url' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+    ]);
+});
+
 it('reconciles tiny zero appearance goalie toi artifacts when pbp does not show the goalie in net', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8476914, [
@@ -1582,6 +1786,7 @@ it('queues only shift-derived stages when a missing shifts source recovers', fun
         NhlImportStages::SHIFTS => 'skipped',
         NhlImportStages::SHIFT_UNITS => 'skipped',
         NhlImportStages::CONNECT_EVENTS => 'skipped',
+        NhlImportStages::HTML_PBP_VERIFY => 'skipped',
         NhlImportStages::SUM_GAME_UNITS => 'skipped',
         NhlImportStages::VALIDATE_SUMMARY => 'completed',
     ]);
@@ -1629,6 +1834,7 @@ it('rebuilds the full game when a missing core source recovers', function (): vo
         NhlImportStages::SHIFTS => 'skipped',
         NhlImportStages::SHIFT_UNITS => 'skipped',
         NhlImportStages::CONNECT_EVENTS => 'skipped',
+        NhlImportStages::HTML_PBP_VERIFY => 'skipped',
         NhlImportStages::SUM_GAME_UNITS => 'skipped',
         NhlImportStages::VALIDATE_SUMMARY => 'skipped',
     ]);
@@ -4138,6 +4344,7 @@ it('requires upstream imports before validate-summary can run', function (): voi
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
         NhlImportStages::CONNECT_EVENTS,
+        NhlImportStages::HTML_PBP_VERIFY,
         NhlImportStages::SUM_GAME_UNITS,
     ]);
 });
@@ -4151,6 +4358,124 @@ it('maps validate-summary to its queue job and timeout config', function (): voi
     expect(NhlImportStages::jobClassFor(NhlImportStages::VALIDATE_SUMMARY))->toBe(ValidateNhlGameSummaryJob::class)
         ->and(NhlImportStages::timeoutConfigKeyFor(NhlImportStages::VALIDATE_SUMMARY))
         ->toBe('apiImportNhl.max_validate_summary_seconds');
+});
+
+it('places HTML PBP verification between event linking and game unit aggregation', function (): void {
+    expect(NhlImportStages::nextAfter(NhlImportStages::CONNECT_EVENTS))->toBe(NhlImportStages::HTML_PBP_VERIFY)
+        ->and(NhlImportStages::nextAfter(NhlImportStages::HTML_PBP_VERIFY))->toBe(NhlImportStages::SUM_GAME_UNITS)
+        ->and(NhlImportStages::dependenciesFor(NhlImportStages::HTML_PBP_VERIFY))->toContain(NhlImportStages::CONNECT_EVENTS)
+        ->and(NhlImportStages::jobClassFor(NhlImportStages::HTML_PBP_VERIFY))->toBe(\App\Jobs\VerifyHtmlPbpNhlJob::class);
+});
+
+it('parses NHL HTML PBP text-flow rows from official reports', function (): void {
+    $html = <<<'HTML'
+        <html><body><pre>
+        # Per Str Time:
+        Elapsed
+        Game Event Description CAR On Ice VGK On Ice
+        12 1 EV 1:40
+        18:20 HIT CAR #22 STANKOVEN HIT VGK #3 MCNABB, Off. Zone 22
+        C
+        53
+        R
+        71
+        L
+        4
+        D
+        21
+        D
+        32
+        G
+        10
+        C
+        19
+        R
+        49
+        L
+        3
+        D
+        27
+        D
+        79
+        G
+        </pre></body></html>
+    HTML;
+
+    $events = app(\App\Services\NhlHtmlPbpReportParser::class)->parse($html);
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]['event_number'])->toBe(12)
+        ->and($events[0]['period'])->toBe(1)
+        ->and($events[0]['time_in_period'])->toBe('1:40')
+        ->and($events[0]['type'])->toBe('hit')
+        ->and($events[0]['team'])->toBe('CAR')
+        ->and($events[0]['description'])->toBe('CAR #22 STANKOVEN HIT VGK #3 MCNABB, Off. Zone')
+        ->and($events[0]['on_ice_players'])->toHaveCount(12)
+        ->and($events[0]['on_ice_players'][0]['team_abbrev'])->toBe('CAR')
+        ->and($events[0]['on_ice_players'][0]['sweater_number'])->toBe(22)
+        ->and($events[0]['on_ice_players'][0]['position_code'])->toBe('C')
+        ->and($events[0]['on_ice_players'][6]['team_abbrev'])->toBe('VGK')
+        ->and($events[0]['on_ice_players'][6]['sweater_number'])->toBe(10)
+        ->and($events[0]['on_ice_players'][6]['position_code'])->toBe('C');
+});
+
+it('parses NHL HTML PBP when report text is collapsed into one string', function (): void {
+    $html = <<<'HTML'
+        <html><body>
+        Game Event Description CAR On Ice VGK On Ice
+        1 1 0:00 20:00 PGSTR
+        12 1 EV 1:40 18:20 HIT CAR #22 STANKOVEN HIT VGK #3 MCNABB, Off. Zone 22 C 53 R 71 L 4 D 21 D 32 G 10 C 19 R 49 L 3 D 27 D 79 G
+        13 1 EV 1:42 18:18 SHOT VGK ONGOAL - #19 SMITH, Wrist, Off. Zone, 18 ft. 22 C 53 R 71 L 4 D 21 D 32 G 10 C 19 R 49 L 3 D 27 D 79 G
+        </body></html>
+    HTML;
+
+    $events = app(\App\Services\NhlHtmlPbpReportParser::class)->parse($html);
+
+    expect($events)->toHaveCount(2)
+        ->and($events[0]['event_number'])->toBe(12)
+        ->and($events[0]['type'])->toBe('hit')
+        ->and($events[0]['description'])->toBe('CAR #22 STANKOVEN HIT VGK #3 MCNABB, Off. Zone')
+        ->and($events[0]['on_ice_players'])->toHaveCount(12)
+        ->and($events[1]['event_number'])->toBe(13)
+        ->and($events[1]['type'])->toBe('shot-on-goal')
+        ->and($events[1]['description'])->toBe('VGK ONGOAL - #19 SMITH, Wrist, Off. Zone, 18 ft.');
+});
+
+it('normalizes delayed penalty rows and skips challenge result rows from NHL HTML PBP reports', function (): void {
+    $html = <<<'HTML'
+        <table>
+            <tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th></tr>
+            <tr><td>23</td><td>1</td><td>EV</td><td>2:43</td><td>17:17</td><td>DELPEN</td><td>UTA</td></tr>
+            <tr><td>153</td><td>2</td><td></td><td>6:11</td><td>13:49</td><td>CHL</td><td>UTA Challenge - Interference on goalie - Result: Goal overturned</td></tr>
+            <tr><td>400</td><td>5</td><td></td><td>0:00</td><td>0:00</td><td>SOC</td><td>Shootout Completed- Local time: 10:57 PDT</td></tr>
+        </table>
+    HTML;
+
+    $events = app(\App\Services\NhlHtmlPbpReportParser::class)->parse($html);
+
+    expect($events)->toHaveCount(2)
+        ->and($events[0]['type'])->toBe('delayed-penalty')
+        ->and($events[1]['type'])->toBe('shootout-complete');
+});
+
+it('parses the saved NHL PBP HTM sample file', function (): void {
+    $html = file_get_contents(base_path('docs/api_responses/samples/pbp_htm.html'));
+
+    expect($html)->not->toBeFalse();
+
+    $events = app(\App\Services\NhlHtmlPbpReportParser::class)->parse((string) $html);
+
+    expect($events)->toHaveCount(343)
+        ->and($events[0]['event_number'])->toBe(4)
+        ->and($events[0]['type'])->toBe('period-start')
+        ->and($events[0]['on_ice_players'])->toHaveCount(12)
+        ->and($events[0]['on_ice_players'][0]['side'])->toBe('away')
+        ->and($events[0]['on_ice_players'][0]['team_abbrev'])->toBe('CAR')
+        ->and($events[0]['on_ice_players'][6]['side'])->toBe('home')
+        ->and($events[0]['on_ice_players'][6]['team_abbrev'])->toBe('VGK')
+        ->and($events[1]['event_number'])->toBe(5)
+        ->and($events[1]['type'])->toBe('faceoff')
+        ->and($events[1]['on_ice_players'])->toHaveCount(12);
 });
 
 it('marks shift-units ready once upstream imports are completed', function (): void {
@@ -4172,6 +4497,7 @@ it('does not mark validation ready until game unit aggregation completes', funct
         NhlImportStages::BOXSCORE => 'completed',
         NhlImportStages::SHIFT_UNITS => 'completed',
         NhlImportStages::CONNECT_EVENTS => 'completed',
+        NhlImportStages::HTML_PBP_VERIFY => 'completed',
         NhlImportStages::SUM_GAME_UNITS => 'running',
     ]);
 
@@ -4188,6 +4514,7 @@ it('dispatches validation after game unit aggregation completes', function (): v
         NhlImportStages::BOXSCORE => 'completed',
         NhlImportStages::SHIFT_UNITS => 'completed',
         NhlImportStages::CONNECT_EVENTS => 'completed',
+        NhlImportStages::HTML_PBP_VERIFY => 'completed',
         NhlImportStages::SUM_GAME_UNITS => 'completed',
     ]);
 
@@ -4323,6 +4650,1181 @@ it('returns embedded validation detail HTML to super admins', function (): void 
         ->assertSee('PBP context')
         ->assertSee('Event 77')
         ->assertSee('SOG away 1');
+});
+
+it('approves matching HTML PBP and upserts unit shift player positions', function (): void {
+    ($this->insertGame)();
+    $player = ($this->makePlayer)(8478402, ['full_name' => 'Sidney Crosby']);
+    ($this->insertBoxscore)(2026020001, 8478402, ['sweater_number' => 87]);
+    $unitId = DB::table('nhl_units')->insertGetId([
+        'team_abbrev' => 'TOR',
+        'unit_type' => 'F',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_unit_players')->insert([
+        'unit_id' => $unitId,
+        'player_id' => $player->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $shiftId = DB::table('nhl_unit_shifts')->insertGetId([
+        'unit_id' => $unitId,
+        'nhl_game_id' => 2026020001,
+        'period' => 1,
+        'start_time' => '00:00',
+        'end_time' => '02:00',
+        'start_game_seconds' => 0,
+        'end_game_seconds' => 120,
+        'seconds' => 120,
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $eventId,
+        'unit_shift_id' => $shiftId,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM',
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>01:00</td><td>19:00</td><td>SHOT</td><td>TOR #87 CROSBY, Wrist, Off. Zone</td><td>87 C</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    expect(app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001))->toBe(1);
+
+    $this->assertDatabaseHas('nhl_game_validations', [
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        'status' => NhlGameValidation::STATUS_APPROVED,
+        'mismatch_count' => 0,
+    ]);
+    $this->assertDatabaseHas('nhl_unit_shift_players', [
+        'unit_shift_id' => $shiftId,
+        'player_id' => $player->id,
+        'position_code' => 'C',
+    ]);
+});
+
+it('records unavailable HTML PBP as incomplete non-fatal review context', function (): void {
+    ($this->insertGame)();
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response(['gameReports' => []]),
+    ]);
+
+    expect(app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001))->toBe(0);
+
+    $validation = NhlGameValidation::where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)->firstOrFail();
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INCOMPLETE)
+        ->and($validation->pbpSourceMismatches()->first()->mismatch_type)->toBe('source_unavailable');
+});
+
+it('records HTML and API PBP disagreements as failed PBP source mismatches', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM',
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Time</th><th>Event</th><th>Team</th><th>Description</th></tr><tr><td>10</td><td>1</td><td>01:00</td><td>GOAL</td><td>TOR</td><td>Goal by Crosby</td></tr></table>',
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $validation = NhlGameValidation::where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)->firstOrFail();
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+        ->and($validation->pbpSourceMismatches()->first()->mismatch_type)->toBe('event_type_mismatch')
+        ->and($validation->pbpSourceMismatches()->first()->severity)->toBe(NhlPbpSourceMismatch::SEVERITY_HIGH);
+});
+
+it('ignores terminal period-end on-ice disagreements during HTML PBP verification', function (): void {
+    ($this->insertGame)();
+    $linkedPlayer = ($this->makePlayer)(8476412, ['full_name' => 'Jordan Binnington']);
+    ($this->makePlayer)(8476897, ['full_name' => 'Oskar Sundqvist']);
+    ($this->insertBoxscore)(2026020001, 8476412, [
+        'nhl_team_id' => 2,
+        'sweater_number' => 50,
+    ]);
+    ($this->insertBoxscore)(2026020001, 8476897, [
+        'nhl_team_id' => 2,
+        'sweater_number' => 70,
+    ]);
+    $unitId = DB::table('nhl_units')->insertGetId([
+        'team_abbrev' => 'MTL',
+        'unit_type' => 'G',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_unit_players')->insert([
+        'unit_id' => $unitId,
+        'player_id' => $linkedPlayer->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $unitShiftId = DB::table('nhl_unit_shifts')->insertGetId([
+        'unit_id' => $unitId,
+        'nhl_game_id' => 2026020001,
+        'period' => 4,
+        'start_time' => '00:00',
+        'end_time' => '00:54',
+        'start_game_seconds' => 3600,
+        'end_game_seconds' => 3654,
+        'seconds' => 54,
+        'team_id' => 2,
+        'team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '561',
+        'period' => 4,
+        'period_type' => 'OT',
+        'time_in_period' => '00:54',
+        'seconds_in_game' => 3654,
+        'type_desc_key' => 'period-end',
+        'sort_order' => 799,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $eventId,
+        'unit_shift_id' => $unitShiftId,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>MTL On Ice</th><th>TOR On Ice</th></tr><tr><td>274</td><td>4</td><td>&nbsp;</td><td>0:54</td><td>4:06</td><td>PEND</td><td>Period End</td><td>70 C</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $validation = NhlGameValidation::where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)->firstOrFail();
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
+        ->and($validation->mismatch_count)->toBe(0)
+        ->and($validation->pbpSourceMismatches()->count())->toBe(0);
+});
+
+it('matches shootout failed-shot-attempt API rows to HTML missed-shot failed attempts', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '411',
+        'period' => 5,
+        'period_type' => 'SO',
+        'time_in_period' => '00:00',
+        'seconds_in_game' => 3900,
+        'type_desc_key' => 'failed-shot-attempt',
+        'sort_order' => 869,
+        'shooting_player_id' => 8483457,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th></tr><tr><td>339</td><td>5</td><td>EV</td><td>0:00</td><td>0:00</td><td>MISS</td><td>MTL #48 HUTSON, Failed Attempt</td></tr></table>',
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $validation = NhlGameValidation::where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)->firstOrFail();
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
+        ->and($validation->mismatch_count)->toBe(0)
+        ->and($validation->pbpSourceMismatches()->count())->toBe(0);
+});
+
+it('matches HTML PBP by clock and type instead of report row number', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => '8',
+            'period' => 1,
+            'time_in_period' => '00:18',
+            'seconds_in_game' => 18,
+            'type_desc_key' => 'stoppage',
+            'sort_order' => 13,
+            'metadata' => json_encode(['details' => ['reason' => 'icing']]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026020001,
+            'nhl_event_id' => '56',
+            'period' => 1,
+            'time_in_period' => '00:18',
+            'seconds_in_game' => 18,
+            'type_desc_key' => 'faceoff',
+            'sort_order' => 16,
+            'metadata' => json_encode(['details' => ['eventOwnerTeamId' => 1]]),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th></tr><tr><td>8</td><td>1</td><td>EV</td><td>0:18</td><td>19:42</td><td>FAC</td><td>UTA won Neu. Zone</td></tr></table>',
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $validation = NhlGameValidation::where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)->firstOrFail();
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
+        ->and($validation->mismatch_count)->toBe(0);
+});
+
+it('writes HTML PBP troubleshooting payloads when verification fails', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
+    File::put($directory . '/raw_api_pbp_2026020001.json', 'existing api');
+    File::put($directory . '/raw_html_pbp_2026020001.html', 'existing html');
+    File::put($directory . '/errors.txt', 'old errors');
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM',
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 1, 'abbrev' => 'TOR'],
+            'homeTeam' => ['id' => 2, 'abbrev' => 'MTL'],
+            'rosterSpots' => [
+                ['teamId' => 1, 'playerId' => 8478402, 'sweaterNumber' => 87],
+            ],
+            'plays' => [[
+                'eventId' => 10,
+                'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                'timeInPeriod' => '01:00',
+                'typeDescKey' => 'shot-on-goal',
+                'sortOrder' => 10,
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Time</th><th>Event</th><th>Team</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>01:00</td><td>GOAL</td><td>TOR</td><td>Goal by Crosby</td><td>87 C</td><td></td></tr></table>',
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM' => Http::response(
+            "<html><body><table><tr><td class=\"playerHeading + border\" colspan=\"8\">\n87 CROSBY, SIDNEY\n</td></tr><tr><td>\nTOT 18 01:00 18:00 14:00 04:00 00:00\n</td></tr></table></body></html>",
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM' => Http::response(
+            "<html><body><table><tr><td class=\"playerHeading + border\" colspan=\"8\">\n34 MATTHEWS, AUSTON\n</td></tr><tr><td>\nTOT 20 01:00 20:00 16:00 04:00 00:00\n</td></tr></table></body></html>",
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    expect(File::get($directory . '/raw_api_pbp_2026020001.json'))->toBe('existing api')
+        ->and(File::get($directory . '/raw_html_pbp_2026020001.html'))->toBe('existing html')
+        ->and(File::get($directory . '/raw_toi_away_2026020001.html'))->toContain('87 CROSBY, SIDNEY')
+        ->and(File::get($directory . '/raw_toi_home_2026020001.html'))->toContain('34 MATTHEWS, AUSTON')
+        ->and(File::get($directory . '/raw_shiftcharts_2026020001.json'))->toContain('"data":[]')
+        ->and(File::get($directory . '/html_toi.txt'))->toContain('SIDNEY CROSBY')
+        ->and(File::get($directory . '/shifts_box_gaps.txt'))->toContain('official_toi', 'html_toi')
+        ->and(File::get($directory . '/errors.txt'))->toContain('Source-Only PBP Review 2026020001')
+        ->and(File::get($directory . '/errors.txt'))->toContain('Mismatch count: 1')
+        ->and(File::get($directory . '/errors.txt'))->toContain('Event: 10')
+        ->and(File::get($directory . '/errors.txt'))->toContain('API event payload:')
+        ->and(File::get($directory . '/errors.txt'))->toContain('HTML PBP event payload:');
+});
+
+it('writes source event payloads and shift context for on-ice troubleshooting errors', function (): void {
+    ($this->insertGame)();
+    $htmlPlayer = ($this->makePlayer)(8478402, ['full_name' => 'Sidney Crosby']);
+    $shiftPlayer = ($this->makePlayer)(8488888, ['full_name' => 'Shift Extra']);
+    ($this->insertBoxscore)(2026020001, 8478402, ['sweater_number' => 87]);
+
+    $unitId = DB::table('nhl_units')->insertGetId([
+        'team_abbrev' => 'TOR',
+        'unit_type' => 'F',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_unit_players')->insert([
+        'unit_id' => $unitId,
+        'player_id' => $shiftPlayer->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $unitShiftId = DB::table('nhl_unit_shifts')->insertGetId([
+        'unit_id' => $unitId,
+        'nhl_game_id' => 2026020001,
+        'period' => 1,
+        'start_time' => '00:30',
+        'end_time' => '01:30',
+        'start_game_seconds' => 30,
+        'end_game_seconds' => 90,
+        'seconds' => 60,
+        'team_id' => 1,
+        'team_abbrev' => 'TOR',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'shooting_player_id' => 8478402,
+        'metadata' => json_encode(['details' => ['shotType' => 'wrist']]),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('event_unit_shifts')->insert([
+        'event_id' => $eventId,
+        'unit_shift_id' => $unitShiftId,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    foreach ([
+        [$htmlPlayer->nhl_id, 1, '00:00', '00:30', 0, 30],
+        [$htmlPlayer->nhl_id, 2, '00:30', '00:50', 30, 50],
+        [$htmlPlayer->nhl_id, 3, '01:10', '02:00', 70, 120],
+        [$shiftPlayer->nhl_id, 1, '00:00', '00:30', 0, 30],
+        [$shiftPlayer->nhl_id, 2, '00:30', '01:30', 30, 90],
+        [$shiftPlayer->nhl_id, 3, '01:30', '02:00', 90, 120],
+    ] as [$playerId, $shiftNumber, $start, $end, $startSeconds, $endSeconds]) {
+        DB::table('nhl_shifts')->insert([
+            'nhl_game_id' => 2026020001,
+            'nhl_player_id' => $playerId,
+            'shift_number' => $shiftNumber,
+            'period' => 1,
+            'start_time' => $start,
+            'end_time' => $end,
+            'duration' => '00:30',
+            'shift_start_seconds' => $startSeconds,
+            'shift_end_seconds' => $endSeconds,
+            'shift_duration_seconds' => $endSeconds - $startSeconds,
+            'pos_type' => 'F',
+            'position' => 'C',
+            'team_abbrev' => 'TOR',
+            'team_name' => 'Toronto Maple Leafs',
+            'first_name' => $playerId === $htmlPlayer->nhl_id ? 'Sidney' : 'Shift',
+            'last_name' => $playerId === $htmlPlayer->nhl_id ? 'Crosby' : 'Extra',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 1, 'abbrev' => 'TOR'],
+            'homeTeam' => ['id' => 2, 'abbrev' => 'MTL'],
+            'rosterSpots' => [
+                ['teamId' => 1, 'playerId' => 8478402, 'sweaterNumber' => 87],
+            ],
+            'plays' => [[
+                'eventId' => 10,
+                'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                'timeInPeriod' => '01:00',
+                'typeDescKey' => 'shot-on-goal',
+                'sortOrder' => 10,
+                'details' => ['shootingPlayerId' => 8478402],
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [
+                ['typeCode' => 517, 'playerId' => 8478402, 'period' => 1, 'startTime' => '00:00', 'endTime' => '00:30', 'teamAbbrev' => 'TOR', 'shiftNumber' => 1],
+                ['typeCode' => 517, 'playerId' => 8478402, 'period' => 1, 'startTime' => '00:30', 'endTime' => '00:50', 'teamAbbrev' => 'TOR', 'shiftNumber' => 2],
+                ['typeCode' => 517, 'playerId' => 8478402, 'period' => 1, 'startTime' => '01:10', 'endTime' => '02:00', 'teamAbbrev' => 'TOR', 'shiftNumber' => 3],
+                ['typeCode' => 517, 'playerId' => 8488888, 'period' => 1, 'startTime' => '00:00', 'endTime' => '00:30', 'teamAbbrev' => 'TOR', 'shiftNumber' => 1],
+                ['typeCode' => 517, 'playerId' => 8488888, 'period' => 1, 'startTime' => '00:30', 'endTime' => '01:30', 'teamAbbrev' => 'TOR', 'shiftNumber' => 2],
+                ['typeCode' => 517, 'playerId' => 8488888, 'period' => 1, 'startTime' => '01:30', 'endTime' => '02:00', 'teamAbbrev' => 'TOR', 'shiftNumber' => 3],
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>01:00</td><td>19:00</td><td>SHOT</td><td>TOR #87 CROSBY, Wrist, Off. Zone</td><td>87 C</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $errors = File::get((string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001/errors.txt');
+
+    expect($errors)->toContain('API event payload:')
+        ->and($errors)->toContain('HTML PBP event payload:')
+        ->and($errors)->toContain('Shiftchart player comparison:')
+        ->and($errors)->toContain('"missing_from_shiftcharts": [')
+        ->and($errors)->toContain('8478402')
+        ->and($errors)->toContain('"extra_in_shiftcharts": [')
+        ->and($errors)->toContain('8488888')
+        ->and($errors)->toContain('Shift context for missing/extra players:')
+        ->and($errors)->toContain('"html_player_payloads"')
+        ->and($errors)->toContain('"shiftchart_player_payloads_at_event"')
+        ->and($errors)->toContain('"sweater_number": 87')
+        ->and($errors)->toContain('"shiftNumber": 2')
+        ->and($errors)->toContain('"previous_shift"')
+        ->and($errors)->toContain('"active_shifts"')
+        ->and($errors)->toContain('"next_shift"')
+        ->and($errors)->toContain('"nhl_player_id": 8478402')
+        ->and($errors)->toContain('"nhl_player_id": 8488888')
+        ->and($errors)->toContain('"classification": "missing_from_shiftcharts"')
+        ->and($errors)->toContain('"classification": "extra_in_shiftcharts"');
+});
+
+it('creates missing HTML PBP troubleshooting payload files from raw provider bodies', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $apiBody = '{"plays":[{"eventId":10,"typeDescKey":"shot-on-goal"}]}';
+    $htmlBody = '<table><tr><th>#</th><th>Per</th><th>Time</th><th>Event</th><th>Team</th><th>Description</th></tr><tr><td>10</td><td>1</td><td>01:00</td><td>GOAL</td><td>TOR</td><td>Goal by Crosby</td></tr></table>';
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response($apiBody, 200, [
+            'Content-Type' => 'application/json',
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response('{"data":[]}', 200, [
+            'Content-Type' => 'application/json',
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response($htmlBody, 200, [
+            'Content-Type' => 'text/html',
+        ]),
+    ]);
+
+    app(VerifyNhlHtmlPlayByPlay::class)->verify(2026020001);
+
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+
+    expect(File::get($directory . '/raw_api_pbp_2026020001.json'))->toBe($apiBody)
+        ->and(File::get($directory . '/raw_html_pbp_2026020001.html'))->toBe($htmlBody)
+        ->and(File::get($directory . '/raw_shiftcharts_2026020001.json'))->toBe('{"data":[]}')
+        ->and(File::get($directory . '/errors.txt'))->toContain('Source-Only PBP Review 2026020001');
+});
+
+it('returns embedded PBP source mismatch triage HTML to super admins', function (): void {
+    ($this->insertGame)();
+    $validation = NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 1,
+        'checked_at' => now(),
+    ]);
+    $validation->pbpSourceMismatches()->create([
+        'mismatch_type' => 'event_type_mismatch',
+        'severity' => NhlPbpSourceMismatch::SEVERITY_HIGH,
+        'source_url' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-validations.index', [
+            'admin_panel' => 1,
+            'status' => 'all',
+            'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        ]))
+        ->assertOk()
+        ->assertSee('2026020001')
+        ->assertSee('Verify')
+        ->assertSee(route('admin.nhl-validations.rerun-html-pbp', $validation));
+});
+
+it('returns recent PBP games for admin enrichment', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $validation = NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 1,
+        'checked_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-pbp.index', ['admin_panel' => 1]))
+        ->assertOk()
+        ->assertSee('2026020001')
+        ->assertSee('MTL @ TOR')
+        ->assertSee('Enrich')
+        ->assertSee('Full PBP')
+        ->assertSee('Event Shifts')
+        ->assertSee('data-pbp-toggle', false)
+        ->assertSee(route('admin.nhl-validations.show', ['validation' => $validation, 'admin_panel' => 1]))
+        ->assertSee(route('admin.nhl-pbp.full', 2026020001))
+        ->assertSee(route('admin.nhl-pbp.event-shifts', 2026020001))
+        ->assertSee(route('admin.nhl-pbp.enrich', 2026020001));
+});
+
+it('treats an event at the exact shift start as inside the source-only shift window', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '00:10',
+        'seconds_in_game' => 10,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 1, 'abbrev' => 'TOR'],
+            'homeTeam' => ['id' => 2, 'abbrev' => 'MTL'],
+            'rosterSpots' => [
+                ['teamId' => 1, 'playerId' => 8478402, 'sweaterNumber' => 87],
+            ],
+            'plays' => [[
+                'eventId' => 10,
+                'sortOrder' => 10,
+                'periodDescriptor' => ['number' => 1],
+                'timeInPeriod' => '00:10',
+                'typeDescKey' => 'shot-on-goal',
+                'details' => ['shootingPlayerId' => 8478402],
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [[
+                'typeCode' => 517,
+                'playerId' => 8478402,
+                'period' => 1,
+                'startTime' => '00:10',
+                'endTime' => '00:30',
+                'teamAbbrev' => 'TOR',
+            ]],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>00:10</td><td>19:50</td><td>SHOT</td><td>TOR ONGOAL - #87 CROSBY</td><td>87 C</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-pbp.full', ['gameId' => 2026020001, 'index' => 0]))
+        ->assertOk()
+        ->assertJsonPath('mismatch_count', 0);
+});
+
+it('ignores terminal period-end on-ice disagreements in source-only Full PBP review', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '561',
+        'period' => 4,
+        'period_type' => 'OT',
+        'time_in_period' => '00:54',
+        'seconds_in_game' => 3654,
+        'type_desc_key' => 'period-end',
+        'sort_order' => 799,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 2, 'abbrev' => 'MTL'],
+            'homeTeam' => ['id' => 1, 'abbrev' => 'TOR'],
+            'rosterSpots' => [
+                ['teamId' => 2, 'playerId' => 8476412, 'sweaterNumber' => 50],
+                ['teamId' => 2, 'playerId' => 8476897, 'sweaterNumber' => 70],
+            ],
+            'plays' => [[
+                'eventId' => 561,
+                'sortOrder' => 799,
+                'periodDescriptor' => ['number' => 4, 'periodType' => 'OT'],
+                'timeInPeriod' => '00:54',
+                'typeDescKey' => 'period-end',
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [[
+                'typeCode' => 517,
+                'playerId' => 8476412,
+                'period' => 4,
+                'startTime' => '00:00',
+                'endTime' => '00:54',
+                'teamAbbrev' => 'MTL',
+            ]],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>MTL On Ice</th><th>TOR On Ice</th></tr><tr><td>274</td><td>4</td><td>&nbsp;</td><td>0:54</td><td>4:06</td><td>PEND</td><td>Period End</td><td>70 C</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-pbp.full', ['gameId' => 2026020001, 'index' => 0]))
+        ->assertOk()
+        ->assertJsonPath('event_count', 1)
+        ->assertJsonPath('mismatch_count', 0)
+        ->assertJsonPath('event.comparison_skipped', true);
+});
+
+it('ignores penalty-shot on-ice disagreements in source-only Full PBP review', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '353',
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '19:51',
+        'seconds_in_game' => 1191,
+        'type_desc_key' => 'shot-on-goal',
+        'shooting_player_id' => 8475158,
+        'sort_order' => 303,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 18, 'abbrev' => 'NSH'],
+            'homeTeam' => ['id' => 26, 'abbrev' => 'LAK'],
+            'rosterSpots' => [
+                ['teamId' => 18, 'playerId' => 8475158, 'sweaterNumber' => 90],
+                ['teamId' => 26, 'playerId' => 8475311, 'sweaterNumber' => 35],
+                ['teamId' => 26, 'playerId' => 8474563, 'sweaterNumber' => 8],
+            ],
+            'plays' => [[
+                'eventId' => 353,
+                'sortOrder' => 303,
+                'periodDescriptor' => ['number' => 1, 'periodType' => 'REG'],
+                'timeInPeriod' => '19:51',
+                'situationCode' => '0101',
+                'typeDescKey' => 'shot-on-goal',
+                'details' => [
+                    'shootingPlayerId' => 8475158,
+                    'goalieInNetId' => 8475311,
+                ],
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [[
+                'typeCode' => 517,
+                'playerId' => 8474563,
+                'period' => 1,
+                'startTime' => '19:51',
+                'endTime' => '20:00',
+                'teamAbbrev' => 'LAK',
+            ]],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>NSH On Ice</th><th>LAK On Ice</th></tr><tr><td>136</td><td>1</td><td>SH</td><td>19:51</td><td>0:09</td><td>SHOT</td><td>NSH ONGOAL - #90 O\'REILLY, Penalty Shot, Wrist, Off. Zone, 9 ft.</td><td>90 C</td><td>35 G</td></tr></table>',
+            200
+        ),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-pbp.full', ['gameId' => 2026020001, 'index' => 0]))
+        ->assertOk()
+        ->assertJsonPath('event_count', 1)
+        ->assertJsonPath('mismatch_count', 0)
+        ->assertJsonPath('event.comparison_skipped', true);
+});
+
+it('returns a source-only Full PBP review step and writes source mismatch errors', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '00:10',
+        'seconds_in_game' => 10,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/play-by-play' => Http::response([
+            'awayTeam' => ['id' => 1, 'abbrev' => 'TOR'],
+            'homeTeam' => ['id' => 2, 'abbrev' => 'MTL'],
+            'rosterSpots' => [
+                ['teamId' => 1, 'playerId' => 8478402, 'sweaterNumber' => 87],
+                ['teamId' => 1, 'playerId' => 8479999, 'sweaterNumber' => 88],
+            ],
+            'plays' => [[
+                'eventId' => 10,
+                'sortOrder' => 10,
+                'periodDescriptor' => ['number' => 1],
+                'timeInPeriod' => '00:10',
+                'typeDescKey' => 'shot-on-goal',
+                'details' => ['shootingPlayerId' => 8478402],
+            ]],
+        ]),
+        'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001' => Http::response([
+            'data' => [[
+                'typeCode' => 517,
+                'playerId' => 8478402,
+                'period' => 1,
+                'startTime' => '00:00',
+                'endTime' => '00:30',
+                'teamAbbrev' => 'TOR',
+            ]],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>00:10</td><td>19:50</td><td>SHOT</td><td>TOR ONGOAL - #87 CROSBY</td><td>87 C 88 R</td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-pbp.full', ['gameId' => 2026020001, 'index' => 0]))
+        ->assertOk()
+        ->assertJsonPath('event_count', 1)
+        ->assertJsonPath('mismatch_count', 1)
+        ->assertSee('Full PBP source review')
+        ->assertSee('8479999');
+
+    $errors = File::get((string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001/full_pbp_errors.txt');
+
+    expect($errors)->toContain('Full PBP Source Review 2026020001')
+        ->and($errors)->toContain('Missing from shiftcharts: 8479999');
+});
+
+it('enriches a recent PBP game from the admin PBP tab', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => ['playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM'],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>TOR On Ice</th><th>MTL On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>01:00</td><td>19:00</td><td>SHOT</td><td>TOR #87 CROSBY, Wrist, Off. Zone</td><td></td><td></td></tr></table>',
+            200
+        ),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-pbp.enrich', 2026020001))
+        ->assertOk()
+        ->assertJsonPath('status', NhlGameValidation::STATUS_APPROVED)
+        ->assertJsonPath('mismatch_count', 0)
+        ->assertJsonPath('events_count', 1);
+});
+
+it('rebuilds event shifts for one PBP game from the admin PBP tab', function (): void {
+    ($this->insertGame)();
+    DB::table('play_by_plays')->insert([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->mock(RebuildNhlEventShiftLinks::class, function ($mock): void {
+        $mock->shouldReceive('rebuild')
+            ->once()
+            ->with(2026020001)
+            ->andReturn([
+                'shifts_count' => 42,
+                'unit_shifts_count' => 12,
+                'events_count' => 1,
+            ]);
+    });
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-pbp.event-shifts', 2026020001))
+        ->assertOk()
+        ->assertJsonPath('shifts_count', 42)
+        ->assertJsonPath('unit_shifts_count', 12)
+        ->assertJsonPath('events_count', 1);
+});
+
+it('does not link penalty-shot attempts to normal unit shifts', function (): void {
+    ($this->insertGame)();
+    ($this->makePlayer)(8475158, [
+        'full_name' => "Ryan O'Reilly",
+        'team_abbrev' => 'NSH',
+    ]);
+
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '353',
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '19:51',
+        'seconds_in_game' => 1191,
+        'type_desc_key' => 'shot-on-goal',
+        'desc_key' => 'penalty-shot-attempt',
+        'shooting_player_id' => 8475158,
+        'sort_order' => 303,
+        'metadata' => json_encode(['is_penalty_shot_attempt' => true]),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $unit = app(\App\Services\ResolveNhlUnit::class)->resolve('F', [8475158], 'NSH');
+    DB::table('nhl_unit_shifts')->insert([
+        'unit_id' => $unit->id,
+        'nhl_game_id' => 2026020001,
+        'period' => 1,
+        'start_time' => '19:30',
+        'end_time' => '20:00',
+        'start_game_seconds' => 1170,
+        'end_game_seconds' => 1200,
+        'seconds' => 30,
+        'team_id' => 18,
+        'team_abbrev' => 'NSH',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    app()->make(ConnectEventsToUnitShifts::class, ['gameId' => 2026020001])->connect();
+
+    expect(DB::table('event_unit_shifts')->where('event_id', $eventId)->count())->toBe(0);
+});
+
+it('rebuilds event links with HTML PBP and TV TOI when shiftcharts disagree', function (): void {
+    ($this->insertGame)();
+
+    $players = [
+        8478700 => ['name' => 'Sidney Crosby', 'position' => 'C', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 87],
+        8478800 => ['name' => 'Right Wing', 'position' => 'R', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 88],
+        8478900 => ['name' => 'Left Wing', 'position' => 'L', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 89],
+        8471400 => ['name' => 'Mattias Ekholm', 'position' => 'D', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 14],
+        8470200 => ['name' => 'Correct Partner', 'position' => 'D', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 2],
+        8470500 => ['name' => 'Wrong Defender', 'position' => 'D', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 5],
+        8473000 => ['name' => 'Home Goalie', 'position' => 'G', 'team' => 'TOR', 'team_id' => 1, 'sweater' => 30],
+        8481100 => ['name' => 'Away Center', 'position' => 'C', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 11],
+        8481200 => ['name' => 'Away Right', 'position' => 'R', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 12],
+        8481300 => ['name' => 'Away Left', 'position' => 'L', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 13],
+        8480300 => ['name' => 'Away D One', 'position' => 'D', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 3],
+        8480400 => ['name' => 'Away D Two', 'position' => 'D', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 4],
+        8483100 => ['name' => 'Away Goalie', 'position' => 'G', 'team' => 'MTL', 'team_id' => 2, 'sweater' => 31],
+    ];
+
+    foreach ($players as $nhlId => $player) {
+        ($this->makePlayer)($nhlId, [
+            'full_name' => $player['name'],
+            'position' => $player['position'],
+            'team_abbrev' => $player['team'],
+        ]);
+        ($this->insertBoxscore)(2026020001, $nhlId, [
+            'nhl_team_id' => $player['team_id'],
+            'sweater_number' => $player['sweater'],
+        ]);
+    }
+
+    $eventId = DB::table('play_by_plays')->insertGetId([
+        'nhl_game_id' => 2026020001,
+        'nhl_event_id' => '10',
+        'period' => 1,
+        'period_type' => 'REG',
+        'time_in_period' => '01:00',
+        'seconds_in_game' => 60,
+        'type_desc_key' => 'shot-on-goal',
+        'sort_order' => 10,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $unitResolver = app(\App\Services\ResolveNhlUnit::class);
+    $createShift = function (string $team, int $teamId, string $unitType, array $playerIds) use ($unitResolver): int {
+        $unit = $unitResolver->resolve($unitType, $playerIds, $team);
+
+        return DB::table('nhl_unit_shifts')->insertGetId([
+            'unit_id' => $unit->id,
+            'nhl_game_id' => 2026020001,
+            'period' => 1,
+            'start_time' => '00:00',
+            'end_time' => '02:00',
+            'start_game_seconds' => 0,
+            'end_game_seconds' => 120,
+            'seconds' => 120,
+            'team_id' => $teamId,
+            'team_abbrev' => $team,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    };
+
+    foreach ([
+        $createShift('TOR', 1, 'F', [8478700, 8478800, 8478900]),
+        $createShift('TOR', 1, 'D', [8470200, 8470500]),
+        $createShift('TOR', 1, 'G', [8473000]),
+        $createShift('MTL', 2, 'F', [8481100, 8481200, 8481300]),
+        $createShift('MTL', 2, 'D', [8480300, 8480400]),
+        $createShift('MTL', 2, 'G', [8483100]),
+    ] as $unitShiftId) {
+        DB::table('event_unit_shifts')->insert([
+            'event_id' => $eventId,
+            'unit_shift_id' => $unitShiftId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    $toiRows = static function (array $players): string {
+        return collect($players)
+            ->map(fn (array $player): string => sprintf(
+                '<tr><td>%d %s</td></tr><tr><td>1</td><td>1</td><td>%s</td><td>%s</td><td>%s</td><td>&nbsp;</td></tr>',
+                $player['sweater'],
+                $player['name'],
+                $player['start'],
+                $player['end'],
+                $player['duration']
+            ))
+            ->implode('');
+    };
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'playByPlay' => 'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM',
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/PL020001.HTM' => Http::response(
+            '<table><tr><th>#</th><th>Per</th><th>Str</th><th>Time</th><th>Elapsed</th><th>Event</th><th>Description</th><th>MTL On Ice</th><th>TOR On Ice</th></tr><tr><td>10</td><td>1</td><td>EV</td><td>01:00</td><td>19:00</td><td>SHOT</td><td>TOR ONGOAL - #87 CROSBY</td><td>11 C 12 R 13 L 3 D 4 D 31 G</td><td>87 C 88 R 89 L 14 D 2 D 30 G</td></tr></table>',
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM' => Http::response('<table>' . $toiRows([
+            ['sweater' => 11, 'name' => 'CENTER, AWAY', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 12, 'name' => 'RIGHT, AWAY', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 13, 'name' => 'LEFT, AWAY', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 3, 'name' => 'ONE, AWAY D', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 4, 'name' => 'TWO, AWAY D', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 31, 'name' => 'GOALIE, AWAY', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+        ]) . '</table>', 200),
+        'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM' => Http::response('<table>' . $toiRows([
+            ['sweater' => 87, 'name' => 'CROSBY, SIDNEY', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 88, 'name' => 'RIGHT, WING', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 89, 'name' => 'LEFT, WING', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 14, 'name' => 'EKHOLM, MATTIAS', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 2, 'name' => 'PARTNER, CORRECT', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+            ['sweater' => 5, 'name' => 'DEFENDER, WRONG', 'start' => '2:00 / 18:00', 'end' => '3:00 / 17:00', 'duration' => '01:00'],
+            ['sweater' => 30, 'name' => 'GOALIE, HOME', 'start' => '0:00 / 20:00', 'end' => '2:00 / 18:00', 'duration' => '02:00'],
+        ]) . '</table>', 200),
+    ]);
+
+    app()->make(ConnectEventsToUnitShifts::class, ['gameId' => 2026020001])->connect();
+
+    $linkedNhlIds = DB::table('event_unit_shifts as eus')
+        ->join('nhl_unit_shifts as us', 'us.id', '=', 'eus.unit_shift_id')
+        ->join('nhl_unit_players as up', 'up.unit_id', '=', 'us.unit_id')
+        ->join('players', 'players.id', '=', 'up.player_id')
+        ->where('eus.event_id', $eventId)
+        ->pluck('players.nhl_id')
+        ->map(fn ($id): int => (int) $id)
+        ->unique()
+        ->sort()
+        ->values()
+        ->all();
+
+    expect($linkedNhlIds)->toContain(8471400)
+        ->and($linkedNhlIds)->not->toContain(8470500);
+});
+
+it('lets super admins accept API PBP as canonical for source mismatches', function (): void {
+    ($this->insertGame)();
+    $validation = NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 1,
+        'checked_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-validations.accept-api-pbp', $validation), ['note' => 'API checked'])
+        ->assertOk()
+        ->assertJsonPath('status', NhlGameValidation::STATUS_ACCEPTED_EXCEPTION)
+        ->assertJsonPath('resolution', 'accepted_api');
+
+    $this->assertDatabaseHas('nhl_game_validations', [
+        'id' => $validation->id,
+        'resolution' => 'accepted_api',
+        'resolution_note' => 'API checked',
+    ]);
+});
+
+it('blocks guests and non-admins from PBP source mismatch actions', function (): void {
+    ($this->insertGame)();
+    $validation = NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+        'status' => NhlGameValidation::STATUS_FAILED,
+        'mismatch_count' => 1,
+        'checked_at' => now(),
+    ]);
+
+    $routes = [
+        route('admin.nhl-validations.rerun-html-pbp', $validation),
+        route('admin.nhl-validations.accept-api-pbp', $validation),
+        route('admin.nhl-validations.accept-html-pbp-positions', $validation),
+        route('admin.nhl-validations.acknowledge-pbp-mismatch', $validation),
+    ];
+
+    foreach ($routes as $url) {
+        $this->postJson($url)->assertUnauthorized();
+    }
+
+    $user = User::factory()->create();
+
+    foreach ($routes as $url) {
+        $this->actingAs($user)->postJson($url)->assertForbidden();
+    }
+});
+
+it('lets super admins resolve PBP source mismatches with position-only and acknowledge actions', function (): void {
+    ($this->insertGame)();
+    $admin = ($this->makeSuperAdmin)();
+
+    foreach ([
+        'accepted_positions_only' => 'accept-html-pbp-positions',
+        'acknowledged' => 'acknowledge-pbp-mismatch',
+    ] as $expectedResolution => $routeSuffix) {
+        $validation = NhlGameValidation::create([
+            'nhl_game_id' => 2026020001,
+            'validation_type' => NhlGameValidation::TYPE_PBP_HTML_REPORT,
+            'status' => NhlGameValidation::STATUS_FAILED,
+            'mismatch_count' => 1,
+            'checked_at' => now(),
+        ]);
+
+        $this->actingAs($admin)
+            ->postJson(route("admin.nhl-validations.{$routeSuffix}", $validation))
+            ->assertOk()
+            ->assertJsonPath('status', NhlGameValidation::STATUS_ACCEPTED_EXCEPTION)
+            ->assertJsonPath('resolution', $expectedResolution);
+
+        $validation->delete();
+    }
 });
 
 it('accepts a validation exception without dispatching unit work', function (): void {
@@ -4552,6 +6054,7 @@ it('queues validation game rebuild setup without doing rebuild work in the reque
         NhlImportStages::SHIFTS => 'completed',
         NhlImportStages::SHIFT_UNITS => 'completed',
         NhlImportStages::CONNECT_EVENTS => 'completed',
+        NhlImportStages::HTML_PBP_VERIFY => 'completed',
         NhlImportStages::SUM_GAME_UNITS => 'completed',
         NhlImportStages::VALIDATE_SUMMARY => 'error',
     ]);

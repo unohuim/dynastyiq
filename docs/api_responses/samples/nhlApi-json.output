@@ -1,0 +1,1085 @@
+{
+    "summary": {
+        "discovered": 119,
+        "sampled": 109,
+        "failed": 4,
+        "skipped": 6
+    },
+    "created_or_overwritten": [
+        {
+            "slug": "by-lang-componentseason",
+            "title": "Get Component Season",
+            "method": "GET",
+            "path": "/{lang}/componentSeason",
+            "url": "https://api.nhle.com/stats/rest/en/componentSeason",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-componentseason.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-config",
+            "title": "Get Configuration",
+            "method": "GET",
+            "path": "/{lang}/config",
+            "url": "https://api.nhle.com/stats/rest/en/config",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-config.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-content-module-by-templatekey",
+            "title": "Get Content Module",
+            "method": "GET",
+            "path": "/{lang}/content/module/{templateKey}",
+            "url": "https://api.nhle.com/stats/rest/en/content/module/overview",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-content-module-by-templatekey.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-country",
+            "title": "Get Country Information",
+            "method": "GET",
+            "path": "/{lang}/country",
+            "url": "https://api.nhle.com/stats/rest/en/country",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-country.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-draft",
+            "title": "Get Draft Information",
+            "method": "GET",
+            "path": "/{lang}/draft",
+            "url": "https://api.nhle.com/stats/rest/en/draft",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-draft.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-franchise",
+            "title": "Get Franchise Information",
+            "method": "GET",
+            "path": "/{lang}/franchise",
+            "url": "https://api.nhle.com/stats/rest/en/franchise",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-franchise.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-game",
+            "title": "Get Game Information",
+            "method": "GET",
+            "path": "/{lang}/game",
+            "url": "https://api.nhle.com/stats/rest/en/game",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-game.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-glossary",
+            "title": "Get Glossary",
+            "method": "GET",
+            "path": "/{lang}/glossary",
+            "url": "https://api.nhle.com/stats/rest/en/glossary",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-glossary.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-goalie-by-report",
+            "title": "Get Goalie Stats",
+            "method": "GET",
+            "path": "/{lang}/goalie/{report}",
+            "url": "https://api.nhle.com/stats/rest/en/goalie/summary?limit=72&start=15&sort=wins&cayenneExp=seasonId=20232024",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-goalie-by-report.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-leaders-goalies-by-attribute",
+            "title": "Get Goalie Leaders",
+            "method": "GET",
+            "path": "/{lang}/leaders/goalies/{attribute}",
+            "url": "https://api.nhle.com/stats/rest/en/leaders/goalies/gaa",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-leaders-goalies-by-attribute.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-leaders-skaters-by-attribute",
+            "title": "Get Skater Leaders",
+            "method": "GET",
+            "path": "/{lang}/leaders/skaters/{attribute}",
+            "url": "https://api.nhle.com/stats/rest/en/leaders/skaters/points",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-leaders-skaters-by-attribute.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-milestones-goalies",
+            "title": "Get Goalie Milestones",
+            "method": "GET",
+            "path": "/{lang}/milestones/goalies",
+            "url": "https://api.nhle.com/stats/rest/en/milestones/goalies",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-milestones-goalies.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-milestones-skaters",
+            "title": "Get Skater Milestones",
+            "method": "GET",
+            "path": "/{lang}/milestones/skaters",
+            "url": "https://api.nhle.com/stats/rest/en/milestones/skaters",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-milestones-skaters.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-players",
+            "title": "Get Player Information",
+            "method": "GET",
+            "path": "/{lang}/players",
+            "url": "https://api.nhle.com/stats/rest/en/players?limit=3&sort=lastName&dir=asc&cayenneExp=currentTeamId=7",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-players.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-season",
+            "title": "Get Season",
+            "method": "GET",
+            "path": "/{lang}/season",
+            "url": "https://api.nhle.com/stats/rest/en/season",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-shiftcharts",
+            "title": "Get Shift Charts",
+            "method": "GET",
+            "path": "/{lang}/shiftcharts?cayenneExp=gameId={game_id}",
+            "url": "https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2021020001",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-shiftcharts.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-skater-by-report",
+            "title": "Get Skater Stats",
+            "method": "GET",
+            "path": "/{lang}/skater/{report}",
+            "url": "https://api.nhle.com/stats/rest/en/skater/summary?limit=72&start=17&sort=points&cayenneExp=seasonId=20232024",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-skater-by-report.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-team",
+            "title": "Get Team Information",
+            "method": "GET",
+            "path": "/{lang}/team",
+            "url": "https://api.nhle.com/stats/rest/en/team",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-team.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-team-by-report",
+            "title": "Get Team Stats",
+            "method": "GET",
+            "path": "/{lang}/team/{report}",
+            "url": "https://api.nhle.com/stats/rest/en/team/summary?sort=shotsForPerGame&cayenneExp=seasonId=20232024%20and%20gameTypeId=2",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-team-by-report.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "by-lang-team-id-by-id",
+            "title": "Get Team By ID",
+            "method": "GET",
+            "path": "/{lang}/team/id/{id}",
+            "url": "https://api.nhle.com/stats/rest/en/team/id/10",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-team-id-by-id.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "cat-edge-goalie-detail-by-player-id-by-season-by-game-type",
+            "title": "CAT - Goalie Detail",
+            "method": "GET",
+            "path": "/v1/cat/edge/goalie-detail/{player-id}/{season}/{game-type}; /v1/cat/edge/goalie-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/cat/edge/skater-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-cat-edge-goalie-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "cat-edge-skater-detail-by-player-id-by-season-by-game-type",
+            "title": "CAT - Skater Detail",
+            "method": "GET",
+            "path": "/v1/cat/edge/skater-detail/{player-id}/{season}/{game-type}; /v1/cat/edge/skater-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/cat/edge/skater-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-cat-edge-skater-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-by-team-month-by-month",
+            "title": "Get Month Schedule",
+            "method": "GET",
+            "path": "/v1/club-schedule/{team}/month/{month}",
+            "url": "https://api-web.nhle.com/v1/club-schedule/TOR/month/2023-11",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-by-team-month-by-month.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-by-team-month-now",
+            "title": "Get Month Schedule As of Now",
+            "method": "GET",
+            "path": "/v1/club-schedule/{team}/month/now",
+            "url": "https://api-web.nhle.com/v1/club-schedule/TOR/month/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-by-team-month-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-by-team-week-by-date",
+            "title": "Get Week Schedule",
+            "method": "GET",
+            "path": "/v1/club-schedule/{team}/week/{date}",
+            "url": "https://api-web.nhle.com/v1/club-schedule/TOR/week/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-by-team-week-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-by-team-week-now",
+            "title": "Get Week Schedule As of Now",
+            "method": "GET",
+            "path": "/v1/club-schedule/{team}/week/now",
+            "url": "https://api-web.nhle.com/v1/club-schedule/TOR/week/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-by-team-week-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-season-by-team-by-season",
+            "title": "Get Team Season Schedule",
+            "method": "GET",
+            "path": "/v1/club-schedule-season/{team}/{season}",
+            "url": "https://api-web.nhle.com/v1/club-schedule-season/TOR/20232024",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-season-by-team-by-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-schedule-season-by-team-now",
+            "title": "Get Team Season Schedule As of Now",
+            "method": "GET",
+            "path": "/v1/club-schedule-season/{team}/now",
+            "url": "https://api-web.nhle.com/v1/club-schedule-season/TOR/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-schedule-season-by-team-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-stats-by-team-by-season-by-game-type",
+            "title": "Get Club Stats by Season and Game Type",
+            "method": "GET",
+            "path": "/v1/club-stats/{team}/{season}/{game-type}",
+            "url": "https://api-web.nhle.com/v1/club-stats/TOR/20232024/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-stats-by-team-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-stats-by-team-now",
+            "title": "Get Club Stats Now",
+            "method": "GET",
+            "path": "/v1/club-stats/{team}/now",
+            "url": "https://api-web.nhle.com/v1/club-stats/TOR/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-stats-by-team-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "club-stats-season-by-team",
+            "title": "Get Club Stats for the Season for a Team",
+            "method": "GET",
+            "path": "/v1/club-stats-season/{team}",
+            "url": "https://api-web.nhle.com/v1/club-stats-season/TOR",
+            "sample_file": "docs/api_responses/samples/nhlApi-club-stats-season-by-team.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "draft-picks-by-season-by-round",
+            "title": "Get Draft Picks",
+            "method": "GET",
+            "path": "/v1/draft/picks/{season}/{round}",
+            "url": "https://api-web.nhle.com/v1/draft/picks/2023/all",
+            "sample_file": "docs/api_responses/samples/nhlApi-draft-picks-by-season-by-round.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "draft-picks-now",
+            "title": "Get Draft Picks Now",
+            "method": "GET",
+            "path": "/v1/draft/picks/now",
+            "url": "https://api-web.nhle.com/v1/draft/picks/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-draft-picks-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "draft-rankings-by-season-by-prospect-category",
+            "title": "Get Draft Rankings by Date",
+            "method": "GET",
+            "path": "/v1/draft/rankings/{season}/{prospect_category}",
+            "url": "https://api-web.nhle.com/v1/draft/rankings/2023/1",
+            "sample_file": "docs/api_responses/samples/nhlApi-draft-rankings-by-season-by-prospect-category.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "draft-rankings-now",
+            "title": "Get Draft Rankings",
+            "method": "GET",
+            "path": "/v1/draft/rankings/now",
+            "url": "https://api-web.nhle.com/v1/draft/rankings/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-draft-rankings-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "draft-tracker-picks-now",
+            "title": "Get Draft Tracker Now",
+            "method": "GET",
+            "path": "/v1/draft-tracker/picks/now",
+            "url": "https://api-web.nhle.com/v1/draft-tracker/picks/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-draft-tracker-picks-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-5v5-detail-by-player-id-by-season-by-game-type",
+            "title": "Goalie 5v5 - Detail",
+            "method": "GET",
+            "path": "/v1/edge/goalie-5v5-detail/{player-id}/{season}/{game-type}; /v1/edge/goalie-5v5-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-5v5-detail/8476999/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-5v5-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-5v5-top-10-by-sort-by-by-season-by-game-type",
+            "title": "Goalie 5v5 - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/goalie-5v5-top-10/{sort-by}/{season}/{game-type}; /v1/edge/goalie-5v5-top-10/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-5v5-top-10/shots/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-5v5-top-10-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-comparison-by-player-id-by-season-by-game-type",
+            "title": "Goalie Comparison",
+            "method": "GET",
+            "path": "/v1/edge/goalie-comparison/{player-id}/{season}/{game-type}; /v1/edge/goalie-comparison/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-comparison/8476999/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-comparison-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-detail-by-player-id-by-season-by-game-type",
+            "title": "Goalie Detail",
+            "method": "GET",
+            "path": "/v1/edge/goalie-detail/{player-id}/{season}/{game-type}; /v1/edge/goalie-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-detail/8476999/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-landing-by-season-by-game-type",
+            "title": "Goalie Landing",
+            "method": "GET",
+            "path": "/v1/edge/goalie-landing/{season}/{game-type}; /v1/edge/goalie-landing/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-landing/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-landing-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-save-percentage-detail-by-player-id-by-season-by-game-type",
+            "title": "Goalie Save Percentage - Detail",
+            "method": "GET",
+            "path": "/v1/edge/goalie-save-percentage-detail/{player-id}/{season}/{game-type}; /v1/edge/goalie-save-percentage-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-save-percentage-detail/8476999/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-save-percentage-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-goalie-shot-location-detail-by-player-id-by-season-by-game-type",
+            "title": "Goalie Shot Location - Detail",
+            "method": "GET",
+            "path": "/v1/edge/goalie-shot-location-detail/{player-id}/{season}/{game-type}; /v1/edge/goalie-shot-location-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/goalie-shot-location-detail/8476999/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-shot-location-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-comparison-by-player-id-by-season-by-game-type",
+            "title": "Skater Comparison",
+            "method": "GET",
+            "path": "/v1/edge/skater-comparison/{player-id}/{season}/{game-type}; /v1/edge/skater-comparison/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-comparison/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-comparison-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-detail-by-player-id-by-season-by-game-type",
+            "title": "Skater Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-detail/{player-id}/{season}/{game-type}; /v1/edge/skater-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-distance-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type",
+            "title": "Skater Distance - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/skater-distance-top-10/{positions}/{strength}/{sort-by}/{season}/{game-type}; /v1/edge/skater-distance-top-10/{positions}/{strength}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-distance-top-10/D/all/total/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-distance-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-landing-by-season-by-game-type",
+            "title": "Skater Landing",
+            "method": "GET",
+            "path": "/v1/edge/skater-landing/{season}/{game-type}; /v1/edge/skater-landing/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-landing/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-landing-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-shot-location-detail-by-player-id-by-season-by-game-type",
+            "title": "Skater Shot Location - Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-shot-location-detail/{player-id}/{season}/{game-type}; /v1/edge/skater-shot-location-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-shot-location-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-shot-location-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-shot-speed-detail-by-player-id-by-season-by-game-type",
+            "title": "Skater Shot Speed - Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-shot-speed-detail/{player-id}/{season}/{game-type}; /v1/edge/skater-shot-speed-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-shot-speed-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-shot-speed-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-shot-speed-top-10-by-positions-by-sort-by-by-season-by-game-type",
+            "title": "Skater Shot Speed - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/skater-shot-speed-top-10/{positions}/{sort-by}/{season}/{game-type}; /v1/edge/skater-shot-speed-top-10/{positions}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-shot-speed-top-10/F/max/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-shot-speed-top-10-by-positions-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-skating-distance-detail-by-player-id-by-season-by-game-type",
+            "title": "Skater Skating Distance - Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-skating-distance-detail/{player-id}/{season}/{game-type}; /v1/edge/skater-skating-distance-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-skating-distance-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-skating-distance-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-skating-speed-detail-by-player-id-by-season-by-game-type",
+            "title": "Skater Skating Speed - Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-skating-speed-detail/{player-id}/{season}/{game-type}; /v1/edge/skater-skating-speed-detail/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-skating-speed-detail/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-skating-speed-detail-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-speed-top-10-by-positions-by-sort-by-by-season-by-game-type",
+            "title": "Skater Speed - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/skater-speed-top-10/{positions}/{sort-by}/{season}/{game-type}; /v1/edge/skater-speed-top-10/{positions}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-speed-top-10/F/max/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-speed-top-10-by-positions-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-zone-time-by-player-id-by-season-by-game-type",
+            "title": "Skater Zone Time - Detail",
+            "method": "GET",
+            "path": "/v1/edge/skater-zone-time/{player-id}/{season}/{game-type}; /v1/edge/skater-zone-time/{player-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-zone-time/8482116/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-zone-time-by-player-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-skater-zone-time-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type",
+            "title": "Skater Zone Time - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/skater-zone-time-top-10/{positions}/{strength}/{sort-by}/{season}/{game-type}; /v1/edge/skater-zone-time-top-10/{positions}/{strength}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/skater-zone-time-top-10/F/all/offensive/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-zone-time-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-comparison-by-team-id-by-season-by-game-type",
+            "title": "Team Comparison",
+            "method": "GET",
+            "path": "/v1/edge/team-comparison/{team-id}/{season}/{game-type}; /v1/edge/team-comparison/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-comparison/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-comparison-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-detail-by-team-id-by-season-by-game-type",
+            "title": "Team Details",
+            "method": "GET",
+            "path": "/v1/edge/team-detail/{team-id}/{season}/{game-type}; /v1/edge/team-detail/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-detail/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-detail-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-landing-by-season-by-game-type",
+            "title": "Team Landing",
+            "method": "GET",
+            "path": "/v1/edge/team-detail/{season}/{game-type}; /v1/edge/team-detail/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-landing/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-landing-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-shot-location-detail-by-team-id-by-season-by-game-type",
+            "title": "Team Shot Location - Detail",
+            "method": "GET",
+            "path": "/v1/edge/team-shot-location-detail/{team-id}/{season}/{game-type}; /v1/edge/team-shot-location-detail/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-shot-location-detail/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-shot-location-detail-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-shot-speed-detail-by-team-id-by-season-by-game-type",
+            "title": "Team Shot Speed - Detail",
+            "method": "GET",
+            "path": "/v1/edge/team-shot-speed-detail/{team-id}/{season}/{game-type}; /v1/edge/team-shot-speed-detail/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-shot-speed-detail/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-shot-speed-detail-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-skating-distance-detail-by-team-id-by-season-by-game-type",
+            "title": "Team Skating Distance - Detail",
+            "method": "GET",
+            "path": "/v1/edge/team-skating-distance-detail/{team-id}/{season}/{game-type}; /v1/edge/team-skating-distance-detail/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-skating-distance-detail/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-skating-distance-detail-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-skating-speed-detail-by-team-id-by-season-by-game-type",
+            "title": "Team Skating Speed - Detail",
+            "method": "GET",
+            "path": "/v1/edge/team-skating-speed-detail/{team-id}/{season}/{game-type}; /v1/edge/team-skating-speed-detail/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-skating-speed-detail/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-skating-speed-detail-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-skating-speed-top-10-by-position-by-sort-by-by-season-by-game-type",
+            "title": "Team Skating Speed - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/team-skating-speed-top-10/{position}/{sort-by}/{season}/{game-type}; /v1/edge/team-skating-speed-top-10/{positions}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-skating-speed-top-10/F/max/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-skating-speed-top-10-by-position-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-zone-time-details-by-team-id-by-season-by-game-type",
+            "title": "Team Zone Time - Details",
+            "method": "GET",
+            "path": "/v1/edge/team-zone-time-details/{team-id}/{season}/{game-type}; /v1/edge/team-zone-time-details/{team-id}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-zone-time-details/9/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-zone-time-details-by-team-id-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "edge-team-zone-time-top-10-by-strength-by-sort-by-by-season-by-game-type",
+            "title": "Team Zone Time - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/team-zone-time-top-10/{strength}/{sort-by}/{season}/{game-type}; /v1/edge/team-zone-time-top-10/{strength}/{sort-by}/now",
+            "url": "https://api-web.nhle.com/v1/edge/team-zone-time-top-10/es/offensive/20242025/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-zone-time-top-10-by-strength-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "gamecenter-by-game-id-boxscore",
+            "title": "Get Boxscore",
+            "method": "GET",
+            "path": "/v1/gamecenter/{game-id}/boxscore",
+            "url": "https://api-web.nhle.com/v1/gamecenter/2023020204/boxscore",
+            "sample_file": "docs/api_responses/samples/nhlApi-gamecenter-by-game-id-boxscore.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "gamecenter-by-game-id-landing",
+            "title": "Get Landing",
+            "method": "GET",
+            "path": "/v1/gamecenter/{game-id}/landing",
+            "url": "https://api-web.nhle.com/v1/gamecenter/2023020204/landing",
+            "sample_file": "docs/api_responses/samples/nhlApi-gamecenter-by-game-id-landing.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "gamecenter-by-game-id-play-by-play",
+            "title": "Get Play By Play",
+            "method": "GET",
+            "path": "/v1/gamecenter/{game-id}/play-by-play",
+            "url": "https://api-web.nhle.com/v1/gamecenter/2023020204/play-by-play",
+            "sample_file": "docs/api_responses/samples/nhlApi-gamecenter-by-game-id-play-by-play.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "gamecenter-by-game-id-right-rail",
+            "title": "Get Game Right Rail Content",
+            "method": "GET",
+            "path": "/v1/gamecenter/{game-id}/right-rail",
+            "url": "https://api-web.nhle.com/v1/gamecenter/2023020204/right-rail",
+            "sample_file": "docs/api_responses/samples/nhlApi-gamecenter-by-game-id-right-rail.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "goalie-stats-leaders-by-season-by-game-type",
+            "title": "Get Goalie Stats Leaders by Season",
+            "method": "GET",
+            "path": "/v1/goalie-stats-leaders/{season}/{game-type}",
+            "url": "https://api-web.nhle.com/v1/goalie-stats-leaders/20232024/2?categories=wins&limit=3",
+            "sample_file": "docs/api_responses/samples/nhlApi-goalie-stats-leaders-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "goalie-stats-leaders-current",
+            "title": "Get Current Goalie Stats Leaders",
+            "method": "GET",
+            "path": "/v1/goalie-stats-leaders/current",
+            "url": "https://api-web.nhle.com/v1/goalie-stats-leaders/current?categories=wins&limit=5",
+            "sample_file": "docs/api_responses/samples/nhlApi-goalie-stats-leaders-current.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "location",
+            "title": "Get Location",
+            "method": "GET",
+            "path": "/v1/location",
+            "url": "https://api-web.nhle.com/v1/location",
+            "sample_file": "docs/api_responses/samples/nhlApi-location.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "meta",
+            "title": "Get Meta Information",
+            "method": "GET",
+            "path": "/v1/meta",
+            "url": "https://api-web.nhle.com/v1/meta?players=8478402&teams=EDM,TOR",
+            "sample_file": "docs/api_responses/samples/nhlApi-meta.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "meta-game-by-game-id",
+            "title": "Get Game Information",
+            "method": "GET",
+            "path": "/v1/meta/game/{game-id}",
+            "url": "https://api-web.nhle.com/v1/meta/game/2023020204",
+            "sample_file": "docs/api_responses/samples/nhlApi-meta-game-by-game-id.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "meta-playoff-series-by-year-by-series-letter",
+            "title": "Get Playoff Series Metadata",
+            "method": "GET",
+            "path": "/v1/meta/playoff-series/{year}/{series_letter}",
+            "url": "https://api-web.nhle.com/v1/meta/playoff-series/2023/a",
+            "sample_file": "docs/api_responses/samples/nhlApi-meta-playoff-series-by-year-by-series-letter.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "network-tv-schedule-by-date",
+            "title": "Get TV Schedule for a Specific Date",
+            "method": "GET",
+            "path": "/v1/network/tv-schedule/{date}",
+            "url": "https://api-web.nhle.com/v1/network/tv-schedule/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-network-tv-schedule-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "network-tv-schedule-now",
+            "title": "Get Current TV Schedule",
+            "method": "GET",
+            "path": "/v1/network/tv-schedule/now",
+            "url": "https://api-web.nhle.com/v1/network/tv-schedule/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-network-tv-schedule-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "partner-game-by-country-code-now",
+            "title": "Get Partner Game Odds",
+            "method": "GET",
+            "path": "/v1/partner-game/{country-code}/now",
+            "url": "https://api-web.nhle.com/v1/partner-game/US/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-partner-game-by-country-code-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "ping",
+            "title": "Ping the Server",
+            "method": "GET",
+            "path": "/ping",
+            "url": "https://api.nhle.com/stats/rest/ping",
+            "sample_file": "docs/api_responses/samples/nhlApi-ping.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "player-by-player-game-log-by-season-by-game-type",
+            "title": "Get Game Log",
+            "method": "GET",
+            "path": "/v1/player/{player}/game-log/{season}/{game-type}",
+            "url": "https://api-web.nhle.com/v1/player/8478402/game-log/20232024/2",
+            "sample_file": "docs/api_responses/samples/nhlApi-player-by-player-game-log-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "player-by-player-game-log-now",
+            "title": "Get Game Log As of Now",
+            "method": "GET",
+            "path": "/v1/player/{player}/game-log/now",
+            "url": "https://api-web.nhle.com/v1/player/8478402/game-log/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-player-by-player-game-log-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "player-by-player-landing",
+            "title": "Get Specific Player Info",
+            "method": "GET",
+            "path": "/v1/player/{player}/landing",
+            "url": "https://api-web.nhle.com/v1/player/8478402/landing",
+            "sample_file": "docs/api_responses/samples/nhlApi-player-by-player-landing.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "player-spotlight",
+            "title": "Get Players",
+            "method": "GET",
+            "path": "/v1/player-spotlight",
+            "url": "https://api-web.nhle.com/v1/player-spotlight",
+            "sample_file": "docs/api_responses/samples/nhlApi-player-spotlight.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "playoff-bracket-by-year",
+            "title": "Get Playoff Bracket",
+            "method": "GET",
+            "path": "/v1/playoff-bracket/{year}",
+            "url": "https://api-web.nhle.com/v1/playoff-bracket/2022",
+            "sample_file": "docs/api_responses/samples/nhlApi-playoff-bracket-by-year.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "playoff-series-carousel-by-season",
+            "title": "Playoff Series Carousel",
+            "method": "GET",
+            "path": "/v1/playoff-series/carousel/{season}/",
+            "url": "https://api-web.nhle.com/v1/playoff-series/carousel/20232024/",
+            "sample_file": "docs/api_responses/samples/nhlApi-playoff-series-carousel-by-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "postal-lookup-by-postalcode",
+            "title": "Get Postal Code Information",
+            "method": "GET",
+            "path": "/v1/postal-lookup/{postalCode}",
+            "url": "https://api-web.nhle.com/v1/postal-lookup/90210",
+            "sample_file": "docs/api_responses/samples/nhlApi-postal-lookup-by-postalcode.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "ppt-replay-by-game-id-by-event-number",
+            "title": "Get Play Replay",
+            "method": "GET",
+            "path": "/v1/ppt-replay/{game-id}/{event-number}",
+            "url": "https://api-web.nhle.com/v1/ppt-replay/2023020204/12",
+            "sample_file": "docs/api_responses/samples/nhlApi-ppt-replay-by-game-id-by-event-number.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "ppt-replay-goal-by-game-id-by-event-number",
+            "title": "Get Goal Replay",
+            "method": "GET",
+            "path": "/v1/ppt-replay/goal/{game-id}/{event-number}",
+            "url": "https://api-web.nhle.com/v1/ppt-replay/goal/2023020204/12",
+            "sample_file": "docs/api_responses/samples/nhlApi-ppt-replay-goal-by-game-id-by-event-number.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "prospects-by-team",
+            "title": "Get Team Prospects",
+            "method": "GET",
+            "path": "/v1/prospects/{team}",
+            "url": "https://api-web.nhle.com/v1/prospects/TOR",
+            "sample_file": "docs/api_responses/samples/nhlApi-prospects-by-team.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "roster-by-team-by-season",
+            "title": "Get Team Roster by Season",
+            "method": "GET",
+            "path": "/v1/roster/{team}/{season}",
+            "url": "https://api-web.nhle.com/v1/roster/TOR/20232024",
+            "sample_file": "docs/api_responses/samples/nhlApi-roster-by-team-by-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "roster-by-team-current",
+            "title": "Get Team Roster As of Now",
+            "method": "GET",
+            "path": "/v1/roster/{team}/current",
+            "url": "https://api-web.nhle.com/v1/roster/TOR/current",
+            "sample_file": "docs/api_responses/samples/nhlApi-roster-by-team-current.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "roster-season-by-team",
+            "title": "Get Roster Season for Team",
+            "method": "GET",
+            "path": "/v1/roster-season/{team}",
+            "url": "https://api-web.nhle.com/v1/roster-season/TOR",
+            "sample_file": "docs/api_responses/samples/nhlApi-roster-season-by-team.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "schedule-by-date",
+            "title": "Get Schedule by Date",
+            "method": "GET",
+            "path": "/v1/schedule/{date}",
+            "url": "https://api-web.nhle.com/v1/schedule/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-schedule-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "schedule-calendar-by-date",
+            "title": "Get Schedule Calendar for a Specific Date",
+            "method": "GET",
+            "path": "/v1/schedule-calendar/{date}",
+            "url": "https://api-web.nhle.com/v1/schedule-calendar/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-schedule-calendar-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "schedule-calendar-now",
+            "title": "Get Schedule Calendar As of Now",
+            "method": "GET",
+            "path": "/v1/schedule-calendar/now",
+            "url": "https://api-web.nhle.com/v1/schedule-calendar/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-schedule-calendar-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "schedule-now",
+            "title": "Get Current Schedule",
+            "method": "GET",
+            "path": "/v1/schedule/now",
+            "url": "https://api-web.nhle.com/v1/schedule/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-schedule-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "schedule-playoff-series-by-season-by-series-letter",
+            "title": "Get Playoff Series Schedule",
+            "method": "GET",
+            "path": "/v1/schedule/playoff-series/{season}/{series_letter}/",
+            "url": "https://api-web.nhle.com/v1/schedule/playoff-series/20232024/a",
+            "sample_file": "docs/api_responses/samples/nhlApi-schedule-playoff-series-by-season-by-series-letter.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "score-by-date",
+            "title": "Get Daily Scores by Date",
+            "method": "GET",
+            "path": "/v1/score/{date}",
+            "url": "https://api-web.nhle.com/v1/score/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-score-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "score-now",
+            "title": "Get Daily Scores As of Now",
+            "method": "GET",
+            "path": "/v1/score/now",
+            "url": "https://api-web.nhle.com/v1/score/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-score-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "scoreboard-by-team-now",
+            "title": "Get Team Scoreboard",
+            "method": "GET",
+            "path": "/v1/scoreboard/{team}/now",
+            "url": "https://api-web.nhle.com/v1/scoreboard/TOR/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-scoreboard-by-team-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "scoreboard-now",
+            "title": "Get Scoreboard",
+            "method": "GET",
+            "path": "/v1/scoreboard/now",
+            "url": "https://api-web.nhle.com/v1/scoreboard/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-scoreboard-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "season",
+            "title": "Get Seasons",
+            "method": "GET",
+            "path": "/v1/season",
+            "url": "https://api-web.nhle.com/v1/season",
+            "sample_file": "docs/api_responses/samples/nhlApi-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "skater-stats-leaders-by-season-by-game-type",
+            "title": "Get Skater Stats Leaders for a Specific Season and Game Type",
+            "method": "GET",
+            "path": "/v1/skater-stats-leaders/{season}/{game-type}",
+            "url": "https://api-web.nhle.com/v1/skater-stats-leaders/20222023/2?categories=assists&limit=3",
+            "sample_file": "docs/api_responses/samples/nhlApi-skater-stats-leaders-by-season-by-game-type.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "skater-stats-leaders-current",
+            "title": "Get Current Skater Stats Leaders",
+            "method": "GET",
+            "path": "/v1/skater-stats-leaders/current",
+            "url": "https://api-web.nhle.com/v1/skater-stats-leaders/current?categories=goals&limit=5",
+            "sample_file": "docs/api_responses/samples/nhlApi-skater-stats-leaders-current.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "standings-by-date",
+            "title": "Get Standings by Date",
+            "method": "GET",
+            "path": "/v1/standings/{date}",
+            "url": "https://api-web.nhle.com/v1/standings/2023-11-10",
+            "sample_file": "docs/api_responses/samples/nhlApi-standings-by-date.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "standings-now",
+            "title": "Get Standings",
+            "method": "GET",
+            "path": "/v1/standings/now",
+            "url": "https://api-web.nhle.com/v1/standings/now",
+            "sample_file": "docs/api_responses/samples/nhlApi-standings-now.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "standings-season",
+            "title": "Get Standings information for each Season",
+            "method": "GET",
+            "path": "/v1/standings-season",
+            "url": "https://api-web.nhle.com/v1/standings-season",
+            "sample_file": "docs/api_responses/samples/nhlApi-standings-season.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "wsc-game-story-by-game-id",
+            "title": "Get Game Story",
+            "method": "GET",
+            "path": "/v1/wsc/game-story/{game-id}",
+            "url": "https://api-web.nhle.com/v1/wsc/game-story/2023020204",
+            "sample_file": "docs/api_responses/samples/nhlApi-wsc-game-story-by-game-id.txt",
+            "reason": "Created or overwritten."
+        },
+        {
+            "slug": "wsc-play-by-play-by-game-id",
+            "title": "Get WSC Play By Play",
+            "method": "GET",
+            "path": "/v1/wsc/play-by-play/{game-id}",
+            "url": "https://api-web.nhle.com/v1/wsc/play-by-play/2023020204",
+            "sample_file": "docs/api_responses/samples/nhlApi-wsc-play-by-play-by-game-id.txt",
+            "reason": "Created or overwritten."
+        }
+    ],
+    "failed": [
+        {
+            "slug": "by-lang-game-meta",
+            "title": "Get Game Metadata",
+            "method": "GET",
+            "path": "/{lang}/game/meta",
+            "url": "https://api.nhle.com/stats/rest/en/game/meta",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-game-meta.txt",
+            "reason": "HTTP 404"
+        },
+        {
+            "slug": "by-lang-skater",
+            "title": "Get Skater Information",
+            "method": "GET",
+            "path": "/{lang}/skater",
+            "url": "https://api.nhle.com/stats/rest/en/skater",
+            "sample_file": "docs/api_responses/samples/nhlApi-by-lang-skater.txt",
+            "reason": "HTTP 404"
+        },
+        {
+            "slug": "model-v1-openapi-json",
+            "title": "Get OpenAPI Specification",
+            "method": "GET",
+            "path": "/model/v1/openapi.json",
+            "url": "https://api-web.nhle.com/model/v1/openapi.json",
+            "sample_file": "docs/api_responses/samples/nhlApi-model-v1-openapi-json.txt",
+            "reason": "HTTP 404"
+        },
+        {
+            "slug": "where-to-watch",
+            "title": "Get Streams",
+            "method": "GET",
+            "path": "/v1/where-to-watch",
+            "url": "https://api-web.nhle.com/v1/where-to-watch",
+            "sample_file": "docs/api_responses/samples/nhlApi-where-to-watch.txt",
+            "reason": "HTTP 404"
+        }
+    ],
+    "skipped": [
+        {
+            "slug": "edge-goalie-edge-save-pctg-top-10-by-sort-by-by-season-by-game-type",
+            "title": "Goalie Save Percentage - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/goalie-edge-save-pctg-top-10/{sort-by}/{season}/{game-type}; /v1/edge/goalie-edge-save-pctg-top-10/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-edge-save-pctg-top-10-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        },
+        {
+            "slug": "edge-goalie-shot-location-top-10-by-category-by-sort-by-by-season-by-game-type",
+            "title": "Goalie Shot Location - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/goalie-shot-location-top-10/{category}/{sort-by}/{season}/{game-type}; /v1/edge/goalie-shot-location-top-10/{category}/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-goalie-shot-location-top-10-by-category-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        },
+        {
+            "slug": "edge-skater-shot-location-top-10-by-position-by-category-by-sort-by-by-season-by-game-type",
+            "title": "Skater Shot Location - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/skater-shot-location-top-10/{position}/{category}/{sort-by}/{season}/{game-type}; /v1/edge/skater-shot-location-top-10/{position}/{category}/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-skater-shot-location-top-10-by-position-by-category-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        },
+        {
+            "slug": "edge-team-shot-location-top-10-by-position-by-category-by-sort-by-by-season-by-game-type",
+            "title": "Team Shot Location - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/team-shot-location-top-10/{position}/{category}/{sort-by}/{season}/{game-type}; /v1/edge/team-shot-location-top-10/{position}/{category}/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-shot-location-top-10-by-position-by-category-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        },
+        {
+            "slug": "edge-team-shot-speed-top-10-by-positions-by-sort-by-by-season-by-game-type",
+            "title": "Team Shot Speed - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/team-shot-speed-top-10/{positions}/{sort-by}/{season}/{game-type}; /v1/edge/team-shot-speed-top-10/{positions}/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-shot-speed-top-10-by-positions-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        },
+        {
+            "slug": "edge-team-skating-distance-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type",
+            "title": "Team Skating Distance - Top 10",
+            "method": "GET",
+            "path": "/v1/edge/team-skating-distance-top-10/{positions}/{strength}/{sort-by}/{season}{game-type}; /v1/edge/team-skating-distance-top-10/{positions}/{strength}/{sort-by}/now",
+            "url": "",
+            "sample_file": "docs/api_responses/samples/nhlApi-edge-team-skating-distance-top-10-by-positions-by-strength-by-sort-by-by-season-by-game-type.txt",
+            "reason": "Example cURL URL is missing or contains placeholders."
+        }
+    ]
+}
