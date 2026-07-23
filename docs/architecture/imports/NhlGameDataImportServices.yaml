@@ -56,7 +56,8 @@ rules:
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.
   - Penalty-shot attempts must preserve the raw attempt situation code but derive stored strength from the same-clock penalty-shot penalty row when the attempt situation is reset to penalty-shot-only manpower.
-  - Penalty-shot attempts must be preserved as trackable events, but must not count as normal shots on goal, normal saves, normal shot attempts, or normal event-unit links.
+  - Regulation and overtime penalty-shot attempts must be preserved as trackable events and count toward normal game SOG, goalie shots against, goalie saves, and shot attempts when their PBP event type qualifies; shootout attempts must remain excluded from normal game totals.
+  - Penalty-shot attempts must not create normal event-unit links because shiftcharts describe normal shift windows at that timestamp, not the shooter-goalie-only penalty-shot participants.
   - Core NHL game import stages require PBP and boxscore feeds.
   - Shiftcharts remain the primary source for shift windows, but missing or empty shiftcharts may fall back to official HTML TV/TH time-on-ice reports when those reports can produce player shift windows.
   - HTML TV/TH fallback shift imports must store an auditable `html-toi` source status and must continue to preserve the original missing or empty `shifts` source status.
@@ -90,6 +91,7 @@ rules:
   - HTML play-by-play verification runs only after API play-by-play rows have been linked to unit shifts.
   - HTML play-by-play verification may enrich unit-shift player position rows but must not overwrite canonical API play-by-play fields.
   - HTML play-by-play verification must not report on-ice player mismatches for `period-end` or `game-end` rows because those rows can carry presentation-only player groups after the meaningful same-clock event.
+  - HTML play-by-play verification and source-only review must not report on-ice player mismatches for penalty-shot attempts because HTML correctly exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters.
   - HTML play-by-play verification must treat shootout `MISS` failed-attempt rows as equivalent to API `failed-shot-attempt` rows.
   - Missing right-rail or HTML play-by-play reports must create non-fatal review context rather than failing the core game import.
   - HTML/API play-by-play disagreements must be persisted for admin review without blocking downstream summaries.

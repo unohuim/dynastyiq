@@ -188,9 +188,18 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/communities/{c_id}/leagues/{l_id}/draft-settings', [CommunityLeagues::class, 'draftSettings'])
             ->middleware('auth')
             ->name('community.leagues.draft-settings');
+        Route::get('/communities/{c_id}/leagues/{l_id}/options', [CommunityLeagues::class, 'leagueOptions'])
+            ->middleware('auth')
+            ->name('community.leagues.options');
         Route::get('/communities/{c_id}/leagues/{l_id}/players-payload', [CommunityLeagues::class, 'playersPayload'])
             ->middleware('auth')
             ->name('community.leagues.players-payload');
+        Route::get('/communities/{c_id}/leagues/{l_id}/transactions', [CommunityLeagues::class, 'transactions'])
+            ->middleware('auth')
+            ->name('community.leagues.transactions.index');
+        Route::post('/communities/{c_id}/leagues/{l_id}/transactions/browser-rpc', [CommunityLeagues::class, 'transactionsBrowserRpc'])
+            ->middleware('auth')
+            ->name('community.leagues.transactions.browser-rpc');
         Route::get('/communities/{c_id}/leagues/{l_id}/draft-testing', [CommunityLeagues::class, 'draftTesting'])
             ->middleware('auth')
             ->name('community.leagues.draft-testing');
@@ -206,6 +215,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::put('/communities/{c_id}/leagues/{l_id}/draft-settings', [CommunityLeagues::class, 'updateDraftSettings'])
             ->middleware('auth')
             ->name('community.leagues.draft-settings.update');
+        Route::put('/communities/{c_id}/leagues/{l_id}/options', [CommunityLeagues::class, 'updateLeagueOptions'])
+            ->middleware('auth')
+            ->name('community.leagues.options.update');
         Route::post('/communities/{c_id}/leagues/{l_id}/team-logos/sync', [CommunityLeagues::class, 'syncTeamLogos'])
             ->middleware('auth')
             ->name('community.leagues.team-logos.sync');

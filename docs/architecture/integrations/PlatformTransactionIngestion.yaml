@@ -1,0 +1,59 @@
+name: Platform Transaction Ingestion
+type: External Platform Import Pattern
+location:
+  - database/migrations/*_create_platform_transactions_tables.php
+  - app/Models/PlatformTransaction.php
+  - app/Models/PlatformTransactionEntry.php
+  - app/Services/FantraxTransactionHistoryBrowserRpc.php
+  - app/Services/TradeTransactionCardRenderer.php
+  - app/Services/ClaimDropTransactionCardRenderer.php
+  - scripts/fetch-fantrax-transaction-history-rpc.mjs
+  - app/Http/Controllers/CommunityLeagues.php
+purpose: Store fantasy platform transaction history separately from NHL player movement and current roster state.
+when_to_use:
+  - Importing fantasy platform trades, claims, drops, and lineup movements.
+  - Preserving raw provider transaction evidence for parser refinement.
+  - Resolving fantasy transaction players and teams through existing platform identities.
+when_not_to_use:
+  - Storing real NHL player movement history.
+  - Deriving current fantasy roster membership state.
+  - Persisting AI-generated trade analysis.
+  - Sending scheduled, polled, or bot-listener-driven Discord transaction announcements.
+rules:
+  - Fantasy platform transaction history must be stored in platform_transactions and platform_transaction_entries.
+  - NHL-domain player movement must remain in nhl_player_transactions.
+  - Current roster state must continue to come from roster sync, not replayed historical transactions.
+  - Imports must be idempotent by provider transaction id when available, otherwise by deterministic source_key.
+  - Raw provider transaction group payloads must be preserved on platform_transactions.
+  - Raw provider transaction row payloads must be preserved on platform_transaction_entries.
+  - Trade direction must be represented on entries with from_platform_team_id and to_platform_team_id.
+  - Transaction team resolution may use provider team ids first and provider team names as fallback so entries still link to existing platform_teams rows and synced team logos.
+  - Claim, drop, and lineup entries may use platform_team_id as the provider-perspective team when useful.
+  - Community-specific transaction output channel settings may be stored on organization_leagues.meta.transactions.discord_channel.
+  - Manual refresh may post one Discord message per newly created platform transaction when organization_leagues.meta.transactions.discord_channel is configured.
+  - Manual refresh trade announcements must render a PNG transaction card attachment; card rendering failure must count as a Discord announcement failure instead of sending a text-only trade announcement.
+  - Trade transaction Discord messages must send only the rendered card attachment with empty message content.
+  - Trade transaction cards must require platform team logo URLs to download and decode before rendering when present, fall back to linked Discord owner avatars only when no team logo URL exists, and use generic team initials only when neither image source exists.
+  - Manual refresh claim/drop announcements must render PNG add/drop transaction card attachments; card rendering failure must count as a Discord announcement failure instead of sending a text-only claim/drop announcement.
+  - Claim/drop transaction Discord messages must send only the rendered card attachment with empty message content.
+  - Claim/drop transaction cards must use player headshots for player identity when available and the fantasy team image priority of team logo, linked Discord owner avatar, then generic team initials.
+  - Manual refresh must not post Discord messages when no new platform transaction rows are created.
+  - Manual refresh must not fail transaction persistence when Discord posting is unavailable or rejected.
+  - Player resolution must use existing platform identity rows and must not create canonical players.
+  - Draft picks and unknown assets must be persisted as entries without requiring player identity resolution.
+  - Unknown source views, transaction types, asset types, or actions must not be silently coerced into known values.
+  - Authenticated browser-profile transaction access must remain explicit and operator-controlled until a separate polling architecture is approved.
+public_interface:
+  - PlatformTransaction
+  - PlatformTransactionEntry
+  - FantraxTransactionHistoryBrowserRpc
+  - TradeTransactionCardRenderer
+  - ClaimDropTransactionCardRenderer
+  - community.leagues.options
+  - community.leagues.options.update
+  - community.leagues.transactions.browser-rpc
+example_usage: |
+  $transaction = PlatformTransaction::query()
+      ->where('platform_league_id', $platformLeague->id)
+      ->where('source_key', $sourceKey)
+      ->first();

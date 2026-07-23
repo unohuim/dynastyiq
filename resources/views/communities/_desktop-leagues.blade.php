@@ -78,6 +78,15 @@
                     $scopeLabel = data_get($l->activePlatformScope(), 'scope_label');
                     $teamsUrl = route('community.leagues.teams', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false);
                     $draftSummaryUrl = route('community.leagues.draft-summary', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false);
+                    $transactionsBrowserRpcUrl = $platform === 'fantrax'
+                        ? route('community.leagues.transactions.browser-rpc', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false)
+                        : '';
+                    $transactionsUrl = $platform === 'fantrax'
+                        ? route('community.leagues.transactions.index', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false)
+                        : '';
+                    $teamLogoSyncUrl = in_array($platform, ['fantrax', 'yahoo'], true)
+                        ? route('community.leagues.team-logos.sync', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false)
+                        : '';
                     $leaguePayload = [
                         'id' => $l->id,
                         'name' => (string) $l->name,
@@ -86,6 +95,10 @@
                         'server' => $serverName,
                         'teamsUrl' => $teamsUrl,
                         'draftSummaryUrl' => $draftSummaryUrl,
+                        'leagueOptionsUrl' => $canEdit ? route('community.leagues.options', ['c_id' => $currentOrg->id, 'l_id' => $l->id], false) : '',
+                        'transactionsBrowserRpcUrl' => $transactionsBrowserRpcUrl,
+                        'transactionsUrl' => $transactionsUrl,
+                        'teamLogoSyncUrl' => $teamLogoSyncUrl,
                     ];
                 @endphp
 

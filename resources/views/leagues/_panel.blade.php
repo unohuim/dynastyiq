@@ -1934,7 +1934,7 @@
           });
           const payload = await response.json().catch(() => ({}));
 
-          if (!response.ok) {
+          if (!response.ok || payload?.ok !== true) {
             throw new Error(payload.message || 'Could not sync team logos.');
           }
 

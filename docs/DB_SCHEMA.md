@@ -80,6 +80,8 @@ Migrations remain the **sole source of truth**.
 - platform_player_ids
 - platform_roster_memberships
 - platform_teams
+- platform_transaction_entries
+- platform_transactions
 - player_external_identities
 - player_imports
 - player_rankings
@@ -912,7 +914,7 @@ Migrations remain the **sole source of truth**.
 | linked_at | timestamp | Yes | Link timestamp |
 | archived_at | timestamp | Yes | Binding archive timestamp |
 | status | string | Yes | Link status, e.g. `active`, `pending`, `unlinked` |
-| meta | json | Yes | Link metadata |
+| meta | json | Yes | Link metadata, including community league draft notification settings and transaction output channel settings |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
@@ -2454,6 +2456,89 @@ Migrations remain the **sole source of truth**.
 - Unique: `(platform_league_id, user_id)` (`uq_platform_league_user_settings`)
 - Implicit (FK index): `platform_league_id`
 - Implicit (FK index): `user_id`
+
+---
+
+## platform_transaction_entries
+
+**Organization-owned:** No; platform-transaction owned
+**Purpose:** Normalized asset movements within external fantasy platform transactions, preserving direction, player/pick identity, and raw provider row evidence.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_transaction_id | bigint | No | FK -> platform_transactions.id (CASCADE) |
+| entry_index | unsignedInteger | No | Stable row order inside the provider transaction group |
+| asset_type | string(40) | No | Normalized asset type; see Platform Transaction Entry Asset Type |
+| action | string(40) | No | Normalized movement action; see Platform Transaction Entry Action |
+| from_platform_team_id | bigint | Yes | FK -> platform_teams.id (SET NULL); team the asset moved from |
+| to_platform_team_id | bigint | Yes | FK -> platform_teams.id (SET NULL); team the asset moved to |
+| platform_team_id | bigint | Yes | FK -> platform_teams.id (SET NULL); provider-perspective team for claim/drop or lineup entries |
+| player_id | bigint | Yes | FK -> players.id (SET NULL); canonical player match when known |
+| platform_player_identity_id | bigint | Yes | FK -> platform_player_ids.id (SET NULL); matched provider player identity row when known |
+| provider_player_id | string | Yes | Raw provider player id, such as Fantrax scorer id |
+| raw_name | string | Yes | Provider display name when unresolved or non-player |
+| from_slot | string | Yes | Source lineup/roster slot when applicable |
+| to_slot | string | Yes | Destination lineup/roster slot when applicable |
+| draft_year | unsignedSmallInteger | Yes | Draft pick year when parsed |
+| draft_round | unsignedTinyInteger | Yes | Draft pick round when parsed |
+| draft_pick | unsignedSmallInteger | Yes | Draft pick number when parsed |
+| draft_original_team_name | string | Yes | Provider display name for original pick owner when present |
+| draft_original_team_provider_id | string | Yes | Provider team id for original pick owner when known |
+| raw_payload | json | Yes | Raw provider transaction row payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_transaction_id, entry_index)` (`uq_platform_transaction_entry_order`)
+- Index: `from_platform_team_id` (`ix_platform_transaction_entry_from_team`)
+- Index: `to_platform_team_id` (`ix_platform_transaction_entry_to_team`)
+- Index: `platform_team_id` (`ix_platform_transaction_entry_team`)
+- Index: `player_id` (`ix_platform_transaction_entry_player`)
+- Index: `platform_player_identity_id` (`ix_platform_transaction_entry_platform_player`)
+- Index: `(asset_type, action)` (`ix_platform_transaction_entry_asset_action`)
+- Implicit (FK index): `platform_transaction_id`
+
+---
+
+## platform_transactions
+
+**Organization-owned:** No; platform-league owned
+**Purpose:** External fantasy platform transaction events grouped by provider identity, preserving raw provider evidence separately from current roster state.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| platform_league_id | bigint | No | FK -> platform_leagues.id (CASCADE) |
+| platform | string(32) | No | Fantasy platform, e.g. `fantrax` |
+| provider_transaction_id | string | Yes | Provider transaction id when available, such as Fantrax `txSetId` |
+| source_key | string | No | Deterministic provider-scope idempotency key |
+| source_view | string(40) | No | Provider source view; see Platform Transaction Source View |
+| transaction_type | string(80) | No | Normalized transaction type; see Platform Transaction Type |
+| occurred_at | timestamp | Yes | Provider processed timestamp when parsed |
+| period | string(64) | Yes | Provider fantasy period/week when available |
+| executed | boolean | Yes | Provider execution state when available |
+| deleted | boolean | No | Provider deleted flag; default `false` |
+| status | string(80) | Yes | Provider status/result code or label |
+| summary | text | Yes | Human-readable normalized transaction summary |
+| raw_payload | json | Yes | Raw provider transaction group payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(platform_league_id, source_key)` (`uq_platform_transaction_source`)
+- Index: `(platform_league_id, source_view, occurred_at)` (`ix_platform_transaction_view_time`)
+- Index: `(platform_league_id, transaction_type, occurred_at)` (`ix_platform_transaction_type_time`)
+- Index: `provider_transaction_id` (`ix_platform_transaction_provider_id`)
+- Implicit (FK index): `platform_league_id`
 
 ---
 

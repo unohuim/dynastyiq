@@ -1,168 +1,204 @@
 ---
-pr_id: 16
-pr_name: pr16
+pr_id: 18
+pr_name: pr18
 status: Active
-created: 2026-07-21
-last_updated: 2026-07-21
+created: 2026-07-22
+last_updated: 2026-07-22
 ---
 
-# Right-Rail HTML PBP Enrichment And Verification
+# Fantrax Platform Transaction Ingestion
 
 ## Source
 
-Discussion on 2026-07-21 about NHL gamecenter `right-rail` payloads exposing official HTML report URLs, especially the `PL` play-by-play report and `TV`/`TH` time-on-ice reports.
+Discussion on 2026-07-22 about replacing screenshot-based trade parsing with
+authenticated Fantrax transaction history ingestion.
 
-The agreed direction is to keep all current NHL sources, add right-rail HTML reports as an additional source layer, and use the HTML play-by-play report after the normal API PBP import to enrich on-ice player positions and verify that events match.
+Relevant Fantrax transaction history views:
+
+- `https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=TRADE`
+- `https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=CLAIM_DROP`
+- `https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=LINEUP_CHANGE`
+
+The agreed first step is to read those authenticated Fantrax views, populate a
+platform-neutral transaction table, and evaluate how accurately DynastyIQ can
+extract transaction data before building trade analysis or Discord automation.
 
 ## Objective
 
-Add a separate right-rail HTML PBP enrichment and verification stage that runs after the existing API PBP import and event-unit linking. The stage should parse the NHL HTML play-by-play report, attach contextual on-ice player positions to unit shifts, and record whether the HTML report agrees with the imported API PBP events.
+Add a first-pass Fantrax transaction ingestion workflow that captures provider
+transaction history into platform-neutral storage, preserves raw provider
+evidence, and normalizes enough structure to inspect extraction quality for
+trades, claim/drop events, and lineup changes.
 
 ## Current DynastyIQ Context
 
-DynastyIQ already imports and derives game data from:
+DynastyIQ already stores platform-neutral Fantrax league, team, roster, scoring,
+settings, draft, and player-stat data in tables such as:
 
-- API play-by-play rows in `play_by_plays`.
-- Boxscore rows used as validation/reconciliation targets.
-- Stats REST shiftchart rows.
-- `nhl_units`, `nhl_unit_shifts`, and `event_unit_shifts` for on-ice unit windows and event links.
+- `platform_leagues`
+- `platform_teams`
+- `platform_player_ids`
+- `platform_roster_memberships`
+- `platform_league_scoring_categories`
+- `platform_league_player_stats`
+- `drafts`
+- `draft_picks`
 
-Recent schema work added the planned storage shape for contextual player positions:
-
-- `nhl_unit_shift_players`
-- `unit_shift_id`
-- `player_id`
-- `position_code`
-
-This table keeps player position scoped to a specific unit shift, so the same unit composition can have different assignments on different shifts.
+`docs/architecture/imports/NhlPlayerTransactions.yaml` explicitly reserves
+`nhl_player_transactions` for real hockey movement and says fantasy roster
+movement must use a separate fantasy transaction model when introduced.
 
 ## Scope
 
-- Add a service that reads the gamecenter right-rail payload and discovers the official HTML play-by-play report URL.
-- Add an HTML PBP parser for the `PL` report that extracts normalized event rows.
-- Extract event-level on-ice players and contextual positions when the report provides them.
-- Match parsed HTML PBP events to existing `play_by_plays` records.
-- Upsert `nhl_unit_shift_players` rows by `(unit_shift_id, player_id)`.
-- Compare HTML PBP events against imported API PBP events for event count, period, time, event type, scoring events, penalty events, team, and player involvement where available.
-- Persist source/enrichment/verification status without making missing HTML reports fatal to the core import.
-- Use official TV/TH time-on-ice reports as fallback shift windows when stats REST shiftcharts are missing or empty.
-- Add focused Pest tests for parser behavior, event matching, position upserts, idempotency, and mismatch status behavior.
+- Discover the Fantrax transaction history network payloads for the `TRADE`,
+  `CLAIM_DROP`, and `LINEUP_CHANGE` views.
+- Prefer authenticated network JSON payload extraction over DOM parsing.
+- Add platform-neutral persistence for fantasy platform transactions.
+- Persist raw provider payloads for audit and parser iteration.
+- Normalize transaction type, occurred timestamp, source view, source key,
+  summary text, involved platform teams, player assets, draft-pick assets when
+  detectable, and direction/action rows.
+- Resolve Fantrax players to canonical DynastyIQ players where existing
+  platform identity data allows it.
+- Preserve unresolved names/assets without failing ingestion.
+- Add an importer service for one platform league and selected history view.
+- Add an operator-facing command or bounded service entry point for manual
+  extraction experiments.
+- Add a bounded transaction tab inspection surface that refreshes Fantrax history
+  and lists recently persisted normalized transactions.
+- Add a community league option for a Discord transactions output channel,
+  stored for manual-refresh transaction announcements.
+- Send Discord announcements for newly created transactions during manual
+  refresh when a transactions channel is configured, including rendered trade
+  card image attachments for trade transactions and rendered add/drop card
+  image attachments for claim/drop transactions. Trade and claim/drop card
+  rendering is required for those announcements; rendering failures count as
+  Discord announcement failures instead of falling back to text-only messages.
+  Trade and claim/drop announcement Discord messages send only the rendered
+  card attachment with empty message content.
+- Add focused Pest tests for parser normalization, idempotent persistence,
+  player/team resolution, unresolved assets, and raw-payload preservation.
 
 ## Out Of Scope
 
-- Replacing API play-by-play as the primary PBP import source.
-- Replacing stats REST shiftcharts as the primary shift source when shiftcharts are available.
-- Normalizing every right-rail HTML report type.
-- Building user-facing UI for right-rail reports.
-- Changing fantasy stat calculations to depend on HTML PBP position enrichment.
+- AI trade analysis.
+- Discord message listeners, commands, scheduled polling, or bot-driven
+  transaction announcement behavior.
+- Screenshot OCR or image parsing.
+- Scheduled polling.
+- Automatic commissioner-machine companion processes.
+- Full transaction history product UI beyond the bounded refresh/recent
+  transaction inspection surface.
+- Updating roster membership state from historical transactions.
+- Treating Fantrax transaction history as more authoritative than current roster
+  sync for current roster state.
+- Claim/drop or lineup-change fantasy-impact analysis.
+- Lineup-change image cards.
 
-## Data Model
+## Proposed Data Model
 
-Use the existing/imported schema direction:
+Add a platform-neutral transaction model separate from NHL-domain transactions.
 
-- `nhl_unit_shift_players.unit_shift_id`
-- `nhl_unit_shift_players.player_id`
-- `nhl_unit_shift_players.position_code`
+Expected transaction row fields:
 
-Allowed `position_code` values remain canonical in `docs/ENUMS.md`:
+- `platform_league_id`
+- `platform`
+- `provider_transaction_id`
+- `source_key`
+- `transaction_type`
+- `source_view`
+- `occurred_at`
+- `summary`
+- `raw_payload`
 
-- `LW`
-- `C`
-- `RW`
-- `LD`
-- `RD`
-- `G`
+Expected transaction entry row fields:
 
-If implementation needs source-level audit rows for HTML report availability or mismatch details, prefer extending existing NHL source-status or validation patterns instead of introducing broad new tables.
+- `platform_transaction_id`
+- `entry_index`
+- `from_platform_team_id`
+- `to_platform_team_id`
+- `platform_team_id`
+- `player_id`
+- `platform_player_identity_id`
+- `provider_player_id`
+- `asset_type`
+- `action`
+- `from_slot`
+- `to_slot`
+- `draft_year`
+- `draft_round`
+- `draft_pick`
+- `draft_original_team_name`
+- `draft_original_team_provider_id`
+- `raw_name`
+- `raw_payload`
+
+The first schema pass uses one transaction row per provider transaction group
+and one entry row per moved asset. Directional team ids live on entries so
+trades, claims, drops, and lineup changes share the same storage shape.
 
 ## Service Shape
 
 Expected service boundaries:
 
-- Right-rail report discovery service.
-- HTML PBP fetcher.
-- HTML PBP parser returning normalized DTOs.
-- Enrichment writer for `nhl_unit_shift_players`.
-- Verification service comparing HTML PBP DTOs against API PBP rows.
+- Fantrax authenticated transaction history fetcher.
+- Fantrax transaction payload parser.
+- Platform transaction persistence service.
+- Player/team resolver using existing platform-neutral Fantrax records.
 
-The parser should not write database rows directly.
+The parser should return normalized DTOs and should not write database rows
+directly.
 
 ## Processing Rules
 
-- This stage runs after API PBP import and after events are linked to unit shifts.
-- Missing right-rail or missing `PL` report should mark enrichment unavailable, not fail the game.
-- HTML fetch or parse failure should mark enrichment failed, not fail the core game import.
-- Event mismatch should create a separate verification warning/status.
-- Position writes must be idempotent and upsert by `(unit_shift_id, player_id)`.
-- Existing unit identity must not change when player positions change.
-- HTML PBP must not overwrite canonical API PBP fields.
-- Raw source URLs and failure reasons should be preserved for audit.
-
-## Admin Review Workflow
-
-HTML PBP disagreement should mean that DynastyIQ found a difference between two NHL-published sources, not that the game import automatically failed.
-
-Add an admin review surface near `Game Validations`, tentatively named `PBP Source Mismatches`, for games where the HTML report and API PBP disagree on comparable fields.
-
-Rows should show:
-
-- Game, teams, date, and import run context when available.
-- Mismatch severity.
-- Mismatch type.
-- Affected event count.
-- Last checked timestamp.
-
-Mismatch types should distinguish:
-
-- Event count mismatch.
-- Event time, period, type, or team mismatch.
-- Scoring event player mismatch.
-- Penalty event player mismatch.
-- On-ice player mismatch.
-- Position-only mismatch.
-- Parser or source availability failure.
-
-Severity should reflect downstream risk:
-
-- High: scoring, penalty, player attribution, or broad event alignment differences that may affect fantasy stats.
-- Medium: on-ice player differences that may affect unit attribution or plus/minus confidence.
-- Low: position-only differences where core stats and event-unit links remain usable.
-- Info: unavailable HTML report, missing right-rail URL, or parser coverage gap.
-
-The detail view should show the API PBP row and parsed HTML PBP row side by side for each mismatch, including the raw source URL.
-
-Expected admin actions:
-
-- Re-run HTML verification.
-- Accept API as canonical and leave the game otherwise approved.
-- Accept position enrichment only when core event data agrees.
-- Ignore or acknowledge a known source mismatch with a note.
-
-The default response should be to keep the game imported and preserve existing stats. Manual review is only required when the mismatch could affect player stats, unit attribution, or event trust.
+- Fantrax transaction imports must be league-scoped.
+- Imports must be idempotent by provider transaction id when available, otherwise
+  by a deterministic source key derived from provider evidence.
+- Raw provider payloads must be preserved for audit and parser refinement.
+- Unknown transaction fields must remain in raw payloads rather than being
+  discarded.
+- Unknown transaction types or views must not be silently coerced into known
+  values.
+- Player resolution must use existing Fantrax/platform identity data and must not
+  create canonical players.
+- Unresolved players, picks, or assets must be persisted as unresolved entries
+  with raw names/payloads.
+- Current roster state must continue to come from roster sync, not from replaying
+  historical transaction rows.
+- Authenticated Chromium/browser-profile access must remain explicit and
+  operator-controlled for this PR.
 
 ## Acceptance Criteria
 
-- Running the service for a game with an available `PL` report discovers and parses the HTML PBP report.
-- Matching HTML events enrich linked unit shifts with per-player `position_code` rows.
-- Re-running the service updates existing position rows without duplicates.
-- Event verification records success when HTML PBP and API PBP agree on comparable fields.
-- Event verification records a non-fatal mismatch status when comparable fields disagree.
-- Missing or unavailable HTML reports are recorded as unavailable and do not fail the game import.
-- Admin users can review HTML/API disagreements separately from failed game validations.
-- Admin users can see mismatch severity, mismatch type, affected events, source URLs, and side-by-side API vs HTML event data.
-- Admin users can re-run verification, accept API as canonical, accept position enrichment only, or acknowledge a known source mismatch.
-- Tests cover a successful parse/enrich path, missing report path, parser failure path, mismatch path, and idempotent re-run path.
-
-## Implementation Notes
-
-- Use `right-rail` as the report-discovery source when available.
-- Prefer stable game/report URL derivation only as a fallback after confirming source behavior.
-- Use the `PL` report as the event-level HTML source.
-- Use `TV`/`TH` as TOI and shift-count troubleshooting sources when HTML/API PBP enrichment finds source mismatches, and as fallback shift-window sources when shiftcharts are missing or empty.
+- Running the importer for a Fantrax league and `TRADE` history view stores trade
+  transactions and entries with raw provider evidence.
+- Running the importer for `CLAIM_DROP` stores add/drop style transactions and
+  entries with raw provider evidence.
+- Running the importer for `LINEUP_CHANGE` stores lineup movement transactions
+  and entries with raw provider evidence.
+- Re-running the same import updates existing transactions without duplicating
+  rows.
+- Resolvable Fantrax player assets link to canonical `players` through existing
+  identity data.
+- Unresolved player names or non-player assets are retained without failing the
+  transaction import.
+- Resolvable Fantrax team assets link to `platform_teams`.
+- Fantrax transaction team names may resolve to existing `platform_teams` when
+  provider transaction rows do not expose usable team ids, preserving access to
+  synced team logos for trade cards.
+- Parser output can be inspected to judge extraction quality before AI analysis
+  or Discord automation is introduced.
+- Tests cover successful trade parsing, claim/drop parsing, lineup-change
+  parsing, idempotent persistence, player/team resolution, unresolved asset
+  persistence, and raw payload retention.
 
 ## Documentation Updates
 
-- Promote any durable source-order or status rules into `docs/architecture/imports/NhlGameDataImportServices.yaml`.
-- Keep position-code enum authority in `docs/ENUMS.md`.
-- Update `docs/DB_SCHEMA.md` if implementation changes schema beyond the current planned table.
-- Add or update NHL response usage docs only when new right-rail HTML parsing behavior changes how DynastyIQ uses those payloads.
+- Add a new architecture YAML under `docs/architecture/integrations/` for the
+  platform transaction ingestion pattern.
+- Update `docs/ARCHITECTURE_INVENTORY.md` as the derived bootstrap summary.
+- Add any new enum-like values to `docs/ENUMS.md`, including transaction type,
+  source view, entry asset type, and entry action values if implemented as
+  canonical strings.
+- Update `docs/DB_SCHEMA.md` if schema documentation is maintained for the new
+  tables.

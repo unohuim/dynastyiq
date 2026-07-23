@@ -33,8 +33,13 @@ final class FantraxLogoSyncService
      *     skipped_reason:string|null,
      *     attempted_league_count:int,
      *     candidate_count:int,
+     *     selected_league_candidate_count:int,
      *     updated_team_count:int,
      *     replaced_derived_team_count:int,
+     *     matched_candidate_count:int,
+     *     unmatched_candidate_count:int,
+     *     skipped_candidate_count:int,
+     *     candidate_results:array<int,array<string,mixed>>,
      *     failed_league_count:int,
      *     errors:array<int,array{league_id:int,message:string}>
      * }
@@ -52,8 +57,13 @@ final class FantraxLogoSyncService
             'skipped_reason' => null,
             'attempted_league_count' => 0,
             'candidate_count' => 0,
+            'selected_league_candidate_count' => 0,
             'updated_team_count' => 0,
             'replaced_derived_team_count' => 0,
+            'matched_candidate_count' => 0,
+            'unmatched_candidate_count' => 0,
+            'skipped_candidate_count' => 0,
+            'candidate_results' => [],
             'failed_league_count' => 0,
             'errors' => [],
         ];
@@ -98,12 +108,24 @@ final class FantraxLogoSyncService
 
             $summary['candidate_count'] += count($candidates);
             $persisted = $this->persistCandidates($league, $candidates);
+            $summary['selected_league_candidate_count'] += $persisted['selected_league_candidate_count'];
             $summary['updated_team_count'] += $persisted['updated_team_count'];
             $summary['replaced_derived_team_count'] += $persisted['replaced_derived_team_count'];
+            $summary['matched_candidate_count'] += $persisted['matched_candidate_count'];
+            $summary['unmatched_candidate_count'] += $persisted['unmatched_candidate_count'];
+            $summary['skipped_candidate_count'] += $persisted['skipped_candidate_count'];
+            $summary['candidate_results'] = [
+                ...$summary['candidate_results'],
+                ...$persisted['candidate_results'],
+            ];
             $this->appendDebugDump(sprintf(
-                'Fantrax league %s yielded %d candidate(s), updated %d team(s), replaced %d derived URL(s).',
+                'Fantrax league %s yielded %d candidate(s), selected %d candidate(s), matched %d candidate(s), unmatched %d candidate(s), skipped %d candidate(s), updated %d team(s), replaced %d derived URL(s).',
                 $league->platform_league_id,
                 count($candidates),
+                $persisted['selected_league_candidate_count'],
+                $persisted['matched_candidate_count'],
+                $persisted['unmatched_candidate_count'],
+                $persisted['skipped_candidate_count'],
                 $persisted['updated_team_count'],
                 $persisted['replaced_derived_team_count'],
             ));
@@ -180,7 +202,7 @@ final class FantraxLogoSyncService
                 }
             }
 
-            if ($candidates !== [] || $this->browserStopReason($process->getOutput()) !== null) {
+            if ($this->browserHardStopReason($process->getOutput()) !== null) {
                 break;
             }
         }
@@ -188,7 +210,7 @@ final class FantraxLogoSyncService
         return $candidates;
     }
 
-    private function browserStopReason(string $output): ?string
+    private function browserHardStopReason(string $output): ?string
     {
         $payload = json_decode(trim($output), true);
 
@@ -202,7 +224,7 @@ final class FantraxLogoSyncService
             return null;
         }
 
-        foreach (['LOGIN_ROUTE_DETECTED', 'ACCESS_DENIED_DETECTED', 'NO_LOGO_XHR_FOUND'] as $marker) {
+        foreach (['LOGIN_ROUTE_DETECTED', 'ACCESS_DENIED_DETECTED'] as $marker) {
             if (in_array($marker, $markers, true)) {
                 return $marker;
             }
@@ -254,55 +276,166 @@ final class FantraxLogoSyncService
      * Persist explicit logo candidates for teams that exist locally.
      *
      * @param array<int,array<string,mixed>> $candidates
-     * @return array{updated_team_count:int,replaced_derived_team_count:int}
+     * @return array{selected_league_candidate_count:int,updated_team_count:int,replaced_derived_team_count:int,matched_candidate_count:int,unmatched_candidate_count:int,skipped_candidate_count:int,candidate_results:array<int,array<string,mixed>>}
      */
     private function persistCandidates(PlatformLeague $fallbackLeague, array $candidates): array
     {
         $summary = [
+            'selected_league_candidate_count' => 0,
             'updated_team_count' => 0,
             'replaced_derived_team_count' => 0,
+            'matched_candidate_count' => 0,
+            'unmatched_candidate_count' => 0,
+            'skipped_candidate_count' => 0,
+            'candidate_results' => [],
         ];
 
         foreach ($candidates as $candidate) {
             $teamId = $this->stringValue($candidate['teamId'] ?? null);
+            $teamName = $this->stringValue(
+                $candidate['teamName']
+                    ?? $candidate['team']
+                    ?? $candidate['name']
+                    ?? null
+            );
             $logoUrl = $this->logoUrl($candidate['logoUrl'] ?? null);
+            $candidateLeagueId = $this->stringValue($candidate['leagueId'] ?? null);
+            $result = [
+                'league_id' => (string) $fallbackLeague->platform_league_id,
+                'candidate_league_id' => $candidateLeagueId,
+                'team_id' => $teamId,
+                'team_name' => $teamName,
+                'logo_url' => $logoUrl,
+                'matched_platform_team_id' => null,
+                'matched_platform_team_name' => null,
+                'matched_by' => null,
+                'skipped_reason' => null,
+                'updated' => false,
+            ];
 
-            if ($teamId === null || $logoUrl === null || $this->isDerivedTeamLogoUrl($teamId, $logoUrl)) {
+            if ($logoUrl === null) {
+                $result['skipped_reason'] = 'invalid_logo_url';
+                $summary['skipped_candidate_count']++;
+                $summary['candidate_results'][] = $result;
+
                 continue;
             }
 
-            $league = $fallbackLeague;
-            $candidateLeagueId = $this->stringValue($candidate['leagueId'] ?? null);
+            if ($teamId === null && $teamName === null) {
+                $result['skipped_reason'] = 'missing_team_identity';
+                $summary['skipped_candidate_count']++;
+                $summary['candidate_results'][] = $result;
+
+                continue;
+            }
 
             if ($candidateLeagueId !== null && $candidateLeagueId !== $fallbackLeague->platform_league_id) {
-                $league = PlatformLeague::query()
-                    ->where('platform', 'fantrax')
-                    ->where('platform_league_id', $candidateLeagueId)
-                    ->first();
+                $result['skipped_reason'] = 'outside_requested_league';
+                $summary['skipped_candidate_count']++;
+                $summary['candidate_results'][] = $result;
 
-                if ($league === null) {
-                    continue;
-                }
-            }
-
-            $team = PlatformTeam::query()
-                ->where('platform_league_id', $league->id)
-                ->where('platform_team_id', $teamId)
-                ->first(['id', 'platform_team_id', 'logo_url']);
-
-            if ($team === null || $team->logo_url === $logoUrl) {
                 continue;
             }
 
-            if ($this->isDerivedTeamLogoUrl($team->platform_team_id, $team->logo_url)) {
+            $summary['selected_league_candidate_count']++;
+            [$team, $matchedBy] = $this->resolveTeam($fallbackLeague, $teamId, $teamName);
+
+            if ($team === null) {
+                $result['skipped_reason'] = 'no_local_team_match';
+                $summary['unmatched_candidate_count']++;
+                $summary['candidate_results'][] = $result;
+
+                continue;
+            }
+
+            $result['matched_platform_team_id'] = (int) $team->id;
+            $result['matched_platform_team_name'] = (string) $team->name;
+            $result['matched_by'] = $matchedBy;
+            $summary['matched_candidate_count']++;
+
+            if ($team->logo_url === $logoUrl) {
+                $result['skipped_reason'] = 'already_current';
+                $summary['skipped_candidate_count']++;
+                $summary['candidate_results'][] = $result;
+
+                continue;
+            }
+
+            if ($this->isDerivedTeamLogoUrl((string) $team->platform_team_id, $team->logo_url)) {
                 $summary['replaced_derived_team_count']++;
             }
 
             $team->forceFill(['logo_url' => $logoUrl])->save();
             $summary['updated_team_count']++;
+            $result['updated'] = true;
+            $summary['candidate_results'][] = $result;
+        }
+
+        foreach ($summary['candidate_results'] as $result) {
+            $this->appendDebugDump(sprintf(
+                'Logo candidate league=%s candidate_team_id=%s candidate_team_name=%s logo_url=%s matched_team_id=%s matched_team_name=%s matched_by=%s updated=%s skipped_reason=%s',
+                (string) ($result['league_id'] ?? ''),
+                (string) ($result['team_id'] ?? ''),
+                (string) ($result['team_name'] ?? ''),
+                (string) ($result['logo_url'] ?? ''),
+                (string) ($result['matched_platform_team_id'] ?? ''),
+                (string) ($result['matched_platform_team_name'] ?? ''),
+                (string) ($result['matched_by'] ?? ''),
+                ($result['updated'] ?? false) === true ? 'true' : 'false',
+                (string) ($result['skipped_reason'] ?? ''),
+            ));
         }
 
         return $summary;
+    }
+
+    /**
+     * Resolve a local team by provider team ID first, then by normalized provider team name.
+     *
+     * @return array{0:PlatformTeam|null,1:string|null}
+     */
+    private function resolveTeam(PlatformLeague $league, ?string $teamId, ?string $teamName): array
+    {
+        if ($teamId !== null) {
+            $team = PlatformTeam::query()
+                ->where('platform_league_id', $league->id)
+                ->where('platform_team_id', $teamId)
+                ->first(['id', 'platform_team_id', 'name', 'short_name', 'logo_url']);
+
+            if ($team instanceof PlatformTeam) {
+                return [$team, 'team_id'];
+            }
+        }
+
+        $normalizedTeamName = $this->normalizeTeamName($teamName);
+
+        if ($normalizedTeamName === '') {
+            return [null, null];
+        }
+
+        $team = PlatformTeam::query()
+            ->where('platform_league_id', $league->id)
+            ->get(['id', 'platform_team_id', 'name', 'short_name', 'logo_url'])
+            ->first(function (PlatformTeam $team) use ($normalizedTeamName): bool {
+                return $this->normalizeTeamName($team->name) === $normalizedTeamName
+                    || $this->normalizeTeamName($team->short_name) === $normalizedTeamName;
+            });
+
+        return $team instanceof PlatformTeam ? [$team, 'team_name'] : [null, null];
+    }
+
+    private function normalizeTeamName(mixed $value): string
+    {
+        $name = $this->stringValue($value);
+
+        if ($name === null) {
+            return '';
+        }
+
+        return str($name)
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '')
+            ->toString();
     }
 
     private function isDerivedTeamLogoUrl(string $teamId, ?string $logoUrl): bool

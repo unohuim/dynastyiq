@@ -1140,6 +1140,19 @@ final class LeagueController extends Controller
                     'summary' => $summary,
                 ], 409);
             }
+
+            if ((int) $summary['updated_team_count'] === 0) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => match (true) {
+                        (int) $summary['candidate_count'] === 0 => 'Logo sync ran, but Fantrax returned no team logo candidates.',
+                        (int) ($summary['selected_league_candidate_count'] ?? 0) === 0 => 'Logo sync found Fantrax candidates, but none belonged to this league.',
+                        (int) $summary['matched_candidate_count'] === 0 => 'Logo sync found Fantrax candidates, but none matched local teams.',
+                        default => 'Logo sync ran, but no team logos changed.',
+                    },
+                    'summary' => $summary,
+                ], 409);
+            }
         } elseif ($league->platform === 'yahoo') {
             $connection = $user->yahooFantasyConnection()
                 ->where('status', 'connected')

@@ -142,6 +142,15 @@
                         $platform = strtolower((string) $league->platform);
                         $statusText = data_get($league, 'settings.status') ?: 'Connected';
                         $scopeLabel = data_get($league->activePlatformScope(), 'scope_label');
+                        $transactionsBrowserRpcUrl = $platform === 'fantrax'
+                            ? route('community.leagues.transactions.browser-rpc', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false)
+                            : '';
+                        $transactionsUrl = $platform === 'fantrax'
+                            ? route('community.leagues.transactions.index', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false)
+                            : '';
+                        $teamLogoSyncUrl = in_array($platform, ['fantrax', 'yahoo'], true)
+                            ? route('community.leagues.team-logos.sync', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false)
+                            : '';
                         $leaguePayload = [
                             'id' => $league->id,
                             'name' => (string) $league->name,
@@ -151,10 +160,14 @@
                             'teamsUrl' => route('community.leagues.teams', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'draftSummaryUrl' => route('community.leagues.draft-summary', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'draftSettingsUrl' => route('community.leagues.draft-settings', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'leagueOptionsUrl' => $canEdit ? route('community.leagues.options', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false) : '',
                             'playersPayloadUrl' => route('community.leagues.players-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'leagueStatsPayloadUrl' => route('community.leagues.stats-payload', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'draftTestingUrl' => route('community.leagues.draft-testing', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
                             'draftTestingSimulateUrl' => route('community.leagues.draft-testing.simulate', ['c_id' => $currentOrg->id, 'l_id' => $league->id], false),
+                            'transactionsBrowserRpcUrl' => $transactionsBrowserRpcUrl,
+                            'transactionsUrl' => $transactionsUrl,
+                            'teamLogoSyncUrl' => $teamLogoSyncUrl,
                         ];
                     @endphp
                     <button
@@ -339,6 +352,14 @@
                     @click="openCommunityLeagueTab('teams')"
                 >
                     Teams
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-1 py-2 text-sm font-semibold transition-colors"
+                    :class="activeLeagueTab === 'transactions' ? 'border-cyan-600 text-cyan-700' : (theme === 'dark' ? 'border-transparent text-slate-300 hover:border-slate-700' : 'border-transparent text-slate-600 hover:border-slate-300')"
+                    @click="openCommunityLeagueTab('transactions')"
+                >
+                    Transactions
                 </button>
                 <button
                     type="button"
@@ -713,6 +734,75 @@
                     </div>
                 </div>
 
+                <div x-show="activeLeagueTab === 'transactions'" x-cloak>
+                    <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <h3 class="text-lg font-semibold">Transactions</h3>
+                            <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                                Refresh Fantrax trades, claims, drops, and lineup moves.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="inline-flex items-center rounded-lg border px-3 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                            :class="theme === 'dark' ? 'border-slate-700 bg-slate-950 text-slate-200 hover:bg-slate-800' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'"
+                            :disabled="leagueTransactionsLoading || !selectedLeague?.transactionsBrowserRpcUrl"
+                            @click="refreshCommunityLeagueTransactions()"
+                        >
+                            <span x-show="!leagueTransactionsLoading">Refresh</span>
+                            <span x-show="leagueTransactionsLoading">Refreshing...</span>
+                        </button>
+                    </div>
+
+                    <div x-show="leagueTransactionsError" x-text="leagueTransactionsError" class="mb-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700"></div>
+
+                    <div x-show="!selectedLeague?.transactionsBrowserRpcUrl" class="rounded-lg border border-dashed p-6 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'">
+                        Connect a Fantrax platform league to refresh transactions.
+                    </div>
+
+                    <div
+                        x-show="selectedLeague?.transactionsBrowserRpcUrl"
+                        class="rounded-lg border"
+                        :class="theme === 'dark' ? 'border-slate-800' : 'border-slate-200'"
+                    >
+                        <div x-show="leagueTransactionsMessage" x-text="leagueTransactionsMessage" class="border-b px-4 py-3 text-sm" :class="theme === 'dark' ? 'border-slate-800 bg-slate-900 text-emerald-300' : 'border-slate-200 bg-emerald-50 text-emerald-700'"></div>
+                        <div x-show="leagueTransactionsLoading" class="px-4 py-6 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                            Loading transactions...
+                        </div>
+                        <div x-show="!leagueTransactionsLoading && leagueTransactions.length === 0" class="px-4 py-6 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
+                            No persisted transactions yet. Refresh to import the latest Fantrax history.
+                        </div>
+                        <div x-show="!leagueTransactionsLoading && leagueTransactions.length > 0" class="divide-y" :class="theme === 'dark' ? 'divide-slate-800' : 'divide-slate-200'">
+                            <template x-for="transaction in leagueTransactions" :key="transaction.id">
+                                <article class="px-4 py-3">
+                                    <div class="flex flex-wrap items-start justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="text-sm font-semibold" x-text="transactionTypeLabel(transaction)"></span>
+                                                <span x-show="transaction.deleted" class="rounded border border-rose-200 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-rose-700">Deleted</span>
+                                                <span x-show="transaction.status" class="text-xs" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'" x-text="transaction.status"></span>
+                                            </div>
+                                            <p x-show="transaction.summary" x-text="transaction.summary" class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-300' : 'text-slate-700'"></p>
+                                        </div>
+                                        <div class="shrink-0 text-right text-xs" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'">
+                                            <div x-text="transaction.occurred_at_label || 'Unknown date'"></div>
+                                            <div x-show="transaction.period" x-text="transaction.period"></div>
+                                        </div>
+                                    </div>
+                                    <ul class="mt-3 space-y-1.5">
+                                        <template x-for="entry in transaction.entries" :key="entry.id">
+                                            <li class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" :class="theme === 'dark' ? 'text-slate-300' : 'text-slate-700'">
+                                                <span x-text="transactionEntryLabel(entry)"></span>
+                                                <span x-show="transactionDraftLabel(entry)" x-text="transactionDraftLabel(entry)" class="text-xs" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </article>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
                 <div x-show="activeLeagueTab === 'draft'" x-cloak>
                     <div
                         class="min-w-0 rounded-xl border shadow-sm"
@@ -1041,8 +1131,93 @@
                 <div x-show="activeLeagueTab === 'setup'" x-cloak>
                     <h3 class="text-lg font-semibold">Setup</h3>
                     <p class="mt-1 text-sm" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'">
-                        Community league configuration, boundaries, and connection options will live here.
+                        Community league configuration and Discord output options.
                     </p>
+
+                    @if ($canEdit)
+                        <div class="mt-5 max-w-xl rounded-lg border p-4" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h4 class="text-sm font-semibold" :class="theme === 'dark' ? 'text-slate-200' : 'text-slate-800'">Team logos</h4>
+                                    <p class="mt-1 text-xs" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'">Pull platform team logos into this league.</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    x-on:click="syncSelectedLeagueLogos()"
+                                    :disabled="teamLogosSyncing || !selectedLeague?.teamLogoSyncUrl"
+                                    class="inline-flex items-center justify-center rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                                >
+                                    <span x-show="!teamLogosSyncing">Sync Logos</span>
+                                    <span x-show="teamLogosSyncing">Syncing...</span>
+                                </button>
+                            </div>
+                            <p x-show="teamLogosMessage" x-text="teamLogosMessage" class="mt-2 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-600'"></p>
+                            <p x-show="teamLogosError" x-text="teamLogosError" class="mt-2 text-xs text-red-600"></p>
+                            <p x-show="!selectedLeague?.teamLogoSyncUrl" class="mt-2 text-xs" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'">Logo sync is available for Fantrax and Yahoo leagues.</p>
+                        </div>
+
+                        <div class="mt-5 max-w-xl rounded-lg border p-4" :class="theme === 'dark' ? 'border-slate-800 bg-slate-950' : 'border-slate-200 bg-white'">
+                            <div class="flex items-center justify-between gap-3">
+                                <label class="text-sm font-medium" :class="theme === 'dark' ? 'text-slate-200' : 'text-slate-700'" for="community-setup-transactions-channel-combobox">Transactions channel</label>
+                                <span class="text-[11px]" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-400'" x-text="draftChannelOptions.length + ' loaded'"></span>
+                            </div>
+                            <div x-show="draftOptionsLoading" class="mt-2 text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'">Loading league options...</div>
+                            <div x-show="draftOptionsError" class="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700" x-text="draftOptionsError"></div>
+                            <div class="relative mt-2" @click.stop>
+                                <input
+                                    id="community-setup-transactions-channel-combobox"
+                                    type="text"
+                                    x-model="transactionsChannelQuery"
+                                    x-on:focus="transactionsChannelOpen = true"
+                                    x-on:click="transactionsChannelOpen = true"
+                                    x-on:input="transactionsChannelId = ''; transactionsChannelOpen = true"
+                                    x-on:keydown.escape.prevent.stop="transactionsChannelOpen = false"
+                                    placeholder="None"
+                                    autocomplete="off"
+                                    class="block w-full rounded-md border-slate-200 pr-9 text-sm text-slate-900 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+                                    :disabled="!draftDiscordConnected"
+                                >
+                                <button
+                                    type="button"
+                                    x-on:click="transactionsChannelOpen = !transactionsChannelOpen"
+                                    class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 text-slate-400"
+                                    :disabled="!draftDiscordConnected"
+                                >
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                                    </svg>
+                                </button>
+
+                                <div x-cloak x-show="transactionsChannelOpen" x-transition @click.outside="transactionsChannelOpen = false" class="absolute z-30 mt-1 max-h-48 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg ring-1 ring-black/5">
+                                    <button type="button" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="selectTransactionsChannel({ id: '', name: '' })">
+                                        None
+                                    </button>
+                                    <template x-for="channel in filteredTransactionsChannels" :key="channel.id">
+                                        <button type="button" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="selectTransactionsChannel(channel)">
+                                            <span class="truncate">#<span x-text="channel.name"></span></span>
+                                        </button>
+                                    </template>
+                                    <div x-show="!transactionsChannelQuery && draftChannelOptions.length === 0" class="px-3 py-2 text-xs text-slate-500" x-text="draftChannelsMessage || 'No text channels returned for this Discord server.'"></div>
+                                    <button type="button" x-show="transactionsChannelQuery && filteredTransactionsChannels.length === 0" class="flex w-full items-center rounded-md px-3 py-2 text-left text-slate-700 hover:bg-blue-600 hover:text-white" x-on:click="transactionsChannelOpen = false">
+                                        Create #<span x-text="transactionsChannelQuery.replace(/^#/, '')"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="mt-2 flex items-center justify-between gap-3">
+                                <p class="text-[11px]" :class="theme === 'dark' ? 'text-slate-500' : 'text-slate-500'" x-text="draftDiscordConnected ? 'New names create a text channel.' : 'Connect a Discord server first.'"></p>
+                                <button type="button" x-on:click="saveTransactionsChannel()" :disabled="transactionsChannelSaving || !draftDiscordConnected" class="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                                    <span x-show="!transactionsChannelSaving">Save</span>
+                                    <span x-show="transactionsChannelSaving">Saving...</span>
+                                </button>
+                            </div>
+                            <p x-show="transactionsChannelMessage" x-text="transactionsChannelMessage" class="mt-2 text-[11px]" :class="transactionsChannelMessage.includes('Could not') ? 'text-red-600' : (theme === 'dark' ? 'text-slate-400' : 'text-slate-500')"></p>
+                        </div>
+                    @else
+                        <div class="mt-5 max-w-xl rounded-lg border border-dashed p-4 text-sm" :class="theme === 'dark' ? 'border-slate-800 text-slate-400' : 'border-slate-300 text-slate-600'">
+                            League setup options are available to league managers.
+                        </div>
+                    @endif
                 </div>
             </section>
         </main>
@@ -1051,7 +1226,7 @@
     @if ($canEdit)
         <x-ui.slide-over show="draftOptionsOpen" close-action="draftOptionsOpen = false" title-id="community-draft-options-title" max-width="max-w-md">
             <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-                <h2 id="community-draft-options-title" class="text-base font-semibold text-slate-950">Draft options</h2>
+                <h2 id="community-draft-options-title" class="text-base font-semibold text-slate-950">Draft Options</h2>
                 <button type="button" class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600" x-on:click="draftOptionsOpen = false" aria-label="Close draft options">
                     <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
                         <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 1 0-1.06-1.06L10 8.94 6.28 5.22Z"/>

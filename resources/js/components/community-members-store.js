@@ -1068,6 +1068,11 @@ function communityMembersHub(config) {
         leagueTeamsLoading: false,
         leagueTeamsError: "",
         leagueTeamsRequestUrl: "",
+        leagueTransactionsLoading: false,
+        leagueTransactionsError: "",
+        leagueTransactionsMessage: "",
+        leagueTransactions: [],
+        leagueTransactionsRequestUrl: "",
         leagueDraftSummary: null,
         leagueDraftLiveHtml: "",
         leagueDraftSummaryLoading: false,
@@ -1137,6 +1142,14 @@ function communityMembersHub(config) {
         communityDraftTestingSimulatedPickKeys: [],
         communityDraftTestingSimulatedPlayerIds: [],
         communityDraftTestingSimulatedPlayersByPickKey: {},
+        transactionsChannelId: "",
+        transactionsChannelQuery: "",
+        transactionsChannelOpen: false,
+        transactionsChannelSaving: false,
+        transactionsChannelMessage: "",
+        teamLogosSyncing: false,
+        teamLogosMessage: "",
+        teamLogosError: "",
         init() {
             // Ensure the store exists even if Alpine boot order changes.
             if (!this.$store.communityMembers) {
@@ -1159,23 +1172,29 @@ function communityMembersHub(config) {
         },
         openCommunityLeague(league, tab = "draft") {
             this.selectedLeague = league;
-            this.activeLeagueTab = ["home", "teams", "draft", "setup"].includes(tab)
+            this.activeLeagueTab = ["home", "teams", "transactions", "draft", "setup"].includes(tab)
                 ? tab
                 : "draft";
             this.activeCommunityDraftTab = "live";
             this.leagueTeams = [];
             this.leagueTeamsError = "";
+            this.resetCommunityLeagueTransactions();
             this.leagueDraftSummary = null;
             this.leagueDraftLiveHtml = "";
             this.leagueDraftSummaryError = "";
             this.resetCommunityDraftPlayers();
             this.resetCommunityDraftTesting();
             this.resetDraftOptions();
+            this.resetTeamLogoSync();
 
             if (this.activeLeagueTab === "teams") {
                 this.loadCommunityLeagueTeams();
             } else if (this.activeLeagueTab === "draft") {
                 this.loadCommunityLeagueDraftSummary();
+            } else if (this.activeLeagueTab === "transactions") {
+                this.loadCommunityLeagueTransactions();
+            } else if (this.activeLeagueTab === "setup") {
+                this.loadLeagueOptions();
             }
         },
         resetDraftOptions() {
@@ -1202,9 +1221,19 @@ function communityMembersHub(config) {
             this.draftTimerCanUpdate = false;
             this.draftTimerSaving = false;
             this.draftTimerMessage = "";
+            this.transactionsChannelId = "";
+            this.transactionsChannelQuery = "";
+            this.transactionsChannelOpen = false;
+            this.transactionsChannelSaving = false;
+            this.transactionsChannelMessage = "";
+        },
+        resetTeamLogoSync() {
+            this.teamLogosSyncing = false;
+            this.teamLogosMessage = "";
+            this.teamLogosError = "";
         },
         openCommunityLeagueTab(tab) {
-            this.activeLeagueTab = ["home", "teams", "draft", "setup"].includes(tab)
+            this.activeLeagueTab = ["home", "teams", "transactions", "draft", "setup"].includes(tab)
                 ? tab
                 : "draft";
 
@@ -1212,6 +1241,10 @@ function communityMembersHub(config) {
                 this.loadCommunityLeagueTeams();
             } else if (this.activeLeagueTab === "draft") {
                 this.loadCommunityLeagueDraftSummary();
+            } else if (this.activeLeagueTab === "transactions") {
+                this.loadCommunityLeagueTransactions();
+            } else if (this.activeLeagueTab === "setup") {
+                this.loadLeagueOptions();
             }
         },
         setCommunityDraftTab(tab) {
@@ -1267,6 +1300,123 @@ function communityMembersHub(config) {
             this.communityDraftTestingSimulatedPlayerIds = [];
             this.communityDraftTestingSimulatedPlayersByPickKey = {};
         },
+        resetCommunityLeagueTransactions() {
+            this.leagueTransactionsLoading = false;
+            this.leagueTransactionsError = "";
+            this.leagueTransactionsMessage = "";
+            this.leagueTransactions = [];
+            this.leagueTransactionsRequestUrl = "";
+        },
+        transactionTypeLabel(transaction) {
+            const labels = {
+                trade: "Trade",
+                claim_drop: "Claim / Drop",
+                lineup_change: "Lineup Change",
+            };
+
+            return labels[transaction?.transaction_type] || transaction?.source_view || "Transaction";
+        },
+        transactionEntryLabel(entry) {
+            const name = entry?.display_name || entry?.raw_name || "Unknown asset";
+            const action = entry?.action ? String(entry.action).replace(/_/g, " ") : "";
+            const fromTeam = entry?.from_team?.name || "";
+            const toTeam = entry?.to_team?.name || "";
+            const team = entry?.team?.name || "";
+
+            if (fromTeam && toTeam) {
+                return `${name} from ${fromTeam} to ${toTeam}`;
+            }
+
+            if (team && entry?.from_slot && entry?.to_slot) {
+                return `${name} ${entry.from_slot} to ${entry.to_slot} (${team})`;
+            }
+
+            if (team && action) {
+                return `${name} ${action} by ${team}`;
+            }
+
+            if (action) {
+                return `${name} ${action}`;
+            }
+
+            return name;
+        },
+        transactionDraftLabel(entry) {
+            if (!entry?.draft_year && !entry?.draft_round && !entry?.draft_pick) {
+                return "";
+            }
+
+            const parts = [];
+            if (entry.draft_year) parts.push(entry.draft_year);
+            if (entry.draft_round) parts.push(`Round ${entry.draft_round}`);
+            if (entry.draft_pick) parts.push(`Pick ${entry.draft_pick}`);
+            if (entry.draft_original_team_name) parts.push(`Original ${entry.draft_original_team_name}`);
+
+            return parts.join(" - ");
+        },
+        transactionRefreshSummary(payload) {
+            const views = payload?.summary?.views || {};
+            const totals = Object.values(views).reduce(
+                (memo, view) => {
+                    const persisted = view?.persisted || {};
+                    memo.transactions += Number(persisted.transactions_created || 0)
+                        + Number(persisted.transactions_updated || 0);
+                    memo.entries += Number(persisted.entries_created || 0)
+                        + Number(persisted.entries_updated || 0);
+
+                    return memo;
+                },
+                { transactions: 0, entries: 0 }
+            );
+
+            return `Refresh saved ${totals.transactions} transactions and ${totals.entries} entries.`;
+        },
+        async loadCommunityLeagueTransactions() {
+            const url = this.selectedLeague?.transactionsUrl || "";
+
+            if (!url || this.leagueTransactionsLoading) {
+                return;
+            }
+
+            this.leagueTransactionsLoading = true;
+            this.leagueTransactionsError = "";
+            this.leagueTransactionsRequestUrl = url;
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not load transactions.");
+                }
+
+                if (this.leagueTransactionsRequestUrl !== url) {
+                    return;
+                }
+
+                this.leagueTransactions = Array.isArray(payload.transactions)
+                    ? payload.transactions
+                    : [];
+            } catch (error) {
+                if (this.leagueTransactionsRequestUrl !== url) {
+                    return;
+                }
+
+                console.error("[communityLeagueTransactions] Unable to load transactions:", error);
+                this.leagueTransactions = [];
+                this.leagueTransactionsError = error?.message || "Could not load transactions.";
+            } finally {
+                if (this.leagueTransactionsRequestUrl === url) {
+                    this.leagueTransactionsLoading = false;
+                }
+            }
+        },
         async loadCommunityLeagueTeams() {
             const url = this.selectedLeague?.teamsUrl || "";
 
@@ -1309,6 +1459,111 @@ function communityMembersHub(config) {
                 if (this.leagueTeamsRequestUrl === url) {
                     this.leagueTeamsLoading = false;
                 }
+            }
+        },
+        async refreshCommunityLeagueTransactions() {
+            const url = this.selectedLeague?.transactionsBrowserRpcUrl || "";
+
+            if (!url || this.leagueTransactionsLoading) {
+                return;
+            }
+
+            this.leagueTransactionsLoading = true;
+            this.leagueTransactionsError = "";
+            this.leagueTransactionsRequestUrl = url;
+
+            try {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({}),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not refresh transactions.");
+                }
+
+                if (this.leagueTransactionsRequestUrl !== url) {
+                    return;
+                }
+
+                this.leagueTransactionsMessage = this.transactionRefreshSummary(payload);
+                this.leagueTransactionsLoading = false;
+                this.loadCommunityLeagueTransactions();
+            } catch (error) {
+                if (this.leagueTransactionsRequestUrl !== url) {
+                    return;
+                }
+
+                console.error("[communityLeagueTransactions] Unable to refresh transactions:", error);
+                this.leagueTransactionsError = error?.message || "Could not refresh transactions.";
+            } finally {
+                if (this.leagueTransactionsRequestUrl === url) {
+                    this.leagueTransactionsLoading = false;
+                }
+            }
+        },
+        async syncSelectedLeagueLogos() {
+            const url = this.selectedLeague?.teamLogoSyncUrl || "";
+            const leagueId = this.selectedLeague?.id || null;
+
+            if (!url || this.teamLogosSyncing) {
+                return;
+            }
+
+            this.teamLogosSyncing = true;
+            this.teamLogosMessage = "";
+            this.teamLogosError = "";
+
+            try {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({}),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not sync team logos.");
+                }
+
+                if (this.selectedLeague?.id !== leagueId) {
+                    return;
+                }
+
+                this.teamLogosMessage = payload?.message || "Team logos synced.";
+                showToast("success", this.teamLogosMessage);
+                window.dispatchEvent(new CustomEvent("league:logos-synced", {
+                    detail: {
+                        platform_league_id: payload?.platform_league_id || null,
+                        platform: payload?.platform || null,
+                        logo_url: payload?.logo_url || null,
+                        refresh_from_server: true,
+                    },
+                }));
+
+                if (this.selectedLeague?.teamsUrl) {
+                    await this.loadCommunityLeagueTeams();
+                }
+            } catch (error) {
+                console.error("[communityLeagueLogos] Unable to sync team logos:", error);
+                this.teamLogosError = error?.message || "Could not sync team logos.";
+                showToast("error", this.teamLogosError);
+            } finally {
+                this.teamLogosSyncing = false;
             }
         },
         async loadCommunityLeagueDraftSummary() {
@@ -1365,7 +1620,10 @@ function communityMembersHub(config) {
             this.loadDraftOptions();
         },
         async loadDraftOptions() {
-            const url = this.selectedLeague?.draftSettingsUrl || "";
+            await this.loadLeagueOptions();
+        },
+        async loadLeagueOptions() {
+            const url = this.selectedLeague?.leagueOptionsUrl || this.selectedLeague?.draftSettingsUrl || "";
 
             if (!url || this.draftOptionsLoading || this.draftOptionsLoadedUrl === url) {
                 return;
@@ -1386,11 +1644,12 @@ function communityMembersHub(config) {
                 const payload = await response.json().catch(() => ({}));
 
                 if (!response.ok || payload?.ok !== true) {
-                    throw new Error(payload?.message || "Could not load draft options.");
+                    throw new Error(payload?.message || "Could not load league options.");
                 }
 
                 const config = payload.config || {};
                 const selectedChannel = config.selected_channel || {};
+                const selectedTransactionsChannel = config.selected_transactions_channel || {};
 
                 this.draftSettingsActionUrl = config.action_url || "";
                 this.draftDiscordConnected = Boolean(config.discord_connected);
@@ -1400,11 +1659,15 @@ function communityMembersHub(config) {
                 this.draftChannelQuery = selectedChannel.name
                     ? `#${selectedChannel.name}`
                     : "";
+                this.transactionsChannelId = selectedTransactionsChannel.id || "";
+                this.transactionsChannelQuery = selectedTransactionsChannel.name
+                    ? `#${selectedTransactionsChannel.name}`
+                    : "";
                 this.applyDraftNotificationConfig(config.notifications || {});
                 this.applyDraftTimerConfig(config.timer || {});
             } catch (error) {
                 console.error("[communityDraftOptions] Unable to load options:", error);
-                this.draftOptionsError = error?.message || "Could not load draft options.";
+                this.draftOptionsError = error?.message || "Could not load league options.";
                 this.draftOptionsLoadedUrl = "";
             } finally {
                 this.draftOptionsLoading = false;
@@ -1434,6 +1697,11 @@ function communityMembersHub(config) {
             this.draftChannelQuery = channel?.name ? `#${channel.name}` : "";
             this.draftChannelOpen = false;
         },
+        selectTransactionsChannel(channel) {
+            this.transactionsChannelId = channel?.id || "";
+            this.transactionsChannelQuery = channel?.name ? `#${channel.name}` : "";
+            this.transactionsChannelOpen = false;
+        },
         async saveDraftChannel() {
             if (!this.draftSettingsActionUrl || this.draftChannelSaving) {
                 return;
@@ -1462,7 +1730,7 @@ function communityMembersHub(config) {
                 const payload = await response.json().catch(() => ({}));
 
                 if (!response.ok || payload?.ok !== true) {
-                    throw new Error(payload?.message || "Could not save draft options.");
+                    throw new Error(payload?.message || "Could not save draft channel.");
                 }
 
                 const channel = payload.channel || {};
@@ -1475,9 +1743,51 @@ function communityMembersHub(config) {
                     : "Draft pick channel cleared.";
             } catch (error) {
                 console.error("[communityDraftOptions] Unable to save channel:", error);
-                this.draftChannelMessage = error?.message || "Could not save draft options.";
+                this.draftChannelMessage = error?.message || "Could not save draft channel.";
             } finally {
                 this.draftChannelSaving = false;
+            }
+        },
+        async saveTransactionsChannel() {
+            if (!this.draftSettingsActionUrl || this.transactionsChannelSaving) {
+                return;
+            }
+
+            this.transactionsChannelSaving = true;
+            this.transactionsChannelMessage = "";
+
+            try {
+                const response = await fetch(this.draftSettingsActionUrl, {
+                    method: "PUT",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({
+                        transactions_channel_id: this.transactionsChannelId || null,
+                        transactions_channel_name: this.transactionsChannelQuery.replace(/^#/, "").trim() || null,
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not save transactions channel.");
+                }
+
+                const channel = payload.transactions_channel || {};
+                this.transactionsChannelId = channel.id || "";
+                this.transactionsChannelQuery = channel.name ? `#${channel.name}` : "";
+                this.transactionsChannelMessage = channel.name
+                    ? `Transactions will post to #${channel.name}.`
+                    : "Transactions channel cleared.";
+            } catch (error) {
+                console.error("[communityLeagueOptions] Unable to save transactions channel:", error);
+                this.transactionsChannelMessage = error?.message || "Could not save transactions channel.";
+            } finally {
+                this.transactionsChannelSaving = false;
             }
         },
         async saveDraftTimerSettings() {
@@ -1524,6 +1834,17 @@ function communityMembersHub(config) {
         },
         get filteredDraftChannels() {
             const query = this.draftChannelQuery.replace(/^#/, "").toLowerCase().trim();
+
+            if (!query) {
+                return this.draftChannelOptions;
+            }
+
+            return this.draftChannelOptions.filter((channel) => (
+                String(channel?.name || "").toLowerCase().includes(query)
+            ));
+        },
+        get filteredTransactionsChannels() {
+            const query = this.transactionsChannelQuery.replace(/^#/, "").toLowerCase().trim();
 
             if (!query) {
                 return this.draftChannelOptions;

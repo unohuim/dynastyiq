@@ -65,6 +65,30 @@ class PlatformTeam extends Model
     }
 
     /**
+     * Transaction entries where this team is the provider-perspective team.
+     */
+    public function transactionEntries(): HasMany
+    {
+        return $this->hasMany(PlatformTransactionEntry::class, 'platform_team_id');
+    }
+
+    /**
+     * Transaction entries where an asset moved from this team.
+     */
+    public function outgoingTransactionEntries(): HasMany
+    {
+        return $this->hasMany(PlatformTransactionEntry::class, 'from_platform_team_id');
+    }
+
+    /**
+     * Transaction entries where an asset moved to this team.
+     */
+    public function incomingTransactionEntries(): HasMany
+    {
+        return $this->hasMany(PlatformTransactionEntry::class, 'to_platform_team_id');
+    }
+
+    /**
      * Limit to a specific league.
      */
     public function scopeInLeague(Builder $query, PlatformLeague|int $league): Builder

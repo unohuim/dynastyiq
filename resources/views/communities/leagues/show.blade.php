@@ -18,6 +18,10 @@
             teamLogosSyncing: false,
             teamLogosMessage: '',
             teamLogosError: '',
+            transactionsLoading: false,
+            transactionsError: '',
+            transactionsMessage: '',
+            transactions: [],
             panelHeight: '42rem',
             updatePanelHeight() {
                 const top = this.$refs.panelTop?.getBoundingClientRect().top || 0;
@@ -83,7 +87,7 @@
                     .then(async (response) => {
                         const payload = await response.json().catch(() => ({}));
 
-                        if (! response.ok) {
+                        if (! response.ok || payload?.ok !== true) {
                             throw payload;
                         }
 
@@ -105,6 +109,118 @@
                     .finally(() => {
                         this.teamLogosSyncing = false;
                     });
+            },
+            refreshTransactions() {
+                if (this.transactionsLoading) return;
+
+                this.transactionsLoading = true;
+                this.transactionsError = '';
+                this.transactionsMessage = '';
+
+                fetch(@js($vm['transactions']['action_url'] ?? ''), {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content || ''
+                    },
+                    body: JSON.stringify({})
+                })
+                    .then(async (response) => {
+                        const payload = await response.json().catch(() => ({}));
+
+                        if (! response.ok) {
+                            throw payload;
+                        }
+
+                        this.transactionsMessage = this.transactionsRefreshSummary(payload);
+                        this.transactionsLoading = false;
+                        this.loadTransactions();
+                    })
+                    .catch((payload) => {
+                        this.transactionsError = payload?.message || 'Could not refresh transactions.';
+                    })
+                    .finally(() => {
+                        this.transactionsLoading = false;
+                    });
+            },
+            loadTransactions() {
+                if (this.transactionsLoading) return;
+
+                const url = @js($vm['transactions']['list_url'] ?? '');
+                if (!url) return;
+
+                this.transactionsLoading = true;
+                this.transactionsError = '';
+
+                fetch(url, {
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                    .then(async (response) => {
+                        const payload = await response.json().catch(() => ({}));
+
+                        if (! response.ok || payload?.ok !== true) {
+                            throw payload;
+                        }
+
+                        this.transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+                    })
+                    .catch((payload) => {
+                        this.transactions = [];
+                        this.transactionsError = payload?.message || 'Could not load transactions.';
+                    })
+                    .finally(() => {
+                        this.transactionsLoading = false;
+                    });
+            },
+            transactionTypeLabel(transaction) {
+                const labels = {
+                    trade: 'Trade',
+                    claim_drop: 'Claim / Drop',
+                    lineup_change: 'Lineup Change',
+                };
+
+                return labels[transaction?.transaction_type] || transaction?.source_view || 'Transaction';
+            },
+            transactionEntryLabel(entry) {
+                const name = entry?.display_name || entry?.raw_name || 'Unknown asset';
+                const action = entry?.action ? String(entry.action).replace(/_/g, ' ') : '';
+                const fromTeam = entry?.from_team?.name || '';
+                const toTeam = entry?.to_team?.name || '';
+                const team = entry?.team?.name || '';
+
+                if (fromTeam && toTeam) return `${name} from ${fromTeam} to ${toTeam}`;
+                if (team && entry?.from_slot && entry?.to_slot) return `${name} ${entry.from_slot} to ${entry.to_slot} (${team})`;
+                if (team && action) return `${name} ${action} by ${team}`;
+                if (action) return `${name} ${action}`;
+
+                return name;
+            },
+            transactionDraftLabel(entry) {
+                if (!entry?.draft_year && !entry?.draft_round && !entry?.draft_pick) return '';
+
+                const parts = [];
+                if (entry.draft_year) parts.push(entry.draft_year);
+                if (entry.draft_round) parts.push(`Round ${entry.draft_round}`);
+                if (entry.draft_pick) parts.push(`Pick ${entry.draft_pick}`);
+                if (entry.draft_original_team_name) parts.push(`Original ${entry.draft_original_team_name}`);
+
+                return parts.join(' - ');
+            },
+            transactionsRefreshSummary(payload) {
+                const views = payload?.summary?.views || {};
+                const totals = Object.values(views).reduce((memo, view) => {
+                    const persisted = view?.persisted || {};
+                    memo.transactions += Number(persisted.transactions_created || 0) + Number(persisted.transactions_updated || 0);
+                    memo.entries += Number(persisted.entries_created || 0) + Number(persisted.entries_updated || 0);
+
+                    return memo;
+                }, { transactions: 0, entries: 0 });
+
+                return `Refresh saved ${totals.transactions} transactions and ${totals.entries} entries.`;
             }
         }"
         x-init="updatePanelHeight(); $nextTick(() => updatePanelHeight())"
@@ -176,6 +292,14 @@
                     :class="activeTab === 'teams' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
                 >
                     Teams
+                </button>
+                <button
+                    type="button"
+                    x-on:click="activeTab = 'transactions'; loadTransactions(); $nextTick(() => updatePanelHeight())"
+                    class="-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors"
+                    :class="activeTab === 'transactions' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-800'"
+                >
+                    Transactions
                 </button>
             </div>
 
@@ -638,6 +762,79 @@
                     </div>
                 @endif
             </section>
+
+            <section
+                x-cloak
+                x-show="activeTab === 'transactions'"
+                x-transition.opacity.duration.150ms
+                class="flex min-h-[42rem] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:h-[var(--league-panel-height)]"
+            >
+                <div class="mb-4 flex items-center justify-between gap-4">
+                    <div>
+                        <h3 class="text-base font-semibold text-slate-900">Transactions</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">Refresh Fantrax trades, claims, drops, and lineup moves.</p>
+                    </div>
+                    <button
+                        type="button"
+                        x-on:click="refreshTransactions()"
+                        x-bind:disabled="transactionsLoading || {{ empty($vm['transactions']['can_refresh']) ? 'true' : 'false' }}"
+                        class="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <span x-show="!transactionsLoading">Refresh</span>
+                        <span x-show="transactionsLoading">Refreshing...</span>
+                    </button>
+                </div>
+
+                <div x-show="transactionsLoading" class="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                    Refreshing transactions...
+                </div>
+
+                <div x-show="transactionsError" x-text="transactionsError" class="mb-3 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700"></div>
+
+                @if (! empty($vm['transactions']['can_refresh']))
+                    <div class="min-h-0 flex-1 overflow-auto rounded-lg border border-slate-200">
+                        <div x-show="transactionsMessage" x-text="transactionsMessage" class="border-b border-slate-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"></div>
+                        <div x-show="transactionsLoading" class="px-4 py-6 text-sm text-slate-600">
+                            Loading transactions...
+                        </div>
+                        <div x-show="!transactionsLoading && transactions.length === 0" class="px-4 py-6 text-sm text-slate-600">
+                            No persisted transactions yet. Refresh to import the latest Fantrax history.
+                        </div>
+                        <div x-show="!transactionsLoading && transactions.length > 0" class="divide-y divide-slate-200">
+                            <template x-for="transaction in transactions" :key="transaction.id">
+                                <article class="px-4 py-3">
+                                    <div class="flex flex-wrap items-start justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="text-sm font-semibold text-slate-900" x-text="transactionTypeLabel(transaction)"></span>
+                                                <span x-show="transaction.deleted" class="rounded border border-rose-200 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-rose-700">Deleted</span>
+                                                <span x-show="transaction.status" class="text-xs text-slate-500" x-text="transaction.status"></span>
+                                            </div>
+                                            <p x-show="transaction.summary" x-text="transaction.summary" class="mt-1 text-sm text-slate-700"></p>
+                                        </div>
+                                        <div class="shrink-0 text-right text-xs text-slate-500">
+                                            <div x-text="transaction.occurred_at_label || 'Unknown date'"></div>
+                                            <div x-show="transaction.period" x-text="transaction.period"></div>
+                                        </div>
+                                    </div>
+                                    <ul class="mt-3 space-y-1.5">
+                                        <template x-for="entry in transaction.entries" :key="entry.id">
+                                            <li class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-700">
+                                                <span x-text="transactionEntryLabel(entry)"></span>
+                                                <span x-show="transactionDraftLabel(entry)" x-text="transactionDraftLabel(entry)" class="text-xs text-slate-500"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </article>
+                            </template>
+                        </div>
+                    </div>
+                @else
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-600">
+                        Connect a Fantrax platform league to refresh transactions.
+                    </div>
+                @endif
+            </section>
         </div>
 
         @if ($vm['header']['can_edit'])
@@ -658,7 +855,7 @@
                             </span>
                             <span class="truncate" x-text="leagueName"></span>
                         </div>
-                        <h3 id="league-options-title" class="mt-7 text-3xl font-semibold tracking-tight text-white">League options</h3>
+                        <h3 id="league-options-title" class="mt-7 text-3xl font-semibold tracking-tight text-white">League Options</h3>
                         <p class="mt-3 max-w-sm text-sm leading-6 text-blue-50/90">Manage draft setup, teams, platform links, and Discord connections.</p>
                     </div>
                     <button

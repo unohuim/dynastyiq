@@ -2,32 +2,38 @@
 
 declare(strict_types=1);
 
-use App\Models\IntegrationSecret;
-use App\Models\DiscordServer;
 use App\Events\DraftPickMade;
 use App\Events\FantraxDraftPickToast;
 use App\Jobs\SyncFantraxDraftStateJob;
 use App\Listeners\AnnounceFantraxDraftPick;
 use App\Listeners\UpdateRosterMembershipForDraftPick;
+use App\Models\DiscordServer;
 use App\Models\Draft;
 use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
 use App\Models\DraftQueueItem;
 use App\Models\FantraxPlayer;
+use App\Models\IntegrationSecret;
 use App\Models\League;
 use App\Models\LeagueUserRole;
 use App\Models\Organization;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\PlatformTransaction;
+use App\Models\PlatformTransactionEntry;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\SocialAccount;
 use App\Models\Stat;
 use App\Models\User;
+use App\Services\ClaimDropTransactionCardRenderer;
 use App\Services\DraftPickCardRenderer;
 use App\Services\FantraxDraftingWindow;
+use App\Services\FantraxLogoSyncService;
+use App\Services\PlatformTransactionPersistenceService;
 use App\Services\SyncFantraxDraftState;
 use App\Services\SyncFantraxLeague;
+use App\Services\TradeTransactionCardRenderer;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -1699,6 +1705,820 @@ it('uses goalie stat columns for drafted goalie discord cards', function (): voi
         ->and($cardRenderer->card['stats'][0]['wins'])->toBe(27)
         ->and($cardRenderer->card['stats'][0]['saves'])->toBe(1210)
         ->and($cardRenderer->card['stats'][0]['sv_pct'])->toBe(0.914);
+});
+
+it('persists fantrax logo candidates by normalized team name when provider team ids do not match', function (): void {
+    ($this->createCommunityLeague)([
+        'platform_league_id' => 'logo-name-match-league',
+    ]);
+    $platformLeague = PlatformLeague::query()
+        ->where('platform_league_id', 'logo-name-match-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $team->update([
+        'name' => 'Bellevue Puck Puppies',
+        'short_name' => 'Puck Puppies',
+        'logo_url' => null,
+    ]);
+
+    $method = new \ReflectionMethod(FantraxLogoSyncService::class, 'persistCandidates');
+    $method->setAccessible(true);
+    $summary = $method->invoke(app(FantraxLogoSyncService::class), $platformLeague, [[
+        'leagueId' => 'logo-name-match-league',
+        'teamId' => 'fantrax-team-that-does-not-match-local-id',
+        'teamName' => 'Bellevue Puck Puppies',
+        'logoUrl' => 'https://fantraximg.com/logos/bellevue-real-logo.png',
+    ]]);
+
+    expect($summary['updated_team_count'])->toBe(1)
+        ->and($summary['matched_candidate_count'])->toBe(1)
+        ->and($summary['unmatched_candidate_count'])->toBe(0)
+        ->and($summary['skipped_candidate_count'])->toBe(0)
+        ->and($summary['candidate_results'][0]['matched_platform_team_id'])->toBe($team->id)
+        ->and($summary['candidate_results'][0]['matched_by'])->toBe('team_name')
+        ->and($summary['candidate_results'][0]['updated'])->toBeTrue()
+        ->and($team->refresh()->logo_url)->toBe('https://fantraximg.com/logos/bellevue-real-logo.png');
+});
+
+it('reports unmatched fantrax logo candidates when no local team can be resolved', function (): void {
+    ($this->createCommunityLeague)([
+        'platform_league_id' => 'logo-unmatched-league',
+    ]);
+    $platformLeague = PlatformLeague::query()
+        ->where('platform_league_id', 'logo-unmatched-league')
+        ->firstOrFail();
+
+    $method = new \ReflectionMethod(FantraxLogoSyncService::class, 'persistCandidates');
+    $method->setAccessible(true);
+    $summary = $method->invoke(app(FantraxLogoSyncService::class), $platformLeague, [[
+        'leagueId' => 'logo-unmatched-league',
+        'teamId' => 'remote-team-99',
+        'teamName' => 'Unlinked Team Name',
+        'logoUrl' => 'https://fantraximg.com/logos/unlinked-team-logo.png',
+    ]]);
+
+    expect($summary['updated_team_count'])->toBe(0)
+        ->and($summary['matched_candidate_count'])->toBe(0)
+        ->and($summary['unmatched_candidate_count'])->toBe(1)
+        ->and($summary['skipped_candidate_count'])->toBe(0)
+        ->and($summary['candidate_results'][0]['skipped_reason'])->toBe('no_local_team_match');
+});
+
+it('persists explicit fantrax tmLogo candidate urls instead of treating them as derived', function (): void {
+    ($this->createCommunityLeague)([
+        'platform_league_id' => 'explicit-tmlogo-league',
+    ]);
+    $platformLeague = PlatformLeague::query()
+        ->where('platform_league_id', 'explicit-tmlogo-league')
+        ->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $team->update([
+        'name' => 'Tokyo Killer Tardigrades',
+        'logo_url' => null,
+    ]);
+
+    $method = new \ReflectionMethod(FantraxLogoSyncService::class, 'persistCandidates');
+    $method->setAccessible(true);
+    $summary = $method->invoke(app(FantraxLogoSyncService::class), $platformLeague, [[
+        'leagueId' => 'explicit-tmlogo-league',
+        'teamId' => 'team-1',
+        'teamName' => 'Tokyo Killer Tardigrades',
+        'logoUrl' => 'https://fantraximg.com/logos/yyu/tmLogo_team-1_128.webp',
+    ]]);
+
+    expect($summary['updated_team_count'])->toBe(1)
+        ->and($summary['matched_candidate_count'])->toBe(1)
+        ->and($summary['skipped_candidate_count'])->toBe(0)
+        ->and($summary['candidate_results'][0]['matched_by'])->toBe('team_id')
+        ->and($summary['candidate_results'][0]['updated'])->toBeTrue()
+        ->and($team->refresh()->logo_url)->toBe('https://fantraximg.com/logos/yyu/tmLogo_team-1_128.webp');
+});
+
+it('skips logo candidates from other fantrax leagues during selected league sync', function (): void {
+    ($this->createCommunityLeague)([
+        'platform_league_id' => 'selected-logo-league',
+    ]);
+    $selectedLeague = PlatformLeague::query()
+        ->where('platform_league_id', 'selected-logo-league')
+        ->firstOrFail();
+    $selectedTeam = PlatformTeam::query()
+        ->where('platform_league_id', $selectedLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $selectedTeam->update([
+        'name' => 'Selected League Team',
+        'logo_url' => null,
+    ]);
+    $otherLeague = PlatformLeague::create([
+        'platform' => 'fantrax',
+        'platform_league_id' => 'other-logo-league',
+        'name' => 'Other Logo League',
+        'sport' => 'hockey',
+    ]);
+    $otherTeam = PlatformTeam::create([
+        'platform_league_id' => $otherLeague->id,
+        'platform_team_id' => 'other-team-1',
+        'name' => 'Other League Team',
+        'logo_url' => null,
+    ]);
+
+    $method = new \ReflectionMethod(FantraxLogoSyncService::class, 'persistCandidates');
+    $method->setAccessible(true);
+    $summary = $method->invoke(app(FantraxLogoSyncService::class), $selectedLeague, [
+        [
+            'leagueId' => 'other-logo-league',
+            'teamId' => 'other-team-1',
+            'teamName' => 'Other League Team',
+            'logoUrl' => 'https://fantraximg.com/logos/other/tmLogo_other_128.webp',
+        ],
+        [
+            'leagueId' => 'selected-logo-league',
+            'teamId' => 'team-1',
+            'teamName' => 'Selected League Team',
+            'logoUrl' => 'https://fantraximg.com/logos/selected/tmLogo_selected_128.webp',
+        ],
+    ]);
+
+    expect($summary['selected_league_candidate_count'])->toBe(1)
+        ->and($summary['updated_team_count'])->toBe(1)
+        ->and($summary['skipped_candidate_count'])->toBe(1)
+        ->and($summary['candidate_results'][0]['skipped_reason'])->toBe('outside_requested_league')
+        ->and($selectedTeam->refresh()->logo_url)->toBe('https://fantraximg.com/logos/selected/tmLogo_selected_128.webp')
+        ->and($otherTeam->refresh()->logo_url)->toBeNull();
+});
+
+it('posts a rendered trade transaction card attachment to the configured discord transactions channel', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'trade-card-league',
+    ]);
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'trade-card-league')->firstOrFail();
+    $leftTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $leftTeam->update([
+        'name' => 'Bellevue Puck Puppies',
+        'short_name' => 'Puck Puppies',
+    ]);
+    $rightTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Gary Cosmopolitans',
+        'short_name' => 'Cosmopolitans',
+    ]);
+    $player = Player::create([
+        'full_name' => 'Tristan Jarry',
+        'first_name' => 'Tristan',
+        'last_name' => 'Jarry',
+        'position' => 'G',
+        'team_abbrev' => 'EDM',
+    ]);
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'trade-1',
+        'source_key' => 'fantrax:trade-1',
+        'source_view' => 'TRADE',
+        'transaction_type' => 'trade',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'Bellevue Puck Puppies send 1 asset to Gary Cosmopolitans and receive 1 asset in return.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 0,
+        'asset_type' => 'player',
+        'action' => 'trade',
+        'from_platform_team_id' => $leftTeam->id,
+        'to_platform_team_id' => $rightTeam->id,
+        'player_id' => $player->id,
+        'raw_name' => 'Tristan Jarry',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 1,
+        'asset_type' => 'draft_pick',
+        'action' => 'trade',
+        'from_platform_team_id' => $rightTeam->id,
+        'to_platform_team_id' => $leftTeam->id,
+        'draft_year' => 2028,
+        'draft_round' => 1,
+        'draft_original_team_name' => 'Gary Cosmopolitans',
+        'raw_name' => '2028 Round 1 Draft Pick',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'transactions' => [
+                'discord_channel' => [
+                    'id' => 'transactions-channel',
+                    'name' => 'transactions',
+                ],
+            ],
+        ]),
+    ]);
+    app()->instance(TradeTransactionCardRenderer::class, new class {
+        public function render(PlatformTransaction $transaction, ?string $path = null): ?string
+        {
+            $targetPath = $path ?: tempnam(sys_get_temp_dir(), 'diq-trade-card-');
+
+            if (! is_string($targetPath)) {
+                return null;
+            }
+
+            file_put_contents($targetPath, 'trade-card');
+
+            return $targetPath;
+        }
+    });
+    Http::fake([
+        'https://discord.com/api/v10/channels/transactions-channel/messages' => Http::response(['id' => 'message-1']),
+    ]);
+
+    $controller = app(\App\Http\Controllers\CommunityLeagues::class);
+    $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
+    $method->setAccessible(true);
+    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+
+    expect($summary)->toMatchArray([
+        'configured' => true,
+        'attempted' => 1,
+        'sent' => 1,
+        'failed' => 0,
+    ]);
+    Http::assertSent(function ($request): bool {
+        $payload = ($this->discordRequestPayload)($request);
+
+        return $request->url() === 'https://discord.com/api/v10/channels/transactions-channel/messages'
+            && $request->method() === 'POST'
+            && array_key_exists('payload_json', $request->data())
+            && ($payload['content'] ?? null) === ''
+            && $payload['allowed_mentions']['parse'] === [];
+    });
+});
+
+it('counts trade transaction announcements as failed when card rendering is unavailable', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'trade-card-fallback-league',
+    ]);
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'trade-card-fallback-league')->firstOrFail();
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'trade-fallback-1',
+        'source_key' => 'fantrax:trade-fallback-1',
+        'source_view' => 'TRADE',
+        'transaction_type' => 'trade',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'A trade was executed.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'transactions' => [
+                'discord_channel' => [
+                    'id' => 'transactions-channel',
+                    'name' => 'transactions',
+                ],
+            ],
+        ]),
+    ]);
+    app()->instance(TradeTransactionCardRenderer::class, new class {
+        public function render(PlatformTransaction $transaction, ?string $path = null): ?string
+        {
+            return null;
+        }
+    });
+    Http::fake();
+
+    $controller = app(\App\Http\Controllers\CommunityLeagues::class);
+    $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
+    $method->setAccessible(true);
+    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+
+    expect($summary)->toMatchArray([
+        'configured' => true,
+        'attempted' => 1,
+        'sent' => 0,
+        'failed' => 1,
+    ]);
+    Http::assertNothingSent();
+});
+
+it('posts a rendered claim drop transaction card attachment to the configured discord transactions channel', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'claim-drop-card-league',
+    ]);
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'claim-drop-card-league')->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $player = Player::create([
+        'full_name' => 'Arvid Soderblom',
+        'first_name' => 'Arvid',
+        'last_name' => 'Soderblom',
+        'position' => 'G',
+        'team_abbrev' => 'CHI',
+    ]);
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'claim-drop-card-1',
+        'source_key' => 'fantrax:claim-drop-card-1',
+        'source_view' => 'CLAIM_DROP',
+        'transaction_type' => 'claim_drop',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'Claim/drop transaction.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 0,
+        'asset_type' => 'player',
+        'action' => 'claim',
+        'to_platform_team_id' => $team->id,
+        'platform_team_id' => $team->id,
+        'player_id' => $player->id,
+        'raw_name' => 'Arvid Soderblom',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'transactions' => [
+                'discord_channel' => [
+                    'id' => 'transactions-channel',
+                    'name' => 'transactions',
+                ],
+            ],
+        ]),
+    ]);
+    app()->instance(ClaimDropTransactionCardRenderer::class, new class {
+        public function render(PlatformTransaction $transaction, ?string $path = null): ?string
+        {
+            $targetPath = $path ?: tempnam(sys_get_temp_dir(), 'diq-claim-drop-card-');
+
+            if (! is_string($targetPath)) {
+                return null;
+            }
+
+            file_put_contents($targetPath, 'claim-drop-card');
+
+            return $targetPath;
+        }
+    });
+    Http::fake([
+        'https://discord.com/api/v10/channels/transactions-channel/messages' => Http::response(['id' => 'message-1']),
+    ]);
+
+    $controller = app(\App\Http\Controllers\CommunityLeagues::class);
+    $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
+    $method->setAccessible(true);
+    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+
+    expect($summary)->toMatchArray([
+        'configured' => true,
+        'attempted' => 1,
+        'sent' => 1,
+        'failed' => 0,
+    ]);
+    Http::assertSent(function ($request): bool {
+        $payload = ($this->discordRequestPayload)($request);
+
+        return $request->url() === 'https://discord.com/api/v10/channels/transactions-channel/messages'
+            && $request->method() === 'POST'
+            && array_key_exists('payload_json', $request->data())
+            && ($payload['content'] ?? null) === ''
+            && $payload['allowed_mentions']['parse'] === [];
+    });
+});
+
+it('counts claim drop transaction announcements as failed when card rendering is unavailable', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'claim-drop-card-fallback-league',
+    ]);
+    config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'claim-drop-card-fallback-league')->firstOrFail();
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'claim-drop-fallback-1',
+        'source_key' => 'fantrax:claim-drop-fallback-1',
+        'source_view' => 'CLAIM_DROP',
+        'transaction_type' => 'claim_drop',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'A claim/drop transaction was executed.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $organization->leagues()->updateExistingPivot($league->id, [
+        'meta' => json_encode([
+            'transactions' => [
+                'discord_channel' => [
+                    'id' => 'transactions-channel',
+                    'name' => 'transactions',
+                ],
+            ],
+        ]),
+    ]);
+    app()->instance(ClaimDropTransactionCardRenderer::class, new class {
+        public function render(PlatformTransaction $transaction, ?string $path = null): ?string
+        {
+            return null;
+        }
+    });
+    Http::fake();
+
+    $controller = app(\App\Http\Controllers\CommunityLeagues::class);
+    $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
+    $method->setAccessible(true);
+    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+
+    expect($summary)->toMatchArray([
+        'configured' => true,
+        'attempted' => 1,
+        'sent' => 0,
+        'failed' => 1,
+    ]);
+    Http::assertNothingSent();
+});
+
+it('resolves platform transaction trade teams by name when provider team ids are missing', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'trade-team-name-resolution-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'trade-team-name-resolution-league')->firstOrFail();
+    $leftTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $leftTeam->update([
+        'name' => 'Bellevue Puck Puppies',
+        'short_name' => 'Puck Puppies',
+        'logo_url' => 'https://example.test/bellevue.png',
+    ]);
+    $rightTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Gary Cosmopolitans',
+        'short_name' => 'Cosmopolitans',
+        'logo_url' => 'https://example.test/gary.png',
+    ]);
+
+    $summary = app(PlatformTransactionPersistenceService::class)->persist($platformLeague, [[
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'trade-name-resolution-1',
+        'source_key' => 'fantrax:trade-name-resolution-1',
+        'source_view' => 'TRADE',
+        'transaction_type' => 'trade',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'deleted' => false,
+        'status' => 'Executed',
+        'summary' => 'Bellevue Puck Puppies traded with Gary Cosmopolitans.',
+        'raw_payload' => ['source' => 'test'],
+        'entries' => [[
+            'entry_index' => 0,
+            'asset_type' => 'draft_pick',
+            'action' => 'trade',
+            'from_provider_team_id' => null,
+            'from_team_name' => 'Bellevue Puck Puppies',
+            'to_provider_team_id' => null,
+            'to_team_name' => 'Gary Cosmopolitans',
+            'provider_team_id' => null,
+            'team_name' => null,
+            'provider_player_id' => null,
+            'raw_name' => '2028 Round 1 Draft Pick',
+            'draft_year' => 2028,
+            'draft_round' => 1,
+            'raw_payload' => ['source' => 'test'],
+        ]],
+    ]]);
+
+    $transaction = PlatformTransaction::query()
+        ->where('source_key', 'fantrax:trade-name-resolution-1')
+        ->with(['entries.fromTeam', 'entries.toTeam'])
+        ->firstOrFail();
+    $entry = $transaction->entries->first();
+
+    expect($summary['unresolved_teams'])->toBe(0)
+        ->and($entry?->from_platform_team_id)->toBe($leftTeam->id)
+        ->and($entry?->to_platform_team_id)->toBe($rightTeam->id)
+        ->and($entry?->fromTeam?->logo_url)->toBe('https://example.test/bellevue.png')
+        ->and($entry?->toTeam?->logo_url)->toBe('https://example.test/gary.png');
+});
+
+it('fails trade transaction card rendering when a configured team logo cannot be decoded', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'trade-card-logo-priority-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'trade-card-logo-priority-league')->firstOrFail();
+    $leftTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $leftTeam->update([
+        'name' => 'Logo Team',
+        'logo_url' => 'https://example.test/logo-team.png',
+    ]);
+    $rightUser = User::factory()->create();
+    $rightTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Avatar Team',
+        'logo_url' => 'https://example.test/missing-logo.png',
+    ]);
+    DB::table('league_user_teams')->insert([
+        'user_id' => $rightUser->id,
+        'platform_league_id' => $platformLeague->id,
+        'team_id' => $rightTeam->id,
+        'is_active' => true,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    SocialAccount::create([
+        'user_id' => $rightUser->id,
+        'provider' => 'discord',
+        'provider_user_id' => 'discord-avatar-owner',
+        'avatar' => 'https://example.test/discord-avatar.png',
+    ]);
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'trade-image-priority-1',
+        'source_key' => 'fantrax:trade-image-priority-1',
+        'source_view' => 'TRADE',
+        'transaction_type' => 'trade',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'Logo Team and Avatar Team completed a trade.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 0,
+        'asset_type' => 'draft_pick',
+        'action' => 'trade',
+        'from_platform_team_id' => $leftTeam->id,
+        'to_platform_team_id' => $rightTeam->id,
+        'draft_year' => 2028,
+        'draft_round' => 1,
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 1,
+        'asset_type' => 'draft_pick',
+        'action' => 'trade',
+        'from_platform_team_id' => $rightTeam->id,
+        'to_platform_team_id' => $leftTeam->id,
+        'draft_year' => 2029,
+        'draft_round' => 2,
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $transaction->load([
+        'entries.fromTeam.users.socialAccounts',
+        'entries.toTeam.users.socialAccounts',
+        'entries.player',
+    ]);
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        true
+    );
+    Http::fake([
+        'https://example.test/logo-team.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+        'https://example.test/missing-logo.png' => Http::response('', 404),
+        'https://example.test/discord-avatar.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+    ]);
+
+    expect(fn () => app(TradeTransactionCardRenderer::class)->render($transaction))
+        ->toThrow(\RuntimeException::class, 'Required trade card image could not be downloaded and decoded.');
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/logo-team.png');
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/missing-logo.png');
+    Http::assertNotSent(static fn ($request): bool => $request->url() === 'https://example.test/discord-avatar.png');
+});
+
+it('uses discord avatars for trade transaction team images only when no team logo url exists', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'trade-card-avatar-fallback-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'trade-card-avatar-fallback-league')->firstOrFail();
+    $leftTeam = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $leftTeam->update([
+        'name' => 'Logo Team',
+        'logo_url' => 'https://example.test/logo-team.png',
+    ]);
+    $rightUser = User::factory()->create();
+    $rightTeam = PlatformTeam::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform_team_id' => 'team-2',
+        'name' => 'Avatar Team',
+        'logo_url' => null,
+    ]);
+    DB::table('league_user_teams')->insert([
+        'user_id' => $rightUser->id,
+        'platform_league_id' => $platformLeague->id,
+        'team_id' => $rightTeam->id,
+        'is_active' => true,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    SocialAccount::create([
+        'user_id' => $rightUser->id,
+        'provider' => 'discord',
+        'provider_user_id' => 'discord-avatar-owner',
+        'avatar' => 'https://example.test/discord-avatar.png',
+    ]);
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'trade-avatar-fallback-1',
+        'source_key' => 'fantrax:trade-avatar-fallback-1',
+        'source_view' => 'TRADE',
+        'transaction_type' => 'trade',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'Logo Team and Avatar Team completed a trade.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 0,
+        'asset_type' => 'draft_pick',
+        'action' => 'trade',
+        'from_platform_team_id' => $leftTeam->id,
+        'to_platform_team_id' => $rightTeam->id,
+        'draft_year' => 2028,
+        'draft_round' => 1,
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 1,
+        'asset_type' => 'draft_pick',
+        'action' => 'trade',
+        'from_platform_team_id' => $rightTeam->id,
+        'to_platform_team_id' => $leftTeam->id,
+        'draft_year' => 2029,
+        'draft_round' => 2,
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $transaction->load([
+        'entries.fromTeam.users.socialAccounts',
+        'entries.toTeam.users.socialAccounts',
+        'entries.player',
+    ]);
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        true
+    );
+    Http::fake([
+        'https://example.test/logo-team.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+        'https://example.test/discord-avatar.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+    ]);
+
+    $path = app(TradeTransactionCardRenderer::class)->render($transaction);
+    $dimensions = is_string($path) ? getimagesize($path) : false;
+
+    expect($path)->toBeString()
+        ->and(file_exists($path))->toBeTrue()
+        ->and($dimensions)->toBeArray()
+        ->and($dimensions[0])->toBe(1460)
+        ->and($dimensions[1])->toBeLessThan(700);
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/logo-team.png');
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/discord-avatar.png');
+
+    if (is_string($path) && file_exists($path)) {
+        @unlink($path);
+    }
+});
+
+it('renders claim and drop transaction cards with player images and fantasy team logos', function (): void {
+    [, , $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'claim-drop-renderer-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'claim-drop-renderer-league')->firstOrFail();
+    $team = PlatformTeam::query()
+        ->where('platform_league_id', $platformLeague->id)
+        ->where('platform_team_id', 'team-1')
+        ->firstOrFail();
+    $team->update([
+        'name' => 'Tokyo Killer Tardigrades',
+        'logo_url' => 'https://example.test/tokyo-logo.png',
+    ]);
+    $addedPlayer = Player::create([
+        'full_name' => 'Arvid Soderblom',
+        'first_name' => 'Arvid',
+        'last_name' => 'Soderblom',
+        'position' => 'G',
+        'team_abbrev' => 'CHI',
+        'head_shot_url' => 'https://example.test/arvid.png',
+    ]);
+    $droppedPlayer = Player::create([
+        'full_name' => 'Tristan Jarry',
+        'first_name' => 'Tristan',
+        'last_name' => 'Jarry',
+        'position' => 'G',
+        'team_abbrev' => 'EDM',
+        'head_shot_url' => 'https://example.test/jarry.png',
+    ]);
+    $transaction = PlatformTransaction::create([
+        'platform_league_id' => $platformLeague->id,
+        'platform' => 'fantrax',
+        'provider_transaction_id' => 'claim-drop-renderer-1',
+        'source_key' => 'fantrax:claim-drop-renderer-1',
+        'source_view' => 'CLAIM_DROP',
+        'transaction_type' => 'claim_drop',
+        'occurred_at' => CarbonImmutable::parse('2026-07-15 15:54:00', 'America/Toronto'),
+        'period' => 'Period 1',
+        'executed' => true,
+        'status' => 'Executed',
+        'summary' => 'Tokyo Killer Tardigrades claimed Arvid Soderblom and dropped Tristan Jarry.',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 0,
+        'asset_type' => 'player',
+        'action' => 'claim',
+        'to_platform_team_id' => $team->id,
+        'platform_team_id' => $team->id,
+        'player_id' => $addedPlayer->id,
+        'raw_name' => 'Arvid Soderblom',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    PlatformTransactionEntry::create([
+        'platform_transaction_id' => $transaction->id,
+        'entry_index' => 1,
+        'asset_type' => 'player',
+        'action' => 'drop',
+        'from_platform_team_id' => $team->id,
+        'platform_team_id' => $team->id,
+        'player_id' => $droppedPlayer->id,
+        'raw_name' => 'Tristan Jarry',
+        'raw_payload' => ['source' => 'test'],
+    ]);
+    $transaction->load([
+        'entries.fromTeam.users.socialAccounts',
+        'entries.toTeam.users.socialAccounts',
+        'entries.platformTeam.users.socialAccounts',
+        'entries.player',
+    ]);
+    $png = base64_decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        true
+    );
+    Http::fake([
+        'https://example.test/tokyo-logo.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+        'https://example.test/arvid.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+        'https://example.test/jarry.png' => Http::response($png, 200, ['Content-Type' => 'image/png']),
+    ]);
+
+    $path = app(ClaimDropTransactionCardRenderer::class)->render($transaction);
+    $dimensions = is_string($path) ? getimagesize($path) : false;
+
+    expect($path)->toBeString()
+        ->and(file_exists($path))->toBeTrue()
+        ->and($dimensions)->toBeArray()
+        ->and($dimensions[0])->toBe(1184)
+        ->and($dimensions[1])->toBe(1208);
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/tokyo-logo.png');
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/arvid.png');
+    Http::assertSent(static fn ($request): bool => $request->url() === 'https://example.test/jarry.png');
+
+    if (is_string($path) && file_exists($path)) {
+        @unlink($path);
+    }
 });
 
 it('announces a fantrax draft pick only once when duplicate listener jobs run', function (): void {

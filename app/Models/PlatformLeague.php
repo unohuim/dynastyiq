@@ -110,6 +110,14 @@ class PlatformLeague extends Model
     }
 
     /**
+     * Imported fantasy platform transactions for this league.
+     */
+    public function transactions(): HasMany
+    {
+        return $this->hasMany(PlatformTransaction::class, 'platform_league_id');
+    }
+
+    /**
      * User-owned projected cap assumptions for cap planning.
      */
     public function capContractProjections(): HasMany

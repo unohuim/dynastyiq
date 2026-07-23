@@ -1,0 +1,2396 @@
+{
+    "ok": true,
+    "platform_league_id": 9,
+    "fantrax_league_id": "uf1sdl47mo6nzpr6",
+    "view": "CLAIM_DROP",
+    "payload": {
+        "ok": true,
+        "page_url": "https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=CLAIM_DROP",
+        "rpc_url": "https://www.fantrax.com/fxpa/req?leagueId=uf1sdl47mo6nzpr6",
+        "view": "CLAIM_DROP",
+        "current_url": "https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=CLAIM_DROP",
+        "request_body": {
+            "msgs": [
+                {
+                    "method": "getTransactionDetailsHistory",
+                    "data": {
+                        "leagueId": "uf1sdl47mo6nzpr6",
+                        "view": "CLAIM_DROP"
+                    }
+                },
+                {
+                    "method": "getFantasyLeagueInfo",
+                    "data": []
+                },
+                {
+                    "method": "getFantasyTeams",
+                    "data": []
+                }
+            ],
+            "uiv": 3,
+            "refUrl": "https://www.fantrax.com/fantasy/league/uf1sdl47mo6nzpr6/transactions/history;view=CLAIM_DROP",
+            "dt": 0,
+            "at": 0,
+            "tz": "America/Toronto",
+            "v": "184.0.10"
+        },
+        "response": {
+            "status": 200,
+            "ok": true,
+            "contentType": "application/json",
+            "json": {
+                "data": {
+                    "sDate": 1784770298816
+                },
+                "roles": [
+                    "02"
+                ],
+                "responses": [
+                    {
+                        "data": {
+                            "paginatedResultSet": {
+                                "totalNumPages": 10,
+                                "pageNumber": 1,
+                                "maxResultsPerPage": 20,
+                                "totalNumResults": 189
+                            },
+                            "filterSettings": {
+                                "positionOrGroup": "ALL",
+                                "view": "CLAIM_DROP",
+                                "adminMode": false,
+                                "includeDeleted": false,
+                                "team": "ALL",
+                                "executedOnly": true
+                            },
+                            "displayedSelections": {
+                                "positionOrGroup": "ALL",
+                                "view": "CLAIM_DROP",
+                                "adminMode": false,
+                                "includeDeleted": false,
+                                "team": "ALL",
+                                "executedOnly": true
+                            },
+                            "miscData": {
+                                "deleteTransactionExecutedDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "Yes"
+                                        },
+                                        {
+                                            "id": "option1",
+                                            "label": "No"
+                                        }
+                                    ],
+                                    "text": "This will only delete the transaction record - <b style=\"color:#8B0000\">it will not undo it - it will not move any players</b>. Are you sure you want to permanently delete this?"
+                                },
+                                "deleteTransactionNotExecutedDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "Yes"
+                                        },
+                                        {
+                                            "id": "option1",
+                                            "label": "No"
+                                        }
+                                    ],
+                                    "text": "Are you sure you want to permanently delete this?"
+                                },
+                                "heading": "2026 Super Duper League",
+                                "undoTransactionDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "Yes"
+                                        },
+                                        {
+                                            "id": "option1",
+                                            "label": "No"
+                                        }
+                                    ],
+                                    "text": "Are you sure you want to undo this transaction?"
+                                },
+                                "undoTooltip": "Undo transaction",
+                                "executeTooltip": "Execute transaction if team was not updated with players",
+                                "deleteTooltip": "Delete transaction from view",
+                                "editTransactionDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "OK"
+                                        },
+                                        {
+                                            "id": "option1",
+                                            "label": "Cancel"
+                                        }
+                                    ],
+                                    "text": "# of periods to move transaction forward:"
+                                },
+                                "editTooltip": "Edit Transaction",
+                                "editTransactionSuccessDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "OK"
+                                        }
+                                    ],
+                                    "text": "Transaction successfully edited and re-executed."
+                                },
+                                "executeTransactionSuccessDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "OK"
+                                        }
+                                    ],
+                                    "text": "Transaction successfully executed."
+                                },
+                                "executeTransactionDialog": {
+                                    "alwaysShowOpener": false,
+                                    "options": [
+                                        {
+                                            "id": "option0",
+                                            "label": "???word.Ok: en_US???"
+                                        },
+                                        {
+                                            "id": "option1",
+                                            "label": "Cancel"
+                                        }
+                                    ],
+                                    "text": "Please confirm that you want to executed the highlighted transaction since the system has detected that it was not executed."
+                                },
+                                "editTransactionMaximumForward": 200
+                            },
+                            "displayedLists": {
+                                "teams": [
+                                    {
+                                        "name": "All Teams",
+                                        "id": "ALL"
+                                    },
+                                    {
+                                        "name": "Tokyo Killer Tardigrades",
+                                        "id": "3p7cwizlmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Amsterdam Assassins",
+                                        "id": "q308287dmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Bellevue Puck Puppies",
+                                        "id": "c8nvlvkymo6nzpre"
+                                    },
+                                    {
+                                        "name": "Brooklyn Americans",
+                                        "id": "g9m52g6cmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Flying Hurricanes",
+                                        "id": "hxo1j0ikmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Gary Cosmopolitans",
+                                        "id": "h1yelzxgmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Halifax Explosions",
+                                        "id": "j9ccxiefmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Hamilton Mustangs",
+                                        "id": "p3r5ifdzmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Laurentides Ice Turtles",
+                                        "id": "dxxtlecumo6nzpre"
+                                    },
+                                    {
+                                        "name": "Lisbon Armada (DDR)",
+                                        "id": "m43pz68wmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Mr. Blue & White",
+                                        "id": "qzfqvhyamo6nzpre"
+                                    },
+                                    {
+                                        "name": "Mr. Copper and blue",
+                                        "id": "nlv2e4vbmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Mr. Hick",
+                                        "id": "l0j375kdmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Mr. Terry Silver",
+                                        "id": "dvf0j1igmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Mr. Titanium Cranium",
+                                        "id": "92es2zwnmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Saint George Smaug",
+                                        "id": "lkzhg77lmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Springfield Duffs",
+                                        "id": "6c4tog2xmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Stockholm Sovereign",
+                                        "id": "8mw080xcmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Sudbury Blueberry Bulldogs",
+                                        "id": "o93000fumo6nzpre"
+                                    },
+                                    {
+                                        "name": "Toronto Red Pandas (Hindsy)",
+                                        "id": "oaxo0nrcmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Van Isle Drunken Marmots",
+                                        "id": "zkvazr04mo6nzpre"
+                                    },
+                                    {
+                                        "name": "Vancouver Rioters (Grizz)",
+                                        "id": "yxsuu5osmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Winnipeg Warriors",
+                                        "id": "f9dik3tdmo6nzpre"
+                                    },
+                                    {
+                                        "name": "Woodstock Argobears",
+                                        "id": "jwfdmefmmo6nzpre"
+                                    }
+                                ],
+                                "tabs": [
+                                    {
+                                        "name": "Claim/Drop",
+                                        "id": "CLAIM_DROP"
+                                    },
+                                    {
+                                        "name": "Trade",
+                                        "id": "TRADE"
+                                    },
+                                    {
+                                        "name": "Lineup",
+                                        "id": "LINEUP_CHANGE"
+                                    }
+                                ],
+                                "positions": [
+                                    {
+                                        "name": "All",
+                                        "id": "ALL"
+                                    },
+                                    {
+                                        "name": "Skaters",
+                                        "id": "HOCKEY_SKATING"
+                                    },
+                                    {
+                                        "name": "Center",
+                                        "id": "POS_206"
+                                    },
+                                    {
+                                        "name": "Left Wing",
+                                        "id": "POS_203"
+                                    },
+                                    {
+                                        "name": "Right Wing",
+                                        "id": "POS_204"
+                                    },
+                                    {
+                                        "name": "Defense",
+                                        "id": "POS_202"
+                                    },
+                                    {
+                                        "name": "Goalie",
+                                        "id": "POS_201"
+                                    }
+                                ]
+                            },
+                            "table": {
+                                "caption": "Claims / Drops",
+                                "header": {
+                                    "cells": [
+                                        {
+                                            "align": "LEFT",
+                                            "sortDirection": 1,
+                                            "name": "Team",
+                                            "shortName": "Team",
+                                            "key": "team"
+                                        },
+                                        {
+                                            "align": "LEFT",
+                                            "sortDirection": 1,
+                                            "name": "Date Processed (EDT)",
+                                            "shortName": "Date (EDT)",
+                                            "key": "date"
+                                        },
+                                        {
+                                            "sortDirection": 1,
+                                            "name": "Period",
+                                            "shortName": "Period",
+                                            "key": "week"
+                                        }
+                                    ]
+                                },
+                                "rows": [
+                                    {
+                                        "scorer": {
+                                            "teamName": "Edmonton Oilers",
+                                            "urlName": "aku-raty",
+                                            "scorerId": "051z2",
+                                            "posIdsNoFlex": [
+                                                "204"
+                                            ],
+                                            "defaultPosId": "204",
+                                            "posShortNames": "RW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "204",
+                                                "208"
+                                            ],
+                                            "teamId": "30220",
+                                            "name": "Aku Raty",
+                                            "teamShortName": "EDM",
+                                            "shortName": "A. Raty"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "numInGroup": 1,
+                                        "txSetId": "pkx9aracmru4lrqp",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Bellevue Puck Puppies",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "c8nvlvkymo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Tue Jul 21, 2026, 12:00AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Vancouver Canucks",
+                                            "urlName": "sawyer-mynio",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs06bak_96_2.png",
+                                            "scorerId": "06bak",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30240",
+                                            "name": "Sawyer Mynio",
+                                            "teamShortName": "VAN",
+                                            "shortName": "S. Mynio"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "disabled": true,
+                                        "numInGroup": 2,
+                                        "txSetId": "5qvwq4vzmru2rtn6",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 2,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 20, 2026, 11:09PM",
+                                                "rowspan": 2,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Anaheim Ducks",
+                                            "urlName": "lasse-boelius",
+                                            "scorerId": "06tmn",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30250",
+                                            "name": "Lasse Boelius",
+                                            "teamShortName": "ANA",
+                                            "shortName": "L. Boelius"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "txSetId": "5qvwq4vzmru2rtn6",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Detroit Red Wings",
+                                            "urlName": "ronnie-attard",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs050mn_96_3.png",
+                                            "scorerId": "050mn",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Jul 13, 10:34 PM: Attard inked a one-year, two-way...",
+                                                    "typeId": "8"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30170",
+                                            "name": "Ronnie Attard",
+                                            "teamShortName": "DET",
+                                            "shortName": "R. Attard"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "numInGroup": 1,
+                                        "txSetId": "1yrv0ka0mrsrgnyh",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Saint George Smaug",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "lkzhg77lmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 20, 2026, 1:05AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "San Jose Sharks",
+                                            "urlName": "jakub-skarek",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs04bfl_96_5.png",
+                                            "scorerId": "04bfl",
+                                            "posIdsNoFlex": [
+                                                "201"
+                                            ],
+                                            "defaultPosId": "201",
+                                            "posShortNames": "G",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Jul 16, 10:15 AM: Skarek inked a one-year contract with...",
+                                                    "typeId": "9"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "201"
+                                            ],
+                                            "teamId": "30290",
+                                            "name": "Jakub Skarek",
+                                            "teamShortName": "SJS",
+                                            "shortName": "J. Skarek"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "do5i5703mrsrdx2k",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Saint George Smaug",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "lkzhg77lmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 20, 2026, 1:03AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Not on a team",
+                                            "urlName": "samu-tuomaala",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs04zj2_96_2.png",
+                                            "scorerId": "04zj2",
+                                            "posIdsNoFlex": [
+                                                "204"
+                                            ],
+                                            "defaultPosId": "204",
+                                            "posShortNames": "RW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Free Agent",
+                                                    "typeId": "3"
+                                                },
+                                                {
+                                                    "tooltip": "Jun 29, 5:55 PM: Tuomaala is slated to become an...",
+                                                    "typeId": "8"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "204",
+                                                "208"
+                                            ],
+                                            "name": "Samu Tuomaala",
+                                            "teamShortName": "(N/A)",
+                                            "shortName": "S. Tuomaala"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "numInGroup": 1,
+                                        "txSetId": "urbqfdkymrsmvzoo",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Bellevue Puck Puppies",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "c8nvlvkymo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Sun Jul 19, 2026, 10:57PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Not on a team",
+                                            "urlName": "arthur-kaliyev",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs04sy1_96_6.png",
+                                            "scorerId": "04sy1",
+                                            "posIdsNoFlex": [
+                                                "204"
+                                            ],
+                                            "defaultPosId": "204",
+                                            "posShortNames": "RW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Free Agent",
+                                                    "typeId": "3"
+                                                },
+                                                {
+                                                    "tooltip": "Jun 29, 2:00 PM: Kaliyev will be an unrestricted free...",
+                                                    "typeId": "8"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": false,
+                                            "posIds": [
+                                                "204",
+                                                "208"
+                                            ],
+                                            "name": "Arthur Kaliyev",
+                                            "teamShortName": "(N/A)",
+                                            "shortName": "A. Kaliyev"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "WW",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "mlcgiticmrny8iw9",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Laurentides Ice Turtles",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "dxxtlecumo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Sat Jul 18, 2026, 12:11PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Pittsburgh Penguins",
+                                            "urlName": "kevin-hayes",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs01zt2_96_9.png",
+                                            "scorerId": "01zt2",
+                                            "posIdsNoFlex": [
+                                                "206",
+                                                "203"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C,LW",
+                                            "team": false,
+                                            "rookie": false,
+                                            "minorsEligible": false,
+                                            "posIds": [
+                                                "206",
+                                                "203",
+                                                "208"
+                                            ],
+                                            "teamId": "30040",
+                                            "name": "Kevin Hayes",
+                                            "teamShortName": "PIT",
+                                            "shortName": "K. Hayes"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "numInGroup": 1,
+                                        "txSetId": "q68wxh81mrp8sqrm",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mr. Copper and blue",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "nlv2e4vbmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Fri Jul 17, 2026, 1:59PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Washington Capitals",
+                                            "urlName": "timothy-liljegren",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs03yg6_96_7.png",
+                                            "scorerId": "03yg6",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "rookie": false,
+                                            "minorsEligible": false,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30140",
+                                            "name": "Timothy Liljegren",
+                                            "teamShortName": "WSH",
+                                            "shortName": "T. Liljegren"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "mia84xewmrouxj1i",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Halifax Explosions",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "j9ccxiefmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Fri Jul 17, 2026, 7:31AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Utah Mammoth",
+                                            "urlName": "gabe-smith",
+                                            "scorerId": "06mj5",
+                                            "posIdsNoFlex": [
+                                                "206"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "206",
+                                                "208"
+                                            ],
+                                            "teamId": "30282",
+                                            "name": "Gabe Smith",
+                                            "teamShortName": "UTA",
+                                            "shortName": "G. Smith"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "numInGroup": 2,
+                                        "txSetId": "v2rh9ibymrnztowv",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 2,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Thu Jul 16, 2026, 5:00PM",
+                                                "rowspan": 2,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Minnesota Wild",
+                                            "urlName": "rieger-lorenz",
+                                            "scorerId": "05ymr",
+                                            "posIdsNoFlex": [
+                                                "206"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "206",
+                                                "208"
+                                            ],
+                                            "teamId": "30230",
+                                            "name": "Rieger Lorenz",
+                                            "teamShortName": "MIN",
+                                            "shortName": "R. Lorenz"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "txSetId": "v2rh9ibymrnztowv",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Not on a team",
+                                            "urlName": "arthur-kaliyev",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs04sy1_96_6.png",
+                                            "scorerId": "04sy1",
+                                            "posIdsNoFlex": [
+                                                "204"
+                                            ],
+                                            "defaultPosId": "204",
+                                            "posShortNames": "RW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Free Agent",
+                                                    "typeId": "3"
+                                                },
+                                                {
+                                                    "tooltip": "Jun 29, 2:00 PM: Kaliyev will be an unrestricted free...",
+                                                    "typeId": "8"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": false,
+                                            "posIds": [
+                                                "204",
+                                                "208"
+                                            ],
+                                            "name": "Arthur Kaliyev",
+                                            "teamShortName": "(N/A)",
+                                            "shortName": "A. Kaliyev"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "0kva647lmrnpi0f8",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Halifax Explosions",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "j9ccxiefmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Thu Jul 16, 2026, 12:11PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Florida Panthers",
+                                            "urlName": "kirill-gerasimyuk",
+                                            "scorerId": "05tpu",
+                                            "posIdsNoFlex": [
+                                                "201"
+                                            ],
+                                            "defaultPosId": "201",
+                                            "posShortNames": "G",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "201"
+                                            ],
+                                            "teamId": "30120",
+                                            "name": "Kirill Gerasimyuk",
+                                            "teamShortName": "FLA",
+                                            "shortName": "K. Gerasimyuk"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "numInGroup": 2,
+                                        "txSetId": "pymwgjvymrnfvgjb",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 2,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Thu Jul 16, 2026, 7:41AM",
+                                                "rowspan": 2,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Boston Bruins",
+                                            "urlName": "lukas-reichel",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs05kei_96_4.png",
+                                            "scorerId": "05kei",
+                                            "posIdsNoFlex": [
+                                                "206",
+                                                "203"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C,LW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "206",
+                                                "203",
+                                                "208"
+                                            ],
+                                            "teamId": "30050",
+                                            "name": "Lukas Reichel",
+                                            "teamShortName": "BOS",
+                                            "shortName": "L. Reichel"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "txSetId": "pymwgjvymrnfvgjb",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Buffalo Sabres",
+                                            "urlName": "ryerson-leenders",
+                                            "scorerId": "06jhg",
+                                            "posIdsNoFlex": [
+                                                "201"
+                                            ],
+                                            "defaultPosId": "201",
+                                            "posShortNames": "G",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "201"
+                                            ],
+                                            "teamId": "30060",
+                                            "name": "Ryerson Leenders",
+                                            "teamShortName": "BUF",
+                                            "shortName": "R. Leenders"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "oty7ctqumrnfmq4q",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Thu Jul 16, 2026, 7:35AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Seattle Kraken",
+                                            "urlName": "frederick-gaudreau",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs03kng_96_7.png",
+                                            "scorerId": "03kng",
+                                            "posIdsNoFlex": [
+                                                "206",
+                                                "204"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C,RW",
+                                            "team": false,
+                                            "rookie": false,
+                                            "minorsEligible": false,
+                                            "posIds": [
+                                                "206",
+                                                "204",
+                                                "208"
+                                            ],
+                                            "teamId": "30257",
+                                            "name": "Frederick Gaudreau",
+                                            "teamShortName": "SEA",
+                                            "shortName": "F. Gaudreau"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "numInGroup": 1,
+                                        "txSetId": "smkpmv5lmrmqp2a8",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Wed Jul 15, 2026, 7:57PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Boston Bruins",
+                                            "urlName": "lukas-reichel",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs05kei_96_4.png",
+                                            "scorerId": "05kei",
+                                            "posIdsNoFlex": [
+                                                "206",
+                                                "203"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C,LW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "206",
+                                                "203",
+                                                "208"
+                                            ],
+                                            "teamId": "30050",
+                                            "name": "Lukas Reichel",
+                                            "teamShortName": "BOS",
+                                            "shortName": "L. Reichel"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "l40yqvrhmrkksm2h",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Gary Cosmopolitans",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "h1yelzxgmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Tue Jul 14, 2026, 7:36AM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Columbus Blue Jackets",
+                                            "urlName": "jonas-woo",
+                                            "scorerId": "06une",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30160",
+                                            "name": "Jonas Woo",
+                                            "teamShortName": "CBJ",
+                                            "shortName": "J. Woo"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "numInGroup": 1,
+                                        "txSetId": "elcou2spmrjw4uoh",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Amsterdam Assassins",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "q308287dmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 8:06PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Florida Panthers",
+                                            "urlName": "vladislav-lukashevich",
+                                            "scorerId": "05u13",
+                                            "posIdsNoFlex": [
+                                                "202"
+                                            ],
+                                            "defaultPosId": "202",
+                                            "posShortNames": "D",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "202",
+                                                "208"
+                                            ],
+                                            "teamId": "30120",
+                                            "name": "Vladislav Lukashevich",
+                                            "teamShortName": "FLA",
+                                            "shortName": "V. Lukashevich"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "fq5sg3w3mrjw3mzq",
+                                        "feesUsed": false,
+                                        "transactionCode": "DROP",
+                                        "transactionType": "Drop",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Amsterdam Assassins",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "q308287dmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 8:05PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Colorado Avalanche",
+                                            "urlName": "christian-humphreys",
+                                            "scorerId": "06lod",
+                                            "posIdsNoFlex": [
+                                                "206"
+                                            ],
+                                            "defaultPosId": "206",
+                                            "posShortNames": "C",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "206",
+                                                "208"
+                                            ],
+                                            "teamId": "30210",
+                                            "name": "Christian Humphreys",
+                                            "teamShortName": "COL",
+                                            "shortName": "C. Humphreys"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "numInGroup": 1,
+                                        "txSetId": "qm2um6inmrjw0f41",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Bellevue Puck Puppies",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "c8nvlvkymo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 8:02PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Dallas Stars",
+                                            "urlName": "dylan-hryckowian",
+                                            "scorerId": "06avo",
+                                            "posIdsNoFlex": [
+                                                "204"
+                                            ],
+                                            "defaultPosId": "204",
+                                            "posShortNames": "RW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "204",
+                                                "208"
+                                            ],
+                                            "teamId": "30260",
+                                            "name": "Dylan Hryckowian",
+                                            "teamShortName": "DAL",
+                                            "shortName": "D. Hryckowian"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "u98x0aohmrjvxfby",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Amsterdam Assassins",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "q308287dmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 8:00PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Edmonton Oilers",
+                                            "urlName": "viljami-marjala",
+                                            "headshotUrl": "https://fantraximg.com/si/headshots/NHL/hs05ubc_96_2.png",
+                                            "scorerId": "05ubc",
+                                            "posIdsNoFlex": [
+                                                "203"
+                                            ],
+                                            "defaultPosId": "203",
+                                            "posShortNames": "LW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "203",
+                                                "208"
+                                            ],
+                                            "teamId": "30220",
+                                            "name": "Viljami Marjala",
+                                            "teamShortName": "EDM",
+                                            "shortName": "V. Marjala"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "numInGroup": 1,
+                                        "txSetId": "6fdnn5yjmrjvx2vd",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Amsterdam Assassins",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "q308287dmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 8:00PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "scorer": {
+                                            "teamName": "Carolina Hurricanes",
+                                            "urlName": "mikey-berchild",
+                                            "scorerId": "06pkj",
+                                            "posIdsNoFlex": [
+                                                "203"
+                                            ],
+                                            "defaultPosId": "203",
+                                            "posShortNames": "LW",
+                                            "team": false,
+                                            "icons": [
+                                                {
+                                                    "tooltip": "Minor Leagues",
+                                                    "typeId": "4"
+                                                },
+                                                {
+                                                    "tooltip": "Jun 27, 2:59 PM: Berchild was the 105th overall pick by...",
+                                                    "typeId": "8"
+                                                },
+                                                {
+                                                    "tooltip": "Minors-eligible",
+                                                    "typeId": "31"
+                                                }
+                                            ],
+                                            "rookie": false,
+                                            "minorsEligible": true,
+                                            "posIds": [
+                                                "203",
+                                                "208"
+                                            ],
+                                            "teamId": "30110",
+                                            "name": "Mikey Berchild",
+                                            "teamShortName": "CAR",
+                                            "shortName": "M. Berchild"
+                                        },
+                                        "resultCode": "EXECUTED",
+                                        "executed": true,
+                                        "result": {
+                                            "content": "Executed"
+                                        },
+                                        "claimType": "FA",
+                                        "disabled": true,
+                                        "numInGroup": 1,
+                                        "txSetId": "f3yrvcg8mrjvwry3",
+                                        "feesUsed": false,
+                                        "transactionCode": "CLAIM",
+                                        "transactionType": "Claim",
+                                        "deleted": false,
+                                        "cells": [
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Amsterdam Assassins",
+                                                "leagueId": "uf1sdl47mo6nzpr6",
+                                                "rowspan": 1,
+                                                "key": "team",
+                                                "teamId": "q308287dmo6nzpre"
+                                            },
+                                            {
+                                                "align": "LEFT",
+                                                "content": "Mon Jul 13, 2026, 7:59PM",
+                                                "rowspan": 1,
+                                                "key": "date"
+                                            },
+                                            {
+                                                "content": "1",
+                                                "key": "week"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    {
+                        "data": {
+                            "fantasySettings": {
+                                "hidePlayerHeadshotsMobile": false,
+                                "teamName": "Tokyo Killer Tardigrades",
+                                "aab": true,
+                                "draftStatus": "In Progress",
+                                "enableSportColors": true,
+                                "isMember": true,
+                                "chatEnabled": true,
+                                "wallImageUrl": "https://fantraximg.com/logos/vax/lgWall_vaxuyiozlk4sf7a4_2048.jpg",
+                                "hideLeagueLogo": false,
+                                "salaryNumDecimals": 0,
+                                "leagueName": "Super Duper League",
+                                "hidePlayerHeadshotsDesktop": false,
+                                "generalSportId": "003",
+                                "salaryDisplayThousands": false,
+                                "headToHead": true,
+                                "season": {
+                                    "seasonType": {
+                                        "code": "REGULAR"
+                                    },
+                                    "displayNameShort": "2026-27 Reg",
+                                    "endDate": 1807415999000,
+                                    "displayName": "2026-27 Reg Season",
+                                    "id": "31n",
+                                    "startDate": 1790654400000,
+                                    "displayYear": "2026-27"
+                                },
+                                "leagueHistoryId": "l871nk2hlvi5ch17",
+                                "screenDefaults": {
+                                    "LIVE_SCORING": {
+                                        "local": {
+                                            "mobileMatchupView": false
+                                        }
+                                    },
+                                    "MATCHUP_PREVIEW": {
+                                        "local": {
+                                            "mobileMatchupView": false
+                                        }
+                                    }
+                                },
+                                "leagueHomeStandingsPosition": "1",
+                                "contentScaleTypeId": "1",
+                                "multiColumnLeftWidthHome": 50,
+                                "commissioner": false,
+                                "teamLogo": "https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_128.webp",
+                                "salaryUseCommas": true,
+                                "myDefaultTeamId": "3p7cwizlmo6nzpre",
+                                "football": false,
+                                "myTeamIds": [
+                                    "3p7cwizlmo6nzpre"
+                                ],
+                                "sportId": "003",
+                                "subtitle": "2026-27 NHL",
+                                "generalSport": "HOCKEY",
+                                "sport": "NHL",
+                                "treasurerUsed": true
+                            },
+                            "positionMap": {
+                                "201": {
+                                    "id": "201",
+                                    "name": "Goalie",
+                                    "shortName": "G",
+                                    "sortOrder": 80,
+                                    "colorKey": "--color-amber--softer"
+                                },
+                                "202": {
+                                    "id": "202",
+                                    "name": "Defense",
+                                    "shortName": "D",
+                                    "sortOrder": 60,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "203": {
+                                    "id": "203",
+                                    "name": "Left Wing",
+                                    "shortName": "LW",
+                                    "sortOrder": 20,
+                                    "colorKey": "--color-red--softer"
+                                },
+                                "204": {
+                                    "id": "204",
+                                    "name": "Right Wing",
+                                    "shortName": "RW",
+                                    "sortOrder": 30,
+                                    "colorKey": "--color-primary--softer "
+                                },
+                                "205": {
+                                    "id": "205",
+                                    "name": "Wing",
+                                    "shortName": "W",
+                                    "sortOrder": 40,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "206": {
+                                    "id": "206",
+                                    "name": "Center",
+                                    "shortName": "C",
+                                    "sortOrder": 10,
+                                    "colorKey": "--color-orange--softer"
+                                },
+                                "207": {
+                                    "id": "207",
+                                    "name": "Forward",
+                                    "shortName": "F",
+                                    "sortOrder": 50,
+                                    "colorKey": "--color-green--soft"
+                                },
+                                "208": {
+                                    "id": "208",
+                                    "name": "Skater",
+                                    "shortName": "Skt",
+                                    "sortOrder": 70,
+                                    "colorKey": "--color-teal--softer"
+                                },
+                                "209": {
+                                    "id": "209",
+                                    "name": "NHL Team Skaters",
+                                    "shortName": "TmS",
+                                    "sortOrder": 90,
+                                    "colorKey": "--color-red--lighter"
+                                },
+                                "210": {
+                                    "id": "210",
+                                    "name": "NHL Team Goalies",
+                                    "shortName": "TmG",
+                                    "sortOrder": 100,
+                                    "colorKey": "--color-amber--softest"
+                                },
+                                "211": {
+                                    "id": "211",
+                                    "name": "NHL Team",
+                                    "shortName": "Tm",
+                                    "sortOrder": 110,
+                                    "colorKey": "--color-orange--light"
+                                },
+                                "212": {
+                                    "id": "212",
+                                    "name": "Enforcer",
+                                    "shortName": "Enf",
+                                    "sortOrder": 72,
+                                    "colorKey": "--color-red"
+                                },
+                                "213": {
+                                    "id": "213",
+                                    "name": "Forward 2",
+                                    "shortName": "F2",
+                                    "sortOrder": 51,
+                                    "colorKey": "--color-green--soft"
+                                },
+                                "214": {
+                                    "id": "214",
+                                    "name": "Forward 3",
+                                    "shortName": "F3",
+                                    "sortOrder": 52,
+                                    "colorKey": "--color-green--soft"
+                                },
+                                "215": {
+                                    "id": "215",
+                                    "name": "Defense 2",
+                                    "shortName": "D2",
+                                    "sortOrder": 61,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "216": {
+                                    "id": "216",
+                                    "name": "Defense 3",
+                                    "shortName": "D3",
+                                    "sortOrder": 62,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "217": {
+                                    "id": "217",
+                                    "name": "Skater 2",
+                                    "shortName": "Skt2",
+                                    "sortOrder": 71,
+                                    "colorKey": "--color-teal--softer"
+                                },
+                                "218": {
+                                    "id": "218",
+                                    "name": "Power Play Specialist",
+                                    "shortName": "PP",
+                                    "sortOrder": 73,
+                                    "colorKey": "--color-teal--light"
+                                },
+                                "219": {
+                                    "id": "219",
+                                    "name": "Penalty Kill Specialist",
+                                    "shortName": "PK",
+                                    "sortOrder": 74,
+                                    "colorKey": "--color-primary--light"
+                                },
+                                "220": {
+                                    "id": "220",
+                                    "name": "Goalie 2",
+                                    "shortName": "G2",
+                                    "sortOrder": 82,
+                                    "colorKey": "--color-amber--softer"
+                                },
+                                "221": {
+                                    "id": "221",
+                                    "name": "Center 2",
+                                    "shortName": "C2",
+                                    "sortOrder": 11,
+                                    "colorKey": "--color-orange--softer"
+                                },
+                                "222": {
+                                    "id": "222",
+                                    "name": "Left Wing 2",
+                                    "shortName": "LW2",
+                                    "sortOrder": 21,
+                                    "colorKey": "--color-red--softer"
+                                },
+                                "223": {
+                                    "id": "223",
+                                    "name": "Right Wing 2",
+                                    "shortName": "RW2",
+                                    "sortOrder": 31,
+                                    "colorKey": "--color-primary--softer"
+                                },
+                                "224": {
+                                    "id": "224",
+                                    "name": "Center 3",
+                                    "shortName": "C3",
+                                    "sortOrder": 12,
+                                    "colorKey": "--color-orange--softer"
+                                },
+                                "225": {
+                                    "id": "225",
+                                    "name": "Center 4",
+                                    "shortName": "C4",
+                                    "sortOrder": 13,
+                                    "colorKey": "--color-orange--softer"
+                                },
+                                "226": {
+                                    "id": "226",
+                                    "name": "Left Wing 3",
+                                    "shortName": "LW3",
+                                    "sortOrder": 22,
+                                    "colorKey": "--color-red--softer"
+                                },
+                                "227": {
+                                    "id": "227",
+                                    "name": "Left Wing 4",
+                                    "shortName": "LW4",
+                                    "sortOrder": 23,
+                                    "colorKey": "--color-red--softer"
+                                },
+                                "228": {
+                                    "id": "228",
+                                    "name": "Right Wing 3",
+                                    "shortName": "RW3",
+                                    "sortOrder": 32,
+                                    "colorKey": "--color-primary--softer"
+                                },
+                                "229": {
+                                    "id": "229",
+                                    "name": "Right Wing 4",
+                                    "shortName": "RW4",
+                                    "sortOrder": 33,
+                                    "colorKey": "--color-primary--softer"
+                                },
+                                "230": {
+                                    "id": "230",
+                                    "name": "Defense 4",
+                                    "shortName": "D4",
+                                    "sortOrder": 63,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "231": {
+                                    "id": "231",
+                                    "name": "Defense 5",
+                                    "shortName": "D5",
+                                    "sortOrder": 64,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "232": {
+                                    "id": "232",
+                                    "name": "Defense 6",
+                                    "shortName": "D6",
+                                    "sortOrder": 65,
+                                    "colorKey": "--color-purple--softest"
+                                },
+                                "233": {
+                                    "id": "233",
+                                    "name": "Wing 2",
+                                    "shortName": "W2",
+                                    "sortOrder": 41,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "234": {
+                                    "id": "234",
+                                    "name": "Wing 3",
+                                    "shortName": "W3",
+                                    "sortOrder": 42,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "235": {
+                                    "id": "235",
+                                    "name": "Wing 4 ",
+                                    "shortName": "W4",
+                                    "sortOrder": 43,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "236": {
+                                    "id": "236",
+                                    "name": "Wing 5",
+                                    "shortName": "W5",
+                                    "sortOrder": 44,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "237": {
+                                    "id": "237",
+                                    "name": "Wing 6",
+                                    "shortName": "W6",
+                                    "sortOrder": 45,
+                                    "colorKey": "--color-purple--soft"
+                                },
+                                "238": {
+                                    "id": "238",
+                                    "name": "Forward 4",
+                                    "shortName": "F4",
+                                    "sortOrder": 53,
+                                    "colorKey": "PRIMARY"
+                                },
+                                "239": {
+                                    "id": "239",
+                                    "name": "Forward 5",
+                                    "shortName": "F5",
+                                    "sortOrder": 54,
+                                    "colorKey": "PRIMARY"
+                                },
+                                "240": {
+                                    "id": "240",
+                                    "name": "Forward 6",
+                                    "shortName": "F6",
+                                    "sortOrder": 55,
+                                    "colorKey": "PRIMARY"
+                                },
+                                "241": {
+                                    "id": "241",
+                                    "name": "Forward 7",
+                                    "shortName": "F7",
+                                    "sortOrder": 56,
+                                    "colorKey": "PRIMARY"
+                                },
+                                "242": {
+                                    "id": "242",
+                                    "name": "Forward 8",
+                                    "shortName": "F8",
+                                    "sortOrder": 57,
+                                    "colorKey": "PRIMARY"
+                                },
+                                "243": {
+                                    "id": "243",
+                                    "name": "Forward 9",
+                                    "shortName": "F9",
+                                    "sortOrder": 58,
+                                    "colorKey": "PRIMARY"
+                                }
+                            }
+                        }
+                    },
+                    {
+                        "data": {
+                            "fantasyTeams": [
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/916/tmLogo_916jdtu8mr9xg63p_256.webp",
+                                    "name": "Amsterdam Assassins",
+                                    "id": "q308287dmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/916/tmLogo_916jdtu8mr9xg63p_128.webp",
+                                    "shortName": "AMS",
+                                    "commissioner": false,
+                                    "logoId": "916jdtu8mr9xg63p"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/ew5/tmLogo_ew591g42morfr8zg_256.webp",
+                                    "name": "Bellevue Puck Puppies",
+                                    "id": "c8nvlvkymo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/ew5/tmLogo_ew591g42morfr8zg_128.webp",
+                                    "shortName": "DAWG",
+                                    "commissioner": true,
+                                    "logoId": "ew591g42morfr8zg"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/303/tmLogo_303l5xbumoqmfn2w_256.webp",
+                                    "name": "Brooklyn Americans",
+                                    "id": "g9m52g6cmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/303/tmLogo_303l5xbumoqmfn2w_128.webp",
+                                    "shortName": "BAM",
+                                    "commissioner": false,
+                                    "logoId": "303l5xbumoqmfn2w"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/assets/images/icons/fantasyteams/hockey/skates/blue_red_whitepng_512.webp",
+                                    "name": "Flying Hurricanes",
+                                    "id": "hxo1j0ikmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/assets/images/icons/fantasyteams/hockey/skates/blue_red_whitepng_512.webp",
+                                    "shortName": "FLY",
+                                    "commissioner": false
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/ip8/tmLogo_ip8x72qpmorimyfc_256.webp",
+                                    "name": "Gary Cosmopolitans",
+                                    "id": "h1yelzxgmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/ip8/tmLogo_ip8x72qpmorimyfc_128.webp",
+                                    "shortName": "GCP",
+                                    "commissioner": false,
+                                    "logoId": "ip8x72qpmorimyfc"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/qzv/tmLogo_qzv838n6moqmv1d9_256.webp",
+                                    "name": "Halifax Explosions",
+                                    "id": "j9ccxiefmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/qzv/tmLogo_qzv838n6moqmv1d9_128.webp",
+                                    "shortName": "HAL",
+                                    "commissioner": true,
+                                    "logoId": "qzv838n6moqmv1d9"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/6ya/tmLogo_6yarrb45mp618jvj_256.webp",
+                                    "name": "Hamilton Mustangs",
+                                    "id": "p3r5ifdzmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/6ya/tmLogo_6yarrb45mp618jvj_128.webp",
+                                    "shortName": "HM",
+                                    "commissioner": false,
+                                    "logoId": "6yarrb45mp618jvj"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/a4i/tmLogo_a4iffv6vmoqo74es_256.webp",
+                                    "name": "Laurentides Ice Turtles",
+                                    "id": "dxxtlecumo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/a4i/tmLogo_a4iffv6vmoqo74es_128.webp",
+                                    "shortName": "LIT",
+                                    "commissioner": false,
+                                    "logoId": "a4iffv6vmoqo74es"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/22l/tmLogo_22luem79mp2p5cxx_256.webp",
+                                    "name": "Lisbon Armada (DDR)",
+                                    "id": "m43pz68wmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/22l/tmLogo_22luem79mp2p5cxx_128.webp",
+                                    "shortName": "Armada",
+                                    "commissioner": false,
+                                    "logoId": "22luem79mp2p5cxx"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/dqw/tmLogo_dqwqnc2llxjg1g23_256.jpg",
+                                    "name": "Mr. Blue & White",
+                                    "id": "qzfqvhyamo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/dqw/tmLogo_dqwqnc2llxjg1g23_128.jpg",
+                                    "shortName": "FIN",
+                                    "commissioner": false,
+                                    "logoId": "dqwqnc2llxjg1g23"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/assets/images/icons/fantasyteams/hockey/stick_puck/orange_blue_128.webp",
+                                    "name": "Mr. Copper and blue",
+                                    "id": "nlv2e4vbmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/assets/images/icons/fantasyteams/hockey/stick_puck/orange_blue_128.webp",
+                                    "shortName": "Radmike",
+                                    "commissioner": false
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/8nn/tmLogo_8nn754g2m0tt50oj_256.jpg",
+                                    "name": "Mr. Hick",
+                                    "id": "l0j375kdmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/8nn/tmLogo_8nn754g2m0tt50oj_128.jpg",
+                                    "shortName": "Hick",
+                                    "commissioner": false,
+                                    "logoId": "8nn754g2m0tt50oj"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/2af/tmLogo_2afxufisly8p8wwz_256.jpg",
+                                    "name": "Mr. Terry Silver",
+                                    "id": "dvf0j1igmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/2af/tmLogo_2afxufisly8p8wwz_128.jpg",
+                                    "shortName": "Silver",
+                                    "commissioner": false,
+                                    "logoId": "2afxufisly8p8wwz"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/4cm/tmLogo_4cmfm3q4morwztmq_256.webp",
+                                    "name": "Mr. Titanium Cranium",
+                                    "id": "92es2zwnmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/4cm/tmLogo_4cmfm3q4morwztmq_128.webp",
+                                    "shortName": "TC",
+                                    "commissioner": false,
+                                    "logoId": "4cmfm3q4morwztmq"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/x4b/tmLogo_x4bryczimp9ryevw_256.webp",
+                                    "name": "Saint George Smaug",
+                                    "id": "lkzhg77lmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/x4b/tmLogo_x4bryczimp9ryevw_128.webp",
+                                    "shortName": "Smaug",
+                                    "commissioner": false,
+                                    "logoId": "x4bryczimp9ryevw"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/a6e/tmLogo_a6e87xgxlkpvorgr_256.jpg",
+                                    "name": "Springfield Duffs",
+                                    "id": "6c4tog2xmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/a6e/tmLogo_a6e87xgxlkpvorgr_128.jpg",
+                                    "shortName": "DUFF",
+                                    "commissioner": false,
+                                    "logoId": "a6e87xgxlkpvorgr"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/20m/tmLogo_20may36qmp0n5py0_256.webp",
+                                    "name": "Stockholm Sovereign",
+                                    "id": "8mw080xcmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/20m/tmLogo_20may36qmp0n5py0_128.webp",
+                                    "shortName": "GOLD",
+                                    "commissioner": false,
+                                    "logoId": "20may36qmp0n5py0"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/wqu/tmLogo_wquh95p8mp63n50g_256.webp",
+                                    "name": "Sudbury Blueberry Bulldogs",
+                                    "id": "o93000fumo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/wqu/tmLogo_wquh95p8mp63n50g_128.webp",
+                                    "shortName": "SBB",
+                                    "commissioner": false,
+                                    "logoId": "wquh95p8mp63n50g"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_256.webp",
+                                    "name": "Tokyo Killer Tardigrades",
+                                    "id": "3p7cwizlmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/yyu/tmLogo_yyu4dyusmora3ff8_128.webp",
+                                    "shortName": "TOK",
+                                    "commissioner": false,
+                                    "logoId": "yyu4dyusmora3ff8"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/mjs/tmLogo_mjs8d5jdmor66cui_256.webp",
+                                    "name": "Toronto Red Pandas (Hindsy)",
+                                    "id": "oaxo0nrcmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/mjs/tmLogo_mjs8d5jdmor66cui_128.webp",
+                                    "shortName": "\ud83d\udd34\ud83d\udc3c",
+                                    "commissioner": false,
+                                    "logoId": "mjs8d5jdmor66cui"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/h7e/tmLogo_h7e8vfpqmou79bx7_256.webp",
+                                    "name": "Van Isle Drunken Marmots",
+                                    "id": "zkvazr04mo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/h7e/tmLogo_h7e8vfpqmou79bx7_128.webp",
+                                    "shortName": "VIDM",
+                                    "commissioner": false,
+                                    "logoId": "h7e8vfpqmou79bx7"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/izf/tmLogo_izftkxnlmorbo2nl_256.webp",
+                                    "name": "Vancouver Rioters (Grizz)",
+                                    "id": "yxsuu5osmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/izf/tmLogo_izftkxnlmorbo2nl_128.webp",
+                                    "shortName": "Riot",
+                                    "commissioner": false,
+                                    "logoId": "izftkxnlmorbo2nl"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/e9k/tmLogo_e9kcj9pymoqpmnyi_256.webp",
+                                    "name": "Winnipeg Warriors",
+                                    "id": "f9dik3tdmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/e9k/tmLogo_e9kcj9pymoqpmnyi_128.webp",
+                                    "shortName": "WPG",
+                                    "commissioner": false,
+                                    "logoId": "e9kcj9pymoqpmnyi"
+                                },
+                                {
+                                    "logoUrl256": "https://fantraximg.com/logos/nly/tmLogo_nlymivl2morew1b4_256.webp",
+                                    "name": "Woodstock Argobears",
+                                    "id": "jwfdmefmmo6nzpre",
+                                    "logoUrl128": "https://fantraximg.com/logos/nly/tmLogo_nlymivl2morew1b4_128.webp",
+                                    "shortName": "\ud83c\udf4a",
+                                    "commissioner": false,
+                                    "logoId": "nlymivl2morew1b4"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "text": null
+        }
+    }
+}

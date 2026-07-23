@@ -4,33 +4,39 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Models\FantraxPlayer;
+use App\Events\TeamLogosSynced;
+use App\Jobs\SyncFantraxDraftStateJob;
 use App\Models\DiscordServer;
 use App\Models\Draft;
 use App\Models\DraftNotificationSetting;
 use App\Models\DraftPick;
-use App\Events\TeamLogosSynced;
-use App\Jobs\SyncFantraxDraftStateJob;
+use App\Models\FantraxPlayer;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\PlatformTransaction;
+use App\Models\PlatformTransactionEntry;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
-use App\Services\FantraxDraftingWindow;
+use App\Services\ClaimDropTransactionCardRenderer;
 use App\Services\DraftPickCardRenderer;
+use App\Services\FantraxDraftingWindow;
 use App\Services\FantraxLogoSyncService;
+use App\Services\FantraxTransactionHistoryImportService;
 use App\Services\LeagueProviderBindingService;
+use App\Services\TradeTransactionCardRenderer;
 use App\Services\YahooFantasyLeagueService;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Traits\HasAPITrait;
 use App\ViewModels\LeagueShowViewModel;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
@@ -210,6 +216,27 @@ class CommunityLeagues extends Controller
         $payload['team_logo_sync'] = [
             'can_sync' => $canSyncTeamLogos,
             'action_url' => route('community.leagues.team-logos.sync', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+        ];
+        $payload['transactions'] = [
+            'can_refresh' => $isFantraxLeague,
+            'action_url' => route('community.leagues.transactions.browser-rpc', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+            'list_url' => route('community.leagues.transactions.index', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+        ];
+        $payload['league_options'] = [
+            'action_url' => route('community.leagues.options.update', [
+                'c_id' => $community->id,
+                'l_id' => $league->id,
+            ]),
+            'config_url' => route('community.leagues.options', [
                 'c_id' => $community->id,
                 'l_id' => $league->id,
             ]),
@@ -402,6 +429,14 @@ class CommunityLeagues extends Controller
      */
     public function draftSettings(int $cId, int $lId): JsonResponse
     {
+        return $this->leagueOptions($cId, $lId);
+    }
+
+    /**
+     * Return league options drawer settings for a community league.
+     */
+    public function leagueOptions(int $cId, int $lId): JsonResponse
+    {
         $user = Auth::user();
 
         $community = $user->organizations()
@@ -414,9 +449,11 @@ class CommunityLeagues extends Controller
             ->withPivot(['discord_server_id', 'meta'])
             ->findOrFail($lId);
 
+        abort_unless($this->canManageLeague($league, $user), 403);
+
         return response()->json([
             'ok' => true,
-            'config' => $this->draftingConfig($community, $league),
+            'config' => $this->leagueOptionsConfig($community, $league),
         ]);
     }
 
@@ -450,6 +487,465 @@ class CommunityLeagues extends Controller
             ]),
             'perspectives' => $this->communityDraftPerspectiveOptions($latestEntryDraftYear),
         ]);
+    }
+
+    /**
+     * Return recently persisted fantasy platform transactions for a community league.
+     */
+    public function transactions(int $cId, int $lId): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        if (! $platformLeague instanceof PlatformLeague) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'No platform league is connected.',
+            ], 422);
+        }
+
+        $transactions = PlatformTransaction::query()
+            ->where('platform_league_id', $platformLeague->id)
+            ->with([
+                'entries.fromTeam:id,name,short_name',
+                'entries.toTeam:id,name,short_name',
+                'entries.platformTeam:id,name,short_name',
+                'entries.player:id,full_name,position,team_abbrev',
+            ])
+            ->orderByDesc('occurred_at')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'ok' => true,
+            'platform_league_id' => (int) $platformLeague->id,
+            'fantrax_league_id' => $platformLeague->platform === 'fantrax'
+                ? (string) $platformLeague->platform_league_id
+                : null,
+            'transactions' => $transactions
+                ->map(fn (PlatformTransaction $transaction): array => $this->platformTransactionPayload($transaction))
+                ->values()
+                ->all(),
+        ]);
+    }
+
+    /**
+     * Refresh Fantrax transaction history and persist normalized rows.
+     */
+    public function transactionsBrowserRpc(
+        int $cId,
+        int $lId,
+        FantraxTransactionHistoryImportService $importService
+    ): JsonResponse
+    {
+        $user = Auth::user();
+
+        $community = $user->organizations()
+            ->whereNotNull('organizations.settings')
+            ->whereNull('organizations.deleted_at')
+            ->with('leagues')
+            ->findOrFail($cId);
+
+        $league = $community->leagues()
+            ->findOrFail($lId);
+
+        $platformLeague = $league->activePlatformLeague() ?? $league->primaryPlatformLeague();
+
+        if (! $platformLeague instanceof PlatformLeague || $platformLeague->platform !== 'fantrax') {
+            return response()->json([
+                'ok' => false,
+                'message' => 'No Fantrax platform league is connected.',
+            ], 422);
+        }
+
+        try {
+            $summary = $importService->import($platformLeague);
+        } catch (Throwable $e) {
+            return response()->json([
+                'ok' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        $sampleFiles = [];
+        foreach ($summary['views'] ?? [] as $view => $viewSummary) {
+            if (! is_array($viewSummary)) {
+                continue;
+            }
+
+            $payload = $viewSummary['payload'] ?? null;
+            unset($summary['views'][$view]['payload']);
+            unset($summary['views'][$view]['created_transaction_ids']);
+
+            if (is_array($payload)) {
+                $sampleFiles[$view] = $this->writeFantraxTransactionRpcSample($platformLeague, (string) $view, [
+                    'ok' => true,
+                    'platform_league_id' => (int) $platformLeague->id,
+                    'fantrax_league_id' => (string) $platformLeague->platform_league_id,
+                    'view' => (string) $view,
+                    'payload' => $payload,
+                ]);
+            }
+        }
+        $discord = $this->announceNewPlatformTransactions($league, $summary['created_transaction_ids'] ?? []);
+        unset($summary['created_transaction_ids']);
+
+        return response()->json([
+            'ok' => true,
+            'platform_league_id' => (int) $platformLeague->id,
+            'fantrax_league_id' => (string) $platformLeague->platform_league_id,
+            'summary' => $summary,
+            'sample_files' => $sampleFiles,
+            'discord' => $discord,
+        ]);
+    }
+
+    /**
+     * Persist a local copy of the raw browser RPC experiment response.
+     *
+     * @param array<string,mixed> $payload
+     */
+    private function writeFantraxTransactionRpcSample(PlatformLeague $platformLeague, string $view, array $payload): string
+    {
+        $directory = base_path('docs/api_responses/samples');
+
+        if (! is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        $filename = sprintf(
+            'rpc_fantrax_transactions_%s_%s.json',
+            preg_replace('/[^a-zA-Z0-9_-]+/', '-', (string) $platformLeague->platform_league_id),
+            strtolower($view),
+        );
+        $path = $directory . DIRECTORY_SEPARATOR . $filename;
+
+        file_put_contents(
+            $path,
+            json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . PHP_EOL
+        );
+
+        return 'docs/api_responses/samples/' . $filename;
+    }
+
+    /**
+     * UI-safe payload for a persisted fantasy platform transaction.
+     *
+     * @return array<string,mixed>
+     */
+    private function platformTransactionPayload(PlatformTransaction $transaction): array
+    {
+        return [
+            'id' => (int) $transaction->id,
+            'source_view' => (string) $transaction->source_view,
+            'transaction_type' => (string) $transaction->transaction_type,
+            'occurred_at' => $transaction->occurred_at?->toISOString(),
+            'occurred_at_label' => $transaction->occurred_at
+                ? $transaction->occurred_at->copy()->timezone('America/Toronto')->format('M j, Y g:i A')
+                : null,
+            'period' => $transaction->period,
+            'executed' => (bool) $transaction->executed,
+            'deleted' => (bool) $transaction->deleted,
+            'status' => $transaction->status,
+            'summary' => $transaction->summary,
+            'entries' => $transaction->entries
+                ->map(fn (PlatformTransactionEntry $entry): array => $this->platformTransactionEntryPayload($entry))
+                ->values()
+                ->all(),
+        ];
+    }
+
+    /**
+     * UI-safe payload for one persisted fantasy platform transaction entry.
+     *
+     * @return array<string,mixed>
+     */
+    private function platformTransactionEntryPayload(PlatformTransactionEntry $entry): array
+    {
+        return [
+            'id' => (int) $entry->id,
+            'entry_index' => (int) $entry->entry_index,
+            'asset_type' => (string) $entry->asset_type,
+            'action' => $entry->action,
+            'raw_name' => $entry->raw_name,
+            'display_name' => $entry->player?->full_name ?: $entry->raw_name,
+            'provider_player_id' => $entry->provider_player_id,
+            'player' => $entry->player ? [
+                'id' => (int) $entry->player->id,
+                'name' => (string) $entry->player->full_name,
+                'position' => $entry->player->position,
+                'team' => $entry->player->team_abbrev,
+            ] : null,
+            'from_team' => $this->platformTransactionTeamPayload($entry->fromTeam),
+            'to_team' => $this->platformTransactionTeamPayload($entry->toTeam),
+            'team' => $this->platformTransactionTeamPayload($entry->platformTeam),
+            'from_slot' => $entry->from_slot,
+            'to_slot' => $entry->to_slot,
+            'draft_year' => $entry->draft_year,
+            'draft_round' => $entry->draft_round,
+            'draft_pick' => $entry->draft_pick,
+            'draft_original_team_name' => $entry->draft_original_team_name,
+        ];
+    }
+
+    /**
+     * Compact transaction team payload.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function platformTransactionTeamPayload(?PlatformTeam $team): ?array
+    {
+        if (! $team instanceof PlatformTeam) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $team->id,
+            'name' => (string) $team->name,
+            'short_name' => (string) ($team->short_name ?: $team->name),
+        ];
+    }
+
+    /**
+     * Send Discord messages for newly imported transactions when a channel is configured.
+     *
+     * @param array<int,mixed> $transactionIds
+     * @return array{configured:bool,attempted:int,sent:int,failed:int,skipped_reason:string|null}
+     */
+    private function announceNewPlatformTransactions(mixed $league, array $transactionIds): array
+    {
+        $transactionIds = collect($transactionIds)
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->filter(static fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($transactionIds === []) {
+            return [
+                'configured' => false,
+                'attempted' => 0,
+                'sent' => 0,
+                'failed' => 0,
+                'skipped_reason' => 'no_new_transactions',
+            ];
+        }
+
+        $channel = data_get($this->pivotMeta($league), 'transactions.discord_channel');
+        $channelId = is_array($channel) ? trim((string) ($channel['id'] ?? '')) : '';
+
+        if ($channelId === '') {
+            return [
+                'configured' => false,
+                'attempted' => 0,
+                'sent' => 0,
+                'failed' => 0,
+                'skipped_reason' => 'no_transactions_channel',
+            ];
+        }
+
+        $token = (string) config('apiurls.discord-bot.key');
+
+        if ($token === '') {
+            return [
+                'configured' => true,
+                'attempted' => 0,
+                'sent' => 0,
+                'failed' => 0,
+                'skipped_reason' => 'missing_bot_token',
+            ];
+        }
+
+        $transactions = PlatformTransaction::query()
+            ->whereIn('id', $transactionIds)
+            ->with([
+                'entries.fromTeam.users.socialAccounts',
+                'entries.fromTeam:id,platform_league_id,platform_team_id,name,short_name,logo_url',
+                'entries.toTeam.users.socialAccounts',
+                'entries.toTeam:id,platform_league_id,platform_team_id,name,short_name,logo_url',
+                'entries.platformTeam.users.socialAccounts',
+                'entries.platformTeam:id,platform_league_id,platform_team_id,name,short_name,logo_url',
+                'entries.player:id,full_name,position,team_abbrev,head_shot_url',
+            ])
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get();
+
+        $summary = [
+            'configured' => true,
+            'attempted' => $transactions->count(),
+            'sent' => 0,
+            'failed' => 0,
+            'skipped_reason' => null,
+        ];
+
+        foreach ($transactions as $transaction) {
+            try {
+                $response = $this->postPlatformTransactionDiscordMessage($channelId, $token, $transaction);
+
+                $response->successful()
+                    ? $summary['sent']++
+                    : $summary['failed']++;
+            } catch (Throwable) {
+                $summary['failed']++;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Post one platform transaction announcement to Discord.
+     */
+    private function postPlatformTransactionDiscordMessage(string $channelId, string $token, PlatformTransaction $transaction): Response
+    {
+        $usesCard = in_array($transaction->transaction_type, ['trade', 'claim_drop'], true);
+        $content = $usesCard
+            ? ''
+            : $this->platformTransactionDiscordMessage($transaction);
+        $cardPath = null;
+        $cardFilename = 'transaction-card.png';
+
+        if ($transaction->transaction_type === 'trade') {
+            $cardPath = app(TradeTransactionCardRenderer::class)->render($transaction);
+            $cardFilename = 'trade-transaction-card.png';
+
+            if (! $cardPath) {
+                throw new \RuntimeException('Trade transaction card rendering failed.');
+            }
+        }
+
+        if ($transaction->transaction_type === 'claim_drop') {
+            $cardPath = app(ClaimDropTransactionCardRenderer::class)->render($transaction);
+            $cardFilename = 'claim-drop-transaction-card.png';
+
+            if (! $cardPath) {
+                throw new \RuntimeException('Claim/drop transaction card rendering failed.');
+            }
+        }
+
+        try {
+            if ($cardPath) {
+                $cardContents = file_get_contents($cardPath);
+
+                if ($cardContents !== false) {
+                    return $this->sendPlatformTransactionDiscordRequest($channelId, $token, $content, $cardContents, $cardFilename);
+                }
+            }
+
+            return $this->sendPlatformTransactionDiscordRequest($channelId, $token, $content);
+        } finally {
+            if ($cardPath && file_exists($cardPath)) {
+                @unlink($cardPath);
+            }
+        }
+    }
+
+    /**
+     * Send a Discord message, optionally with a rendered transaction card attached.
+     */
+    private function sendPlatformTransactionDiscordRequest(
+        string $channelId,
+        string $token,
+        string $content,
+        ?string $cardContents = null,
+        string $cardFilename = 'transaction-card.png'
+    ): Response {
+        $request = Http::withHeaders($this->discordBotHeaders($token))
+            ->acceptJson();
+        $payload = [
+            'content' => $content,
+            'allowed_mentions' => ['parse' => []],
+        ];
+
+        if ($cardContents === null) {
+            return $request->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', $payload);
+        }
+
+        return $request
+            ->asMultipart()
+            ->attach('files[0]', $cardContents, $cardFilename)
+            ->post('https://discord.com/api/v10/channels/' . $channelId . '/messages', [
+                'payload_json' => json_encode($payload, JSON_UNESCAPED_SLASHES),
+            ]);
+    }
+
+    /**
+     * Format a concise Discord announcement for a persisted fantasy transaction.
+     */
+    private function platformTransactionDiscordMessage(PlatformTransaction $transaction): string
+    {
+        $lines = [
+            '**' . $this->platformTransactionTypeLabel((string) $transaction->transaction_type) . '**',
+        ];
+
+        if ($transaction->occurred_at) {
+            $lines[] = $transaction->occurred_at->copy()->timezone('America/Toronto')->format('M j, Y g:i A T');
+        }
+
+        if (filled($transaction->summary)) {
+            $lines[] = (string) $transaction->summary;
+        }
+
+        foreach ($transaction->entries->take(12) as $entry) {
+            $lines[] = '- ' . $this->platformTransactionEntryDiscordLine($entry);
+        }
+
+        if ($transaction->entries->count() > 12) {
+            $lines[] = '- +' . ($transaction->entries->count() - 12) . ' more entries';
+        }
+
+        $message = implode("\n", $lines);
+
+        return strlen($message) > 1900 ? substr($message, 0, 1897) . '...' : $message;
+    }
+
+    private function platformTransactionTypeLabel(string $type): string
+    {
+        return match ($type) {
+            'trade' => 'Trade',
+            'claim_drop' => 'Claim / Drop',
+            'lineup_change' => 'Lineup Change',
+            default => $type !== '' ? str_replace('_', ' ', $type) : 'Transaction',
+        };
+    }
+
+    private function platformTransactionEntryDiscordLine(PlatformTransactionEntry $entry): string
+    {
+        $name = (string) ($entry->player?->full_name ?: $entry->raw_name ?: 'Unknown asset');
+        $action = trim(str_replace('_', ' ', (string) $entry->action));
+        $fromTeam = trim((string) ($entry->fromTeam?->name ?? ''));
+        $toTeam = trim((string) ($entry->toTeam?->name ?? ''));
+        $team = trim((string) ($entry->platformTeam?->name ?? ''));
+
+        if ($fromTeam !== '' && $toTeam !== '') {
+            return $name . ' from ' . $fromTeam . ' to ' . $toTeam;
+        }
+
+        if ($team !== '' && filled($entry->from_slot) && filled($entry->to_slot)) {
+            return $name . ' ' . $entry->from_slot . ' to ' . $entry->to_slot . ' (' . $team . ')';
+        }
+
+        if ($team !== '' && $action !== '') {
+            return $name . ' ' . $action . ' by ' . $team;
+        }
+
+        if ($action !== '') {
+            return $name . ' ' . $action;
+        }
+
+        return $name;
     }
 
     /**
@@ -1732,6 +2228,19 @@ class CommunityLeagues extends Controller
                     'summary' => $summary,
                 ], 409);
             }
+
+            if ((int) $summary['updated_team_count'] === 0) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => match (true) {
+                        (int) $summary['candidate_count'] === 0 => 'Logo sync ran, but Fantrax returned no team logo candidates.',
+                        (int) ($summary['selected_league_candidate_count'] ?? 0) === 0 => 'Logo sync found Fantrax candidates, but none belonged to this league.',
+                        (int) $summary['matched_candidate_count'] === 0 => 'Logo sync found Fantrax candidates, but none matched local teams.',
+                        default => 'Logo sync ran, but no team logos changed.',
+                    },
+                    'summary' => $summary,
+                ], 409);
+            }
         } elseif ($platformLeague->platform === 'yahoo') {
             $connection = $user->yahooFantasyConnection()
                 ->where('status', 'connected')
@@ -1845,6 +2354,14 @@ class CommunityLeagues extends Controller
 
     public function updateDraftSettings(Request $request, int $cId, int $lId): JsonResponse
     {
+        return $this->updateLeagueOptions($request, $cId, $lId);
+    }
+
+    /**
+     * Persist league options stored on the community-league pivot.
+     */
+    public function updateLeagueOptions(Request $request, int $cId, int $lId): JsonResponse
+    {
         $user = Auth::user();
         $community = $user->organizations()
             ->whereNotNull('organizations.settings')
@@ -1855,9 +2372,13 @@ class CommunityLeagues extends Controller
             ->withPivot(['discord_server_id', 'meta'])
             ->findOrFail($lId);
 
+        abort_unless($this->canManageLeague($league, $user), 403);
+
         $data = $request->validate([
             'draft_channel_id' => ['nullable', 'string', 'max:64'],
             'draft_channel_name' => ['nullable', 'string', 'max:100'],
+            'transactions_channel_id' => ['nullable', 'string', 'max:64'],
+            'transactions_channel_name' => ['nullable', 'string', 'max:100'],
             'announce_otc' => ['nullable', 'boolean'],
             'announce_on_deck' => ['nullable', 'boolean'],
             'pick_clock_seconds' => ['nullable', 'integer', 'min:0', 'max:86400'],
@@ -1868,45 +2389,45 @@ class CommunityLeagues extends Controller
 
         $hasChannelPayload = array_key_exists('draft_channel_id', $data)
             || array_key_exists('draft_channel_name', $data);
+        $hasTransactionsChannelPayload = array_key_exists('transactions_channel_id', $data)
+            || array_key_exists('transactions_channel_name', $data);
         $hasDiscordOptionsPayload = array_key_exists('announce_otc', $data)
             || array_key_exists('announce_on_deck', $data);
         $hasTimerPayload = array_key_exists('pick_clock_seconds', $data)
             || array_key_exists('pick_clock_minutes', $data)
             || array_key_exists('pause_between_picks_seconds', $data)
             || array_key_exists('auto_pick_enabled', $data);
-        $channelId = trim((string) ($data['draft_channel_id'] ?? ''));
-        $channelName = $this->normalizeDiscordChannelName($data['draft_channel_name'] ?? '');
         $discordServer = $this->selectedDiscordServer($community, $league);
         $meta = $this->pivotMeta($league);
 
-        if ($hasChannelPayload && $channelId === '' && $channelName === '') {
-            data_forget($meta, 'draft_notifications.discord_channel');
-        } elseif ($hasChannelPayload && $discordServer) {
-            $channels = $this->discordTextChannels($discordServer);
-            $channel = collect($channels)->first(static fn (array $option): bool => $channelId !== ''
-                ? (string) $option['id'] === $channelId
-                : strtolower((string) $option['name']) === strtolower($channelName));
+        if ($hasChannelPayload) {
+            $channelSaved = $this->saveDiscordChannelToMeta(
+                $meta,
+                $discordServer,
+                'draft_notifications.discord_channel',
+                trim((string) ($data['draft_channel_id'] ?? '')),
+                $this->normalizeDiscordChannelName($data['draft_channel_name'] ?? ''),
+                'draft'
+            );
 
-            if (! $channel && $channelName !== '') {
-                $channel = $this->createDiscordTextChannel($discordServer, $channelName);
+            if ($channelSaved instanceof JsonResponse) {
+                return $channelSaved;
             }
+        }
 
-            if ($channel) {
-                data_set($meta, 'draft_notifications.discord_channel', [
-                    'id' => (string) $channel['id'],
-                    'name' => (string) $channel['name'],
-                ]);
-            } else {
-                return response()->json([
-                    'ok' => false,
-                    'message' => 'Could not find or create that Discord channel.',
-                ], 422);
+        if ($hasTransactionsChannelPayload) {
+            $channelSaved = $this->saveDiscordChannelToMeta(
+                $meta,
+                $discordServer,
+                'transactions.discord_channel',
+                trim((string) ($data['transactions_channel_id'] ?? '')),
+                $this->normalizeDiscordChannelName($data['transactions_channel_name'] ?? ''),
+                'transactions'
+            );
+
+            if ($channelSaved instanceof JsonResponse) {
+                return $channelSaved;
             }
-        } elseif ($hasChannelPayload) {
-            return response()->json([
-                'ok' => false,
-                'message' => 'Connect a Discord server before selecting a draft channel.',
-            ], 422);
         }
 
         if ($hasDiscordOptionsPayload) {
@@ -1933,9 +2454,61 @@ class CommunityLeagues extends Controller
         return response()->json([
             'ok' => true,
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
+            'transactions_channel' => data_get($meta, 'transactions.discord_channel'),
             'notifications' => $this->draftNotificationOptionsFromMeta($meta),
             'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
         ]);
+    }
+
+    /**
+     * Store or clear a Discord text channel reference inside league pivot metadata.
+     *
+     * @param array<string,mixed> $meta
+     * @return JsonResponse|null
+     */
+    private function saveDiscordChannelToMeta(
+        array &$meta,
+        ?DiscordServer $discordServer,
+        string $metaPath,
+        string $channelId,
+        string $channelName,
+        string $label
+    ): ?JsonResponse {
+        if ($channelId === '' && $channelName === '') {
+            data_forget($meta, $metaPath);
+
+            return null;
+        }
+
+        if (! $discordServer) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Connect a Discord server before selecting a ' . $label . ' channel.',
+            ], 422);
+        }
+
+        $channels = $this->discordTextChannels($discordServer);
+        $channel = collect($channels)->first(static fn (array $option): bool => $channelId !== ''
+            ? (string) $option['id'] === $channelId
+            : strtolower((string) $option['name']) === strtolower($channelName));
+
+        if (! $channel && $channelName !== '') {
+            $channel = $this->createDiscordTextChannel($discordServer, $channelName);
+        }
+
+        if (! $channel) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Could not find or create that Discord channel.',
+            ], 422);
+        }
+
+        data_set($meta, $metaPath, [
+            'id' => (string) $channel['id'],
+            'name' => (string) $channel['name'],
+        ]);
+
+        return null;
     }
 
     /**
@@ -2152,30 +2725,38 @@ class CommunityLeagues extends Controller
     }
 
     /**
-     * Build settings data for the draft settings drawer.
+     * Build settings data for draft consumers that still use the legacy config key.
      *
      * @return array<string,mixed>
      */
     private function draftingConfig(mixed $community, mixed $league): array
     {
+        return $this->leagueOptionsConfig($community, $league);
+    }
+
+    /**
+     * Build settings data for the league options drawer.
+     *
+     * @return array<string,mixed>
+     */
+    private function leagueOptionsConfig(mixed $community, mixed $league): array
+    {
         $discordServer = $this->selectedDiscordServer($community, $league);
-        $selectedChannel = data_get($this->pivotMeta($league), 'draft_notifications.discord_channel');
         $meta = $this->pivotMeta($league);
+        $selectedChannel = data_get($meta, 'draft_notifications.discord_channel');
+        $selectedTransactionsChannel = data_get($meta, 'transactions.discord_channel');
         $channelOptions = $this->discordTextChannelOptions($discordServer);
         $channels = $channelOptions['channels'];
 
-        if (is_array($selectedChannel)) {
-            $selectedChannelId = (string) ($selectedChannel['id'] ?? '');
-            $hasSelectedChannel = collect($channels)
-                ->contains(static fn (array $channel): bool => (string) $channel['id'] === $selectedChannelId);
-
-            if ($channelOptions['status'] === 'loaded' && ! $hasSelectedChannel) {
-                $selectedChannel = null;
-            }
-        }
+        $selectedChannel = $this->selectedDiscordChannelPayload($selectedChannel, $channels, $channelOptions['status']);
+        $selectedTransactionsChannel = $this->selectedDiscordChannelPayload(
+            $selectedTransactionsChannel,
+            $channels,
+            $channelOptions['status']
+        );
 
         return [
-            'action_url' => route('community.leagues.draft-settings.update', [
+            'action_url' => route('community.leagues.options.update', [
                 'c_id' => $community->id,
                 'l_id' => $league->id,
             ]),
@@ -2184,9 +2765,35 @@ class CommunityLeagues extends Controller
             'channels_status' => $channelOptions['status'],
             'channels_message' => $channelOptions['message'],
             'selected_channel' => is_array($selectedChannel) ? $selectedChannel : null,
+            'selected_transactions_channel' => is_array($selectedTransactionsChannel)
+                ? $selectedTransactionsChannel
+                : null,
             'notifications' => $this->draftNotificationOptionsFromMeta($meta),
             'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
         ];
+    }
+
+    /**
+     * Return a selected Discord channel only when it remains valid for the loaded options.
+     *
+     * @param array<int,array{id:string,name:string}> $channels
+     * @return array<string,mixed>|null
+     */
+    private function selectedDiscordChannelPayload(mixed $selectedChannel, array $channels, string $status): ?array
+    {
+        if (! is_array($selectedChannel)) {
+            return null;
+        }
+
+        $selectedChannelId = (string) ($selectedChannel['id'] ?? '');
+        $hasSelectedChannel = collect($channels)
+            ->contains(static fn (array $channel): bool => (string) $channel['id'] === $selectedChannelId);
+
+        if ($status === 'loaded' && ! $hasSelectedChannel) {
+            return null;
+        }
+
+        return $selectedChannel;
     }
 
     /**

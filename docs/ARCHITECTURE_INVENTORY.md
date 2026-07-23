@@ -227,13 +227,13 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 - `app/Jobs/VerifyHtmlPbpNhlJob.php`
 
 **Purpose:**
-Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions.
+Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions. Penalty-shot attempts are skipped for normal on-ice mismatch reporting because the HTML report exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters.
 
 **When to Use:**
 After API PBP rows are imported and linked to unit shifts, when source verification or shift-level position enrichment is needed.
 
 **When Not to Use:**
-Replacing API PBP as the canonical event source, replacing stats REST shiftcharts, or blocking the core game import pipeline.
+Replacing API PBP as the canonical event source, replacing stats REST shiftcharts when they are available, treating penalty-shot shooter-goalie participants as a normal on-ice unit, or blocking the core game import pipeline.
 
 **Public Interface:**
 - `VerifyHtmlPbpNhlJob`
@@ -1022,7 +1022,7 @@ php artisan nhl:empty --players
 - `docs/architecture/imports/NhlPbpEventNormalizer.yaml`
 
 **Purpose:**
-Centralize NHL play-by-play event classification used by player summaries, unit summaries, and validation triage.
+Centralize NHL play-by-play event classification used by player summaries, unit summaries, validation triage, and import debugging. Regulation and overtime penalty-shot attempts remain boxscore-comparable for game shot totals, while shootout attempts remain excluded.
 
 **When to Use:**
 Classifying PBP events as boxscore-comparable shots, attempts, shootout-only events, or normalized penalty-minute contributors.
@@ -1602,7 +1602,9 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 **Purpose:**
 Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
 Provider league and team logo URLs may be stored on the platform-neutral league and team rows when Fantrax exposes them. Fantrax team logos must come from explicit provider payload fields, not derived team-id paths.
-Authenticated browser logo extraction backend code is league-scoped and persists only explicit provider logo URLs when the browser profile is ready, but the commissioner-facing UI entry point is hibernated until a per-commissioner collection approach replaces the shared server browser profile model.
+Fantrax logo candidates resolve local teams by provider team ID first, then normalized provider team name, and sync responses distinguish no candidates, unmatched candidates, and persisted updates.
+Selected Fantrax logo sync inspects every configured source URL before deciding no league logos were found, and it ignores candidates that explicitly belong to another Fantrax league.
+Authenticated browser logo extraction backend code is league-scoped and persists only explicit provider logo URLs when the browser profile is ready, and commissioner-facing setup surfaces may expose the guarded sync entry point.
 Completed browser logo extraction may broadcast a user-scoped logo update event so the league list can update without a page refresh.
 Fantrax league scoring categories are enriched from the platform category mapping dictionary during league sync, with manual mappings overriding dictionary auto mappings while preserving support metadata.
 Provider scoring categories that power league UI persist to platform_league_scoring_categories; platform_leagues.scoring_settings may retain raw provider scoring payload for fallback and audit context.
@@ -1645,6 +1647,49 @@ NHL source-of-truth stats imports or Patreon membership syncing.
 **Example Usage:**
 ```php
 dispatch(new SyncFantraxLeagueJob($platformLeague->id));
+```
+
+---
+
+### Platform Transaction Ingestion
+
+**Name:** Platform Transaction Ingestion
+**Type:** External Platform Import Pattern
+**Location:**
+- `database/migrations/*_create_platform_transactions_tables.php`
+- `app/Models/PlatformTransaction.php`
+- `app/Models/PlatformTransactionEntry.php`
+- `app/Services/FantraxTransactionHistoryBrowserRpc.php`
+- `app/Services/TradeTransactionCardRenderer.php`
+- `app/Services/ClaimDropTransactionCardRenderer.php`
+- `scripts/fetch-fantrax-transaction-history-rpc.mjs`
+- `app/Http/Controllers/CommunityLeagues.php`
+
+**Purpose:**
+Store fantasy platform transaction history separately from NHL player movement and current roster state.
+
+**When to Use:**
+Importing fantasy platform trades, claims, drops, lineup movements, raw provider transaction evidence, and manual-refresh transaction announcements.
+
+**When Not to Use:**
+Storing real NHL player movement, deriving current roster state, persisting AI trade analysis, or sending scheduled/bot-driven Discord transaction announcements.
+
+**Public Interface:**
+- `PlatformTransaction`
+- `PlatformTransactionEntry`
+- `FantraxTransactionHistoryBrowserRpc`
+- `TradeTransactionCardRenderer`
+- `ClaimDropTransactionCardRenderer`
+- `community.leagues.options`
+- `community.leagues.options.update`
+- `community.leagues.transactions.browser-rpc`
+
+**Example Usage:**
+```php
+$transaction = PlatformTransaction::query()
+    ->where('platform_league_id', $platformLeague->id)
+    ->where('source_key', $sourceKey)
+    ->first();
 ```
 
 ---
@@ -2164,19 +2209,23 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel. Processed discovery run cards must not display date-window progress after their stage rows are reassigned to a newer reprocess run.
+Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel. Every run row exposes a Re Run action, Process/Re Run actions update through AJAX without leaving the current tab, and import broadcasts refresh loaded validation panels so resolved validation rows disappear without a page refresh.
 
 **When to Use:**
-Admin-triggered NHL game discovery, discovery-row processing actions, season stat rollups, queued nhl:empty --games resets, and recent orchestration progress display.
+Admin-triggered NHL game discovery, discovery-row processing actions, full run replays, season stat rollups, queued nhl:empty --games resets, recent orchestration progress display, and live validation-panel refreshes.
 
 **When Not to Use:**
 Synchronous web-request imports, NHL stage transformation ownership, or replacing `nhl_import_progress`.
 
 **Public Interface:**
 - `admin.nhl-game-imports.status`
+- `admin.nhl-game-imports.source-gaps`
+- `admin.nhl-game-imports.source-gaps.rerun`
+- `admin.nhl-game-imports.games.rerun`
 - `admin.nhl-game-imports.discover`
 - `admin.nhl-game-imports.process`
 - `admin.nhl-game-imports.season-sync`
+- `admin.nhl-game-imports.empty-games`
 - `NhlGameImportRun`
 - `NhlGameImportStatusUpdated`
 

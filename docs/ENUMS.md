@@ -250,7 +250,7 @@ Do not introduce new enum values without updating this document.
 **Notes:**
 
 - Other provider penalty type codes may be stored, but only `MAT` has special calculation behavior documented here.
-- `play_by_plays.desc_key = penalty-shot-attempt` is an internal marker for same-clock penalty-shot attempt rows. It preserves the attempt for penalty-shot tracking while excluding the row from normal SOG, save, shot-attempt, and event-unit calculations.
+- `play_by_plays.desc_key = penalty-shot-attempt` is an internal marker for same-clock penalty-shot attempt rows. It preserves the attempt for penalty-shot tracking and excludes the row from normal event-unit calculations. Regulation and overtime penalty-shot attempts remain boxscore-comparable for game shot totals; saved attempts count as normal SOG, goalie shots against, and goalie saves. Shootout attempts remain excluded from normal game SOG, goals, saves, shots against, and event-unit calculations.
 
 ### NHL Game Type
 
@@ -864,6 +864,93 @@ Do not introduce new enum values without updating this document.
 
 - Leagues navigation visibility is driven by the derived `show_leagues` flag, not by provider credential storage alone.
 - Fantrax and Yahoo expose this common state shape even though Fantrax uses `integration_secrets` and Yahoo uses `yahoo_fantasy_connections`.
+
+### Platform Transaction Source View
+
+**Name:** Platform transaction source view
+**Storage location(s):** `platform_transactions.source_view` (string column)
+**Allowed values currently emitted:**
+
+- `TRADE`
+- `CLAIM_DROP`
+- `LINEUP_CHANGE`
+
+**Semantic meaning:**
+
+- `TRADE`: Provider trade history view.
+- `CLAIM_DROP`: Provider claim/drop history view.
+- `LINEUP_CHANGE`: Provider lineup movement history view.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+- Unknown provider views must be preserved in raw payloads until explicitly supported.
+
+### Platform Transaction Type
+
+**Name:** Platform transaction type
+**Storage location(s):** `platform_transactions.transaction_type` (string column)
+**Allowed values currently emitted:**
+
+- `trade`
+- `claim_drop`
+- `lineup_change`
+- `unknown`
+
+**Semantic meaning:**
+
+- `trade`: Fantasy assets moved between teams.
+- `claim_drop`: Fantasy team claim/drop transaction group.
+- `lineup_change`: Fantasy roster slot movement within a team.
+- `unknown`: Provider transaction group could not be safely normalized.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+### Platform Transaction Entry Asset Type
+
+**Name:** Platform transaction entry asset type
+**Storage location(s):** `platform_transaction_entries.asset_type` (string column)
+**Allowed values currently emitted:**
+
+- `player`
+- `draft_pick`
+- `unknown`
+
+**Semantic meaning:**
+
+- `player`: Entry represents a player asset.
+- `draft_pick`: Entry represents a fantasy draft pick asset.
+- `unknown`: Entry could not be classified but raw provider evidence is retained.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+
+### Platform Transaction Entry Action
+
+**Name:** Platform transaction entry action
+**Storage location(s):** `platform_transaction_entries.action` (string column)
+**Allowed values currently emitted:**
+
+- `claim`
+- `drop`
+- `trade`
+- `lineup_move`
+- `unknown`
+
+**Semantic meaning:**
+
+- `claim`: Asset was added by a fantasy team from the claim/drop view.
+- `drop`: Asset was removed by a fantasy team from the claim/drop view.
+- `trade`: Asset moved between fantasy teams through a trade.
+- `lineup_move`: Asset moved between roster slots for the same fantasy team.
+- `unknown`: Entry action could not be safely normalized.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
 
 ### Platform Roster Membership Status
 
