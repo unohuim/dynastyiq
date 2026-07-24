@@ -2007,9 +2007,11 @@ it('invalidates unresolved validation deltas for regular season games', function
     ($this->insertSummary)(2026020001, 8478402);
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
 
     expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
-        ->and($validation->mismatch_count)->toBe(1);
+        ->and($validation->mismatch_count)->toBe(1)
+        ->and(File::isDirectory($directory))->toBeTrue();
 });
 
 it('marks regular season shift-only deltas as shiftchart mismatch and uses official boxscore totals', function (): void {
@@ -2023,12 +2025,15 @@ it('marks regular season shift-only deltas as shiftchart mismatch and uses offic
         'toi' => 1120,
         'shifts' => 20,
     ]);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
     expect($validation->status)->toBe(NhlGameValidation::STATUS_SHIFTCHART_MISMATCH)
         ->and($validation->mismatch_count)->toBe(2)
-        ->and($validation->approved_at)->toBeNull();
+        ->and($validation->approved_at)->toBeNull()
+        ->and(File::isDirectory($directory))->toBeFalse();
 
     $this->assertDatabaseHas('nhl_game_summaries', [
         'nhl_game_id' => 2026020001,
@@ -2422,13 +2427,17 @@ it('replaces stale deltas on rerun', function (): void {
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
     ($this->insertSummary)(2026020001, 8478402);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
 
     app(ValidateNhlGameSummary::class)->validate(2026020001);
+    expect(File::isDirectory($directory))->toBeTrue();
+
     DB::table('nhl_boxscores')->where('nhl_game_id', 2026020001)->update(['goals' => 1]);
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
     expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
-        ->and(DB::table('nhl_game_validation_deltas')->where('validation_id', $validation->id)->count())->toBe(0);
+        ->and(DB::table('nhl_game_validation_deltas')->where('validation_id', $validation->id)->count())->toBe(0)
+        ->and(File::isDirectory($directory))->toBeFalse();
 });
 
 it('updates game summary time on ice and shifts after importing raw shifts', function (): void {
@@ -5911,6 +5920,8 @@ it('accepts a validation exception without dispatching unit work', function (): 
         'mismatch_count' => 1,
         'checked_at' => now(),
     ]);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
 
     $this->actingAs(($this->makeSuperAdmin)())
         ->postJson(route('admin.nhl-validations.accept-exception', $validation))
@@ -5922,6 +5933,7 @@ it('accepts a validation exception without dispatching unit work', function (): 
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
         'status' => 'completed',
     ]);
+    expect(File::isDirectory($directory))->toBeFalse();
     Bus::assertNotDispatched(MakeShiftUnitsNhlJob::class);
 });
 

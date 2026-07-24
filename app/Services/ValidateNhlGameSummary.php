@@ -44,6 +44,10 @@ class ValidateNhlGameSummary
             $deltas = $this->comparator->compare($gameId);
         }
 
+        if ($this->applyLimitedPreseasonBoxscoreReconciliations($gameId, $deltas)) {
+            $deltas = $this->comparator->compare($gameId);
+        }
+
         $shiftchartMismatchDeltas = [];
 
         if ($this->isShiftchartMismatch($gameId, $deltas)) {
@@ -95,7 +99,7 @@ class ValidateNhlGameSummary
             return $validation->refresh();
         });
 
-        if (!empty($persistedDeltas)) {
+        if (! empty($persistedDeltas) && $validation->shouldRetainTroubleshootingDirectory()) {
             try {
                 $this->troubleshootingExporter->export($validation);
             } catch (\Throwable $exception) {
@@ -104,6 +108,10 @@ class ValidateNhlGameSummary
                     'message' => $exception->getMessage(),
                 ]);
             }
+        }
+
+        if ($validation->shouldDeleteTroubleshootingDirectory()) {
+            $this->troubleshootingExporter->deleteGameDirectory($gameId);
         }
 
         return $validation;
@@ -123,6 +131,99 @@ class ValidateNhlGameSummary
         }
 
         return NhlGameValidation::STATUS_APPROVED;
+    }
+
+    /**
+     * Accept official skater boxscore totals when preseason PBP is explicitly limited.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function applyLimitedPreseasonBoxscoreReconciliations(int $gameId, array $deltas): bool
+    {
+        if (empty($deltas) || ! $this->isLimitedPreseasonGame($gameId)) {
+            return false;
+        }
+
+        $changed = false;
+        $playerIds = collect($deltas)
+            ->pluck('nhl_player_id')
+            ->filter()
+            ->map(static fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values();
+
+        foreach ($playerIds as $playerId) {
+            $boxscore = NhlBoxscore::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first([
+                    'nhl_team_id',
+                    'position',
+                    'goals',
+                    'assists',
+                    'points',
+                    'plus_minus',
+                    'penalty_minutes',
+                    'sog',
+                    'hits',
+                    'blocks',
+                    'faceoffs_won',
+                    'faceoffs_lost',
+                    'power_play_goals',
+                    'faceoff_win_percentage',
+                ]);
+
+            $summary = NhlGameSummary::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first();
+
+            if (! $boxscore || ! $summary || strtoupper((string) $boxscore->position) === 'G') {
+                continue;
+            }
+
+            $sog = (int) $boxscore->sog;
+            $goals = (int) $boxscore->goals;
+            $powerPlayGoals = (int) $boxscore->power_play_goals;
+            $faceoffsWon = (int) $boxscore->faceoffs_won;
+            $faceoffsLost = (int) $boxscore->faceoffs_lost;
+
+            $summary->forceFill([
+                'nhl_team_id' => (int) $boxscore->nhl_team_id,
+                'g' => $goals,
+                'a' => (int) $boxscore->assists,
+                'pts' => (int) $boxscore->points,
+                'plus_minus' => (int) $boxscore->plus_minus,
+                'pim' => (int) $boxscore->penalty_minutes,
+                'sog' => $sog,
+                'h' => (int) $boxscore->hits,
+                'b' => (int) $boxscore->blocks,
+                'ppg' => $powerPlayGoals,
+                'fow' => $faceoffsWon,
+                'fol' => $faceoffsLost,
+                'fot' => $faceoffsWon + $faceoffsLost,
+                'fow_percentage' => round(((float) $boxscore->faceoff_win_percentage) * 100, 2),
+                'sog_p' => $sog > 0 ? round($goals / $sog, 3) : 0.0,
+            ])->save();
+
+            $changed = true;
+
+            Log::info('Applied limited preseason NHL skater summary reconciliation from official boxscore.', [
+                'game_id' => $gameId,
+                'nhl_player_id' => $playerId,
+            ]);
+        }
+
+        return $changed;
+    }
+
+    private function isLimitedPreseasonGame(int $gameId): bool
+    {
+        return NhlGame::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('game_type', 1)
+            ->where('limited_scoring', true)
+            ->exists();
     }
 
     /**

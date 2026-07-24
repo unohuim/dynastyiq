@@ -448,7 +448,7 @@ class NhlHtmlPbpReportParser
             'soc' => 'shootout-complete',
             'pstr' => 'period-start',
             'pend' => 'period-end',
-            'gend' => 'game-end',
+            'gend', 'goff' => 'game-end',
             default => $type,
         };
     }

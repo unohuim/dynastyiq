@@ -10,7 +10,6 @@ use App\Models\NhlPbpSourceMismatch;
 use App\Models\PlayByPlay;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Verify imported API PBP against NHL's official HTML play-by-play report.
@@ -20,7 +19,7 @@ class VerifyNhlHtmlPlayByPlay
     public function __construct(
         private readonly NhlHtmlPbpReportLocator $locator,
         private readonly NhlHtmlPbpReportParser $parser,
-        private readonly NhlSourceOnlyPbpReview $sourceOnlyPbpReview
+        private readonly NhlValidationTroubleshootingExporter $troubleshootingExporter
     ) {
     }
 
@@ -33,13 +32,7 @@ class VerifyNhlHtmlPlayByPlay
         $sourceUrl = $reportUrls['playByPlay'] ?? null;
 
         if ($sourceUrl === null) {
-            $validation = $this->persistValidation($gameId, NhlGameValidation::STATUS_INCOMPLETE, [[
-                'mismatch_type' => 'source_unavailable',
-                'severity' => NhlPbpSourceMismatch::SEVERITY_INFO,
-                'source_url' => null,
-                'html_event' => ['reason' => 'HTML play-by-play report URL was not available from right-rail.'],
-            ]]);
-            $this->exportTroubleshooting($validation, null);
+            $this->clearValidation($gameId);
 
             return 0;
         }
@@ -55,13 +48,7 @@ class VerifyNhlHtmlPlayByPlay
                 ['message' => $throwable->getMessage()]
             );
 
-            $validation = $this->persistValidation($gameId, NhlGameValidation::STATUS_INCOMPLETE, [[
-                'mismatch_type' => 'source_unavailable',
-                'severity' => NhlPbpSourceMismatch::SEVERITY_INFO,
-                'source_url' => $sourceUrl,
-                'html_event' => ['reason' => $throwable->getMessage()],
-            ]]);
-            $this->exportTroubleshooting($validation, $sourceUrl);
+            $this->clearValidation($gameId);
 
             return 0;
         }
@@ -77,13 +64,7 @@ class VerifyNhlHtmlPlayByPlay
                 ['message' => $throwable->getMessage()]
             );
 
-            $validation = $this->persistValidation($gameId, NhlGameValidation::STATUS_INCOMPLETE, [[
-                'mismatch_type' => 'parser_failure',
-                'severity' => NhlPbpSourceMismatch::SEVERITY_INFO,
-                'source_url' => $sourceUrl,
-                'html_event' => ['reason' => $throwable->getMessage()],
-            ]]);
-            $this->exportTroubleshooting($validation, $sourceUrl);
+            $this->clearValidation($gameId);
 
             return 0;
         }
@@ -97,13 +78,7 @@ class VerifyNhlHtmlPlayByPlay
         );
 
         if ($htmlEvents === []) {
-            $validation = $this->persistValidation($gameId, NhlGameValidation::STATUS_INCOMPLETE, [[
-                'mismatch_type' => 'parser_coverage_gap',
-                'severity' => NhlPbpSourceMismatch::SEVERITY_INFO,
-                'source_url' => $sourceUrl,
-                'html_event' => ['reason' => 'HTML play-by-play report did not produce parseable events.'],
-            ]]);
-            $this->exportTroubleshooting($validation, $sourceUrl);
+            $this->clearValidation($gameId);
 
             return 0;
         }
@@ -116,14 +91,11 @@ class VerifyNhlHtmlPlayByPlay
 
         $htmlToiShifts = $this->htmlToiShifts($gameId, $reportUrls);
         $mismatches = $this->compareAndEnrich($gameId, $apiEvents, $htmlEvents, $sourceUrl, $htmlToiShifts);
-        $status = $mismatches === []
-            ? NhlGameValidation::STATUS_APPROVED
-            : NhlGameValidation::STATUS_FAILED;
 
-        $validation = $this->persistValidation($gameId, $status, $mismatches);
-
-        if ((int) $validation->mismatch_count > 0) {
-            $this->exportTroubleshooting($validation, $sourceUrl);
+        if ($mismatches === []) {
+            $this->persistValidation($gameId, NhlGameValidation::STATUS_APPROVED, []);
+        } else {
+            $this->clearValidation($gameId);
         }
 
         return count($htmlEvents);
@@ -1049,19 +1021,21 @@ class VerifyNhlHtmlPlayByPlay
     }
 
     /**
-     * Export offline review payloads without affecting verifier result.
+     * Remove non-blocking HTML PBP review rows from the actionable validation surface.
      */
-    private function exportTroubleshooting(NhlGameValidation $validation, ?string $htmlUrl): void
+    private function clearValidation(int $gameId): void
     {
-        try {
-            $gameId = (int) $validation->nhl_game_id;
-            $this->sourceOnlyPbpReview->writeTroubleshootingErrors($gameId);
-        } catch (\Throwable $throwable) {
-            Log::warning('Failed to export NHL HTML PBP troubleshooting payloads.', [
-                'game_id' => $validation->nhl_game_id,
-                'message' => $throwable->getMessage(),
-            ]);
-        }
+        DB::transaction(function () use ($gameId): void {
+            NhlGameValidation::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('validation_type', NhlGameValidation::TYPE_PBP_HTML_REPORT)
+                ->each(function (NhlGameValidation $validation): void {
+                    $validation->pbpSourceMismatches()->delete();
+                    $validation->delete();
+                });
+        });
+
+        $this->troubleshootingExporter->deleteGameDirectory($gameId);
     }
 
     /**

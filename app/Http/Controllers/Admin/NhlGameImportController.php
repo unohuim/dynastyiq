@@ -17,9 +17,9 @@ use App\Services\AdminImports;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
-use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -28,8 +28,6 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGameImportController extends Controller
 {
-    private const COMPLETED_SUCCESSFUL_GAME_RETENTION_SECONDS = 30;
-
     private const SHIFT_RERUN_STAGES = [
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
@@ -372,8 +370,26 @@ class NhlGameImportController extends Controller
      */
     private function rerunRangeFromRun(NhlGameImportRun $run): array
     {
-        $start = Carbon::parse($run->start_date)->startOfDay();
-        $end = Carbon::parse($run->end_date)->startOfDay();
+        $payload = $run->payload ?? [];
+        $startValue = $run->start_date?->toDateString()
+            ?? $payload['start']
+            ?? $payload['start_date']
+            ?? $payload['date']
+            ?? null;
+        $endValue = $run->end_date?->toDateString()
+            ?? $payload['end']
+            ?? $payload['end_date']
+            ?? $payload['date']
+            ?? $startValue;
+
+        if (! $startValue || ! $endValue) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This game import run is missing its original date range.',
+            ]);
+        }
+
+        $start = Carbon::parse((string) $startValue)->startOfDay();
+        $end = Carbon::parse((string) $endValue)->startOfDay();
 
         return [
             'start' => $start,
@@ -744,38 +760,8 @@ class NhlGameImportController extends Controller
                     'blocked_sources' => $blockedSources,
                 ];
             })
-            ->reject(fn (array $game): bool => $this->shouldHideCompletedSuccessfulGame($game))
             ->values()
             ->all();
-    }
-
-    /**
-     * Hide stale successful games from run details while leaving fresh completions available for UI fade-out.
-     *
-     * @param array<string, mixed> $game
-     */
-    private function shouldHideCompletedSuccessfulGame(array $game): bool
-    {
-        if (
-            (int) ($game['total_stage_rows'] ?? 0) <= 0
-            || (int) ($game['percentage'] ?? 0) < 100
-            || (int) ($game['failed_stage_rows'] ?? 0) > 0
-            || (int) ($game['skipped_stage_rows'] ?? 0) > 0
-            || (int) ($game['scheduled_stage_rows'] ?? 0) > 0
-            || (int) ($game['running_stage_rows'] ?? 0) > 0
-            || ! empty($game['last_error'])
-            || ! empty($game['blocked_sources'])
-        ) {
-            return false;
-        }
-
-        $updatedAt = $game['latest_stage_updated_at'] ?? null;
-
-        if (! is_string($updatedAt) || trim($updatedAt) === '') {
-            return false;
-        }
-
-        return Carbon::parse($updatedAt)->lt(now()->subSeconds(self::COMPLETED_SUCCESSFUL_GAME_RETENTION_SECONDS));
     }
 
     private function hasRunScopedProgress(NhlGameImportRun $run): bool

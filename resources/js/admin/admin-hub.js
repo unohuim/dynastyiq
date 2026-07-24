@@ -3,14 +3,6 @@ import { bootPlayerTriage } from './player-triage.js';
 let importListenersRegistered = false;
 const validationDetailTransitionMs = 300;
 const seasonSyncDismissedStorageKey = 'dynastyiq:admin:nhl-game-imports:season-sync-dismissed';
-const completedGameDismissedStorageKey = 'dynastyiq:admin:nhl-game-imports:completed-games-dismissed';
-const completedGameFadeClasses = [
-    'bg-lime-500',
-    'bg-lime-300',
-    'bg-green-100',
-    'bg-gray-100',
-    'bg-gray-200',
-];
 
 function readDismissedSeasonSyncRunIds() {
     try {
@@ -26,25 +18,6 @@ function readDismissedSeasonSyncRunIds() {
 function writeDismissedSeasonSyncRunIds(ids) {
     try {
         globalThis.localStorage?.setItem(seasonSyncDismissedStorageKey, JSON.stringify(ids));
-    } catch {
-        // Browser storage is a convenience for UI dismissal, not required for operation.
-    }
-}
-
-function readDismissedCompletedGameIds() {
-    try {
-        const stored = globalThis.localStorage?.getItem(completedGameDismissedStorageKey);
-        const parsed = stored ? JSON.parse(stored) : [];
-
-        return Array.isArray(parsed) ? parsed.map((id) => String(id)) : [];
-    } catch {
-        return [];
-    }
-}
-
-function writeDismissedCompletedGameIds(ids) {
-    try {
-        globalThis.localStorage?.setItem(completedGameDismissedStorageKey, JSON.stringify(ids));
     } catch {
         // Browser storage is a convenience for UI dismissal, not required for operation.
     }
@@ -107,7 +80,6 @@ export default function adminHub(options = {}) {
             rerunningGames: {},
             completedGameFadeSteps: {},
             completedGameFadeTimers: {},
-            dismissedCompletedGameIds: readDismissedCompletedGameIds(),
             sourceGapsExpanded: false,
             processableDateCount: 0,
             seasonDropdownOpen: false,
@@ -911,17 +883,30 @@ export default function adminHub(options = {}) {
         },
 
         async rerunGameImportRun(run) {
-            if (!this.canRerunGameImportRun(run)) {
+            const runId = run?.id;
+
+            if (!runId || this.gameImports.rerunningRuns[runId] === true) {
                 return;
             }
 
             this.gameImports.error = '';
             this.gameImports.rerunningRuns = {
                 ...this.gameImports.rerunningRuns,
-                [run.id]: true,
+                [runId]: true,
             };
 
             try {
+                if (run.action === 'discover' && !run.processing_started) {
+                    await this.processGameImports(run, { reprocessExisting: true });
+                    await this.refreshValidationContainers();
+
+                    return;
+                }
+
+                if (!this.canRerunGameImportRun(run)) {
+                    return;
+                }
+
                 const url = run.action === 'season-sync'
                     ? this.gameImportSeasonSyncUrl
                     : this.gameImportDiscoverUrl;
@@ -940,7 +925,7 @@ export default function adminHub(options = {}) {
                 this.gameImports.error = error.message ?? 'Unable to queue rerun';
             } finally {
                 const next = { ...this.gameImports.rerunningRuns };
-                delete next[run.id];
+                delete next[runId];
                 this.gameImports.rerunningRuns = next;
             }
         },
@@ -1289,112 +1274,21 @@ export default function adminHub(options = {}) {
             return this.gameImportSourceGapGameIds().has(String(game?.game_id));
         },
 
-        isDismissedCompletedGame(game) {
-            return this.gameImports.dismissedCompletedGameIds.includes(String(game?.game_id));
-        },
-
         gameImportGames(run) {
-            const games = Array.isArray(run.games) ? run.games : [];
-
-            return games.filter((game) => !this.isGameImportSourceGapGame(game) && !this.isDismissedCompletedGame(game));
+            return Array.isArray(run.games) ? run.games : [];
         },
 
         syncCompletedGameFadeState() {
-            const games = this.gameImports.runs.flatMap((run) => Array.isArray(run.games) ? run.games : []);
-            const seenGameIds = new Set(games.map((game) => String(game?.game_id)).filter(Boolean));
-
-            for (const [gameId, timer] of Object.entries(this.gameImports.completedGameFadeTimers)) {
-                if (!seenGameIds.has(gameId)) {
-                    clearInterval(timer);
-                    this.removeCompletedGameFadeState(gameId);
-                }
-            }
-
-            for (const game of games) {
-                const gameId = String(game?.game_id ?? '');
-
-                if (
-                    gameId === ''
-                    || this.isDismissedCompletedGame(game)
-                    || this.gameImports.completedGameFadeTimers[gameId]
-                    || !this.shouldFadeCompletedGame(game)
-                ) {
-                    continue;
-                }
-
-                this.startCompletedGameFade(gameId);
-            }
-        },
-
-        shouldFadeCompletedGame(game) {
-            return this.gameImportGameProgressPercentage(game) >= 100
-                && Number(game.failed_stage_rows) === 0
-                && Number(game.skipped_stage_rows) === 0
-                && !this.isGameImportSourceGapGame(game);
-        },
-
-        startCompletedGameFade(gameId) {
-            this.gameImports.completedGameFadeSteps = {
-                ...this.gameImports.completedGameFadeSteps,
-                [gameId]: 0,
-            };
-
-            const timer = setInterval(() => {
-                this.advanceCompletedGameFade(gameId);
-            }, 1000);
-
-            this.gameImports.completedGameFadeTimers = {
-                ...this.gameImports.completedGameFadeTimers,
-                [gameId]: timer,
-            };
-        },
-
-        advanceCompletedGameFade(gameId) {
-            const currentStep = Number(this.gameImports.completedGameFadeSteps[gameId]) || 0;
-            const nextStep = currentStep + 1;
-
-            if (nextStep >= completedGameFadeClasses.length) {
-                this.dismissCompletedGame(gameId);
-                return;
-            }
-
-            this.gameImports.completedGameFadeSteps = {
-                ...this.gameImports.completedGameFadeSteps,
-                [gameId]: nextStep,
-            };
-        },
-
-        dismissCompletedGame(gameId) {
-            const normalizedGameId = String(gameId);
-            const dismissed = new Set(this.gameImports.dismissedCompletedGameIds);
-            dismissed.add(normalizedGameId);
-
-            this.gameImports.dismissedCompletedGameIds = [...dismissed];
-            writeDismissedCompletedGameIds(this.gameImports.dismissedCompletedGameIds);
-            this.removeCompletedGameFadeState(normalizedGameId);
-        },
-
-        removeCompletedGameFadeState(gameId) {
-            const normalizedGameId = String(gameId);
-            const timer = this.gameImports.completedGameFadeTimers[normalizedGameId];
-
-            if (timer) {
+            for (const timer of Object.values(this.gameImports.completedGameFadeTimers)) {
                 clearInterval(timer);
             }
 
-            const timers = { ...this.gameImports.completedGameFadeTimers };
-            delete timers[normalizedGameId];
-            this.gameImports.completedGameFadeTimers = timers;
-
-            const steps = { ...this.gameImports.completedGameFadeSteps };
-            delete steps[normalizedGameId];
-            this.gameImports.completedGameFadeSteps = steps;
+            this.gameImports.completedGameFadeTimers = {};
+            this.gameImports.completedGameFadeSteps = {};
         },
 
-        completedGameFadeClass(game) {
-            const step = Number(this.gameImports.completedGameFadeSteps[String(game?.game_id)]) || 0;
-
-            return completedGameFadeClasses[Math.min(step, completedGameFadeClasses.length - 1)];
+        completedGameFadeClass() {
+            return 'bg-green-500';
         },
 
         gameImportGameLabel(game) {
@@ -1465,7 +1359,7 @@ export default function adminHub(options = {}) {
         },
 
         canRerunStoppedGameImport(game) {
-            return Number(game?.failed_stage_rows) > 0;
+            return Boolean(game?.game_id);
         },
 
         stageProgressText(completed, total, running, failed, skipped = 0) {
@@ -1503,11 +1397,16 @@ export default function adminHub(options = {}) {
         },
 
         canProcessGameImportRun(run) {
+            const discoveredGames = Number(run?.facts?.discovered_game_count || 0);
+            const visibleGames = Array.isArray(run?.games) ? run.games.length : 0;
+
             return run?.action === 'discover'
                 && !run.processing_started
                 && !this.gameImports.processingRuns[run.id]
                 && (
                     Number(run?.facts?.scheduled_stage_rows || 0) > 0
+                    || discoveredGames > 0
+                    || visibleGames > 0
                     || this.shouldReprocessGameImportRun(run)
                 );
         },

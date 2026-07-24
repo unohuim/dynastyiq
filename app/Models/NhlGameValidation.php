@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Services\NhlValidationTroubleshootingExporter;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -29,6 +30,42 @@ class NhlGameValidation extends Model
         'checked_at' => 'datetime',
         'approved_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::saved(function (NhlGameValidation $validation): void {
+            if (! $validation->shouldDeleteTroubleshootingDirectory()) {
+                return;
+            }
+
+            app(NhlValidationTroubleshootingExporter::class)
+                ->deleteGameDirectory((int) $validation->nhl_game_id);
+        });
+    }
+
+    /**
+     * Determine whether validation evidence should remain on disk for triage.
+     */
+    public function shouldRetainTroubleshootingDirectory(): bool
+    {
+        return in_array($this->status, [
+            self::STATUS_FAILED,
+            self::STATUS_INCOMPLETE,
+            self::STATUS_INVALIDATED,
+        ], true);
+    }
+
+    /**
+     * Determine whether validation evidence should be removed from disk.
+     */
+    public function shouldDeleteTroubleshootingDirectory(): bool
+    {
+        return in_array($this->status, [
+            self::STATUS_APPROVED,
+            self::STATUS_ACCEPTED_EXCEPTION,
+            self::STATUS_SHIFTCHART_MISMATCH,
+        ], true);
+    }
 
     public function game(): BelongsTo
     {

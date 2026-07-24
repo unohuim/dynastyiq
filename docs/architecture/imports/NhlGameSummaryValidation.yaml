@@ -22,6 +22,8 @@ rules:
   - Failed validations must persist deltas before the pipeline stage is marked failed.
   - Validation deltas must drive processing fixes, source-gap handling, source-backed reconciliation, invalidation, auditable shiftchart mismatch handling, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values outside documented import-stage reconciliation rules.
   - Game type must not decide whether deltas fail or invalidate a validation.
+  - Game type may identify documented provider-shape exceptions, such as preseason games with limited scoring payloads, but must not hide unresolved source disagreement.
+  - Preseason games with limited scoring payloads must reconcile existing skater summary rows for boxscore-owned fields from the official boxscore before final summary validation.
   - Validation must approve after reconciliation when trusted source agreement determines the correct summary value and the summary is updated to that value.
   - Validation must persist deltas as invalidated when trusted sources are missing, contradictory, or insufficient to determine the correct summary value, regardless of game type.
   - Invalidated validations may continue without marking the pipeline stage failed.

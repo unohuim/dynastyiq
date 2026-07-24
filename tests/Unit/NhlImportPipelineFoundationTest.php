@@ -12,6 +12,7 @@ use App\Jobs\SummarizePbpNhlJob;
 use App\Jobs\ValidateNhlGameSummaryJob;
 use App\Jobs\VerifyHtmlPbpNhlJob;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\NhlDiscoverGames;
 use App\Services\NhlGameSourcePreflight;
@@ -20,8 +21,10 @@ use App\Support\NhlImportStages;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -29,6 +32,8 @@ uses(TestCase::class, RefreshDatabase::class);
 
 beforeEach(function (): void {
     Carbon::setTestNow('2026-06-29 12:00:00');
+    Config::set('apiImportNhl.validation_troubleshooting_path', sys_get_temp_dir() . '/dynastyiq-import-pipeline-troubleshooting-tests');
+    File::deleteDirectory((string) config('apiImportNhl.validation_troubleshooting_path'));
     $this->app->instance(NhlGameSourcePreflight::class, new class extends NhlGameSourcePreflight {
         public function check(int $gameId): array
         {
@@ -82,6 +87,7 @@ beforeEach(function (): void {
 });
 
 afterEach(function (): void {
+    File::deleteDirectory((string) config('apiImportNhl.validation_troubleshooting_path'));
     Carbon::setTestNow();
 });
 
@@ -249,6 +255,55 @@ it('does not dispatch a duplicate job after the row has already been claimed', f
     $orchestrator->dispatchJob(2026020001, NhlImportStages::PBP);
 
     Bus::assertDispatchedTimes(ImportPbpNhlJob::class, 1);
+});
+
+it('deletes stale game troubleshooting directories when a processing stage succeeds', function (): void {
+    Bus::fake();
+    ($this->insertPipeline)(2026020001, [
+        NhlImportStages::PBP => 'running',
+    ]);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
+
+    app(NhlImportOrchestrator::class)->onSuccess(2026020001, NhlImportStages::PBP, ['items_count' => 1]);
+
+    expect(File::isDirectory($directory))->toBeFalse();
+});
+
+it('deletes game troubleshooting directories when processing approves summary validation', function (): void {
+    Bus::fake();
+    ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
+    NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_APPROVED,
+        'mismatch_count' => 0,
+        'checked_at' => now(),
+    ]);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
+
+    app(NhlImportOrchestrator::class)->onSuccess(2026020001, NhlImportStages::VALIDATE_SUMMARY, ['items_count' => 0]);
+
+    expect(File::isDirectory($directory))->toBeFalse();
+});
+
+it('retains game troubleshooting directories when processing keeps invalidated summary validation', function (): void {
+    Bus::fake();
+    ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
+    NhlGameValidation::create([
+        'nhl_game_id' => 2026020001,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_INVALIDATED,
+        'mismatch_count' => 1,
+        'checked_at' => now(),
+    ]);
+    $directory = (string) config('apiImportNhl.validation_troubleshooting_path') . '/2026020001';
+    File::ensureDirectoryExists($directory);
+
+    app(NhlImportOrchestrator::class)->onSuccess(2026020001, NhlImportStages::VALIDATE_SUMMARY, ['items_count' => 1]);
+
+    expect(File::isDirectory($directory))->toBeTrue();
 });
 
 it('skips on-ice stages and still dispatches validation when only the shifts source is missing', function (): void {

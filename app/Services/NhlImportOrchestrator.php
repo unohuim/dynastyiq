@@ -8,6 +8,7 @@ use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\SeasonSumJob;
 use App\Events\NhlGameImportStatusUpdated;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
 use App\Support\NhlImportStages;
 use Illuminate\Support\Facades\Cache;
@@ -25,7 +26,8 @@ class NhlImportOrchestrator
 
     public function __construct(
         private readonly NhlImportProgressRepo $repo,
-        private readonly NhlGameSourcePreflight $sourcePreflight
+        private readonly NhlGameSourcePreflight $sourcePreflight,
+        private readonly NhlValidationTroubleshootingExporter $troubleshootingExporter
     )
     {
     }
@@ -134,6 +136,7 @@ class NhlImportOrchestrator
         $items = (int) ($meta['items_count'] ?? 0);
         $runId = $this->runIdForStage($gameId, $type);
         $this->repo->markCompleted($gameId, $type, $items);
+        $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
         $this->seasonSummary($gameId, $type);
         $this->advance($gameId, $type, $runId);
     }
@@ -257,6 +260,24 @@ class NhlImportOrchestrator
             } finally {
                 $lock->release();
             }
+        }
+    }
+
+    private function clearTroubleshootingDirectoryAfterSuccessfulStage(int $gameId, string $type): void
+    {
+        if ($type !== NhlImportStages::VALIDATE_SUMMARY) {
+            $this->troubleshootingExporter->deleteGameDirectory($gameId);
+
+            return;
+        }
+
+        $validation = NhlGameValidation::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('validation_type', NhlGameValidation::TYPE_SUMMARY_BOXSCORE)
+            ->first();
+
+        if ($validation?->shouldDeleteTroubleshootingDirectory() === true) {
+            $this->troubleshootingExporter->deleteGameDirectory($gameId);
         }
     }
 

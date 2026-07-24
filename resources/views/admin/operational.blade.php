@@ -423,7 +423,7 @@
                                 @click="submitGameImportEmptyGames()"
                                 :disabled="gameImports.emptyingGames"
                             >
-                                <span x-text="gameImports.emptyingGames ? 'Queuing...' : 'Empty Games'"></span>
+                                <span x-text="gameImports.emptyingGames ? 'Queuing...' : 'Empty Games'">Empty Games</span>
                             </button>
                             <div
                                 class="relative inline-flex rounded-md shadow-sm"
@@ -435,7 +435,7 @@
                                     @click="submitGameImportSeasonSync()"
                                     :disabled="gameImports.syncingSeason || !gameImports.selectedSeason"
                                 >
-                                    <span x-text="gameImports.syncingSeason ? 'Queuing...' : gameImportSeasonSyncButtonText()"></span>
+                                    <span x-text="gameImports.syncingSeason ? 'Queuing...' : gameImportSeasonSyncButtonText()">Sync Season</span>
                                 </button>
                                 <div class="relative -ml-px block">
                                     <button
@@ -678,11 +678,43 @@
                                             <template x-if="run.action === 'discover' && !run.processing_started">
                                                 <button
                                                     type="button"
-                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-                                                    @click="processGameImports(run)"
-                                                    :disabled="!canProcessGameImportRun(run)"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700"
+                                                    :data-run-id="run.id"
+                                                    onclick="
+                                                        event.preventDefault();
+                                                        event.stopPropagation();
+
+                                                        const runId = this.dataset.runId;
+                                                        if (!runId) {
+                                                            return false;
+                                                        }
+
+                                                        const originalText = this.textContent;
+                                                        this.textContent = 'Queuing...';
+
+                                                        fetch(@js(route('admin.nhl-game-imports.process')), {
+                                                            method: 'POST',
+                                                            headers: {
+                                                                Accept: 'application/json',
+                                                                'Content-Type': 'application/json',
+                                                                'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']')?.getAttribute('content'),
+                                                            },
+                                                            body: JSON.stringify({
+                                                                run_id: Number(runId),
+                                                                reprocess_existing: true,
+                                                            }),
+                                                        })
+                                                            .catch((error) => {
+                                                                window.alert(error?.message ?? 'Unable to queue processing');
+                                                            })
+                                                            .finally(() => {
+                                                                this.textContent = originalText;
+                                                            });
+
+                                                        return false;
+                                                    "
                                                 >
-                                                    <span x-text="gameImportProcessButtonText(run)"></span>
+                                                    Process
                                                 </button>
                                             </template>
                                             <template x-if="run.status !== 'completed' && (run.action !== 'discover' || run.processing_started)">
@@ -693,12 +725,48 @@
                                             </template>
                                             <button
                                                 type="button"
-                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                                x-show="canRerunGameImportRun(run)"
-                                                @click.prevent.stop="rerunGameImportRun(run)"
-                                                :disabled="!canRerunGameImportRun(run) || gameImports.rerunningRuns[run.id] === true"
+                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
+                                                :data-run-id="run.id"
+                                                :data-run-action="run.action"
+                                                :data-processing-started="run.processing_started ? '1' : '0'"
+                                                onclick="
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+
+                                                    const runId = this.dataset.runId;
+                                                    if (!runId) {
+                                                        return false;
+                                                    }
+
+                                                    const originalText = this.textContent;
+                                                    this.textContent = 'Queuing...';
+
+                                                    fetch(@js(route('admin.nhl-game-imports.discover')), {
+                                                        method: 'POST',
+                                                        headers: {
+                                                            Accept: 'application/json',
+                                                            'Content-Type': 'application/json',
+                                                            'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']')?.getAttribute('content'),
+                                                        },
+                                                        body: JSON.stringify({ run_id: Number(runId) }),
+                                                    })
+                                                        .then(async (response) => {
+                                                            if (!response.ok) {
+                                                                const payload = await response.json().catch(() => ({}));
+                                                                throw new Error(payload.message ?? 'Unable to queue rerun');
+                                                            }
+                                                        })
+                                                        .catch((error) => {
+                                                            window.alert(error?.message ?? 'Unable to queue rerun');
+                                                        })
+                                                        .finally(() => {
+                                                            this.textContent = originalText;
+                                                        });
+
+                                                    return false;
+                                                "
                                             >
-                                                <span x-text="gameImports.rerunningRuns[run.id] === true ? 'Queuing...' : 'Re Run'"></span>
+                                                Re Run
                                             </button>
                                         </div>
                                     </div>
@@ -893,7 +961,7 @@
                                     class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
                                     :disabled="gameImports.discovering"
                                 >
-                                    <span x-text="gameImports.discovering ? 'Queuing...' : 'Discover'"></span>
+                                    <span x-text="gameImports.discovering ? 'Queuing...' : 'Discover'">Discover</span>
                                 </button>
                             </div>
                         </div>

@@ -860,7 +860,7 @@ describe('admin-hub import listeners', () => {
             running_stage_rows: 0,
             failed_stage_rows: 0,
             percentage: 100,
-        })).toBe('bg-lime-500');
+        })).toBe('bg-green-500');
         expect(instance.gameImportGameProgressClass({
             total_stage_rows: 8,
             completed_stage_rows: 4,
@@ -1081,7 +1081,7 @@ describe('admin-hub import listeners', () => {
         expect(JSON.parse(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:season-sync-dismissed'))).toEqual(['30']);
     });
 
-    it('removes source gap games from recent orchestration runs', async () => {
+    it('keeps source gap games visible in recent orchestration runs', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();
         instance.gameImports.sourceGaps.items = [
@@ -1113,13 +1113,16 @@ describe('admin-hub import listeners', () => {
         ];
 
         expect(instance.gameImportGames(instance.gameImports.runs[0])).toEqual([
+            { game_id: '2026020001' },
             { game_id: '2026020002' },
         ]);
-        expect(instance.gameImportGames(instance.gameImports.runs[1])).toEqual([]);
+        expect(instance.gameImportGames(instance.gameImports.runs[1])).toEqual([
+            { game_id: '2026020003' },
+        ]);
         expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41, 42, 43]);
     });
 
-    it('fades completed game progress toward gray before permanently removing it', async () => {
+    it('keeps completed game rows visible for rerun controls', async () => {
         vi.useFakeTimers();
 
         const adminHub = await loadAdminHub();
@@ -1144,30 +1147,18 @@ describe('admin-hub import listeners', () => {
         instance.syncCompletedGameFadeState();
 
         expect(instance.gameImportGames(instance.gameImports.runs[0])).toHaveLength(1);
-        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-lime-500');
+        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-green-500');
 
-        vi.advanceTimersByTime(1000);
-        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-lime-300');
+        vi.advanceTimersByTime(6000);
 
-        vi.advanceTimersByTime(1000);
-        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-green-100');
-
-        vi.advanceTimersByTime(1000);
-        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-gray-100');
-
-        vi.advanceTimersByTime(1000);
-        expect(instance.gameImportGameProgressClass(completedGame)).toBe('bg-gray-200');
-
-        vi.advanceTimersByTime(1000);
-
-        expect(instance.gameImportGames(instance.gameImports.runs[0])).toHaveLength(0);
+        expect(instance.gameImportGames(instance.gameImports.runs[0])).toHaveLength(1);
         expect(instance.gameImportVisibleRuns().map((run) => run.id)).toEqual([41]);
-        expect(JSON.parse(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:completed-games-dismissed'))).toEqual(['2026020001']);
+        expect(globalThis.localStorage.getItem('dynastyiq:admin:nhl-game-imports:completed-games-dismissed')).toBeNull();
 
         const reloaded = adminHub();
         reloaded.gameImports.runs = instance.gameImports.runs;
 
-        expect(reloaded.gameImportGames(reloaded.gameImports.runs[0])).toHaveLength(0);
+        expect(reloaded.gameImportGames(reloaded.gameImports.runs[0])).toHaveLength(1);
         expect(reloaded.gameImportVisibleRuns().map((run) => run.id)).toEqual([41]);
     });
 

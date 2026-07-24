@@ -31,14 +31,12 @@ class NhlValidationTroubleshootingExporter
     {
         $validation->loadMissing(['deltas.player', 'game']);
 
-        $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
-        if ($directory === '') {
+        $gameId = (int) $validation->nhl_game_id;
+        $directory = $this->gameTroubleshootingDirectory($gameId);
+        if ($directory === null) {
             return;
         }
 
-        File::ensureDirectoryExists($directory);
-
-        $gameId = (int) $validation->nhl_game_id;
         $playerIds = $validation->deltas
             ->pluck('nhl_player_id')
             ->filter()
@@ -60,15 +58,39 @@ class NhlValidationTroubleshootingExporter
      */
     public function exportRawProviderPayloads(int $gameId, array $context = []): void
     {
-        $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
-        if ($directory === '') {
+        $directory = $this->gameTroubleshootingDirectory($gameId);
+        if ($directory === null) {
             return;
         }
 
-        File::ensureDirectoryExists($directory);
-
         $this->writeFile($directory, "stoppage_{$gameId}.md", fn (): string => $this->stoppageMarkdown($gameId, $context));
         $this->writeRawProviderFiles($directory, $gameId);
+    }
+
+    /**
+     * Delete a per-game troubleshooting directory after the game validates successfully.
+     */
+    public function deleteGameDirectory(int $gameId): void
+    {
+        $root = (string) config('apiImportNhl.validation_troubleshooting_path');
+        if ($root === '') {
+            return;
+        }
+
+        $directory = rtrim($root, '/') . '/' . $gameId;
+        if (! File::isDirectory($directory)) {
+            return;
+        }
+
+        try {
+            File::deleteDirectory($directory);
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to delete validated NHL game troubleshooting directory.', [
+                'game_id' => $gameId,
+                'directory' => $directory,
+                'message' => $exception->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -735,6 +757,30 @@ class NhlValidationTroubleshootingExporter
                 'message' => $exception->getMessage(),
             ]);
         }
+    }
+
+    private function gameTroubleshootingDirectory(int $gameId): ?string
+    {
+        $root = (string) config('apiImportNhl.validation_troubleshooting_path');
+        if ($root === '') {
+            return null;
+        }
+
+        $directory = rtrim($root, '/') . '/' . $gameId;
+
+        try {
+            File::ensureDirectoryExists($directory);
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to create NHL validation troubleshooting directory.', [
+                'game_id' => $gameId,
+                'directory' => $directory,
+                'message' => $exception->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        return $directory;
     }
 
     /**

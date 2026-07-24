@@ -46,7 +46,7 @@ rules:
   - Game-level rerun endpoints must queue rebuild setup work and return before deleting or reseeding game-scoped import rows.
   - Game-level rebuild setup must run as visible queued phases: source preflight, game-scoped cleanup, progress reseeding, and PBP pipeline dispatch.
   - Processed discovery runs must not fall back to date-window progress after their run-scoped stage rows are reassigned to a newer reprocess run.
-  - Stale per-game rows that completed successfully must be omitted from the admin status payload after a short UI transition grace window; failed, skipped, active, and source-blocked games must remain visible for review.
+  - Per-game rows for a run must remain available after completion so admins can rerun individual games from the original run card.
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
   - Direct command processing for an explicit date may remain as an operator escape hatch without creating an admin run.
   - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.

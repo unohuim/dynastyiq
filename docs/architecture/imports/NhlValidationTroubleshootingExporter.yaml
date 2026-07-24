@@ -15,14 +15,17 @@ when_not_to_use:
 rules:
   - Exported files must be derived from persisted imported data.
   - Exported files must include the deltas that caused the validation to fail or become invalidated.
-  - Validations with deltas must emit separate deltas, boxscore, play-by-play, and shifts markdown files for the game when those sections can be built.
-  - Validations with deltas must emit raw provider payload text files for boxscore, play-by-play, and shiftcharts when troubleshooting export is configured.
+  - Actionable validations with deltas must emit separate deltas, boxscore, play-by-play, and shifts markdown files for the game when those sections can be built.
+  - Actionable validations with deltas must emit raw provider payload text files for boxscore, play-by-play, and shiftcharts when troubleshooting export is configured.
   - Game stage stoppages must emit raw provider payload text files and stoppage context when troubleshooting export is configured.
+  - Saving a game validation as approved, accepted-exception, or shiftchart-mismatch must delete any existing configured per-game troubleshooting directory named by that game id.
+  - Clearing non-actionable validation rows for a game that continues importing must delete any existing configured per-game troubleshooting directory named by that game id.
   - A failure writing one troubleshooting file must not prevent attempts to write the remaining troubleshooting files.
   - Play-by-play exports must include event classification context such as strength, situation code, shot type, goalie id, and shot-on-goal classification.
   - Exported files must not mutate source import tables.
   - The output path must come from configuration.
 public_interface:
   - NhlValidationTroubleshootingExporter::export()
+  - NhlValidationTroubleshootingExporter::deleteGameDirectory()
 example_usage: |
   app(NhlValidationTroubleshootingExporter::class)->export($validation);
