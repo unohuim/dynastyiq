@@ -7,7 +7,10 @@ namespace App\Services;
 use App\Models\NhlGame;
 use App\Repositories\NhlImportProgressRepo;
 use App\Support\NhlImportStages;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Clears game-scoped NHL import data and requeues the canonical pipeline.
@@ -38,40 +41,145 @@ class NhlGameImportRebuilder
      */
     public function clearGameScopedData(int $gameId): void
     {
-        DB::transaction(function () use ($gameId): void {
-            $unitShiftIds = DB::table('nhl_unit_shifts')
-                ->where('nhl_game_id', $gameId)
-                ->pluck('id');
+        $startedAt = microtime(true);
+        $steps = [];
 
-            if ($unitShiftIds->isNotEmpty()) {
-                DB::table('event_unit_shifts')
-                    ->whereIn('unit_shift_id', $unitShiftIds)
-                    ->delete();
-            }
+        try {
+            DB::transaction(function () use ($gameId, &$steps): void {
+                $unitShiftIds = DB::table('nhl_unit_shifts')
+                    ->where('nhl_game_id', $gameId)
+                    ->pluck('id');
 
-            DB::table('nhl_unit_game_strength_summaries')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_player_game_strength_summaries')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_unit_game_summaries')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_shifts')->where('nhl_game_id', $gameId)->delete();
+                if ($unitShiftIds->isNotEmpty()) {
+                    $this->deleteAndRecord(
+                        'event_unit_shifts_by_unit_shift',
+                        fn (): Builder => DB::table('event_unit_shifts')->whereIn('unit_shift_id', $unitShiftIds),
+                        $steps
+                    );
 
-            $validationIds = DB::table('nhl_game_validations')
-                ->where('nhl_game_id', $gameId)
-                ->pluck('id');
+                    $this->deleteAndRecord(
+                        'nhl_unit_shift_players',
+                        fn (): Builder => DB::table('nhl_unit_shift_players')->whereIn('unit_shift_id', $unitShiftIds),
+                        $steps
+                    );
+                }
 
-            if ($validationIds->isNotEmpty()) {
-                DB::table('nhl_game_validation_deltas')
-                    ->whereIn('validation_id', $validationIds)
-                    ->delete();
-            }
+                $this->deleteAndRecord(
+                    'event_unit_shifts_by_event',
+                    fn (): Builder => DB::table('event_unit_shifts')
+                        ->whereIn('event_id', function ($query) use ($gameId): void {
+                            $query->select('id')
+                                ->from('play_by_plays')
+                                ->where('nhl_game_id', $gameId);
+                        }),
+                    $steps
+                );
 
-            DB::table('nhl_game_validations')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_boxscores')->where('nhl_game_id', $gameId)->delete();
-            DB::table('nhl_game_summaries')->where('nhl_game_id', $gameId)->delete();
-            DB::table('play_by_plays')->where('nhl_game_id', $gameId)->delete();
+                $this->deleteAndRecord(
+                    'nhl_unit_game_strength_summaries',
+                    fn (): Builder => DB::table('nhl_unit_game_strength_summaries')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_player_game_strength_summaries',
+                    fn (): Builder => DB::table('nhl_player_game_strength_summaries')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_unit_game_summaries',
+                    fn (): Builder => DB::table('nhl_unit_game_summaries')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_unit_shifts',
+                    fn (): Builder => DB::table('nhl_unit_shifts')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_shifts',
+                    fn (): Builder => DB::table('nhl_shifts')->where('nhl_game_id', $gameId),
+                    $steps
+                );
 
-            DB::table('nhl_import_progress')->where('game_id', (string) $gameId)->delete();
-        });
+                $validationIds = DB::table('nhl_game_validations')
+                    ->where('nhl_game_id', $gameId)
+                    ->pluck('id');
+
+                if ($validationIds->isNotEmpty()) {
+                    $this->deleteAndRecord(
+                        'nhl_game_validation_deltas',
+                        fn (): Builder => DB::table('nhl_game_validation_deltas')->whereIn('validation_id', $validationIds),
+                        $steps
+                    );
+                    $this->deleteAndRecord(
+                        'nhl_pbp_source_mismatches',
+                        fn (): Builder => DB::table('nhl_pbp_source_mismatches')->whereIn('validation_id', $validationIds),
+                        $steps
+                    );
+                }
+
+                $this->deleteAndRecord(
+                    'nhl_game_validations',
+                    fn (): Builder => DB::table('nhl_game_validations')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_boxscores',
+                    fn (): Builder => DB::table('nhl_boxscores')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'nhl_game_summaries',
+                    fn (): Builder => DB::table('nhl_game_summaries')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+                $this->deleteAndRecord(
+                    'play_by_plays',
+                    fn (): Builder => DB::table('play_by_plays')->where('nhl_game_id', $gameId),
+                    $steps
+                );
+
+                $this->deleteAndRecord(
+                    'nhl_import_progress',
+                    fn (): Builder => DB::table('nhl_import_progress')->where('game_id', (string) $gameId),
+                    $steps
+                );
+            });
+        } catch (Throwable $exception) {
+            Log::warning('NHL game scoped import data clear failed.', [
+                'game_id' => $gameId,
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'steps' => $steps,
+                'exception' => $exception::class,
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
+
+        Log::info('NHL game scoped import data cleared.', [
+            'game_id' => $gameId,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+            'steps' => $steps,
+        ]);
+    }
+
+    /**
+     * Delete rows from a game-scoped query and record clear-phase timing.
+     *
+     * @param callable(): Builder $queryFactory
+     * @param list<array{step:string,deleted:int,duration_ms:int}> $steps
+     */
+    private function deleteAndRecord(string $step, callable $queryFactory, array &$steps): void
+    {
+        $startedAt = microtime(true);
+        $deleted = (int) $queryFactory()->delete();
+
+        $steps[] = [
+            'step' => $step,
+            'deleted' => $deleted,
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+        ];
     }
 
     /**
