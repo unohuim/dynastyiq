@@ -20,17 +20,20 @@ when_not_to_use:
 rules:
   - Exact comparable fields may auto-approve only when no blocking deltas exist.
   - Failed validations must persist deltas before the pipeline stage is marked failed.
-  - Validation deltas must drive processing fixes, source-gap handling, preseason invalidation, auditable shiftchart mismatch handling, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values outside documented import-stage reconciliation rules.
-  - Preseason game type 1 validations with deltas must persist deltas as invalidated and may continue without marking the pipeline stage failed.
-  - Regular season and playoff game types must keep validation deltas as failed hard stops unless all remaining deltas are documented shiftchart mismatch fields.
+  - Validation deltas must drive processing fixes, source-gap handling, source-backed reconciliation, invalidation, auditable shiftchart mismatch handling, or auditable accepted exceptions; validation must not be silenced by overwriting derived summaries with official boxscore values outside documented import-stage reconciliation rules.
+  - Game type must not decide whether deltas fail or invalidate a validation.
+  - Validation must approve after reconciliation when trusted source agreement determines the correct summary value and the summary is updated to that value.
+  - Validation must persist deltas as invalidated when trusted sources are missing, contradictory, or insufficient to determine the correct summary value, regardless of game type.
+  - Invalidated validations may continue without marking the pipeline stage failed.
   - Shiftchart mismatch status may be used only after all documented reconciliation attempts have run, stored shiftcharts are available, the game is not preseason, and every remaining delta is limited to skater or goalie time-on-ice or shift count.
   - Shiftchart mismatch validations must preserve the original deltas for audit while allowing the pipeline to continue and using official boxscore time-on-ice and shift counts in player game summaries.
+  - Goalie shift-count-only deltas must be reconciled to the official boxscore convention when official goalie time on ice already matches the computed summary.
   - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.
   - Skater blocking validation fields are goals, assists, points, penalty minutes, hits, power-play goals, shots on goal, faceoff percentage, time on ice with tolerance, shifts, and blocked shots.
   - Penalty-minute validation must tolerate the NHL boxscore gap for match penalties only when a player's computed summary exceeds the official boxscore by exactly ten minutes per committed match-penalty event in the imported play-by-play.
   - Skater faceoffs won, faceoffs lost, giveaways, takeaways, and missing summary records must not be blocking validation fields.
   - Goalie blocking validation fields are goals against, shots against, saves, save percentage, even-strength/power-play/shorthanded saves and shots against, derived even-strength/power-play/shorthanded goals against, penalty minutes, and time on ice with tolerance.
-  - Zero-appearance goalie shiftchart artifacts may be auto-reconciled only when the official boxscore has zero goalie time on ice and zero shifts, play-by-play never names that goalie in net, the only goalie deltas are shift-derived time-on-ice or shifts fields, and the time-on-ice delta is under 30 seconds; deltas of 30 seconds or more must remain failed hard stops for review.
+  - Zero-appearance goalie shiftchart artifacts may be auto-reconciled only when the official boxscore has zero goalie time on ice and zero shifts, play-by-play never names that goalie in net, the only goalie deltas are shift-derived time-on-ice or shifts fields, and the time-on-ice delta is under 30 seconds; deltas of 30 seconds or more must remain invalidated for review.
   - Goalie offensive fields such as goals, assists, points, and shots on goal must not be blocking validation fields because NHL boxscore goalie rows do not provide them consistently.
   - Starter and decision metadata must not be blocking validation fields.
   - Admin Game Validations should use embedded row-level detail disclosure in the admin control panel, keyed by nhl_game_validations.id, while standalone validation routes may remain for direct access.

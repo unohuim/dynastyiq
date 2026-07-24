@@ -63,8 +63,10 @@ rules:
   - HTML TV/TH fallback shift imports must store an auditable `html-toi` source status and must continue to preserve the original missing or empty `shifts` source status.
   - Source preflight must store exact provider URLs and source-specific reasons for empty or unavailable feeds.
   - Summary validation may return incomplete when source coverage prevents validating shift-dependent fields.
-  - Summary validation may return invalidated for game type 1 when preseason provider deltas exist but the game import should continue.
+  - Summary validation may return invalidated when source coverage or source disagreement prevents determining the correct summary value, regardless of game type.
+  - Summary validation may return approved after source-backed reconciliation updates summaries to values established by trusted provider agreement.
   - Summary validation may return shiftchart-mismatch for non-preseason games when all remaining deltas are limited to time on ice or shifts after documented reconciliation; official boxscore time on ice and shifts must be used in summaries while the original deltas remain persisted for admin review.
+  - Goalie shift-count-only deltas must be reconciled to the official boxscore convention when official goalie time on ice already matches the computed summary.
   - Explicit reprocess runs must delete game-scoped stage-owned rows before importing or recalculating that stage so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data.
   - Explicit game rebuilds must clear game-scoped raw and derived import rows before requeueing the canonical pipeline from PBP.
   - Explicit game rebuilds must not delete global unit composition records that can be reused by other games.

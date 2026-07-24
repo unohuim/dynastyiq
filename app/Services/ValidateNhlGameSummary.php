@@ -40,6 +40,10 @@ class ValidateNhlGameSummary
             $deltas = $this->comparator->compare($gameId);
         }
 
+        if ($this->applyGoalieShiftCountReconciliations($gameId, $deltas)) {
+            $deltas = $this->comparator->compare($gameId);
+        }
+
         $shiftchartMismatchDeltas = [];
 
         if ($this->isShiftchartMismatch($gameId, $deltas)) {
@@ -111,15 +115,7 @@ class ValidateNhlGameSummary
     private function validationStatus(int $gameId, array $deltas): string
     {
         if (! empty($deltas)) {
-            $gameType = NhlGame::query()
-                ->where('nhl_game_id', $gameId)
-                ->value('game_type');
-
-            if ((int) $gameType === 1) {
-                return NhlGameValidation::STATUS_INVALIDATED;
-            }
-
-            return NhlGameValidation::STATUS_FAILED;
+            return NhlGameValidation::STATUS_INVALIDATED;
         }
 
         if (! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
@@ -262,6 +258,71 @@ class ValidateNhlGameSummary
                 'summary_toi_seconds' => (int) ($toiDelta['summary_value'] ?? $summary->toi),
                 'boxscore_toi_seconds' => (int) ($boxscore->toi_seconds ?? 0),
                 'delta_seconds' => (float) ($toiDelta['delta'] ?? 0),
+            ]);
+        }
+
+        return $changed;
+    }
+
+    /**
+     * Accept official goalie shift-count convention when trusted TOI already matches.
+     *
+     * @param array<int,array<string,mixed>> $deltas
+     */
+    private function applyGoalieShiftCountReconciliations(int $gameId, array $deltas): bool
+    {
+        if (empty($deltas) || ! $this->sourcePreflight->storedShiftsAvailable($gameId)) {
+            return false;
+        }
+
+        $changed = false;
+        $deltasByPlayer = collect($deltas)
+            ->filter(fn (array $delta): bool => isset($delta['nhl_player_id']))
+            ->groupBy(fn (array $delta): int => (int) $delta['nhl_player_id']);
+
+        foreach ($deltasByPlayer as $playerId => $playerDeltas) {
+            $fields = $playerDeltas
+                ->pluck('field')
+                ->map(static fn (mixed $field): string => (string) $field)
+                ->unique()
+                ->values()
+                ->all();
+
+            if ($fields !== ['shifts']) {
+                continue;
+            }
+
+            $boxscore = NhlBoxscore::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['position', 'shifts', 'toi_seconds']);
+
+            $summary = NhlGameSummary::query()
+                ->where('nhl_game_id', $gameId)
+                ->where('nhl_player_id', $playerId)
+                ->first(['id', 'shifts', 'toi']);
+
+            if (
+                ! $boxscore
+                || ! $summary
+                || strtoupper((string) $boxscore->position) !== 'G'
+                || $boxscore->toi_seconds === null
+                || abs((int) $boxscore->toi_seconds - (int) $summary->toi) > 1
+            ) {
+                continue;
+            }
+
+            $summary->forceFill([
+                'shifts' => (int) $boxscore->shifts,
+            ])->save();
+
+            $changed = true;
+
+            Log::info('Applied NHL goalie shift-count reconciliation from official boxscore convention.', [
+                'game_id' => $gameId,
+                'nhl_player_id' => (int) $playerId,
+                'summary_shifts' => (int) $playerDeltas->first()['summary_value'],
+                'boxscore_shifts' => (int) $boxscore->shifts,
             ]);
         }
 

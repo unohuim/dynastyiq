@@ -479,18 +479,18 @@ Do not introduce new enum values without updating this document.
 
 **Semantic meaning:**
 
-- `approved`: Exact comparable totals matched and the validation can be trusted by downstream work.
-- `failed`: One or more durable validation deltas exist.
+- `approved`: Exact comparable totals matched, or source-backed reconciliation updated summaries to trusted provider values, and the validation can be trusted by downstream work.
+- `failed`: Validation could not execute successfully because processing failed outside normal source-comparison disagreement.
 - `accepted_exception`: An admin reviewed and accepted the failed validation as a known exception.
 - `incomplete`: Comparable core totals passed, but at least one source-dependent field group could not be validated.
-- `invalidated`: Preseason or exhibition validation produced deltas; deltas remain auditable, but the game may continue through import flow.
+- `invalidated`: Validation produced deltas and trusted sources are missing, contradictory, or insufficient to determine the correct value; deltas remain auditable, but the game may continue through import flow.
 - `shiftchart-mismatch`: Remaining validation deltas are limited to shiftchart-derived time on ice or shift count after all documented reconciliation attempts; official boxscore time on ice and shifts are used in summaries, and the deltas remain auditable.
 
 **Notes:**
 
 - `failed` validation status blocks downstream import stages until rerun approval or accepted exception.
 - `incomplete` does not mean parser failure; it indicates provider source coverage is incomplete.
-- `invalidated` is allowed only for NHL game type `1`; game types `2` and `3` must continue to hard fail on validation deltas except documented `shiftchart-mismatch` cases.
+- Game type must not decide whether validation deltas are failed or invalidated.
 
 ### NHL Game Validation Delta Severity
 

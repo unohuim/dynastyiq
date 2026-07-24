@@ -1691,7 +1691,7 @@ it('reconciles tiny zero appearance goalie toi artifacts when pbp does not show 
             ->value('shifts'))->toBe(0);
 });
 
-it('keeps zero appearance goalie toi artifacts at thirty seconds failed for review', function (): void {
+it('keeps zero appearance goalie toi artifacts at thirty seconds invalidated for review', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8476914, [
         'first_name' => 'Joonas',
@@ -1712,7 +1712,7 @@ it('keeps zero appearance goalie toi artifacts at thirty seconds failed for revi
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and($validation->mismatch_count)->toBe(1)
         ->and($validation->deltas()->first()?->field)->toBe('toi_seconds')
         ->and(DB::table('nhl_game_summaries')
@@ -1965,7 +1965,7 @@ it('writes raw provider troubleshooting files when a game import stage stops', f
     ]);
 });
 
-it('persists a failed validation with field deltas', function (): void {
+it('persists an invalidated validation with field deltas when truth cannot be determined', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
@@ -1973,7 +1973,7 @@ it('persists a failed validation with field deltas', function (): void {
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and($validation->mismatch_count)->toBe(1);
     $this->assertDatabaseHas('nhl_game_validation_deltas', [
         'validation_id' => $validation->id,
@@ -1982,7 +1982,7 @@ it('persists a failed validation with field deltas', function (): void {
     ]);
 });
 
-it('persists an invalidated validation with field deltas for preseason games', function (): void {
+it('uses the same invalidated validation status for unresolved preseason field deltas', function (): void {
     ($this->insertGame)(2026010001, ['game_type' => 1]);
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026010001, 8478402, ['goals' => 2]);
@@ -2000,7 +2000,7 @@ it('persists an invalidated validation with field deltas for preseason games', f
     ]);
 });
 
-it('keeps validation deltas as failed hard stops for regular season games', function (): void {
+it('invalidates unresolved validation deltas for regular season games', function (): void {
     ($this->insertGame)(2026020001, ['game_type' => 2]);
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
@@ -2008,7 +2008,7 @@ it('keeps validation deltas as failed hard stops for regular season games', func
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and($validation->mismatch_count)->toBe(1);
 });
 
@@ -2087,7 +2087,7 @@ it('keeps shiftchart mismatch status after official boxscore totals have already
     ]);
 });
 
-it('keeps mixed shift and scoring deltas as failed hard stops without overwriting summaries', function (): void {
+it('invalidates mixed shift and scoring deltas without overwriting summaries', function (): void {
     ($this->insertGame)(2026020001, ['game_type' => 2]);
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, [
@@ -2102,7 +2102,7 @@ it('keeps mixed shift and scoring deltas as failed hard stops without overwritin
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and($validation->mismatch_count)->toBe(3);
 
     $this->assertDatabaseHas('nhl_game_summaries', [
@@ -2113,7 +2113,7 @@ it('keeps mixed shift and scoring deltas as failed hard stops without overwritin
     ]);
 });
 
-it('keeps validation deltas as failed hard stops for playoff games', function (): void {
+it('invalidates unresolved validation deltas for playoff games', function (): void {
     ($this->insertGame)(2026030001, ['game_type' => 3]);
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026030001, 8478402, ['goals' => 2]);
@@ -2121,8 +2121,75 @@ it('keeps validation deltas as failed hard stops for playoff games', function ()
 
     $validation = app(ValidateNhlGameSummary::class)->validate(2026030001);
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and($validation->mismatch_count)->toBe(1);
+});
+
+it('reconciles goalie shift-count-only deltas when official goalie toi already matches', function (): void {
+    ($this->insertGame)(2026010003, ['game_type' => 1]);
+    ($this->makePlayer)(8482445, [
+        'first_name' => 'Devin',
+        'last_name' => 'Cooley',
+        'full_name' => 'Devin Cooley',
+        'position' => 'G',
+    ]);
+    ($this->insertBoxscore)(2026010003, 8482445, [
+        'position' => 'G',
+        'goals' => 0,
+        'assists' => 0,
+        'points' => 0,
+        'sog' => 0,
+        'hits' => 0,
+        'blocks' => 0,
+        'power_play_goals' => 0,
+        'toi' => '60:00',
+        'toi_seconds' => 3600,
+        'shifts' => 0,
+        'goals_against' => 3,
+        'saves' => 26,
+        'shots_against' => 29,
+        'ev_saves' => 22,
+        'ev_shots_against' => 25,
+        'ev_goals_against' => 3,
+        'pp_saves' => 4,
+        'pp_shots_against' => 4,
+        'pp_goals_against' => 0,
+        'pk_saves' => 0,
+        'pk_shots_against' => 0,
+        'pk_goals_against' => 0,
+    ]);
+    ($this->insertSummary)(2026010003, 8482445, [
+        'g' => 0,
+        'a' => 0,
+        'pts' => 0,
+        'sog' => 0,
+        'h' => 0,
+        'b' => 0,
+        'ppg' => 0,
+        'toi' => 3600,
+        'shifts' => 3,
+        'ga' => 3,
+        'sv' => 26,
+        'sa' => 29,
+        'evsv' => 22,
+        'evsa' => 25,
+        'evga' => 3,
+        'ppsv' => 4,
+        'ppsa' => 4,
+        'ppga' => 0,
+        'pksv' => 0,
+        'pksa' => 0,
+        'pkga' => 0,
+    ]);
+
+    $validation = app(ValidateNhlGameSummary::class)->validate(2026010003);
+
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_APPROVED)
+        ->and($validation->mismatch_count)->toBe(0)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026010003)
+            ->where('nhl_player_id', 8482445)
+            ->value('shifts'))->toBe(0);
 });
 
 it('lets preseason invalidated validation jobs complete without failing the stage', function (): void {
@@ -2179,7 +2246,7 @@ it('lets shiftchart mismatch validation jobs complete without failing the stage'
     ]);
 });
 
-it('keeps regular season validation jobs failed when deltas exist', function (): void {
+it('lets unresolved regular season validation jobs complete as invalidated', function (): void {
     ($this->insertGame)(2026020001, ['game_type' => 2]);
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
@@ -2193,17 +2260,17 @@ it('keeps regular season validation jobs failed when deltas exist', function ():
 
     $this->assertDatabaseHas('nhl_game_validations', [
         'nhl_game_id' => 2026020001,
-        'status' => NhlGameValidation::STATUS_FAILED,
+        'status' => NhlGameValidation::STATUS_INVALIDATED,
         'mismatch_count' => 1,
     ]);
     $this->assertDatabaseHas('nhl_import_progress', [
         'game_id' => '2026020001',
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
-        'status' => 'error',
+        'status' => 'completed',
     ]);
 });
 
-it('writes troubleshooting markdown snapshots when validation fails', function (): void {
+it('writes troubleshooting markdown snapshots when validation is invalidated', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
@@ -2267,7 +2334,7 @@ it('writes troubleshooting markdown snapshots when validation fails', function (
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
     $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and(File::exists($directory . '/boxscore_2026020001.md'))->toBeTrue()
         ->and(File::exists($directory . '/pbp_2026020001.md'))->toBeTrue()
         ->and(File::exists($directory . '/shifts_2026020001.md'))->toBeTrue()
@@ -2345,7 +2412,7 @@ it('includes linked unit context for plus-minus troubleshooting snapshots', func
     $validation = app(ValidateNhlGameSummary::class)->validate(2026020001);
     $directory = (string) config('apiImportNhl.validation_troubleshooting_path');
 
-    expect($validation->status)->toBe(NhlGameValidation::STATUS_FAILED)
+    expect($validation->status)->toBe(NhlGameValidation::STATUS_INVALIDATED)
         ->and(File::get($directory . '/pbp_2026020001.md'))
         ->toContain('Plus/Minus Linked Goal Context', '746', 'Test Player (8478402)', '+1');
 });
@@ -5858,7 +5925,7 @@ it('accepts a validation exception without dispatching unit work', function (): 
     Bus::assertNotDispatched(MakeShiftUnitsNhlJob::class);
 });
 
-it('reruns validation and keeps failed validation progress in error', function (): void {
+it('reruns unresolved validation and marks validation progress completed as invalidated', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8478402);
     ($this->insertBoxscore)(2026020001, 8478402, ['goals' => 2]);
@@ -5869,12 +5936,12 @@ it('reruns validation and keeps failed validation progress in error', function (
     $this->actingAs(($this->makeSuperAdmin)())
         ->postJson(route('admin.nhl-validations.rerun', $validation))
         ->assertOk()
-        ->assertJsonPath('status', NhlGameValidation::STATUS_FAILED);
+        ->assertJsonPath('status', NhlGameValidation::STATUS_INVALIDATED);
 
     $this->assertDatabaseHas('nhl_import_progress', [
         'game_id' => '2026020001',
         'import_type' => NhlImportStages::VALIDATE_SUMMARY,
-        'status' => 'error',
+        'status' => 'completed',
     ]);
 });
 
