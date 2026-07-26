@@ -49,7 +49,9 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Gate::define('refresh-leagues', function (User $user) {
-            return $user->hasGlobalRole('super-admin');
+            return $user->hasGlobalRole('super-admin')
+                || $user->roles()->where('slug', 'super-admin')->exists()
+                || $user->roles()->where('level', '>=', 99)->exists();
         });
 
 

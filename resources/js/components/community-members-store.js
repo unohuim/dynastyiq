@@ -1068,6 +1068,13 @@ function communityMembersHub(config) {
         leagueTeamsLoading: false,
         leagueTeamsError: "",
         leagueTeamsRequestUrl: "",
+        rosterShareOpen: false,
+        rosterShareTeam: null,
+        rosterShareLinks: [],
+        rosterShareLoading: false,
+        rosterShareSaving: false,
+        rosterShareError: "",
+        rosterShareMessage: "",
         leagueTransactionsLoading: false,
         leagueTransactionsError: "",
         leagueTransactionsMessage: "",
@@ -1460,6 +1467,168 @@ function communityMembersHub(config) {
                     this.leagueTeamsLoading = false;
                 }
             }
+        },
+        openRosterShare(team) {
+            if (!team?.can_share_roster || !team?.share_links_url) {
+                return;
+            }
+
+            this.rosterShareTeam = team;
+            this.rosterShareOpen = true;
+            this.rosterShareLinks = [];
+            this.rosterShareError = "";
+            this.rosterShareMessage = "";
+            this.loadRosterShareLinks();
+        },
+        async loadRosterShareLinks() {
+            const url = this.rosterShareTeam?.share_links_url || "";
+
+            if (!url || this.rosterShareLoading) {
+                return;
+            }
+
+            this.rosterShareLoading = true;
+            this.rosterShareError = "";
+
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload?.message || "Could not load share links.");
+                }
+
+                this.rosterShareLinks = Array.isArray(payload.links) ? payload.links : [];
+            } catch (error) {
+                this.rosterShareError = error?.message || "Could not load share links.";
+            } finally {
+                this.rosterShareLoading = false;
+            }
+        },
+        async createRosterShareLink() {
+            const url = this.rosterShareTeam?.share_link_create_url || "";
+
+            if (!url || this.rosterShareSaving) {
+                return;
+            }
+
+            this.rosterShareSaving = true;
+            this.rosterShareError = "";
+            this.rosterShareMessage = "";
+
+            try {
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRF-TOKEN": csrfToken(),
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({ label: "Roster share" }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload?.message || "Could not create share link.");
+                }
+
+                this.rosterShareLinks = [payload, ...this.rosterShareLinks];
+            } catch (error) {
+                this.rosterShareError = error?.message || "Could not create share link.";
+            } finally {
+                this.rosterShareSaving = false;
+            }
+        },
+        async updateRosterShareLink(link, values) {
+            const baseUrl = this.rosterShareTeam?.share_links_url || "";
+
+            if (!baseUrl || !link?.id || this.rosterShareSaving) {
+                return;
+            }
+
+            this.rosterShareSaving = true;
+            this.rosterShareError = "";
+            this.rosterShareMessage = "";
+
+            try {
+                const response = await fetch(`${baseUrl}/${link.id}`, {
+                    method: "PUT",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRF-TOKEN": csrfToken(),
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify(values),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload?.message || "Could not update share link.");
+                }
+
+                this.rosterShareLinks = this.rosterShareLinks.map((item) => (item.id === payload.id ? payload : item));
+            } catch (error) {
+                this.rosterShareError = error?.message || "Could not update share link.";
+            } finally {
+                this.rosterShareSaving = false;
+            }
+        },
+        async revokeRosterShareLink(link) {
+            const baseUrl = this.rosterShareTeam?.share_links_url || "";
+
+            if (!baseUrl || !link?.id || this.rosterShareSaving) {
+                return;
+            }
+
+            this.rosterShareSaving = true;
+            this.rosterShareError = "";
+            this.rosterShareMessage = "";
+
+            try {
+                const response = await fetch(`${baseUrl}/${link.id}`, {
+                    method: "DELETE",
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "X-CSRF-TOKEN": csrfToken(),
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload?.message || "Could not revoke share link.");
+                }
+
+                this.rosterShareLinks = this.rosterShareLinks.map((item) => (item.id === payload.id ? payload : item));
+            } catch (error) {
+                this.rosterShareError = error?.message || "Could not revoke share link.";
+            } finally {
+                this.rosterShareSaving = false;
+            }
+        },
+        copyRosterShareLink(link) {
+            if (!link?.copy_enabled || !link?.url || !navigator.clipboard) {
+                return;
+            }
+
+            navigator.clipboard.writeText(link.url)
+                .then(() => {
+                    this.rosterShareMessage = "Copied";
+                })
+                .catch(() => {
+                    this.rosterShareError = "Could not copy link.";
+                });
         },
         async refreshCommunityLeagueTransactions() {
             const url = this.selectedLeague?.transactionsBrowserRpcUrl || "";

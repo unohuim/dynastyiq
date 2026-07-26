@@ -25,6 +25,7 @@ use App\Http\Controllers\LeaguesController;
 use App\Http\Controllers\CommunityLeagues;
 use App\Http\Controllers\CommunityMemberController;
 use App\Http\Controllers\CommunityTierController;
+use App\Http\Controllers\PlatformTeamRosterShareLinkController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\PatreonConnectController;
 use App\Http\Controllers\PatreonSyncController;
@@ -51,6 +52,11 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/api/stats', [StatsController::class, 'payload'])
         ->middleware('web')
         ->name('stats.payload');
+
+    Route::get('/shared/rosters/{token}', [LeagueController::class, 'sharedRoster'])
+        ->name('shared.rosters.show');
+    Route::get('/shared/rosters/{token}/players-payload', [LeagueController::class, 'sharedRosterPlayersPayload'])
+        ->name('shared.rosters.players-payload');
 
     Route::get('/transactions', [NhlPlayerTransactionController::class, 'index'])
         ->name('transactions.index');
@@ -182,6 +188,18 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         Route::get('/communities/{c_id}/leagues/{l_id}/teams', [CommunityLeagues::class, 'teams'])
             ->middleware('auth')
             ->name('community.leagues.teams');
+        Route::get('/communities/{c_id}/leagues/{l_id}/teams/{team}/roster-share-links', [PlatformTeamRosterShareLinkController::class, 'index'])
+            ->middleware('auth')
+            ->name('community.leagues.teams.roster-share-links.index');
+        Route::post('/communities/{c_id}/leagues/{l_id}/teams/{team}/roster-share-links', [PlatformTeamRosterShareLinkController::class, 'store'])
+            ->middleware('auth')
+            ->name('community.leagues.teams.roster-share-links.store');
+        Route::put('/communities/{c_id}/leagues/{l_id}/teams/{team}/roster-share-links/{shareLink}', [PlatformTeamRosterShareLinkController::class, 'update'])
+            ->middleware('auth')
+            ->name('community.leagues.teams.roster-share-links.update');
+        Route::delete('/communities/{c_id}/leagues/{l_id}/teams/{team}/roster-share-links/{shareLink}', [PlatformTeamRosterShareLinkController::class, 'destroy'])
+            ->middleware('auth')
+            ->name('community.leagues.teams.roster-share-links.destroy');
         Route::get('/communities/{c_id}/leagues/{l_id}/draft-summary', [CommunityLeagues::class, 'draftSummary'])
             ->middleware('auth')
             ->name('community.leagues.draft-summary');

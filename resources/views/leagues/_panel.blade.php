@@ -9,8 +9,12 @@
   $leagueStatsFallbackName = $league?->platform === 'fantrax'
       ? $league->name . ' Fantrax'
       : $league?->name . ' Scoring';
+  $publicLockedTeamId = (string) ($publicLockedTeamId ?? '');
+  $isPublicLockedRoster = $publicLockedTeamId !== '';
   $teamRowsForHeader = collect($teams ?? [])->reject(static fn (array $team): bool => in_array($team['id'] ?? null, ['__all_players__', '__free_agents__'], true));
-  $ownedTeamForHeader = $teamRowsForHeader->first(static fn (array $team): bool => (bool) ($team['owned_by_me'] ?? false));
+  $ownedTeamForHeader = $isPublicLockedRoster
+      ? $teamRowsForHeader->first(static fn (array $team): bool => (string) ($team['id'] ?? '') === $publicLockedTeamId)
+      : $teamRowsForHeader->first(static fn (array $team): bool => (bool) ($team['owned_by_me'] ?? false));
   $teamCountForHeader = $teamRowsForHeader->count();
   $teamCountLabel = $teamCountForHeader === 1 ? 'Team' : 'Teams';
   $canManageLeague = (bool) ($canManageLeague ?? false);
@@ -64,6 +68,7 @@
       fantraxContractCodes: @js($fantraxContractCodes ?? []),
       fantraxContractCodeDefinitions: @js((object) ($fantraxContractCodeDefinitions ?? [])),
       initialLeagueTab: @js($initialLeagueTab ?? null),
+      publicLockedTeamId: @js($publicLockedTeamId),
       activeLeagueTab: @js($initialLeagueTab ?? 'draft'),
       playerSearch: '',
       capView: 'sheet',
@@ -288,6 +293,8 @@
         return ['overview', 'draft', 'players', 'teams', 'cap'].includes(String(tab || '')) ? String(tab) : 'draft';
       },
       validCapView(view){
+        if (this.publicLockedTeamId) return 'sheet';
+
         return ['sheet', 'adjustments', 'limits'].includes(String(view || '')) ? String(view) : 'sheet';
       },
       reloadMountedLeagueStats(){
@@ -345,6 +352,11 @@
       // pick my team as default when possible
       i: (() => {
         const teams = @js($teams ?? []);
+        const lockedTeamId = @js($publicLockedTeamId);
+        if (lockedTeamId) {
+          const lockedIndex = teams.findIndex(t => String(t?.id || '') === String(lockedTeamId));
+          if (lockedIndex !== -1) return lockedIndex;
+        }
         const me = @js($authId);
         let idx = teams.findIndex(t => t?.owned_by_me === true);
         if (idx !== -1) return idx;
@@ -357,7 +369,7 @@
       get current(){ return this.teams[this.i] ?? null },
       get filteredPlayers(){
         const q = (this.playerSearch || '').toLowerCase().trim();
-        const players = q === '' ? (this.current?.players ?? []) : (this.searchPlayers ?? []);
+        const players = (q === '' || this.publicLockedTeamId) ? (this.current?.players ?? []) : (this.searchPlayers ?? []);
 
         if (q === '') return players;
 
@@ -380,6 +392,7 @@
         const q = (this.teamQuery || '').toLowerCase().trim();
         return (this.teams || [])
           .map((t, idx) => ({ t, idx }))
+          .filter(o => !this.publicLockedTeamId || String(o.t?.id || '') === String(this.publicLockedTeamId))
           .filter(o => q === '' || (o.t.name || '').toLowerCase().includes(q));
       },
       shouldShowRosterSections(){
@@ -400,6 +413,7 @@
         return '';
       },
       select(idx){
+        if (this.publicLockedTeamId && String(this.teams[idx]?.id || '') !== String(this.publicLockedTeamId)) return;
         this.i = idx;
         this.teamQuery = this.teams[idx]?.name ?? '';
         this.playerSearch = '';
@@ -437,6 +451,12 @@
         }
       },
       resetSelectedTeamIndex(){
+        if (this.publicLockedTeamId) {
+          const idx = (this.teams || []).findIndex(t => String(t?.id || '') === String(this.publicLockedTeamId));
+          this.i = idx !== -1 ? idx : 0;
+          return;
+        }
+
         const me = @js($authId);
         let idx = (this.teams || []).findIndex(t => t?.owned_by_me === true);
         if (idx !== -1) {
@@ -448,6 +468,10 @@
         this.i = idx !== -1 ? idx : 0;
       },
       defaultCapTeamId(){
+        if (this.publicLockedTeamId) {
+          return String(this.publicLockedTeamId);
+        }
+
         const team = (this.teams || []).find(team => team?.owned_by_me === true)
           || (this.teams || []).find(team => (team?.owner_user_ids || []).includes(this.currentUserId))
           || null;
@@ -519,7 +543,7 @@
           this.playersFreeAgentsPayloadUrl = payload.playersFreeAgentsPayloadUrl ?? this.playersFreeAgentsPayloadUrl;
           this.applyDeferredTeams();
           this.resetSelectedTeamIndex();
-          this.ensureCapTeamSelection();
+          this.ensureCapTeamSelection(this.publicLockedTeamId);
           this.playersPayloadLoaded = true;
           if (hydrateFreeAgents) {
             this.$nextTick(() => this.loadFreeAgentsPayload());
@@ -2136,7 +2160,7 @@
                 @else
                   <span class="h-2 w-2 rounded-full bg-blue-300"></span>
                 @endif
-                <span class="shrink-0 text-blue-100/80">Your Team:</span>
+                <span class="shrink-0 text-blue-100/80">{{ $isPublicLockedRoster ? 'Shared Team:' : 'Your Team:' }}</span>
                 <span class="truncate">{{ $ownedTeamForHeader['name'] ?? 'Not linked' }}</span>
               </div>
             </div>
@@ -2148,9 +2172,11 @@
     </div>
 
     <div class="mb-4 flex shrink-0 items-center gap-7 border-b border-slate-200 px-7">
-      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
-        Overview
-      </button>
+      @if (! $isPublicLockedRoster)
+        <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+          Overview
+        </button>
+      @endif
       <button
         type="button"
         class="border-b-2 py-3 text-sm font-semibold transition"
@@ -2167,14 +2193,16 @@
       >
         Players
       </button>
-      <button
-        type="button"
-        class="border-b-2 py-3 text-sm font-semibold transition"
-        :class="activeLeagueTab === 'teams' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
-        @click="openLeagueTab('teams')"
-      >
-        Teams
-      </button>
+      @if (! $isPublicLockedRoster)
+        <button
+          type="button"
+          class="border-b-2 py-3 text-sm font-semibold transition"
+          :class="activeLeagueTab === 'teams' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800'"
+          @click="openLeagueTab('teams')"
+        >
+          Teams
+        </button>
+      @endif
       <button
         type="button"
         class="border-b-2 py-3 text-sm font-semibold transition"
@@ -2183,12 +2211,14 @@
       >
         Cap
       </button>
-      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
-        Standings
-      </button>
-      <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
-        Activity
-      </button>
+      @if (! $isPublicLockedRoster)
+        <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+          Standings
+        </button>
+        <button type="button" class="border-b-2 border-transparent py-3 text-sm font-semibold text-slate-500 transition hover:text-slate-800">
+          Activity
+        </button>
+      @endif
     </div>
 
     <div class="min-h-0 flex-1 overflow-hidden">
@@ -2222,7 +2252,7 @@
                 @focus="loadFreeAgentsPayload()"
                 @input.debounce.200ms="loadFreeAgentsPayload()"
                 class="block w-full rounded-md bg-white py-2 pl-3 pr-3 text-sm text-slate-900 outline outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600"
-                placeholder="Search all players..."
+                placeholder="{{ $isPublicLockedRoster ? 'Search roster...' : 'Search all players...' }}"
                 autocomplete="off"
               />
               <div x-show="freeAgentsPayloadLoading" class="mt-1 text-xs text-slate-500">Loading free agents...</div>
@@ -2240,79 +2270,95 @@
 
             {{-- Combobox --}}
             <div class="relative z-50" @click.stop>
-              <label for="team-combobox" class="block text-sm font-medium text-slate-900 sr-only">Team</label>
-              <div class="flex items-center gap-2">
-                <template x-if="hasTeamOwnerAvatars(current)">
-                  <div class="isolate flex -space-x-2 overflow-hidden">
-                    <template x-for="(avatar, index) in teamOwnerAvatarUrls(current)" :key="`selected-team-owner-${index}-${avatar}`">
-                      <img
-                        :src="avatar"
-                        alt=""
-                        class="relative h-8 w-8 rounded-full object-cover ring-2 ring-white"
-                        :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
-                        loading="lazy"
-                      >
-                    </template>
-                  </div>
-                </template>
-                <span
-                  x-show="!hasTeamOwnerAvatars(current)"
-                  class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
-                  x-text="current?.id === '__free_agents__' ? 'FA' : (current?.id === '__all_players__' ? 'ALL' : 'TM')"
-                ></span>
-                <div class="relative w-full">
-                  <input
-                    id="team-combobox"
-                    type="text"
-                    x-model="teamQuery"
-                    @focus="teamListOpen = true; teamQuery = ''"
-                    @keydown.escape.prevent.stop="teamListOpen = false"
-                    class="block w-full rounded-md bg-white py-2 pl-3 pr-10 text-sm text-slate-900 outline outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600"
-                    :placeholder="current?.name ?? 'Select team...'"
-                    autocomplete="off"
-                  />
-                  <button type="button"
-                          class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 focus:outline-none"
-                          @click.stop="teamListOpen = !teamListOpen" aria-label="Toggle team list">
-                    <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-slate-400">
-                      <path fill-rule="evenodd" clip-rule="evenodd"
-                            d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"/>
-                    </svg>
-                  </button>
-
-                  {{-- Options --}}
-                  <div x-show="teamListOpen" @click.outside="teamListOpen = false" x-transition
-                       class="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg outline outline-1 outline-black/5">
-                    <template x-for="o in filtered" :key="o.idx">
-                      <button type="button"
-                              class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-slate-900 hover:bg-indigo-600 hover:text-white"
-                              @click="select(o.idx)">
-                        <template x-if="hasTeamOwnerAvatars(o.t)">
-                          <div class="isolate flex -space-x-1.5 overflow-hidden">
-                            <template x-for="(avatar, index) in teamOwnerAvatarUrls(o.t)" :key="`team-owner-${o.t.id}-${index}-${avatar}`">
-                              <img
-                                :src="avatar"
-                                class="relative h-6 w-6 shrink-0 rounded-full object-cover ring-2 ring-white"
-                                :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
-                                alt=""
-                                loading="lazy"
-                              >
-                            </template>
-                          </div>
-                        </template>
-                        <template x-if="!hasTeamOwnerAvatars(o.t)">
-                          <span
-                            class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600 ring-1 ring-black/5"
-                            x-text="o.t.id === '__free_agents__' ? 'FA' : (o.t.id === '__all_players__' ? 'ALL' : 'TM')"
-                          ></span>
-                        </template>
-                        <span class="truncate" x-text="o.t.name ?? 'Team'"></span>
-                      </button>
-                    </template>
-                    <div x-show="filtered.length === 0" class="px-3 py-2 text-slate-500">No matches.</div>
+              @if ($isPublicLockedRoster)
+                <div class="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <template x-if="hasTeamOwnerAvatars(current)">
+                    <img :src="teamOwnerAvatarUrls(current)[0]" alt="" class="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200">
+                  </template>
+                  <span
+                    x-show="!hasTeamOwnerAvatars(current)"
+                    class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                  >TM</span>
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-semibold text-slate-900" x-text="current?.name ?? 'Roster'"></div>
+                    <div class="text-xs text-slate-500">Shared team roster</div>
                   </div>
                 </div>
-              </div>
+              @else
+                <label for="team-combobox" class="block text-sm font-medium text-slate-900 sr-only">Team</label>
+                <div class="flex items-center gap-2">
+                  <template x-if="hasTeamOwnerAvatars(current)">
+                    <div class="isolate flex -space-x-2 overflow-hidden">
+                      <template x-for="(avatar, index) in teamOwnerAvatarUrls(current)" :key="`selected-team-owner-${index}-${avatar}`">
+                        <img
+                          :src="avatar"
+                          alt=""
+                          class="relative h-8 w-8 rounded-full object-cover ring-2 ring-white"
+                          :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
+                          loading="lazy"
+                        >
+                      </template>
+                    </div>
+                  </template>
+                  <span
+                    x-show="!hasTeamOwnerAvatars(current)"
+                    class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200"
+                    x-text="current?.id === '__free_agents__' ? 'FA' : (current?.id === '__all_players__' ? 'ALL' : 'TM')"
+                  ></span>
+                  <div class="relative w-full">
+                    <input
+                      id="team-combobox"
+                      type="text"
+                      x-model="teamQuery"
+                      @focus="teamListOpen = true; teamQuery = ''"
+                      @keydown.escape.prevent.stop="teamListOpen = false"
+                      class="block w-full rounded-md bg-white py-2 pl-3 pr-10 text-sm text-slate-900 outline outline-1 -outline-offset-1 outline-slate-300 placeholder:text-slate-400 focus:outline focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600"
+                      :placeholder="current?.name ?? 'Select team...'"
+                      autocomplete="off"
+                    />
+                    <button type="button"
+                            class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 focus:outline-none"
+                            @click.stop="teamListOpen = !teamListOpen" aria-label="Toggle team list">
+                      <svg viewBox="0 0 20 20" fill="currentColor" class="size-5 text-slate-400">
+                        <path fill-rule="evenodd" clip-rule="evenodd"
+                              d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"/>
+                      </svg>
+                    </button>
+
+                    {{-- Options --}}
+                    <div x-show="teamListOpen" @click.outside="teamListOpen = false" x-transition
+                         class="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-md bg-white p-1 text-sm shadow-lg outline outline-1 outline-black/5">
+                      <template x-for="o in filtered" :key="o.idx">
+                        <button type="button"
+                                class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-slate-900 hover:bg-indigo-600 hover:text-white"
+                                @click="select(o.idx)">
+                          <template x-if="hasTeamOwnerAvatars(o.t)">
+                            <div class="isolate flex -space-x-1.5 overflow-hidden">
+                              <template x-for="(avatar, index) in teamOwnerAvatarUrls(o.t)" :key="`team-owner-${o.t.id}-${index}-${avatar}`">
+                                <img
+                                  :src="avatar"
+                                  class="relative h-6 w-6 shrink-0 rounded-full object-cover ring-2 ring-white"
+                                  :class="index === 0 ? 'z-30' : (index === 1 ? 'z-20' : 'z-10')"
+                                  alt=""
+                                  loading="lazy"
+                                >
+                              </template>
+                            </div>
+                          </template>
+                          <template x-if="!hasTeamOwnerAvatars(o.t)">
+                            <span
+                              class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600 ring-1 ring-black/5"
+                              x-text="o.t.id === '__free_agents__' ? 'FA' : (o.t.id === '__all_players__' ? 'ALL' : 'TM')"
+                            ></span>
+                          </template>
+                          <span class="truncate" x-text="o.t.name ?? 'Team'"></span>
+                        </button>
+                      </template>
+                      <div x-show="filtered.length === 0" class="px-3 py-2 text-slate-500">No matches.</div>
+                    </div>
+                  </div>
+                </div>
+              @endif
             </div>
           </div>
 
@@ -2439,24 +2485,37 @@
               <p class="mt-1 truncate text-xs text-slate-500" x-text="capTeam ? `${capTeam.name} ${customCap ? 'Fantrax salary outlook' : 'contract outlook'}` : 'No fantasy team is linked for this league.'"></p>
             </div>
             <div x-show="capTeam" class="flex flex-wrap items-center justify-end gap-3">
-              <div class="inline-flex rounded-md bg-slate-100 p-0.5">
-                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'sheet' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('sheet')">Sheet</button>
-                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'adjustments' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('adjustments')">Buyouts &amp; Retentions</button>
-                <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'limits' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('limits')">Limits</button>
-              </div>
-              <label class="block">
-                <span class="sr-only">Cap team</span>
-                <select
-                  class="block w-56 rounded-md border-0 bg-white py-1.5 pl-3 pr-9 text-sm font-medium text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:bg-slate-50 disabled:text-slate-500"
-                  :value="capTeamId"
-                  :disabled="capTeamLoading"
-                  @change="changeCapTeam"
-                >
-                  <template x-for="team in capTeamOptions" :key="team.id">
-                    <option :value="team.id" x-text="team.name"></option>
-                  </template>
-                </select>
-              </label>
+              @if ($isPublicLockedRoster)
+                <div class="inline-flex rounded-md bg-slate-100 p-0.5">
+                  <span class="rounded bg-white px-3 py-1.5 text-xs font-semibold text-slate-950 shadow-sm">Sheet</span>
+                </div>
+              @else
+                <div class="inline-flex rounded-md bg-slate-100 p-0.5">
+                  <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'sheet' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('sheet')">Sheet</button>
+                  <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'adjustments' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('adjustments')">Buyouts &amp; Retentions</button>
+                  <button type="button" class="rounded px-3 py-1.5 text-xs font-semibold transition-colors" :class="capView === 'limits' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-600 hover:text-slate-900'" @click="setCapView('limits')">Limits</button>
+                </div>
+              @endif
+              @if ($isPublicLockedRoster)
+                <div class="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
+                  <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600 ring-1 ring-slate-200">TM</span>
+                  <span class="max-w-56 truncate text-sm font-semibold text-slate-900" x-text="capTeam?.name ?? 'Shared team'"></span>
+                </div>
+              @else
+                <label class="block">
+                  <span class="sr-only">Cap team</span>
+                  <select
+                    class="block w-56 rounded-md border-0 bg-white py-1.5 pl-3 pr-9 text-sm font-medium text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 transition focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:bg-slate-50 disabled:text-slate-500"
+                    :value="capTeamId"
+                    :disabled="capTeamLoading"
+                    @change="changeCapTeam"
+                  >
+                    <template x-for="team in capTeamOptions" :key="team.id">
+                      <option :value="team.id" x-text="team.name"></option>
+                    </template>
+                  </select>
+                </label>
+              @endif
               <div class="min-w-16 text-right text-xs text-slate-500">
                 <div>
                   <span class="font-semibold text-slate-700" x-text="capPlayers.length"></span>
@@ -2464,16 +2523,18 @@
                 </div>
                 <div x-show="capTeamLoading" class="mt-1 text-[11px] text-slate-500">Loading...</div>
               </div>
-              <button
-                type="button"
-                class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                @click="capSettingsDrawerOpen = true"
-                aria-label="Cap options"
-              >
-                <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
-                  <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.53 1.53 0 0 1-2.29.95c-1.37-.84-2.94.73-2.1 2.1.54.89.06 2.05-.95 2.29-1.56.38-1.56 2.6 0 2.98 1.01.24 1.49 1.4.95 2.29-.84 1.37.73 2.94 2.1 2.1.89-.54 2.05-.06 2.29.95.38 1.56 2.6 1.56 2.98 0 .24-1.01 1.4-1.49 2.29-.95 1.37.84 2.94-.73 2.1-2.1-.54-.89-.06-2.05.95-2.29 1.56-.38 1.56-2.6 0-2.98a1.53 1.53 0 0 1-.95-2.29c.84-1.37-.73-2.94-2.1-2.1-.89.54-2.05.06-2.29-.95ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clip-rule="evenodd" />
-                </svg>
-              </button>
+              @if (! $isPublicLockedRoster)
+                <button
+                  type="button"
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                  @click="capSettingsDrawerOpen = true"
+                  aria-label="Cap options"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.53 1.53 0 0 1-2.29.95c-1.37-.84-2.94.73-2.1 2.1.54.89.06 2.05-.95 2.29-1.56.38-1.56 2.6 0 2.98 1.01.24 1.49 1.4.95 2.29-.84 1.37.73 2.94 2.1 2.1.89-.54 2.05-.06 2.29.95.38 1.56 2.6 1.56 2.98 0 .24-1.01 1.4-1.49 2.29-.95 1.37.84 2.94-.73 2.1-2.1-.54-.89-.06-2.05.95-2.29 1.56-.38 1.56-2.6 0-2.98a1.53 1.53 0 0 1-.95-2.29c.84-1.37-.73-2.94-2.1-2.1-.89.54-2.05.06-2.29-.95ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clip-rule="evenodd" />
+                  </svg>
+                </button>
+              @endif
             </div>
           </div>
           <div x-show="capTeamError" class="border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-700" x-text="capTeamError"></div>
@@ -2754,7 +2815,7 @@
                               inputmode="decimal"
                               class="h-6 w-14 rounded border-0 bg-slate-50 px-1 text-right text-[10px] font-semibold text-slate-700 shadow-sm ring-1 ring-inset ring-slate-400 transition-colors focus:bg-white focus:ring-2 focus:ring-inset focus:ring-indigo-600 disabled:cursor-wait disabled:opacity-60"
                               :value="capProjectionEditValue(row.player, column.key)"
-                              :disabled="savingCapProjection"
+                              :disabled="savingCapProjection || !capProjectionsUpdateUrl"
                               :aria-label="`Projected cap for ${row.player.name} in ${column.label}`"
                               @change="saveCapProjection(row.player, column.key, $event.target.value)"
                             >

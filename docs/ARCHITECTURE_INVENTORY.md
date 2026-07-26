@@ -726,6 +726,38 @@ $dto = $leagueShowViewModel->toDto();
 
 ---
 
+### Platform Team Roster Share Links
+
+**Name:** Platform Team Roster Share Links
+**Type:** Public Token Sharing Contract
+**Location:**
+- `app/Models/PlatformTeamRosterShareLink.php`
+- `app/Http/Controllers/PlatformTeamRosterShareLinkController.php`
+- `app/Http/Controllers/LeagueController.php`
+- `resources/views/communities/leagues/show.blade.php`
+- `resources/views/leagues/public-roster.blade.php`
+
+**Purpose:**
+Allow league commissioners to create revocable public roster URLs for a single platform team without requiring the future roster viewer to have an account.
+
+**When to Use:**
+Commissioner-facing workflows that need a temporary public roster view for one orphan team.
+
+**When Not to Use:**
+Authenticated manager league access, league-wide public exports, or permanent public league pages.
+
+**Public Interface:**
+- `community.leagues.teams.roster-share-links.*`
+- `shared.rosters.show`
+- `shared.rosters.players-payload`
+
+**Example Usage:**
+```php
+$token = PlatformTeamRosterShareLink::newPlainToken();
+```
+
+---
+
 ## Stats & Player Data
 
 ### Perspective-Driven Stats Payload

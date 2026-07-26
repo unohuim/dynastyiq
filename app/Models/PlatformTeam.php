@@ -65,6 +65,14 @@ class PlatformTeam extends Model
     }
 
     /**
+     * Public roster share links for this fantasy team.
+     */
+    public function rosterShareLinks(): HasMany
+    {
+        return $this->hasMany(PlatformTeamRosterShareLink::class);
+    }
+
+    /**
      * Transaction entries where this team is the provider-perspective team.
      */
     public function transactionEntries(): HasMany

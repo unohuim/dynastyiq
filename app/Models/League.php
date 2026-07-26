@@ -62,6 +62,14 @@ class League extends Model
         return $this->hasMany(LeagueUserRole::class);
     }
 
+    /**
+     * Public roster share links created for teams in this league.
+     */
+    public function rosterShareLinks(): HasMany
+    {
+        return $this->hasMany(PlatformTeamRosterShareLink::class);
+    }
+
     public function activePlatformLeague(): ?PlatformLeague
     {
         return $this->activePlatformBinding()?->platformLeague;

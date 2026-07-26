@@ -14,7 +14,8 @@
             ->first();
     }
 
-    $canEdit = $highestRole && (int) ($highestRole->level ?? 0) >= 10;
+    $canEdit = ($highestRole && (int) ($highestRole->level ?? 0) >= 10)
+        || (bool) ($user?->can('refresh-leagues') ?? false);
     $roleLabel = $highestRole ? ucfirst((string) $highestRole->name) : 'Member';
 
     $guilds = $currentOrg
@@ -728,6 +729,18 @@
                                         <img :src="avatar" alt="" class="h-7 w-7 rounded-full object-cover ring-1 ring-slate-200">
                                     </template>
                                     <span class="max-w-48 truncate text-right text-xs" :class="theme === 'dark' ? 'text-slate-400' : 'text-slate-500'" x-text="(team.owner_names || []).join(', ')"></span>
+                                    <button
+                                        type="button"
+                                        x-show="team.can_share_roster"
+                                        x-on:click="openRosterShare(team)"
+                                        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border shadow-sm transition focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                                        :class="theme === 'dark' ? 'border-slate-700 bg-slate-900 text-slate-300 hover:border-indigo-400 hover:text-indigo-300' : 'border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'"
+                                        :aria-label="`Share roster for ${team.name || 'team'}`"
+                                    >
+                                        <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                                            <path d="M13 5a3 3 0 1 1 .88 2.12l-5.18 2.59a3.02 3.02 0 0 1 0 .58l5.18 2.59A3 3 0 1 1 13 15a2.96 2.96 0 0 1 .05-.53L7.87 11.88a3 3 0 1 1 0-3.76l5.18-2.59A2.96 2.96 0 0 1 13 5Z"/>
+                                        </svg>
+                                    </button>
                                 </div>
                             </div>
                         </template>
@@ -1224,6 +1237,72 @@
     </div>
 
     @if ($canEdit)
+        <x-ui.slide-over show="rosterShareOpen" close-action="rosterShareOpen = false" title-id="community-roster-share-title" max-width="max-w-lg">
+            <div class="border-b border-slate-200 px-6 py-5">
+                <div class="flex items-start justify-between gap-4">
+                    <div class="min-w-0">
+                        <h3 id="community-roster-share-title" class="text-base font-semibold text-slate-900">Roster Share</h3>
+                        <p class="mt-1 truncate text-sm text-slate-500" x-text="rosterShareTeam?.name || 'Selected team'"></p>
+                    </div>
+                    <button type="button" x-on:click="rosterShareOpen = false" aria-label="Close roster share" class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+                        <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M5.22 5.22a.75.75 0 0 1 1.06 0L10 8.94l3.72-3.72a.75.75 0 1 1 1.06 1.06L11.06 10l3.72 3.72a.75.75 0 1 1-1.06 1.06L10 11.06l-3.72 3.72a.75.75 0 1 1-1.06-1.06L8.94 10 5.22 6.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+                <div x-show="rosterShareError" x-text="rosterShareError" class="mb-4 rounded-lg border border-rose-100 bg-rose-50 px-3 py-2 text-sm text-rose-700"></div>
+                <div x-show="rosterShareMessage" x-text="rosterShareMessage" class="mb-4 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"></div>
+
+                <button type="button" x-on:click="createRosterShareLink()" x-bind:disabled="rosterShareSaving || rosterShareLoading" class="mb-5 inline-flex h-9 items-center gap-2 rounded-md bg-slate-900 px-3 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60">
+                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                        <path d="M10 3.25a.75.75 0 0 1 .75.75v5.25H16a.75.75 0 0 1 0 1.5h-5.25V16a.75.75 0 0 1-1.5 0v-5.25H4a.75.75 0 0 1 0-1.5h5.25V4a.75.75 0 0 1 .75-.75Z"/>
+                    </svg>
+                    <span>Create URL</span>
+                </button>
+
+                <div x-show="rosterShareLoading" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">Loading share URLs...</div>
+                <div x-show="!rosterShareLoading && rosterShareLinks.length === 0" class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">No roster URLs have been created for this team.</div>
+
+                <div x-show="!rosterShareLoading && rosterShareLinks.length > 0" class="space-y-3">
+                    <template x-for="link in rosterShareLinks" :key="link.id">
+                        <div class="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                            <div class="flex items-center justify-between gap-4">
+                                <div class="min-w-0">
+                                    <div class="truncate text-sm font-semibold text-slate-900" x-text="link.label || 'Roster share'"></div>
+                                    <div class="mt-0.5 truncate text-[11px] text-slate-500" x-text="link.expires_at ? `Expires ${new Date(link.expires_at).toLocaleDateString()}` : 'No expiration shown'"></div>
+                                </div>
+                                <label class="inline-flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-700">
+                                    <span>Public</span>
+                                    <button type="button" x-on:click="updateRosterShareLink(link, { is_public: !link.is_public })" x-bind:disabled="rosterShareSaving || link.revoked_at" x-bind:aria-pressed="link.is_public ? 'true' : 'false'" class="relative inline-flex h-5 w-9 items-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-50" x-bind:class="link.is_public ? 'bg-indigo-600' : 'bg-slate-200'">
+                                        <span class="sr-only">Toggle public roster URL</span>
+                                        <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition" x-bind:class="link.is_public ? 'translate-x-4' : 'translate-x-0.5'"></span>
+                                    </button>
+                                </label>
+                            </div>
+
+                            <div class="mt-3 flex items-center gap-2">
+                                <input type="text" readonly x-bind:value="link.url" class="min-w-0 flex-1 rounded-md border-slate-200 bg-slate-50 text-xs text-slate-600 focus:border-indigo-500 focus:ring-indigo-500">
+                                <button type="button" x-on:click="copyRosterShareLink(link)" x-bind:disabled="!link.copy_enabled" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Copy public roster URL">
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                                        <path d="M7 3.5A2.5 2.5 0 0 1 9.5 1h5A2.5 2.5 0 0 1 17 3.5v8A2.5 2.5 0 0 1 14.5 14h-5A2.5 2.5 0 0 1 7 11.5v-8Z"/>
+                                        <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H6v6.5A3.5 3.5 0 0 0 9.5 15H13v.5A2.5 2.5 0 0 1 10.5 18h-5A2.5 2.5 0 0 1 3 15.5v-8Z"/>
+                                    </svg>
+                                </button>
+                                <button type="button" x-on:click="revokeRosterShareLink(link)" x-bind:disabled="rosterShareSaving || link.revoked_at" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Revoke public roster URL">
+                                    <svg viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4" aria-hidden="true">
+                                        <path fill-rule="evenodd" d="M8.75 3.5a1.25 1.25 0 0 1 2.5 0h3.5a.75.75 0 0 1 0 1.5H14v10.25A2.75 2.75 0 0 1 11.25 18h-2.5A2.75 2.75 0 0 1 6 15.25V5h-.75a.75.75 0 0 1 0-1.5h3.5ZM8 5v10.25c0 .69.56 1.25 1.25 1.25h1.5c.69 0 1.25-.56 1.25-1.25V5H8Z" clip-rule="evenodd"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </x-ui.slide-over>
+
         <x-ui.slide-over show="draftOptionsOpen" close-action="draftOptionsOpen = false" title-id="community-draft-options-title" max-width="max-w-md">
             <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
                 <h2 id="community-draft-options-title" class="text-base font-semibold text-slate-950">Draft Options</h2>

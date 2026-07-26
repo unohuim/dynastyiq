@@ -134,6 +134,14 @@ class CommunityLeagues extends Controller
             }
         }
 
+        if ($platformLeague instanceof PlatformLeague) {
+            $storedTeams = $this->communityTeamRows($platformLeague, $communityProviderScope);
+
+            if ($storedTeams !== []) {
+                $teams = $storedTeams;
+            }
+        }
+
         $draftResults = [];
         $draftPickInfo = [];
         $draftError = null;
@@ -169,13 +177,37 @@ class CommunityLeagues extends Controller
         $draftTeamMetaByFantraxId = $isFantraxLeague
             ? $this->fantraxDraftTeamMap((int) $platformLeague?->id)
             : [];
+        $platformTeamsByProviderId = $platformLeague instanceof PlatformLeague
+            ? PlatformTeam::query()
+                ->where('platform_league_id', $platformLeague->id)
+                ->get(['id', 'platform_team_id'])
+                ->keyBy(static fn (PlatformTeam $team): string => (string) $team->platform_team_id)
+            : collect();
+        $canShareRosters = $this->canManageLeague($league, $user);
         $teams = collect($teams)
-            ->map(static function (array $team) use ($draftTeamMetaByFantraxId): array {
+            ->map(function (array $team) use ($draftTeamMetaByFantraxId, $platformTeamsByProviderId, $canShareRosters, $community, $league): array {
                 $teamMeta = $draftTeamMetaByFantraxId[(string) ($team['id'] ?? '')] ?? [];
+                $platformTeam = $platformTeamsByProviderId->get((string) ($team['id'] ?? ''));
 
                 return array_merge($team, [
+                    'platform_team_record_id' => $platformTeam?->id,
                     'owner_avatar_url' => $teamMeta['owner_avatar_url'] ?? null,
                     'logo_url' => $teamMeta['logo_url'] ?? ($team['logo_url'] ?? null),
+                    'can_share_roster' => $canShareRosters && $platformTeam instanceof PlatformTeam,
+                    'share_links_url' => $platformTeam instanceof PlatformTeam
+                        ? route('community.leagues.teams.roster-share-links.index', [
+                            'c_id' => $community->id,
+                            'l_id' => $league->id,
+                            'team' => $platformTeam->id,
+                        ])
+                        : null,
+                    'share_link_create_url' => $platformTeam instanceof PlatformTeam
+                        ? route('community.leagues.teams.roster-share-links.store', [
+                            'c_id' => $community->id,
+                            'l_id' => $league->id,
+                            'team' => $platformTeam->id,
+                        ])
+                        : null,
                 ]);
             })
             ->all();
@@ -305,12 +337,34 @@ class CommunityLeagues extends Controller
             ]);
         }
 
+        $canShareRosters = $this->canManageLeague($league, $user);
+
         return response()->json([
             'ok' => true,
-            'teams' => $this->communityTeamRows(
+            'teams' => collect($this->communityTeamRows(
                 $platformLeague,
                 $this->communityProviderScope($platformLeague, $league->activePlatformScope())
-            ),
+            ))->map(function (array $team) use ($canShareRosters, $community, $league): array {
+                $platformTeamId = (int) ($team['platform_team_record_id'] ?? 0);
+
+                return array_merge($team, [
+                    'can_share_roster' => $canShareRosters && $platformTeamId > 0,
+                    'share_links_url' => $platformTeamId > 0
+                        ? route('community.leagues.teams.roster-share-links.index', [
+                            'c_id' => $community->id,
+                            'l_id' => $league->id,
+                            'team' => $platformTeamId,
+                        ])
+                        : null,
+                    'share_link_create_url' => $platformTeamId > 0
+                        ? route('community.leagues.teams.roster-share-links.store', [
+                            'c_id' => $community->id,
+                            'l_id' => $league->id,
+                            'team' => $platformTeamId,
+                        ])
+                        : null,
+                ]);
+            })->values()->all(),
         ]);
     }
 
@@ -2106,6 +2160,7 @@ class CommunityLeagues extends Controller
                     ->all();
 
                 return [
+                    'platform_team_record_id' => (int) $team->id,
                     'id' => (string) $team->platform_team_id,
                     'name' => (string) $team->name,
                     'short_name' => (string) ($team->short_name ?: $team->name),

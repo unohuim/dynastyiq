@@ -1,0 +1,40 @@
+name: Platform Team Roster Share Links
+type: Public Token Sharing Contract
+location:
+  - app/Models/PlatformTeamRosterShareLink.php
+  - app/Http/Controllers/PlatformTeamRosterShareLinkController.php
+  - app/Http/Controllers/LeagueController.php
+  - resources/views/communities/leagues/show.blade.php
+  - resources/views/leagues/public-roster.blade.php
+purpose: Allow league commissioners to create revocable public roster URLs for a single platform team without requiring the future roster viewer to have an account.
+when_to_use:
+  - Commissioner-facing workflows that need a shareable roster view for one orphan team.
+  - Public roster reads that must be scoped to exactly one platform team.
+  - Temporary public URLs that should be disabled independently of the underlying league.
+when_not_to_use:
+  - Authenticated manager league access.
+  - League-wide public exports.
+  - Permanent public league pages.
+rules:
+  - Share links are owned by an internal league, a platform league, and exactly one platform team.
+  - Share links must be private by default.
+  - Public access requires is_public to be true, revoked_at to be null, and expires_at to be in the future.
+  - Share links must expire automatically after 30 days unless a future approved workflow changes that lifecycle.
+  - Public roster views must lock all roster, cap, and draft data to the shared platform team.
+  - Public roster views must not expose team-selection controls or mutation controls.
+  - Raw public tokens must never be stored as plain text.
+public_interface:
+  - community.leagues.teams.roster-share-links.index
+  - community.leagues.teams.roster-share-links.store
+  - community.leagues.teams.roster-share-links.update
+  - community.leagues.teams.roster-share-links.destroy
+  - shared.rosters.show
+  - shared.rosters.players-payload
+example_usage: |
+  $token = PlatformTeamRosterShareLink::newPlainToken();
+  PlatformTeamRosterShareLink::create([
+      'token_hash' => PlatformTeamRosterShareLink::hashToken($token),
+      'encrypted_token' => $token,
+      'is_public' => false,
+      'expires_at' => now()->addDays(30),
+  ]);

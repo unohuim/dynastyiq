@@ -19,7 +19,7 @@ final class LeagueShowViewModel
 
     private Collection $guilds;
 
-    /** @var array<int, array{id:string,name:string,owner_avatar_url:string|null,logo_url?:string|null}> */
+    /** @var array<int, array{id:string,name:string,owner_avatar_url:string|null,logo_url?:string|null,platform_team_record_id?:int|null,can_share_roster?:bool,share_links_url?:string|null,share_link_create_url?:string|null}> */
     private array $teams;
 
     /** @var array<string,mixed> */
@@ -99,6 +99,10 @@ final class LeagueShowViewModel
                 'name' => (string) $t['name'],
                 'owner_avatar_url' => $t['owner_avatar_url'] ?? null,
                 'logo_url' => $t['logo_url'] ?? null,
+                'platform_team_record_id' => $t['platform_team_record_id'] ?? null,
+                'can_share_roster' => (bool) ($t['can_share_roster'] ?? false),
+                'share_links_url' => $t['share_links_url'] ?? null,
+                'share_link_create_url' => $t['share_link_create_url'] ?? null,
             ];
         }, $this->teams);
 

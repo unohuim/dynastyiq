@@ -15,6 +15,7 @@ use App\Models\FantasyScoringCategoryMapping;
 use App\Models\IntegrationSecret;
 use App\Models\CapContractProjection;
 use App\Models\PlatformTeam;
+use App\Models\PlatformTeamRosterShareLink;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\Stat;
@@ -238,6 +239,128 @@ final class LeagueController extends Controller
             'canShowLeagueStats' => $this->canShowLeagueStats($league),
             'canManageLeague' => $this->canManageLeague($league, $user),
             'initialLeagueTab' => $request->query('initial_tab'),
+        ]);
+    }
+
+    /**
+     * Render a public locked roster view from a revocable share token.
+     */
+    public function sharedRoster(string $token): View
+    {
+        $shareLink = $this->activeRosterShareLink($token);
+        $league = $shareLink->platformLeague()->with(['teams' => static fn ($q) => $q->orderBy('name')])->firstOrFail();
+        $team = $shareLink->platformTeam()->firstOrFail();
+        $scope = ['scope' => 'all', 'division' => null];
+        $teams = $this->lockedTeamRows($league, $team, null, $scope);
+        $leagueSettings = [
+            'settings' => is_array($league->settings) ? $league->settings : [],
+            'source' => 'shared_roster',
+            'can_edit' => false,
+            'has_league_admin' => false,
+        ];
+        $perspectives = app(LeagueStatsPerspectiveFactory::class)
+            ->perspectives(null, $league);
+
+        $shareLink->forceFill([
+            'last_accessed_at' => now(),
+            'access_count' => (int) $shareLink->access_count + 1,
+        ])->save();
+
+        return view('leagues.public-roster', [
+            'league' => $league,
+            'team' => $team,
+            'teams' => $teams,
+            'drafting' => $this->draftingPayload($league, null, $scope),
+            'scoringCategories' => $this->scoringCategoriesPayload($league),
+            'scoringAlignmentCategories' => [],
+            'manualScoringMappings' => [],
+            'availableStatFields' => $this->availableStatFieldsPayload(),
+            'scoringMappingOptions' => [],
+            'searchPlayers' => [],
+            'scoringSettingsUpdateUrl' => '',
+            'capSettingsUpdateUrl' => '',
+            'capProjectionsUpdateUrl' => '',
+            'leagueStatsPayloadUrl' => route('shared.rosters.players-payload', ['token' => $token]),
+            'leagueStatsPerspectives' => collect($perspectives)
+                ->filter(static fn (array $perspective): bool => in_array((string) ($perspective['slug'] ?? ''), [
+                    'basic',
+                    'advanced',
+                    'prospects',
+                    'prospects-goalies',
+                ], true))
+                ->values()
+                ->all(),
+            'selectedLeagueStatsPerspective' => 'basic',
+            'playersPayloadUrl' => route('shared.rosters.players-payload', ['token' => $token]),
+            'playersFreeAgentsPayloadUrl' => '',
+            'teamLogoSyncUrl' => '',
+            'leagueShape' => $this->leagueShapePayload($league),
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => false,
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $league,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
+            'canShowLeagueStats' => false,
+            'canManageLeague' => false,
+            'publicLockedTeamId' => (string) $team->platform_team_id,
+            'initialLeagueTab' => 'players',
+        ]);
+    }
+
+    /**
+     * Return public locked roster payload for a shared team.
+     */
+    public function sharedRosterPlayersPayload(string $token): JsonResponse
+    {
+        $shareLink = $this->activeRosterShareLink($token);
+        $league = $shareLink->platformLeague()->firstOrFail();
+        $team = $shareLink->platformTeam()->firstOrFail();
+        $leagueSettings = [
+            'settings' => is_array($league->settings) ? $league->settings : [],
+            'source' => 'shared_roster',
+            'can_edit' => false,
+            'has_league_admin' => false,
+        ];
+
+        return response()->json([
+            'teams' => $this->lockedTeamRows($league, $team, null, ['scope' => 'all', 'division' => null]),
+            'canShowLeagueStats' => false,
+            'leagueStatsPayloadUrl' => route('shared.rosters.players-payload', ['token' => $token]),
+            'leagueStatsPerspectives' => [],
+            'selectedLeagueStatsPerspective' => 'basic',
+            'playersFreeAgentsPayloadUrl' => '',
+            'leagueShape' => $this->leagueShapePayload($league),
+            'isScoringFullyMapped' => $this->isScoringFullyMapped($league),
+            'customCap' => (bool) data_get($leagueSettings, 'settings.custom_cap', false),
+            'salaryCap' => data_get($leagueSettings, 'settings.salary_cap'),
+            'capLimitsBySeason' => data_get($leagueSettings, 'settings.cap_limits_by_season', []),
+            'capAdjustmentsByTeam' => data_get($leagueSettings, 'settings.cap_adjustments_by_team', []),
+            'maxActiveBuyouts' => data_get($leagueSettings, 'settings.max_active_buyouts'),
+            'maxActiveRetentions' => data_get($leagueSettings, 'settings.max_active_retentions'),
+            'buyoutExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.buyout_extra_payout_year', false),
+            'retentionExtraPayoutYear' => (bool) data_get($leagueSettings, 'settings.retention_extra_payout_year', false),
+            'leagueSettingsSource' => $leagueSettings['source'],
+            'canEditLeagueSettings' => false,
+            'fantraxContractCodes' => $this->fantraxContractCodesPayload(
+                $league,
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
+            'fantraxContractCodeDefinitions' => $this->fantraxContractCodeDefinitionsFromSettings(
+                data_get($leagueSettings, 'settings.fantrax_contract_code_definitions', []),
+            ),
         ]);
     }
 
@@ -2273,6 +2396,34 @@ final class LeagueController extends Controller
         ];
 
         return $teams;
+    }
+
+    /**
+     * Resolve an active public roster share link from its bearer token.
+     */
+    private function activeRosterShareLink(string $token): PlatformTeamRosterShareLink
+    {
+        $shareLink = PlatformTeamRosterShareLink::query()
+            ->with(['platformLeague', 'platformTeam'])
+            ->where('token_hash', PlatformTeamRosterShareLink::hashToken($token))
+            ->firstOrFail();
+
+        abort_unless($shareLink->isAccessible(), 404);
+
+        return $shareLink;
+    }
+
+    /**
+     * Return the full roster payload filtered to exactly one shared team.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function lockedTeamRows($league, PlatformTeam $team, mixed $user = null, ?array $scope = null): array
+    {
+        return collect($this->teamsPayload($league, false, $user, $scope))
+            ->filter(static fn (array $row): bool => (int) ($row['platform_team_record_id'] ?? 0) === (int) $team->id)
+            ->values()
+            ->all();
     }
 
     /**

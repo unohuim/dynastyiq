@@ -8,6 +8,7 @@ use App\Models\LeagueUserRole;
 use App\Models\Organization;
 use App\Models\PlatformLeague;
 use App\Models\PlatformTeam;
+use App\Models\PlatformTeamRosterShareLink;
 use App\Models\Player;
 use App\Models\Role;
 use App\Models\User;
@@ -17,6 +18,7 @@ use App\Services\FantraxLeagueService;
 use App\Services\SyncFantraxLeague;
 use App\Support\FantasyProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -72,6 +74,51 @@ beforeEach(function (): void {
         ]);
 
         return $league;
+    };
+
+    $this->createRosterShareFixture = function (): array {
+        $user = User::factory()->create();
+        $organization = Organization::create([
+            'name' => 'Roster Share Community',
+            'short_name' => 'RSC',
+            'slug' => 'roster-share-community',
+            'settings' => ['commissioner_tools' => true],
+        ]);
+        $organization->users()->attach($user->id);
+
+        $internalLeague = League::create([
+            'name' => 'Roster Share League',
+            'sport' => 'hockey',
+        ]);
+        $organization->leagues()->attach($internalLeague->id, [
+            'linked_at' => now(),
+        ]);
+
+        $platformLeague = PlatformLeague::create([
+            'platform' => FantasyProvider::FANTRAX,
+            'platform_league_id' => 'roster-share-league',
+            'name' => 'Roster Share League',
+            'sport' => 'hockey',
+        ]);
+        $internalLeague->platformLeagues()->attach($platformLeague->id, [
+            'linked_at' => now(),
+            'status' => 'active',
+        ]);
+
+        $team = PlatformTeam::create([
+            'platform_league_id' => $platformLeague->id,
+            'platform_team_id' => 'team-1',
+            'name' => 'Team One',
+            'logo_url' => 'https://example.test/team.png',
+        ]);
+
+        LeagueUserRole::create([
+            'league_id' => $internalLeague->id,
+            'user_id' => $user->id,
+            'role' => 'commissioner',
+        ]);
+
+        return [$user, $organization, $internalLeague, $platformLeague, $team];
     };
 });
 
@@ -463,6 +510,221 @@ it('league settings are gated by league-scoped commissioner role', function (): 
         ->get(route('leagues.show', $league->id))
         ->assertOk()
         ->assertSee('aria-label="League settings"', false);
+});
+
+it('community league commissioners can create private roster share links', function (): void {
+    Carbon::setTestNow('2026-07-25 12:00:00');
+
+    [$user, $organization, $internalLeague, $platformLeague, $team] = ($this->createRosterShareFixture)();
+
+    $this->actingAs($user)
+        ->postJson(route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertCreated()
+        ->assertJsonPath('label', 'Roster share')
+        ->assertJsonPath('is_public', false)
+        ->assertJsonPath('copy_enabled', false);
+
+    $link = PlatformTeamRosterShareLink::query()->firstOrFail();
+
+    expect($link->league_id)->toBe($internalLeague->id)
+        ->and($link->platform_league_id)->toBe($platformLeague->id)
+        ->and($link->platform_team_id)->toBe($team->id)
+        ->and($link->is_public)->toBeFalse()
+        ->and($link->expires_at?->equalTo(now()->addDays(30)))->toBeTrue();
+
+    Carbon::setTestNow();
+});
+
+it('community league commissioners see roster share buttons on team rows', function (): void {
+    [$user, $organization, $internalLeague] = ($this->createRosterShareFixture)();
+
+    $this->actingAs($user)
+        ->get(route('community.leagues.show', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+        ]))
+        ->assertOk()
+        ->assertSee('Share roster for Team One', false);
+});
+
+it('super admins see roster share buttons without league commissioner role', function (): void {
+    [$user, $organization, $internalLeague] = ($this->createRosterShareFixture)();
+    LeagueUserRole::query()
+        ->where('league_id', $internalLeague->id)
+        ->where('user_id', $user->id)
+        ->delete();
+    $role = Role::create([
+        'name' => 'Super Admin',
+        'slug' => 'super-admin',
+        'level' => 100,
+        'scope' => 'global',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => $organization->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('community.leagues.show', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+        ]))
+        ->assertOk()
+        ->assertSee('Share roster for Team One', false);
+});
+
+it('super admins can create roster share links without league commissioner role', function (): void {
+    [$user, $organization, $internalLeague, , $team] = ($this->createRosterShareFixture)();
+    LeagueUserRole::query()
+        ->where('league_id', $internalLeague->id)
+        ->where('user_id', $user->id)
+        ->delete();
+    $role = Role::create([
+        'name' => 'Super Admin',
+        'slug' => 'super-admin',
+        'level' => 100,
+        'scope' => 'global',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => $organization->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->postJson(route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertCreated();
+});
+
+it('community league teams payload includes roster share fields for super admins', function (): void {
+    [$user, $organization, $internalLeague, , $team] = ($this->createRosterShareFixture)();
+    LeagueUserRole::query()
+        ->where('league_id', $internalLeague->id)
+        ->where('user_id', $user->id)
+        ->delete();
+    $role = Role::create([
+        'name' => 'Super Admin',
+        'slug' => 'super-admin',
+        'level' => 100,
+        'scope' => 'global',
+        'is_active' => true,
+    ]);
+    DB::table('role_user')->insert([
+        'role_id' => $role->id,
+        'user_id' => $user->id,
+        'organization_id' => null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($user)
+        ->getJson(route('community.leagues.teams', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('teams.0.platform_team_record_id', $team->id)
+        ->assertJsonPath('teams.0.can_share_roster', true)
+        ->assertJsonPath('teams.0.share_links_url', route('community.leagues.teams.roster-share-links.index', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertJsonPath('teams.0.share_link_create_url', route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]));
+});
+
+it('roster share copy becomes available only after the link is public', function (): void {
+    [$user, $organization, $internalLeague, , $team] = ($this->createRosterShareFixture)();
+
+    $this->actingAs($user)
+        ->postJson(route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertCreated()
+        ->assertJsonPath('copy_enabled', false);
+
+    $link = PlatformTeamRosterShareLink::query()->firstOrFail();
+
+    $this->actingAs($user)
+        ->putJson(route('community.leagues.teams.roster-share-links.update', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+            'shareLink' => $link->id,
+        ]), [
+            'is_public' => true,
+        ])
+        ->assertOk()
+        ->assertJsonPath('is_public', true)
+        ->assertJsonPath('copy_enabled', true)
+        ->assertJsonStructure(['url']);
+});
+
+it('public roster share URLs require a public non expired link', function (): void {
+    [$user, $organization, $internalLeague, , $team] = ($this->createRosterShareFixture)();
+
+    $this->actingAs($user)
+        ->postJson(route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertCreated();
+
+    $link = PlatformTeamRosterShareLink::query()->firstOrFail();
+    $token = $link->encrypted_token;
+
+    $this->get(route('shared.rosters.show', ['token' => $token]))
+        ->assertNotFound();
+
+    $link->forceFill(['is_public' => true])->save();
+
+    $this->get(route('shared.rosters.show', ['token' => $token]))
+        ->assertOk()
+        ->assertSee('Team One')
+        ->assertSee('Shared Roster');
+
+    $link->forceFill(['expires_at' => now()->subMinute()])->save();
+
+    $this->get(route('shared.rosters.show', ['token' => $token]))
+        ->assertNotFound();
+});
+
+it('non commissioners cannot manage roster share links', function (): void {
+    [$user, $organization, $internalLeague, , $team] = ($this->createRosterShareFixture)();
+    LeagueUserRole::query()
+        ->where('league_id', $internalLeague->id)
+        ->where('user_id', $user->id)
+        ->delete();
+
+    $this->actingAs($user)
+        ->postJson(route('community.leagues.teams.roster-share-links.store', [
+            'c_id' => $organization->id,
+            'l_id' => $internalLeague->id,
+            'team' => $team->id,
+        ]))
+        ->assertForbidden();
 });
 
 it('league commissioner backfill assigns organization owners only by default', function (): void {
