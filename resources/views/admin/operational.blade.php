@@ -20,6 +20,7 @@
             gameImportGameRerunUrl: @js(url('/admin/nhl-game-imports/games')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
+            gameImportProcessShotsUrl: @js(route('admin.nhl-game-imports.process-shots')),
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
@@ -677,14 +678,41 @@
                                         </div>
                                         <div class="flex flex-wrap items-center justify-end gap-1.5 text-xs text-gray-600 sm:text-right">
                                             <template x-if="run.action === 'discover' && !run.processing_started">
-                                                <button
-                                                    type="button"
-                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700"
-                                                    @click.stop.prevent="processGameImports(run, { reprocessExisting: true })"
-                                                    x-text="gameImportProcessButtonText(run)"
-                                                >
-                                                    Process
-                                                </button>
+                                                <div class="relative" @click.outside="closeGameImportProcessMenu(run)">
+                                                    <button
+                                                        type="button"
+                                                        class="inline-flex items-center justify-center gap-1 rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        :disabled="gameImportProcessBusy(run)"
+                                                        :aria-expanded="isGameImportProcessMenuOpen(run) ? 'true' : 'false'"
+                                                        @click.stop.prevent="toggleGameImportProcessMenu(run)"
+                                                    >
+                                                        <span x-text="gameImportProcessButtonText(run)"></span>
+                                                        <svg class="h-3 w-3 text-indigo-100" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+                                                        </svg>
+                                                    </button>
+                                                    <div
+                                                        x-show="isGameImportProcessMenuOpen(run)"
+                                                        x-transition.opacity.duration.150ms
+                                                        x-cloak
+                                                        class="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
+                                                    >
+                                                        <button
+                                                            type="button"
+                                                            class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                                            @click.stop.prevent="processShotFactsGameImports(run)"
+                                                        >
+                                                            Shots
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                                            @click.stop.prevent="processFullGameImports(run)"
+                                                        >
+                                                            Full
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </template>
                                             <template x-if="run.status !== 'completed' && (run.action !== 'discover' || run.processing_started)">
                                                 <div>

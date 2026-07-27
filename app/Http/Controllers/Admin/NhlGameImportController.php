@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Events\NhlGameImportStatusUpdated;
+use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\RebuildNhlGameImportJob;
@@ -18,11 +19,15 @@ use App\Services\AdminImports;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
+use Illuminate\Bus\Batch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Admin endpoints for dispatching and monitoring NHL game import work.
@@ -45,7 +50,9 @@ class NhlGameImportController extends Controller
         $runs = NhlGameImportRun::query()
             ->latest()
             ->limit(15)
-            ->get()
+            ->get();
+
+        $runs = $this->collapseDuplicateRangeRuns($runs)
             ->map(fn (NhlGameImportRun $run): array => $this->serializeRun($run));
 
         return response()->json([
@@ -136,17 +143,37 @@ class NhlGameImportController extends Controller
             ? $this->rerunRangeFromRun($rerunSourceRun)
             : $this->normalizeDateSelection($input, true);
 
-        $run = NhlGameImportRun::create([
-            'action' => NhlGameImportRun::ACTION_DISCOVER,
-            'mode' => $range['mode'],
-            'status' => NhlGameImportRun::STATUS_QUEUED,
-            'start_date' => $range['start']->toDateString(),
-            'end_date' => $range['end']->toDateString(),
-            'date_count' => $range['date_count'],
-            'queued_jobs' => 1,
-            'payload' => $range['payload'],
-            'created_by' => $request->user()?->id,
-        ]);
+        $activeRun = $this->activeRunForRange($range['start']->toDateString(), $range['end']->toDateString());
+
+        if ($activeRun) {
+            return response()->json([
+                'message' => 'An NHL game import run is already active for this range.',
+                'run' => $this->serializeRun($activeRun),
+            ], 202);
+        }
+
+        $existingRun = $this->exactRangeRunForRange($range['start']->toDateString(), $range['end']->toDateString());
+
+        if ($existingRun && ! $rerunSourceRun) {
+            return response()->json([
+                'message' => 'An NHL game import run already exists for this range.',
+                'run' => $this->serializeRun($existingRun),
+            ], 202);
+        }
+
+        $run = $existingRun
+            ? $this->reuseRunForDiscovery($existingRun, $range, $request, $rerunSourceRun)
+            : NhlGameImportRun::create([
+                'action' => NhlGameImportRun::ACTION_DISCOVER,
+                'mode' => $range['mode'],
+                'status' => NhlGameImportRun::STATUS_QUEUED,
+                'start_date' => $range['start']->toDateString(),
+                'end_date' => $range['end']->toDateString(),
+                'date_count' => $range['date_count'],
+                'queued_jobs' => 1,
+                'payload' => $range['payload'],
+                'created_by' => $request->user()?->id,
+            ]);
 
         NhlDiscoveryJob::dispatch($range['start'], $range['end'], $run->id);
         broadcast(new NhlGameImportStatusUpdated('discovery-queued', $run->id));
@@ -172,6 +199,31 @@ class NhlGameImportController extends Controller
             : $this->normalizeDateSelection($input, false);
         $dates = $this->dateStrings($range['start'], $range['end']);
         $reprocessExisting = $request->boolean('reprocess_existing');
+        $activeRun = $this->activeRunForRange(
+            $range['start']->toDateString(),
+            $range['end']->toDateString(),
+            $discoveryRun?->id
+        );
+
+        if ($activeRun) {
+            return response()->json([
+                'message' => 'An NHL game import run is already active for this range.',
+                'run' => $this->serializeRun($activeRun),
+            ], 202);
+        }
+
+        $existingRun = $this->exactRangeRunForRange(
+            $range['start']->toDateString(),
+            $range['end']->toDateString(),
+            $discoveryRun?->id
+        );
+
+        if ($existingRun) {
+            return response()->json([
+                'message' => 'An NHL game import run already exists for this range.',
+                'run' => $this->serializeRun($existingRun),
+            ], 202);
+        }
 
         $run = $discoveryRun;
 
@@ -231,6 +283,62 @@ class NhlGameImportController extends Controller
         return response()->json([
             'message' => 'Processing queued.',
             'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue deterministic shot-attempt fact collection for games in a run range.
+     */
+    public function processShots(Request $request): JsonResponse
+    {
+        $input = $request->validate([
+            'run_id' => ['required', 'integer'],
+        ]);
+        $sourceRun = $this->rerunSourceRunFromInput($input);
+        $range = $this->rerunRangeFromRun($sourceRun);
+        $gameIds = $this->gameIdsForRunRange($sourceRun);
+
+        if ($gameIds === []) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This game import run has no discovered NHL games for shot fact collection.',
+            ]);
+        }
+
+        $jobs = array_map(
+            fn (int $gameId): BuildNhlShotAttemptFactsJob => new BuildNhlShotAttemptFactsJob($gameId, $sourceRun->id),
+            $gameIds,
+        );
+        $runId = (int) $sourceRun->id;
+
+        $batch = Bus::batch($jobs)
+            ->then(function (Batch $batch) use ($runId): void {
+                self::recordShotFactBatchCompleted($runId, $batch->id);
+            })
+            ->catch(function (Batch $batch, Throwable $throwable) use ($runId): void {
+                self::recordShotFactBatchFailure($runId, $batch->id, $throwable);
+            })
+            ->name('NHL:ShotAttemptFacts:' . $runId)
+            ->dispatch();
+
+        $payload = $sourceRun->payload ?? [];
+        $payload['process_scope'] = 'shots';
+        $payload['shot_fact_batch_id'] = $batch->id;
+        $payload['shot_fact_game_count'] = count($gameIds);
+        $payload['shot_fact_requested_at'] = now()->toIso8601String();
+        $payload['shot_fact_requested_by'] = $request->user()?->id;
+        $payload['processing_started_at'] = now()->toIso8601String();
+        $payload['processing_requested_by'] = $request->user()?->id;
+
+        $sourceRun->update([
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'queued_jobs' => count($gameIds),
+            'payload' => $payload,
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('shot-facts-queued', $sourceRun->id));
+
+        return response()->json([
+            'message' => 'Shot attempt facts queued.',
+            'run' => $this->serializeRun($sourceRun->refresh()),
         ], 202);
     }
 
@@ -652,8 +760,10 @@ class NhlGameImportController extends Controller
             'created_at' => $run->created_at?->toIso8601String(),
             'updated_at' => $run->updated_at?->toIso8601String(),
             'progress' => $progress,
-            'facts' => $run->action === NhlGameImportRun::ACTION_SEASON_SYNC ? [] : $this->factsForRun($run),
-            'games' => $run->action === NhlGameImportRun::ACTION_SEASON_SYNC ? [] : $this->gamesForRun($run),
+            'facts' => $this->shouldShowPipelineFacts($run) ? $this->factsForRun($run) : [],
+            'games' => $this->shouldShowPipelineFacts($run) && $this->shouldShowGameRows($progress)
+                ? $this->gamesForRun($run)
+                : [],
         ];
     }
 
@@ -666,6 +776,10 @@ class NhlGameImportController extends Controller
     {
         if ($run->action === NhlGameImportRun::ACTION_SEASON_SYNC) {
             return $this->seasonSyncProgressForRun($run);
+        }
+
+        if ($this->isShotFactRun($run)) {
+            return $this->shotFactProgressForRun($run);
         }
 
         $rows = $this->progressQueryForRun($run)
@@ -723,6 +837,29 @@ class NhlGameImportController extends Controller
             'skipped_stage_rows' => 0,
             'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
             'percentage' => $percentage,
+            'last_error' => $run->last_error,
+        ];
+    }
+
+    /**
+     * Serialize progress for a shot-attempt facts batch run.
+     *
+     * @return array<string, mixed>
+     */
+    private function shotFactProgressForRun(NhlGameImportRun $run): array
+    {
+        $status = $run->status;
+        $total = max(1, (int) $run->queued_jobs);
+
+        return [
+            'status' => $status,
+            'total_stage_rows' => $total,
+            'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? $total : 0,
+            'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? $total : 0,
+            'completed_stage_rows' => $status === NhlGameImportRun::STATUS_COMPLETED ? $total : 0,
+            'skipped_stage_rows' => 0,
+            'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? $total : 0,
+            'percentage' => in_array($status, [NhlGameImportRun::STATUS_COMPLETED, NhlGameImportRun::STATUS_FAILED], true) ? 100 : 0,
             'last_error' => $run->last_error,
         ];
     }
@@ -839,6 +976,213 @@ class NhlGameImportController extends Controller
             ->exists();
     }
 
+    private function isShotFactRun(NhlGameImportRun $run): bool
+    {
+        return (($run->payload ?? [])['process_scope'] ?? null) === 'shots';
+    }
+
+    private function shouldShowPipelineFacts(NhlGameImportRun $run): bool
+    {
+        return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC && ! $this->isShotFactRun($run);
+    }
+
+    /**
+     * Keep per-game rows only while they are operationally useful.
+     *
+     * @param array<string, mixed> $progress
+     */
+    private function shouldShowGameRows(array $progress): bool
+    {
+        return $progress['status'] !== NhlGameImportRun::STATUS_COMPLETED
+            || (int) ($progress['failed_stage_rows'] ?? 0) > 0
+            || (int) ($progress['running_stage_rows'] ?? 0) > 0
+            || (int) ($progress['scheduled_stage_rows'] ?? 0) > 0;
+    }
+
+    /**
+     * Reuse an existing exact-range run for a discovery rerun request.
+     *
+     * @param array{start: Carbon, end: Carbon, date_count: int, mode: string, payload: array<string, mixed>} $range
+     */
+    private function reuseRunForDiscovery(
+        NhlGameImportRun $run,
+        array $range,
+        Request $request,
+        ?NhlGameImportRun $sourceRun
+    ): NhlGameImportRun {
+        $payload = $range['payload'];
+
+        if ($sourceRun) {
+            $payload['rerun_from_run_id'] = $sourceRun->id;
+        }
+
+        $run->forceFill([
+            'action' => NhlGameImportRun::ACTION_DISCOVER,
+            'mode' => $range['mode'],
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'start_date' => $range['start']->toDateString(),
+            'end_date' => $range['end']->toDateString(),
+            'date_count' => $range['date_count'],
+            'queued_jobs' => 1,
+            'payload' => $payload,
+            'last_error' => null,
+            'created_by' => $run->created_by ?? $request->user()?->id,
+        ])->save();
+
+        return $run->refresh();
+    }
+
+    /**
+     * Collapse recent exact-date-range duplicates into one visible run.
+     *
+     * @param \Illuminate\Support\Collection<int, NhlGameImportRun> $runs
+     * @return \Illuminate\Support\Collection<int, NhlGameImportRun>
+     */
+    private function collapseDuplicateRangeRuns($runs)
+    {
+        return $runs
+            ->groupBy(fn (NhlGameImportRun $run): string => $this->duplicateRunKey($run))
+            ->map(fn ($group): NhlGameImportRun => $group
+                ->sortByDesc(fn (NhlGameImportRun $run): string => $this->duplicateRunScore($run))
+                ->first())
+            ->sortByDesc(fn (NhlGameImportRun $run): int => $run->created_at?->getTimestamp() ?? 0)
+            ->values();
+    }
+
+    /**
+     * Build the exact date range identity used for duplicate import suppression.
+     */
+    private function duplicateRunKey(NhlGameImportRun $run): string
+    {
+        if (
+            $run->action === NhlGameImportRun::ACTION_SEASON_SYNC
+            || $run->start_date === null
+            || $run->end_date === null
+        ) {
+            return 'run:' . $run->id;
+        }
+
+        return $this->runRangeKey($run);
+    }
+
+    /**
+     * Score duplicate run candidates so the useful visible card wins.
+     *
+     */
+    private function duplicateRunScore(NhlGameImportRun $run): string
+    {
+        $directProgressCount = $this->directProgressCountForRun($run);
+
+        return sprintf(
+            '%d:%d:%010d:%d:%010d',
+            $directProgressCount > 0 ? 1 : 0,
+            $this->isActiveGameImportRun($run) ? 1 : 0,
+            $directProgressCount,
+            (bool) (($run->payload ?? [])['processing_started_at'] ?? false) ? 1 : 0,
+            $run->created_at?->getTimestamp() ?? 0,
+        );
+    }
+
+    /**
+     * Count progress rows that are explicitly owned by one run.
+     */
+    private function directProgressCountForRun(NhlGameImportRun $run): int
+    {
+        return (int) DB::table('nhl_import_progress')
+            ->where('run_id', $run->id)
+            ->count();
+    }
+
+    /**
+     * Find an already-active game import run for an exact stored date range.
+     */
+    private function activeRunForRange(string $startDate, string $endDate, ?int $exceptRunId = null): ?NhlGameImportRun
+    {
+        return NhlGameImportRun::query()
+            ->where('action', '!=', NhlGameImportRun::ACTION_SEASON_SYNC)
+            ->whereIn('status', [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING])
+            ->whereDate('start_date', $startDate)
+            ->whereDate('end_date', $endDate)
+            ->when($exceptRunId, fn ($query) => $query->where('id', '!=', $exceptRunId))
+            ->latest()
+            ->first();
+    }
+
+    /**
+     * Find the preferred existing game import run for an exact stored date range.
+     */
+    private function exactRangeRunForRange(string $startDate, string $endDate, ?int $exceptRunId = null): ?NhlGameImportRun
+    {
+        $runs = NhlGameImportRun::query()
+            ->where('action', '!=', NhlGameImportRun::ACTION_SEASON_SYNC)
+            ->whereDate('start_date', $startDate)
+            ->whereDate('end_date', $endDate)
+            ->when($exceptRunId, fn ($query) => $query->where('id', '!=', $exceptRunId))
+            ->latest()
+            ->get();
+
+        return $runs
+            ->sortByDesc(fn (NhlGameImportRun $run): string => $this->duplicateRunScore($run))
+            ->first();
+    }
+
+    /**
+     * Determine whether a run is active enough to block duplicate range actions.
+     */
+    private function isActiveGameImportRun(NhlGameImportRun $run): bool
+    {
+        return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
+            && in_array($run->status, [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING], true)
+            && $run->start_date !== null
+            && $run->end_date !== null;
+    }
+
+    /**
+     * Build the exact date range identity used for duplicate import suppression.
+     */
+    private function runRangeKey(NhlGameImportRun $run): string
+    {
+        return implode(':', [
+            $run->start_date?->toDateString() ?? '',
+            $run->end_date?->toDateString() ?? '',
+        ]);
+    }
+
+    /**
+     * Return NHL games represented by a run, with date-range fallback.
+     *
+     * @return array<int,int>
+     */
+    private function gameIdsForRunRange(NhlGameImportRun $run): array
+    {
+        if ($run->action === NhlGameImportRun::ACTION_SEASON_SYNC) {
+            return [];
+        }
+
+        $gameIds = $this->progressQueryForRun($run)
+            ->distinct()
+            ->pluck('game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+
+        if ($gameIds !== []) {
+            return array_values(array_unique($gameIds));
+        }
+
+        $range = $this->rerunRangeFromRun($run);
+
+        return DB::table('nhl_games')
+            ->whereBetween('game_date', [
+                $range['end']->toDateString(),
+                $range['start']->toDateString(),
+            ])
+            ->orderBy('game_date')
+            ->orderBy('nhl_game_id')
+            ->pluck('nhl_game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+    }
+
     /**
      * Return games eligible for a failed-only rerun for an import run's range.
      *
@@ -912,6 +1256,55 @@ class NhlGameImportController extends Controller
             $run->end_date->toDateString(),
             $run->start_date->toDateString(),
         ]);
+    }
+
+    private static function recordShotFactBatchCompleted(int $runId, string $batchId): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['shot_fact_batch_id'] = $batchId;
+        $payload['shot_fact_completed_at'] = now()->toIso8601String();
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_COMPLETED,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        broadcast(new NhlGameImportStatusUpdated('shot-facts-completed', $runId));
+    }
+
+    private static function recordShotFactBatchFailure(int $runId, string $batchId, Throwable $throwable): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['shot_fact_batch_id'] = $batchId;
+        $payload['shot_fact_failed_at'] = now()->toIso8601String();
+        $payload['shot_fact_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_FAILED,
+            'payload' => $payload,
+            'last_error' => $payload['shot_fact_last_error'],
+            'updated_at' => now(),
+        ])->save();
+
+        Log::error('NHL shot attempt facts batch failed.', [
+            'run_id' => $runId,
+            'batch_id' => $batchId,
+            'error' => $throwable->getMessage(),
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('shot-facts-failed', $runId));
     }
 
     /**

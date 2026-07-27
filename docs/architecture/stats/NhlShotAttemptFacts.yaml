@@ -1,0 +1,47 @@
+name: NHL Shot Attempt Facts
+type: Derived Analytics Fact Layer
+location:
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - app/Jobs/BuildNhlShotAttemptFactsJob.php
+  - app/Services/BuildNhlShotAttemptFacts.php
+  - database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php
+  - docs/architecture/stats/NhlShotAttemptFacts.yaml
+purpose: Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
+when_to_use:
+  - Building an analytical source table for shot attempts from play_by_plays.
+  - Deriving stable shot context such as result, surface, geometry buckets, rebound flags, strength, score state, and net state.
+  - Producing sanitized aggregate extracts for AI-assisted or statistical shot-quality exploration.
+  - Feeding future expected-goals prediction and summary tables.
+  - Queueing shots-only fact collection from an admin-selected game import run range.
+when_not_to_use:
+  - Storing expected-goals probabilities or high/medium/low danger labels.
+  - Replacing raw play-by-play provider event rows.
+  - Persisting model-specific coefficients, thresholds, or trained outputs.
+  - Making betting or fantasy decisions directly from sparse bucket rates without validation.
+rules:
+  - The facts layer must be deterministic and rebuildable from imported NHL play-by-play plus stored game context.
+  - Raw play-by-play remains the event source of truth; shot facts are a derived analytical projection.
+  - Each shot fact row must link to exactly one source play_by_plays row.
+  - Shootout attempts must be excluded or isolated from normal game shot-attempt analysis.
+  - Penalty-shot attempts may be tracked as shot facts but must remain distinguishable from normal in-play attempts.
+  - Shot geometry facts must reuse the canonical ShotGeometryService-derived distance and angle semantics.
+  - Score snapshots and score-state buckets must represent the pre-event game state before the shot outcome changes the score, derived from the ordered goal timeline rather than trusting per-row provider score snapshots.
+  - Rush context must distinguish direct rush attempts from same-team rebounds that inherit rush sequence context inside the rebound window.
+  - Bucket labels must remain deterministic feature labels and must not imply goal probability by themselves.
+  - Expected-goals probabilities, danger labels, and model outputs belong in future versioned prediction tables.
+  - Aggregate AI review must use sanitized exports or grouped facts and must remain advisory until validated against holdout data.
+  - Sparse bucket combinations must fall back to broader groupings before they are used for probability estimates.
+  - Shots-only admin processing must upsert shot facts from already imported play-by-play and must not fetch providers or run the full NHL import pipeline.
+public_interface:
+  - nhl_shot_attempts_facts
+  - play_by_plays.id
+  - admin.nhl-game-imports.process-shots
+  - BuildNhlShotAttemptFacts
+  - BuildNhlShotAttemptFactsJob
+  - ShotGeometryService
+  - NhlPbpEventNormalizer
+example_usage: |
+  SELECT distance_bucket, angle_bucket, COUNT(*) AS attempts, SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) AS goals
+  FROM nhl_shot_attempts_facts
+  WHERE is_unblocked_attempt = true
+  GROUP BY distance_bucket, angle_bucket;

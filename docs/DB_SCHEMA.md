@@ -2892,6 +2892,92 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_shot_attempts_facts
+
+**Organization-owned:** No
+**Purpose:** Deterministic NHL shot-attempt facts derived from `play_by_plays` for shot-quality exploration and future expected-goals models.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| play_by_play_id | bigint | No | Source PBP row |
+| previous_play_by_play_id | bigint | Yes | Prior event row used for context derivation |
+| nhl_game_id | bigint | No | NHL game ID |
+| nhl_event_id | string | Yes | Provider event ID snapshot |
+| season_id | string(8) | Yes | NHL season ID |
+| game_date | date | Yes | Game date |
+| fact_version | string(40) | No | Deterministic fact derivation version |
+| event_type | string | Yes | Source event type |
+| attempt_result | string(32) | No | Canonical result; see `docs/ENUMS.md` |
+| is_shot_attempt | boolean | No | Defaults to `true` |
+| is_unblocked_attempt | boolean | No | Goal/shot-on-goal/missed attempt surface |
+| is_shot_on_goal | boolean | No | Boxscore-comparable shot-on-goal surface |
+| is_goal | boolean | No | Goal result flag |
+| team_id | integer | Yes | Shooting/event-owner team |
+| opponent_team_id | integer | Yes | Opposing team |
+| shooter_player_id | integer | Yes | Shooter |
+| goalie_player_id | integer | Yes | Goalie in net |
+| blocking_player_id | integer | Yes | Shot blocker |
+| period | integer | Yes | Period |
+| period_type | string(12) | Yes | Provider period type |
+| period_bucket | string(32) | Yes | Deterministic period bucket |
+| seconds_in_game | integer | Yes | Elapsed game seconds |
+| seconds_since_last_event | integer | Yes | Source PBP event delta |
+| time_bucket | string(32) | Yes | Deterministic time bucket |
+| situation_code | string | Yes | Provider situation code |
+| strength | string(12) | Yes | Derived strength |
+| strength_bucket | string(32) | Yes | Deterministic strength bucket |
+| home_score | integer | Yes | Pre-event home score snapshot |
+| away_score | integer | Yes | Pre-event away score snapshot |
+| score_differential | integer | Yes | Shooting-team perspective score differential |
+| score_state_bucket | string(32) | Yes | Deterministic pre-event score-state bucket |
+| x_coord | integer | Yes | Rink X coordinate |
+| y_coord | integer | Yes | Rink Y coordinate |
+| shot_distance | decimal(8,2) | Yes | Shot distance from target net |
+| shot_angle | decimal(7,3) | Yes | Signed shot angle |
+| abs_shot_angle | decimal(7,3) | Yes | Absolute shot angle used by buckets |
+| distance_bucket | string(32) | Yes | Deterministic distance bucket |
+| angle_bucket | string(32) | Yes | Deterministic angle bucket |
+| zone_code | string(12) | Yes | Provider zone code |
+| zone_bucket | string(32) | Yes | Deterministic zone bucket |
+| shot_type | string | Yes | Provider shot type |
+| shot_type_bucket | string(32) | Yes | Normalized shot type bucket |
+| is_rebound | boolean | Yes | Rebound heuristic result |
+| rebound_window_seconds | unsignedSmallInteger | Yes | Rebound detection window |
+| rebound_bucket | string(32) | Yes | Deterministic rebound bucket |
+| is_rush | boolean | Yes | Rush heuristic result |
+| is_rush_attempt | boolean | Yes | Direct rush-attempt heuristic result |
+| is_rush_sequence | boolean | Yes | Rush sequence membership including inherited rush rebounds |
+| rush_sequence_origin_play_by_play_id | bigint | Yes | Source rush attempt for rush sequence rows |
+| rush_bucket | string(32) | Yes | Deterministic rush bucket |
+| is_empty_net | boolean | Yes | Empty-net context |
+| net_state_bucket | string(32) | Yes | Deterministic net-state bucket |
+| previous_event_type | string | Yes | Prior event type snapshot |
+| previous_event_team_id | integer | Yes | Prior event owner team |
+| previous_event_seconds_delta | integer | Yes | Seconds between previous event and shot attempt |
+| facts_payload | json | Yes | Derivation/debug payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `play_by_play_id` references `play_by_plays.id`
+- FK: `previous_play_by_play_id` references `play_by_plays.id`
+- FK: `rush_sequence_origin_play_by_play_id` references `play_by_plays.id`
+- FK: `nhl_game_id` references `nhl_games.nhl_game_id`
+- Unique: `play_by_play_id` (`uq_nhl_shot_attempt_facts_pbp`)
+- Index: `(season_id, game_date)` (`ix_nhl_saf_season_date`)
+- Index: `(nhl_game_id, team_id)` (`ix_nhl_saf_game_team`)
+- Index: `(nhl_game_id, shooter_player_id)` (`ix_nhl_saf_game_shooter`)
+- Index: `(nhl_game_id, goalie_player_id)` (`ix_nhl_saf_game_goalie`)
+- Index: `(distance_bucket, angle_bucket, strength_bucket, shot_type_bucket)` (`ix_nhl_saf_bucket_inputs`)
+- Index: `(attempt_result, is_unblocked_attempt, is_shot_on_goal)` (`ix_nhl_saf_attempt_surface`)
+
+---
+
 ## ranking_profiles
 
 **Organization-owned:** Optional

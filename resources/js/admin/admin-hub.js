@@ -50,6 +50,7 @@ export default function adminHub(options = {}) {
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
+        gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
@@ -77,6 +78,7 @@ export default function adminHub(options = {}) {
             runs: [],
             seasons: [],
             expandedRuns: {},
+            processMenuRunId: null,
             rerunMenuRunId: null,
             rerunningRuns: {},
             rerunningGames: {},
@@ -968,12 +970,17 @@ export default function adminHub(options = {}) {
         },
 
         async processGameImports(run = null, options = {}) {
+            return this.processFullGameImports(run, options);
+        },
+
+        async processFullGameImports(run = null, options = {}) {
             this.gameImports.processing = true;
             const runId = run?.id ?? '__form__';
             this.gameImports.processingRuns = {
                 ...this.gameImports.processingRuns,
                 [runId]: true,
             };
+            this.closeGameImportProcessMenu(run);
             this.gameImports.error = '';
 
             try {
@@ -994,6 +1001,39 @@ export default function adminHub(options = {}) {
                 this.gameImports.processing = false;
                 const next = { ...this.gameImports.processingRuns };
                 delete next[runId];
+                this.gameImports.processingRuns = next;
+            }
+        },
+
+        async processShotFactsGameImports(run) {
+            const runId = run?.id;
+            const processKey = this.gameImportProcessKey(run, 'shots');
+
+            if (!runId || this.gameImports.processingRuns[processKey] === true) {
+                return;
+            }
+
+            this.gameImports.processing = true;
+            this.gameImports.processingRuns = {
+                ...this.gameImports.processingRuns,
+                [processKey]: true,
+            };
+            this.closeGameImportProcessMenu(run);
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(
+                    this.gameImportProcessShotsUrl,
+                    { run_id: runId }
+                );
+
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue shot facts';
+            } finally {
+                this.gameImports.processing = false;
+                const next = { ...this.gameImports.processingRuns };
+                delete next[processKey];
                 this.gameImports.processingRuns = next;
             }
         },
@@ -1449,7 +1489,34 @@ export default function adminHub(options = {}) {
         },
 
         gameImportProcessButtonText(run) {
-            return this.gameImports.processingRuns[run?.id] === true ? 'Queuing...' : 'Process';
+            return this.gameImportProcessBusy(run) ? 'Queuing...' : 'Process';
+        },
+
+        gameImportProcessKey(run, scope = 'full') {
+            return scope === 'full' ? (run?.id ?? '__form__') : `${run?.id ?? 'unknown'}:${scope}`;
+        },
+
+        gameImportProcessBusy(run) {
+            return this.gameImports.processingRuns[this.gameImportProcessKey(run, 'full')] === true
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'shots')] === true;
+        },
+
+        isGameImportProcessMenuOpen(run) {
+            return this.gameImports.processMenuRunId === run?.id;
+        },
+
+        toggleGameImportProcessMenu(run) {
+            if (this.gameImportProcessBusy(run)) {
+                return;
+            }
+
+            this.gameImports.processMenuRunId = this.isGameImportProcessMenuOpen(run) ? null : run.id;
+        },
+
+        closeGameImportProcessMenu(run = null) {
+            if (!run || this.isGameImportProcessMenuOpen(run)) {
+                this.gameImports.processMenuRunId = null;
+            }
         },
 
         gameImportRerunKey(run, scope = 'full') {

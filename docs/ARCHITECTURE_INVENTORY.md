@@ -929,6 +929,44 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 
 ---
 
+### NHL Shot Attempt Facts
+
+**Name:** NHL Shot Attempt Facts
+**Type:** Derived Analytics Fact Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlGameImportController.php`
+- `app/Jobs/BuildNhlShotAttemptFactsJob.php`
+- `app/Services/BuildNhlShotAttemptFacts.php`
+- `database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php`
+- `docs/architecture/stats/NhlShotAttemptFacts.yaml`
+
+**Purpose:**
+Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
+
+**When to Use:**
+Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range.
+
+**When Not to Use:**
+Storing expected-goals probabilities, danger labels, model thresholds, or trained model outputs.
+
+**Public Interface:**
+- `nhl_shot_attempts_facts`
+- `play_by_plays.id`
+- `admin.nhl-game-imports.process-shots`
+- `BuildNhlShotAttemptFacts`
+- `BuildNhlShotAttemptFactsJob`
+- `ShotGeometryService`
+- `NhlPbpEventNormalizer`
+
+**Example Usage:**
+```sql
+SELECT distance_bucket, angle_bucket, COUNT(*) AS attempts
+FROM nhl_shot_attempts_facts
+GROUP BY distance_bucket, angle_bucket;
+```
+
+---
+
 ## NHL Imports
 
 ### NHL Import Orchestrator
@@ -2265,6 +2303,35 @@ Synchronous web-request imports, NHL stage transformation ownership, or replacin
 ```php
 NhlOrchestratorJob::dispatch($gameDate);
 SeasonSumJob::dispatch($seasonId, $runId);
+```
+
+---
+
+### Admin NHL Shot Attempts
+
+**Name:** Admin NHL Shot Attempts
+**Type:** Admin Analytics Review UI
+**Location:**
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `docs/architecture/admin/AdminNhlShotAttempts.yaml`
+
+**Purpose:**
+Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, and QA coverage before expected-goals modeling.
+
+**When to Use:**
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, and auditing missing or suspicious shot-fact fields.
+
+**When Not to Use:**
+Running imports, mutating shot facts, replacing Game Imports, or storing xG outputs.
+
+**Public Interface:**
+- `admin.nhl-shot-attempts.index`
+- `NhlShotAttemptController::index()`
+
+**Example Usage:**
+```php
+Route::get('/admin/nhl-shot-attempts', [NhlShotAttemptController::class, 'index']);
 ```
 
 ---

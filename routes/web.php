@@ -345,12 +345,18 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.rerun-failed');
                 Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
                     ->name('admin.nhl-game-imports.discover');
+                Route::post('/nhl-game-imports/process-shots', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processShots'])
+                    ->name('admin.nhl-game-imports.process-shots');
                 Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])
                     ->name('admin.nhl-game-imports.process');
                 Route::post('/nhl-game-imports/season-sync', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'seasonSync'])
                     ->name('admin.nhl-game-imports.season-sync');
                 Route::post('/nhl-game-imports/empty-games', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'emptyGames'])
                     ->name('admin.nhl-game-imports.empty-games');
+
+                // NHL shot attempt analysis
+                Route::get('/nhl-shot-attempts', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'index'])
+                    ->name('admin.nhl-shot-attempts.index');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])

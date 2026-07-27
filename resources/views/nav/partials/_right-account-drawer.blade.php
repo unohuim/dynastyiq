@@ -174,6 +174,10 @@
                     </a>
 
                     @auth
+                        @php
+                            $canUseAdmin = auth()->user()?->roles()->where('slug', 'super-admin')->exists()
+                                || auth()->user()?->roles()->where('level', '>=', 99)->exists();
+                        @endphp
                         <a href="{{ route('admin.dashboard') }}"
                             class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
                             <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -183,6 +187,17 @@
                             </svg>
                             <span class="text-sm">Admin Control Panel</span>
                         </a>
+                        @if($canUseAdmin)
+                            <a href="{{ route('admin.nhl-shot-attempts.index') }}"
+                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M3.75 12h16.5M12 3.75v16.5M6.75 6.75l10.5 10.5M17.25 6.75l-10.5 10.5" />
+                                </svg>
+                                <span class="text-sm">Shot Attempts</span>
+                            </a>
+                        @endif
                     @endauth
 
                     <form method="POST" action="{{ route('logout') }}">

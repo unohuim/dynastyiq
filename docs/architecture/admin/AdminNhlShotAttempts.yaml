@@ -1,0 +1,34 @@
+name: Admin NHL Shot Attempts
+type: Admin Analytics Review UI
+location:
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+  - resources/views/nav/partials/_right-account-drawer.blade.php
+purpose: Provide a super-admin panel for reviewing NHL shot-attempt facts, aggregate rates, bucket behavior, and QA coverage before expected-goals modeling.
+when_to_use:
+  - Inspecting raw rows from nhl_shot_attempts_facts.
+  - Reviewing grouped shot-attempt rates by team, player, strength, result, or bucket.
+  - Comparing goal rates across distance and angle bucket combinations.
+  - Auditing missing or suspicious shot-attempt fact fields.
+when_not_to_use:
+  - Running NHL game imports or shot-fact build jobs.
+  - Replacing the Game Imports operational run ledger.
+  - Storing expected-goals model outputs or danger labels.
+  - Building public stats pages for non-admin users.
+rules:
+  - The panel must remain super-admin protected through admin middleware.
+  - The panel reads from nhl_shot_attempts_facts and must not mutate shot facts.
+  - The first version should use server-rendered tabs and query-string filters without new page-local JavaScript state.
+  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, and QA checks.
+  - Aggregate columns must sort through whitelisted query-string keys and display the active sort direction.
+  - Aggregate grouping must support team abbreviation, rebound state, and previous event type.
+  - Shooter and goalie aggregate grouping should display resolved player names while keeping the stable shooter_player_id and goalie_player_id query parameters.
+  - Missing-table environments must degrade with an operator-readable empty state instead of failing the page.
+  - The account drawer link must appear below Admin Control Panel only for users who can access super-admin routes.
+public_interface:
+  - admin.nhl-shot-attempts.index
+  - NhlShotAttemptController::index()
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+example_usage: |
+  GET /admin/nhl-shot-attempts?tab=buckets&season_id=20252026

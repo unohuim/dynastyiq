@@ -1610,6 +1610,86 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Shot Attempt Result
+
+**Name:** NHL shot attempt result
+**Storage location(s):** `nhl_shot_attempts_facts.attempt_result` (string column)
+**Allowed values currently emitted:**
+
+- `goal`
+- `saved_shot`
+- `missed_shot`
+- `blocked_shot`
+- `penalty_shot`
+- `unknown`
+
+**Semantic meaning:**
+
+- `goal`: Attempt resulted in a goal.
+- `saved_shot`: Attempt reached the goalie or net context and did not score.
+- `missed_shot`: Attempt was unblocked and missed the net.
+- `blocked_shot`: Attempt was blocked before reaching the goalie or net context.
+- `penalty_shot`: Regulation or overtime penalty-shot attempt tracked apart from normal in-play attempts.
+- `unknown`: Source event qualifies as a shot attempt but does not map cleanly to a result.
+
+**Notes:**
+
+- The column is string-backed and not database constrained.
+- Shootout attempts must not be mixed into normal game shot-attempt probability analysis.
+
+---
+
+### NHL Shot Attempt Fact Buckets
+
+**Name:** NHL shot attempt fact buckets
+**Storage location(s):** `nhl_shot_attempts_facts.*_bucket` (string columns)
+**Allowed values currently emitted:**
+
+- Distance buckets use `d_000_005`, `d_005_010`, continuing in five-foot ranges, plus `d_060_plus` and `unknown`.
+- Angle buckets use `a_000_010`, `a_010_020`, continuing in ten-degree absolute-angle ranges, plus `a_090_plus` and `unknown`.
+- Strength buckets: `ev`, `pp`, `pk`, `en`, `ps`, `unknown`.
+- Shot type buckets: `wrist`, `snap`, `slap`, `backhand`, `tip`, `deflection`, `wrap`, `poke`, `other`, `unknown`.
+- Rebound buckets: `rebound`, `not_rebound`, `unknown`.
+- Rush buckets: `rush_attempt`, `rush_rebound`, `not_rush`, `unknown`.
+- Net state buckets: `goalie_in_net`, `empty_net`, `unknown`.
+- Score state buckets: `leading_by_2_plus`, `leading_by_1`, `tied`, `trailing_by_1`, `trailing_by_2_plus`, `unknown`.
+- Period buckets: `p1`, `p2`, `p3`, `ot`, `other`, `unknown`.
+- Time buckets: `early_period`, `middle_period`, `late_period`, `final_5`, `unknown`.
+- Zone buckets: `offensive`, `neutral`, `defensive`, `unknown`.
+
+**Semantic meaning:**
+
+- Buckets are deterministic feature labels used for exploratory goal-rate analysis and future expected-goals models.
+- Buckets do not imply high, medium, or low danger by themselves.
+- Rush buckets distinguish direct transition attempts from rebounds that inherit rush context inside the rebound window.
+- Probability-derived danger labels belong to future versioned prediction outputs, not to `nhl_shot_attempts_facts`.
+
+**Notes:**
+
+- Bucket columns are string-backed and not database constrained.
+- Sparse bucket combinations must be widened or backed off before they are used as probability estimates.
+
+---
+
+### NHL Game Import Process Scope
+
+**Name:** NHL game import process scope
+**Storage location(s):** `nhl_game_import_runs.payload.process_scope` (JSON string value)
+**Allowed values currently emitted:**
+
+- `shots`
+
+**Semantic meaning:**
+
+- `shots`: Process run was queued from Game Imports to upsert `nhl_shot_attempts_facts` from already imported play-by-play without running provider fetches or the full NHL import pipeline.
+
+**Notes:**
+
+- Missing `process_scope` means the run follows the standard Game Imports behavior for its action and payload.
+- The value is payload-backed and not database constrained.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:

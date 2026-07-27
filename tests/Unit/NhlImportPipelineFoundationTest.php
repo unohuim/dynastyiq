@@ -14,6 +14,7 @@ use App\Jobs\VerifyHtmlPbpNhlJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
+use App\Services\BuildNhlShotAttemptFacts;
 use App\Services\NhlDiscoverGames;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
@@ -385,6 +386,169 @@ it('records source preflight statuses with exact provider URLs', function (): vo
         'reason' => 'empty_shiftcharts',
         'url' => 'https://api.nhle.com/stats/rest/en/shiftcharts?cayenneExp=gameId=2026020001',
     ]);
+});
+
+it('builds deterministic NHL shot attempt facts from imported play by play', function (): void {
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020001,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-01-15',
+        'game_dow' => 'Thu',
+        'game_month' => 'Jan',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 8,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('play_by_plays')->insert([
+        [
+            'id' => 9000,
+            'nhl_game_id' => 2025020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'period_type' => 'REG',
+            'seconds_in_period' => 295,
+            'seconds_in_game' => 295,
+            'seconds_remaining' => 3305,
+            'seconds_since_last_event' => 9,
+            'type_desc_key' => 'takeaway',
+            'nhl_event_id' => '100',
+            'situation_code' => '1551',
+            'strength' => 'EV',
+            'sort_order' => 0,
+            'zone_code' => 'N',
+            'home_score' => 0,
+            'away_score' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 9001,
+            'nhl_game_id' => 2025020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'period_type' => 'REG',
+            'seconds_in_period' => 300,
+            'seconds_in_game' => 300,
+            'seconds_remaining' => 3300,
+            'seconds_since_last_event' => 12,
+            'type_desc_key' => 'shot-on-goal',
+            'nhl_event_id' => '101',
+            'situation_code' => '1551',
+            'strength' => 'EV',
+            'sort_order' => 1,
+            'x_coord' => 70,
+            'y_coord' => 5,
+            'shot_distance' => 19.65,
+            'shot_angle' => -14.744,
+            'zone_code' => 'O',
+            'shot_type' => 'wrist',
+            'shooting_player_id' => 8470001,
+            'goalie_in_net_player_id' => 8471001,
+            'home_score' => 0,
+            'away_score' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 9002,
+            'nhl_game_id' => 2025020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'period_type' => 'REG',
+            'seconds_in_period' => 302,
+            'seconds_in_game' => 302,
+            'seconds_remaining' => 3298,
+            'seconds_since_last_event' => 2,
+            'type_desc_key' => 'goal',
+            'nhl_event_id' => '102',
+            'situation_code' => '1551',
+            'strength' => 'EV',
+            'sort_order' => 2,
+            'x_coord' => 76,
+            'y_coord' => -3,
+            'shot_distance' => 13.34,
+            'shot_angle' => 12.995,
+            'zone_code' => 'O',
+            'shot_type' => 'snap',
+            'scoring_player_id' => 8470002,
+            'goalie_in_net_player_id' => 8471001,
+            'home_score' => 1,
+            'away_score' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 9003,
+            'nhl_game_id' => 2025020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'period_type' => 'REG',
+            'seconds_in_period' => 340,
+            'seconds_in_game' => 340,
+            'seconds_remaining' => 3260,
+            'seconds_since_last_event' => 38,
+            'type_desc_key' => 'missed-shot',
+            'nhl_event_id' => '103',
+            'situation_code' => '1551',
+            'strength' => 'EV',
+            'sort_order' => 3,
+            'x_coord' => 68,
+            'y_coord' => 8,
+            'shot_distance' => 22.47,
+            'shot_angle' => 20.854,
+            'zone_code' => 'O',
+            'shot_type' => 'wrist',
+            'shooting_player_id' => 8470001,
+            'goalie_in_net_player_id' => 8471001,
+            'home_score' => 0,
+            'away_score' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $builder = app(BuildNhlShotAttemptFacts::class);
+
+    expect($builder->buildForGame(2025020001))->toBe(3)
+        ->and($builder->buildForGame(2025020001))->toBe(3)
+        ->and(DB::table('nhl_shot_attempts_facts')->count())->toBe(3);
+
+    $goalFact = DB::table('nhl_shot_attempts_facts')
+        ->where('play_by_play_id', 9002)
+        ->first();
+    $rushFact = DB::table('nhl_shot_attempts_facts')
+        ->where('play_by_play_id', 9001)
+        ->first();
+    $postGoalFact = DB::table('nhl_shot_attempts_facts')
+        ->where('play_by_play_id', 9003)
+        ->first();
+
+    expect($rushFact->rush_bucket)->toBe('rush_attempt')
+        ->and((bool) $rushFact->is_rush_attempt)->toBeTrue()
+        ->and((bool) $rushFact->is_rush_sequence)->toBeTrue()
+        ->and($rushFact->rush_sequence_origin_play_by_play_id)->toBe(9001)
+        ->and($goalFact->attempt_result)->toBe('goal')
+        ->and((bool) $goalFact->is_goal)->toBeTrue()
+        ->and((bool) $goalFact->is_rebound)->toBeTrue()
+        ->and((bool) $goalFact->is_rush_attempt)->toBeFalse()
+        ->and((bool) $goalFact->is_rush_sequence)->toBeTrue()
+        ->and($goalFact->rush_bucket)->toBe('rush_rebound')
+        ->and($goalFact->rush_sequence_origin_play_by_play_id)->toBe(9001)
+        ->and($goalFact->rebound_bucket)->toBe('rebound')
+        ->and($goalFact->distance_bucket)->toBe('d_010_015')
+        ->and($goalFact->angle_bucket)->toBe('a_010_020')
+        ->and($goalFact->strength_bucket)->toBe('ev')
+        ->and($goalFact->home_score)->toBe(0)
+        ->and($goalFact->away_score)->toBe(0)
+        ->and($goalFact->score_state_bucket)->toBe('tied')
+        ->and($goalFact->shot_type_bucket)->toBe('snap')
+        ->and($postGoalFact->home_score)->toBe(1)
+        ->and($postGoalFact->away_score)->toBe(0)
+        ->and($postGoalFact->score_state_bucket)->toBe('leading_by_1');
 });
 
 it('processes only ready scheduled stages for a date', function (): void {
