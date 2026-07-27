@@ -35,3 +35,7 @@ Schedule::command('leagues:refresh-connected')
     ->everyThreeHours()
     ->timezone('America/Toronto')
     ->unlessBetween('08:00', '12:00');
+Schedule::command('fantrax:drafts:poll')
+    ->everyMinute()
+    ->timezone('America/Toronto')
+    ->unlessBetween('08:00', '12:00');
