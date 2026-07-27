@@ -341,6 +341,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/nhl-game-imports/games/{gameId}/rerun', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunStoppedGame'])
                     ->whereNumber('gameId')
                     ->name('admin.nhl-game-imports.games.rerun');
+                Route::post('/nhl-game-imports/rerun-failed', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunFailedOnly'])
+                    ->name('admin.nhl-game-imports.rerun-failed');
                 Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
                     ->name('admin.nhl-game-imports.discover');
                 Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])

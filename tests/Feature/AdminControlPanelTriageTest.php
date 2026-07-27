@@ -11,6 +11,7 @@ use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameValidation;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\PlatformLeague;
@@ -193,6 +194,20 @@ it('blocks authenticated non-admin users from queuing NHL game processing', func
         ->assertForbidden();
 });
 
+it('blocks guests from queuing failed-only NHL game import reruns', function () {
+    $this->postJson(route('admin.nhl-game-imports.rerun-failed'), [
+        'run_id' => 1,
+    ])->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from queuing failed-only NHL game import reruns', function () {
+    $this->actingAs(User::factory()->create())
+        ->postJson(route('admin.nhl-game-imports.rerun-failed'), [
+            'run_id' => 1,
+        ])
+        ->assertForbidden();
+});
+
 it('blocks guests from queuing NHL season stat syncs', function () {
     $this->postJson(route('admin.nhl-game-imports.season-sync'), [
         'season' => '20252026',
@@ -296,6 +311,175 @@ it('allows super admins to rerun discovery for a previous NHL game import run ra
         return $job->start->toDateString() === '2026-01-17'
             && $job->end->toDateString() === '2026-01-15';
     });
+});
+
+it('allows super admins to rerun only failed NHL game imports and actionable validations', function () {
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    $now = now();
+    $sourceRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_PROCESS,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_FAILED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 3,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    foreach ([
+        ['game_id' => 2025020001, 'date' => '2026-01-15'],
+        ['game_id' => 2025020002, 'date' => '2026-01-16'],
+        ['game_id' => 2025020003, 'date' => '2026-01-17'],
+        ['game_id' => 2025020004, 'date' => '2026-01-17'],
+    ] as $game) {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $game['game_id'],
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => $game['date'],
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    foreach ([
+        ['game_id' => 2025020001, 'status' => 'error'],
+        ['game_id' => 2025020002, 'status' => 'completed'],
+        ['game_id' => 2025020003, 'status' => 'completed'],
+        ['game_id' => 2025020004, 'status' => 'completed'],
+    ] as $row) {
+        DB::table('nhl_import_progress')->insert([
+            'run_id' => $sourceRun->id,
+            'season_id' => '20252026',
+            'game_date' => DB::table('nhl_games')->where('nhl_game_id', $row['game_id'])->value('game_date'),
+            'game_id' => (string) $row['game_id'],
+            'game_type' => 2,
+            'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+            'items_count' => $row['status'] === 'completed' ? 1 : 0,
+            'status' => $row['status'],
+            'last_error' => $row['status'] === 'error' ? 'validation failed' : null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    NhlGameValidation::create([
+        'nhl_game_id' => 2025020002,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_INVALIDATED,
+        'mismatch_count' => 1,
+    ]);
+    NhlGameValidation::create([
+        'nhl_game_id' => 2025020003,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
+        'mismatch_count' => 1,
+    ]);
+    NhlGameValidation::create([
+        'nhl_game_id' => 2025020004,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_APPROVED,
+        'mismatch_count' => 0,
+    ]);
+
+    $orchestrator = Mockery::mock(NhlImportOrchestrator::class);
+    $orchestrator->shouldReceive('fillActiveGameSlotsForRun')
+        ->once()
+        ->with(Mockery::type('int'));
+    app()->instance(NhlImportOrchestrator::class, $orchestrator);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.rerun-failed'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_PROCESS)
+        ->assertJsonPath('run.payload.rerun_scope', 'failed_only')
+        ->assertJsonPath('run.payload.rerun_from_run_id', $sourceRun->id)
+        ->assertJsonPath('run.payload.failed_game_count', 2)
+        ->assertJsonPath('run.payload.reprocess_existing', true);
+
+    $rerun = NhlGameImportRun::query()
+        ->where('id', '!=', $sourceRun->id)
+        ->firstOrFail();
+
+    expect(DB::table('nhl_import_progress')->where('run_id', $rerun->id)->pluck('game_id')->all())
+        ->toEqualCanonicalizing(['2025020001', '2025020002'])
+        ->and(DB::table('nhl_import_progress')->where('run_id', $rerun->id)->where('status', 'scheduled')->count())
+        ->toBe(2)
+        ->and(DB::table('nhl_import_progress')->where('game_id', '2025020003')->value('run_id'))
+        ->toBe($sourceRun->id)
+        ->and(DB::table('nhl_import_progress')->where('game_id', '2025020004')->value('run_id'))
+        ->toBe($sourceRun->id);
+
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($rerun): bool {
+        return $event->reason === 'processing-queued' && $event->runId === $rerun->id;
+    });
+});
+
+it('rejects failed-only NHL game import reruns when there are no failed candidates', function () {
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    $now = now();
+    $sourceRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_PROCESS,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020005,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-01-15',
+        'game_dow' => 'Thu',
+        'game_month' => 'Jan',
+        'home_team_id' => 1,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 2,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => $sourceRun->id,
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020005',
+        'game_type' => 2,
+        'import_type' => NhlImportStages::VALIDATE_SUMMARY,
+        'items_count' => 1,
+        'status' => 'completed',
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    NhlGameValidation::create([
+        'nhl_game_id' => 2025020005,
+        'validation_type' => NhlGameValidation::TYPE_SUMMARY_BOXSCORE,
+        'status' => NhlGameValidation::STATUS_APPROVED,
+        'mismatch_count' => 0,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.rerun-failed'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('run_id');
+
+    expect(NhlGameImportRun::query()->count())->toBe(1);
+    Event::assertNotDispatched(NhlGameImportStatusUpdated::class);
 });
 
 it('allows super admins to queue NHL game processing for each date in a range', function () {

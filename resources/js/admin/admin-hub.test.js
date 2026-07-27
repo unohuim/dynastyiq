@@ -1361,7 +1361,73 @@ describe('admin-hub import listeners', () => {
             headers: { Accept: 'application/json' },
         });
         expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
-        expect(instance.gameImports.rerunningRuns[24]).toBeUndefined();
+        expect(instance.gameImports.rerunningRuns['24:full']).toBeUndefined();
+    });
+
+    it('submits failed-only game import rerun using only the selected run id', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Failed-only rerun queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 26, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportRerunFailedUrl: '/admin/nhl-game-imports/rerun-failed',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        instance.refreshValidationContainers = vi.fn(() => Promise.resolve());
+        const run = {
+            id: 24,
+            action: 'process',
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+            facts: {
+                failed_rerun_game_count: 2,
+            },
+        };
+
+        await instance.rerunFailedOnlyGameImportRun(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/rerun-failed', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ run_id: 24 }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
+        expect(instance.gameImports.rerunningRuns['24:failed']).toBeUndefined();
+    });
+
+    it('keeps failed-only game import rerun unavailable when the run has no failed candidates', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            id: 24,
+            action: 'process',
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+            facts: {
+                failed_rerun_game_count: 0,
+            },
+        };
+
+        expect(instance.canRerunFailedOnlyGameImportRun(run)).toBe(false);
+
+        await instance.rerunFailedOnlyGameImportRun(run);
+
+        expect(fetch).not.toHaveBeenCalled();
     });
 
     it('submits season sync rerun using the stored season payload', async () => {
@@ -1403,7 +1469,7 @@ describe('admin-hub import listeners', () => {
             headers: { Accept: 'application/json' },
         });
         expect(instance.refreshValidationContainers).toHaveBeenCalledTimes(1);
-        expect(instance.gameImports.rerunningRuns[31]).toBeUndefined();
+        expect(instance.gameImports.rerunningRuns['31:full']).toBeUndefined();
     });
 
     it('submits replay processing from a discovered range with no scheduled rows', async () => {

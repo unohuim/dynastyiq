@@ -20,6 +20,7 @@
             gameImportGameRerunUrl: @js(url('/admin/nhl-game-imports/games')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
+            gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
             leagueRefreshUrl: @js(route('leagues.resync')),
@@ -679,40 +680,8 @@
                                                 <button
                                                     type="button"
                                                     class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700"
-                                                    :data-run-id="run.id"
-                                                    onclick="
-                                                        event.preventDefault();
-                                                        event.stopPropagation();
-
-                                                        const runId = this.dataset.runId;
-                                                        if (!runId) {
-                                                            return false;
-                                                        }
-
-                                                        const originalText = this.textContent;
-                                                        this.textContent = 'Queuing...';
-
-                                                        fetch(@js(route('admin.nhl-game-imports.process')), {
-                                                            method: 'POST',
-                                                            headers: {
-                                                                Accept: 'application/json',
-                                                                'Content-Type': 'application/json',
-                                                                'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']')?.getAttribute('content'),
-                                                            },
-                                                            body: JSON.stringify({
-                                                                run_id: Number(runId),
-                                                                reprocess_existing: true,
-                                                            }),
-                                                        })
-                                                            .catch((error) => {
-                                                                window.alert(error?.message ?? 'Unable to queue processing');
-                                                            })
-                                                            .finally(() => {
-                                                                this.textContent = originalText;
-                                                            });
-
-                                                        return false;
-                                                    "
+                                                    @click.stop.prevent="processGameImports(run, { reprocessExisting: true })"
+                                                    x-text="gameImportProcessButtonText(run)"
                                                 >
                                                     Process
                                                 </button>
@@ -723,51 +692,42 @@
                                                     <div><span x-text="formatNumber(run.date_count)"></span> dates</div>
                                                 </div>
                                             </template>
-                                            <button
-                                                type="button"
-                                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50"
-                                                :data-run-id="run.id"
-                                                :data-run-action="run.action"
-                                                :data-processing-started="run.processing_started ? '1' : '0'"
-                                                onclick="
-                                                    event.preventDefault();
-                                                    event.stopPropagation();
-
-                                                    const runId = this.dataset.runId;
-                                                    if (!runId) {
-                                                        return false;
-                                                    }
-
-                                                    const originalText = this.textContent;
-                                                    this.textContent = 'Queuing...';
-
-                                                    fetch(@js(route('admin.nhl-game-imports.discover')), {
-                                                        method: 'POST',
-                                                        headers: {
-                                                            Accept: 'application/json',
-                                                            'Content-Type': 'application/json',
-                                                            'X-CSRF-TOKEN': document.querySelector('meta[name=\'csrf-token\']')?.getAttribute('content'),
-                                                        },
-                                                        body: JSON.stringify({ run_id: Number(runId) }),
-                                                    })
-                                                        .then(async (response) => {
-                                                            if (!response.ok) {
-                                                                const payload = await response.json().catch(() => ({}));
-                                                                throw new Error(payload.message ?? 'Unable to queue rerun');
-                                                            }
-                                                        })
-                                                        .catch((error) => {
-                                                            window.alert(error?.message ?? 'Unable to queue rerun');
-                                                        })
-                                                        .finally(() => {
-                                                            this.textContent = originalText;
-                                                        });
-
-                                                    return false;
-                                                "
-                                            >
-                                                Re Run
-                                            </button>
+                                            <div class="relative" @click.outside="closeGameImportRerunMenu(run)">
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    :disabled="!canRerunGameImportRun(run) || gameImportRerunBusy(run)"
+                                                    :aria-expanded="isGameImportRerunMenuOpen(run) ? 'true' : 'false'"
+                                                    @click.stop.prevent="toggleGameImportRerunMenu(run)"
+                                                >
+                                                    <span x-text="gameImportRerunBusy(run) ? 'Queuing...' : 'Re Run'"></span>
+                                                    <svg class="h-3 w-3 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                        <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" />
+                                                    </svg>
+                                                </button>
+                                                <div
+                                                    x-show="isGameImportRerunMenuOpen(run)"
+                                                    x-transition.opacity.duration.150ms
+                                                    x-cloak
+                                                    class="absolute right-0 z-20 mt-1 w-36 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
+                                                        :disabled="!canRerunFailedOnlyGameImportRun(run)"
+                                                        @click.stop.prevent="rerunFailedOnlyGameImportRun(run)"
+                                                    >
+                                                        Failed Only
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                                        @click.stop.prevent="rerunFullGameImportRun(run)"
+                                                    >
+                                                        Full Run
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 

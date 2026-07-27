@@ -50,6 +50,7 @@ export default function adminHub(options = {}) {
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
+        gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
         leagueRefreshUrl: options.leagueRefreshUrl ?? '/leagues/resync',
@@ -76,6 +77,7 @@ export default function adminHub(options = {}) {
             runs: [],
             seasons: [],
             expandedRuns: {},
+            rerunMenuRunId: null,
             rerunningRuns: {},
             rerunningGames: {},
             completedGameFadeSteps: {},
@@ -883,26 +885,25 @@ export default function adminHub(options = {}) {
         },
 
         async rerunGameImportRun(run) {
-            const runId = run?.id;
+            return this.rerunFullGameImportRun(run);
+        },
 
-            if (!runId || this.gameImports.rerunningRuns[runId] === true) {
+        async rerunFullGameImportRun(run) {
+            const runId = run?.id;
+            const rerunKey = this.gameImportRerunKey(run, 'full');
+
+            if (!runId || this.gameImports.rerunningRuns[rerunKey] === true) {
                 return;
             }
 
+            this.closeGameImportRerunMenu(run);
             this.gameImports.error = '';
             this.gameImports.rerunningRuns = {
                 ...this.gameImports.rerunningRuns,
-                [runId]: true,
+                [rerunKey]: true,
             };
 
             try {
-                if (run.action === 'discover' && !run.processing_started) {
-                    await this.processGameImports(run, { reprocessExisting: true });
-                    await this.refreshValidationContainers();
-
-                    return;
-                }
-
                 if (!this.canRerunGameImportRun(run)) {
                     return;
                 }
@@ -925,7 +926,43 @@ export default function adminHub(options = {}) {
                 this.gameImports.error = error.message ?? 'Unable to queue rerun';
             } finally {
                 const next = { ...this.gameImports.rerunningRuns };
-                delete next[runId];
+                delete next[rerunKey];
+                this.gameImports.rerunningRuns = next;
+            }
+        },
+
+        async rerunFailedOnlyGameImportRun(run) {
+            const runId = run?.id;
+            const rerunKey = this.gameImportRerunKey(run, 'failed');
+
+            if (!runId || this.gameImports.rerunningRuns[rerunKey] === true) {
+                return;
+            }
+
+            this.closeGameImportRerunMenu(run);
+            this.gameImports.error = '';
+            this.gameImports.rerunningRuns = {
+                ...this.gameImports.rerunningRuns,
+                [rerunKey]: true,
+            };
+
+            try {
+                if (!this.canRerunFailedOnlyGameImportRun(run)) {
+                    return;
+                }
+
+                await this.sendGameImportRequest(
+                    this.gameImportRerunFailedUrl,
+                    { run_id: runId }
+                );
+
+                await this.loadGameImports({ background: true });
+                await this.refreshValidationContainers();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue failed-only rerun';
+            } finally {
+                const next = { ...this.gameImports.rerunningRuns };
+                delete next[rerunKey];
                 this.gameImports.rerunningRuns = next;
             }
         },
@@ -1415,6 +1452,33 @@ export default function adminHub(options = {}) {
             return this.gameImports.processingRuns[run?.id] === true ? 'Queuing...' : 'Process';
         },
 
+        gameImportRerunKey(run, scope = 'full') {
+            return `${run?.id ?? 'unknown'}:${scope}`;
+        },
+
+        gameImportRerunBusy(run) {
+            return this.gameImports.rerunningRuns[this.gameImportRerunKey(run, 'full')] === true
+                || this.gameImports.rerunningRuns[this.gameImportRerunKey(run, 'failed')] === true;
+        },
+
+        isGameImportRerunMenuOpen(run) {
+            return this.gameImports.rerunMenuRunId === run?.id;
+        },
+
+        toggleGameImportRerunMenu(run) {
+            if (!this.canRerunGameImportRun(run) || this.gameImportRerunBusy(run)) {
+                return;
+            }
+
+            this.gameImports.rerunMenuRunId = this.isGameImportRerunMenuOpen(run) ? null : run.id;
+        },
+
+        closeGameImportRerunMenu(run = null) {
+            if (!run || this.isGameImportRerunMenuOpen(run)) {
+                this.gameImports.rerunMenuRunId = null;
+            }
+        },
+
         shouldReprocessGameImportRun(run) {
             return run?.action === 'discover'
                 && !run.processing_started
@@ -1436,6 +1500,12 @@ export default function adminHub(options = {}) {
             }
 
             return Boolean(run?.start_date) && Boolean(run?.end_date);
+        },
+
+        canRerunFailedOnlyGameImportRun(run) {
+            return this.canRerunGameImportRun(run)
+                && run.action !== 'season-sync'
+                && Number(run?.facts?.failed_rerun_game_count || 0) > 0;
         },
 
         discoveryFactsText(run) {

@@ -214,6 +214,36 @@ class NhlImportProgressRepo
         return $updated;
     }
 
+    /**
+     * Reattach selected game progress rows to a run and queue them again.
+     *
+     * @param array<int,int> $gameIds
+     */
+    public function rescheduleExistingGameRowsForRun(int $runId, array $gameIds): int
+    {
+        $gameIds = array_values(array_unique(array_map('intval', $gameIds)));
+
+        if ($gameIds === []) {
+            return 0;
+        }
+
+        $updated = DB::table('nhl_import_progress')
+            ->whereIn('game_id', $gameIds)
+            ->update([
+                'run_id' => $runId,
+                'items_count' => 0,
+                'status' => 'scheduled',
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+
+        if ($updated > 0) {
+            broadcast(new NhlGameImportStatusUpdated('stage-rescheduled'));
+        }
+
+        return $updated;
+    }
+
     /** Mark failure (error) with message/code. */
     public function markError(int $gameId, string $type, string $message, $code = null): void
     {

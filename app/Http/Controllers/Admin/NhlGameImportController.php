@@ -12,6 +12,7 @@ use App\Jobs\RebuildNhlGameImportJob;
 use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameSourceStatus;
+use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\AdminImports;
 use App\Services\NhlGameSourcePreflight;
@@ -229,6 +230,72 @@ class NhlGameImportController extends Controller
 
         return response()->json([
             'message' => 'Processing queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue only failed game imports and actionable validation failures from a previous run range.
+     */
+    public function rerunFailedOnly(
+        Request $request,
+        NhlImportOrchestrator $orchestrator,
+        NhlImportProgressRepo $progress
+    ): JsonResponse {
+        $input = $request->validate([
+            'run_id' => ['required', 'integer'],
+        ]);
+        $sourceRun = $this->rerunSourceRunFromInput($input);
+        $range = $this->rerunRangeFromRun($sourceRun);
+        $gameIds = $this->failedOnlyGameIdsForRun($sourceRun);
+
+        if ($gameIds === []) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This game import run has no failed games or actionable game validations to rerun.',
+            ]);
+        }
+
+        $gameDates = DB::table('nhl_import_progress')
+            ->whereIn('game_id', $gameIds)
+            ->distinct()
+            ->pluck('game_date')
+            ->map(fn ($date): string => (string) $date)
+            ->all();
+
+        $run = NhlGameImportRun::create([
+            'action' => NhlGameImportRun::ACTION_PROCESS,
+            'mode' => $range['mode'],
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'start_date' => $range['start']->toDateString(),
+            'end_date' => $range['end']->toDateString(),
+            'date_count' => count($gameDates),
+            'queued_jobs' => count($gameIds),
+            'payload' => [
+                'start' => $range['start']->toDateString(),
+                'end' => $range['end']->toDateString(),
+                'rerun_from_run_id' => $sourceRun->id,
+                'rerun_scope' => 'failed_only',
+                'failed_game_count' => count($gameIds),
+                'reprocess_existing' => true,
+            ],
+            'created_by' => $request->user()?->id,
+        ]);
+
+        $reprocessCount = $progress->rescheduleExistingGameRowsForRun($run->id, $gameIds);
+
+        if ($reprocessCount === 0) {
+            $run->delete();
+
+            throw ValidationException::withMessages([
+                'run_id' => 'No existing NHL import stages were found for failed-only rerun games.',
+            ]);
+        }
+
+        $orchestrator->fillActiveGameSlotsForRun($run->id);
+        broadcast(new NhlGameImportStatusUpdated('processing-queued', $run->id));
+
+        return response()->json([
+            'message' => 'Failed-only rerun queued.',
             'run' => $this->serializeRun($run->refresh()),
         ], 202);
     }
@@ -673,6 +740,7 @@ class NhlGameImportController extends Controller
             'selected_date_count' => $run->date_count,
             'discovered_game_date_count' => (int) (clone $query)->distinct()->count('game_date'),
             'discovered_game_count' => (int) (clone $query)->distinct()->count('game_id'),
+            'failed_rerun_game_count' => count($this->failedOnlyGameIdsForRun($run)),
             'scheduled_stage_rows' => (int) (clone $query)->where('status', 'scheduled')->count(),
             'skipped_stage_rows' => (int) (clone $query)->where('status', 'skipped')->count(),
             'total_stage_rows' => (int) (clone $query)->count(),
@@ -769,6 +837,58 @@ class NhlGameImportController extends Controller
         return DB::table('nhl_import_progress')
             ->where('run_id', $run->id)
             ->exists();
+    }
+
+    /**
+     * Return games eligible for a failed-only rerun for an import run's range.
+     *
+     * @return array<int,int>
+     */
+    private function failedOnlyGameIdsForRun(NhlGameImportRun $run): array
+    {
+        if ($run->action === NhlGameImportRun::ACTION_SEASON_SYNC) {
+            return [];
+        }
+
+        $range = $this->rerunRangeFromRun($run);
+        $progressGameIds = $this->progressQueryForRun($run)
+            ->where('status', 'error')
+            ->distinct()
+            ->pluck('game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+        $validationGameIds = DB::table('nhl_game_validations as validations')
+            ->join('nhl_games as games', 'games.nhl_game_id', '=', 'validations.nhl_game_id')
+            ->whereBetween('games.game_date', [
+                $range['end']->toDateString(),
+                $range['start']->toDateString(),
+            ])
+            ->whereIn('validations.status', $this->actionableValidationStatuses())
+            ->distinct()
+            ->pluck('validations.nhl_game_id')
+            ->map(fn ($gameId): int => (int) $gameId)
+            ->all();
+
+        return collect($progressGameIds)
+            ->merge($validationGameIds)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Validation statuses that should still be actionable from Game Imports.
+     *
+     * @return array<int,string>
+     */
+    private function actionableValidationStatuses(): array
+    {
+        return [
+            NhlGameValidation::STATUS_FAILED,
+            NhlGameValidation::STATUS_INCOMPLETE,
+            NhlGameValidation::STATUS_INVALIDATED,
+        ];
     }
 
     private function progressQueryForRun(NhlGameImportRun $run, ?string $alias = null)
