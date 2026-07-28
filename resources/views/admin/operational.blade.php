@@ -27,6 +27,7 @@
             leagueRefreshUrl: @js(route('leagues.resync')),
         })"
         x-init="init()"
+        @click.capture="handleAdminHubClick($event)"
         x-cloak
     >
         <div class="border-b border-gray-200">
@@ -800,8 +801,19 @@
                                             :id="gameImportAccordionId(run)"
                                             class="mt-2 space-y-2"
                                         >
+                                            <div
+                                                x-show="gameImportRunDetailText(run)"
+                                                x-cloak
+                                                class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+                                            >
+                                                <div class="font-semibold text-red-800">Run detail</div>
+                                                <div class="mt-0.5 break-words" x-text="gameImportRunDetailText(run)"></div>
+                                            </div>
+
                                             <template x-if="gameImportGames(run).length === 0">
-                                                <div class="text-xs text-gray-500">No games discovered yet.</div>
+                                                <div class="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                                                    No game-level rows require attention.
+                                                </div>
                                             </template>
 
                                             <template x-for="game in gameImportGames(run)" :key="game.game_id">
@@ -989,6 +1001,7 @@
                 <div
                     x-ref="validationsMount"
                     data-admin-validations-mount
+                    data-admin-validation-scope="validations"
                     class="min-h-64"
                 >
                     <div
@@ -1017,6 +1030,7 @@
                 <div
                     x-ref="shiftMismatchesMount"
                     data-admin-shift-mismatches-mount
+                    data-admin-validation-scope="shift-mismatches"
                     class="min-h-64"
                 >
                     <div

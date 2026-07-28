@@ -66,7 +66,8 @@ rules:
   - Summary validation may return invalidated when source coverage or source disagreement prevents determining the correct summary value, regardless of game type.
   - Summary validation may use preseason game type only to identify documented provider-shape exceptions, such as limited scoring payloads, and not to hide unresolved source disagreement.
   - Summary validation may return approved after source-backed reconciliation updates summaries to values established by trusted provider agreement.
-  - Summary validation may return shiftchart-mismatch for non-preseason games when all remaining deltas are limited to time on ice or shifts after documented reconciliation; official boxscore time on ice and shifts must be used in summaries while the original deltas remain persisted for admin review.
+  - Summary validation may return shiftchart-mismatch for non-preseason games when all current remaining deltas are limited to time on ice or shifts after documented reconciliation; official boxscore time on ice and shifts must be used in summaries while those unresolved deltas remain persisted for admin review.
+  - Summary validation must approve instead of preserving shiftchart-mismatch when source-backed reconciliation or HTML TV/TH time-on-ice fallback produces summaries that match official boxscore time on ice and shifts.
   - Goalie shift-count-only deltas must be reconciled to the official boxscore convention when official goalie time on ice already matches the computed summary.
   - Explicit reprocess runs must delete game-scoped stage-owned rows before importing or recalculating that stage so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data.
   - Non-blocking HTML play-by-play review differences must not create actionable Game Validations rows or filesystem troubleshooting folders for games whose pipeline continues.

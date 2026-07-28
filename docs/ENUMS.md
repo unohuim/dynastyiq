@@ -28,6 +28,26 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+## API Clients
+
+### API Client Scopes
+
+**Name:** API client scopes
+**Storage location(s):** `api_clients.scopes` (JSON array)
+**Allowed values currently emitted:**
+
+- `nhl-reference:read`
+
+**Semantic meaning:**
+
+- `nhl-reference:read`: Allows a server-to-server API client to read NHL team and player reference endpoints.
+
+**Notes:**
+
+- API client scopes are string-backed and enforced by middleware.
+
+---
+
 ## Analytics
 
 ### Analytics Identity Link Method
@@ -484,7 +504,7 @@ Do not introduce new enum values without updating this document.
 - `accepted_exception`: An admin reviewed and accepted the failed validation as a known exception.
 - `incomplete`: Comparable core totals passed, but at least one source-dependent field group could not be validated.
 - `invalidated`: Validation produced deltas and trusted sources are missing, contradictory, or insufficient to determine the correct value; deltas remain auditable, but the game may continue through import flow.
-- `shiftchart-mismatch`: Remaining validation deltas are limited to shiftchart-derived time on ice or shift count after all documented reconciliation attempts; official boxscore time on ice and shifts are used in summaries, and the deltas remain auditable.
+- `shiftchart-mismatch`: Current unresolved validation deltas are limited to shiftchart-derived time on ice or shift count after all documented reconciliation attempts; official boxscore time on ice and shifts are used in summaries while the unresolved deltas remain auditable. Once source-backed reconciliation or HTML TOI fallback makes summaries match official boxscore values, the validation should approve instead.
 
 **Notes:**
 

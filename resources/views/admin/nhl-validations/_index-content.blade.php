@@ -15,12 +15,22 @@
             @endforeach
         </div>
 
+        <div class="mb-4 grid gap-2 text-xs text-gray-600 sm:grid-cols-2 lg:grid-cols-3">
+            <div><span class="font-semibold text-gray-800">Failed:</span> validation processing errored.</div>
+            <div><span class="font-semibold text-gray-800">Invalidated:</span> deltas exist and truth cannot be determined.</div>
+            <div><span class="font-semibold text-gray-800">Incomplete:</span> source coverage is missing.</div>
+            <div><span class="font-semibold text-gray-800">Shifts Mismatch:</span> remaining deltas are shift-derived.</div>
+            <div><span class="font-semibold text-gray-800">Approved:</span> trusted automatically.</div>
+            <div><span class="font-semibold text-gray-800">Accepted:</span> trusted by manual exception.</div>
+        </div>
+
         <div class="overflow-hidden bg-white shadow-sm">
             <table class="min-w-full divide-y divide-gray-200 text-sm">
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Game</th>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Status</th>
+                        <th class="px-4 py-3 text-left font-semibold text-gray-700">Reason</th>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">{{ $isPbpHtmlReport ? 'Mismatches' : 'Deltas' }}</th>
                         <th class="px-4 py-3 text-left font-semibold text-gray-700">Checked</th>
                         <th class="px-4 py-3 text-right font-semibold text-gray-700">Action</th>
@@ -41,6 +51,16 @@
                                 </span>
                                 @if($validation->resolution)
                                     <div class="mt-1 text-xs text-gray-500">{{ str_replace('_', ' ', $validation->resolution) }}</div>
+                                @endif
+                            </td>
+                            <td class="px-4 py-3 text-xs text-gray-600">
+                                <div>{{ $validation->review_summary }}</div>
+                                @if(! empty($validation->source_gap_summaries))
+                                    <div class="mt-1 flex flex-wrap gap-1">
+                                        @foreach($validation->source_gap_summaries as $sourceGapSummary)
+                                            <span class="inline-flex rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-800">{{ $sourceGapSummary }}</span>
+                                        @endforeach
+                                    </div>
                                 @endif
                             </td>
                             <td class="px-4 py-3 text-gray-900">{{ $isPbpHtmlReport ? $validation->pbp_source_mismatches_count : $validation->mismatch_count }}</td>
@@ -86,7 +106,7 @@
                                 data-validation-detail-row="{{ $validation->id }}"
                                 class="hidden bg-gray-50"
                             >
-                                <td colspan="5" class="px-4 py-0">
+                                <td colspan="6" class="px-4 py-0">
                                     <div
                                         data-validation-detail-shell="{{ $validation->id }}"
                                         class="grid grid-rows-[0fr] opacity-0 transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none"
@@ -105,7 +125,7 @@
                         @endif
                     @empty
                         <tr>
-                            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500">No validations found.</td>
+                            <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500">No validations found.</td>
                         </tr>
                     @endforelse
                 </tbody>

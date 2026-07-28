@@ -8,6 +8,7 @@ use App\Console\Commands\ImportCapWagesCommand;
 use App\Console\Commands\AuditNhleLeagueMappingsCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\BackfillLeagueCommissionersCommand;
+use App\Console\Commands\CreateApiClientCommand;
 use App\Console\Commands\NhlApiCommand;
 use App\Console\Commands\ImportNhlPlayersCommand;
 use App\Console\Commands\NhlDiscoverCommand;
@@ -16,6 +17,7 @@ use App\Console\Commands\PatreonNightlySync;
 use App\Console\Commands\RefreshNhlProspectFlagsCommand;
 use App\Console\Commands\SumNhlSeasonCommand;
 use App\Http\Middleware\AdminLifecycleMiddleware;
+use App\Http\Middleware\AuthenticateApiClient;
 use App\Http\Middleware\HydrateDiscordSession;
 use App\Http\Middleware\SuperAdminMiddleware;
 use Illuminate\Foundation\Application;
@@ -31,6 +33,7 @@ return Application::configure(basePath: dirname(__DIR__))
         BackfillShotGeometryCommand::class,
         BackfillLeagueCommissionersCommand::class,
         AuditNhleLeagueMappingsCommand::class,
+        CreateApiClientCommand::class,
         FantraxDraftsPollCommand::class,
         GenerateDraftPickCardImageCommand::class,
         NhlApiCommand::class,
@@ -48,6 +51,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin.lifecycle' => AdminLifecycleMiddleware::class,
             'admin.super' => SuperAdminMiddleware::class,
+            'api.client' => AuthenticateApiClient::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\Api\DiscordWebhookController;
+use App\Http\Controllers\Api\NhlReferenceController;
 use App\Http\Controllers\StatsController;
 use App\Http\Controllers\PatreonWebhookController;
 
@@ -42,6 +43,13 @@ Route::post('/discord/fantrax/connect', [DiscordWebhookController::class, 'conne
 // Patreon Webhooks
 Route::post('/patreon/webhook', [PatreonWebhookController::class, 'handle'])
     ->name('patreon.webhook');
+
+Route::middleware('api.client:nhl-reference:read')->group(function (): void {
+    Route::get('/nhl-teams', [NhlReferenceController::class, 'teams'])
+        ->name('api.nhl-reference.teams');
+    Route::get('/nhl-players', [NhlReferenceController::class, 'players'])
+        ->name('api.nhl-reference.players');
+});
 
 
 

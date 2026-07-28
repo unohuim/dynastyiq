@@ -944,7 +944,12 @@ class NhlGameImportController extends Controller
                     ->all();
                 $blockedSources = array_values(array_filter(
                     $statuses,
-                    fn (array $status): bool => $status['status'] !== 'available'
+                    fn (array $status): bool => $this->isActionableSourceGap($status)
+                ));
+                $auditOnlySources = array_values(array_filter(
+                    $statuses,
+                    fn (array $status): bool => $status['status'] !== NhlGameSourceStatus::STATUS_AVAILABLE
+                        && ! $this->isActionableSourceGap($status)
                 ));
 
                 return [
@@ -963,10 +968,44 @@ class NhlGameImportController extends Controller
                     'latest_stage_updated_at' => $gameRows->pluck('updated_at')->filter()->max(),
                     'source_statuses' => $statuses,
                     'blocked_sources' => $blockedSources,
+                    'audit_source_statuses' => $auditOnlySources,
                 ];
             })
+            ->filter(fn (array $game): bool => $this->shouldShowGameRow($game))
             ->values()
             ->all();
+    }
+
+    /**
+     * Determine whether a game row needs operator attention inside a run accordion.
+     *
+     * @param array<string, mixed> $game
+     */
+    private function shouldShowGameRow(array $game): bool
+    {
+        return (int) ($game['failed_stage_rows'] ?? 0) > 0
+            || (int) ($game['running_stage_rows'] ?? 0) > 0
+            || (int) ($game['scheduled_stage_rows'] ?? 0) > 0
+            || (int) ($game['skipped_stage_rows'] ?? 0) > 0
+            || count($game['blocked_sources'] ?? []) > 0;
+    }
+
+    /**
+     * Determine whether a source gap is actionable in Game Imports.
+     *
+     * @param array<string, mixed> $status
+     */
+    private function isActionableSourceGap(array $status): bool
+    {
+        if (($status['status'] ?? null) === NhlGameSourceStatus::STATUS_AVAILABLE) {
+            return false;
+        }
+
+        return in_array($status['source'] ?? null, [
+            NhlGameSourceStatus::SOURCE_PBP,
+            NhlGameSourceStatus::SOURCE_BOXSCORE,
+            NhlGameSourceStatus::SOURCE_SHIFTS,
+        ], true);
     }
 
     private function hasRunScopedProgress(NhlGameImportRun $run): bool

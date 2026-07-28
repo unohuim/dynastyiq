@@ -40,6 +40,41 @@ Each entry includes:
 
 ## Application Structure
 
+### Server To Server API Clients
+
+**Name:** Server To Server API Clients
+**Type:** Partner API Authentication Pattern
+**Location:**
+- `app/Models/ApiClient.php`
+- `app/Console/Commands/CreateApiClientCommand.php`
+- `app/Http/Middleware/AuthenticateApiClient.php`
+- `app/Http/Controllers/Api/NhlReferenceController.php`
+- `database/migrations/2026_07_27_000002_create_api_clients_table.php`
+- `routes/api.php`
+
+**Purpose:**
+Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
+
+**When to Use:**
+Creating revocable API tokens, protecting partner API endpoints, or exposing scoped DynastyIQ reference data to another server.
+
+**When Not to Use:**
+Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discord bot runtime commands.
+
+**Public Interface:**
+- `api-client:create`
+- `api.client`
+- `api_clients`
+- `/api/nhl-teams`
+- `/api/nhl-players`
+
+**Example Usage:**
+```bash
+php artisan api-client:create gner8 --scope=nhl-reference:read
+```
+
+---
+
 ### Laravel Application Shell
 
 **Name:** Laravel Application Shell

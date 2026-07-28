@@ -55,11 +55,10 @@ class ValidateNhlGameSummary
 
             if ($this->applyOfficialShiftchartMismatchTotals($gameId, $deltas)) {
                 $deltas = $this->comparator->compare($gameId);
+                $shiftchartMismatchDeltas = $this->isShiftchartMismatch($gameId, $deltas)
+                    ? $deltas
+                    : [];
             }
-        }
-
-        if ($shiftchartMismatchDeltas === [] && empty($deltas)) {
-            $shiftchartMismatchDeltas = $this->existingShiftchartMismatchDeltas($gameId);
         }
 
         $status = $shiftchartMismatchDeltas === []
@@ -515,42 +514,6 @@ class ValidateNhlGameSummary
         }
 
         return $changed;
-    }
-
-    /**
-     * Keep an auditable shiftchart mismatch when a later validation sees no
-     * deltas only because official boxscore TOI and shifts were already applied.
-     *
-     * @return array<int,array<string,mixed>>
-     */
-    private function existingShiftchartMismatchDeltas(int $gameId): array
-    {
-        $validation = NhlGameValidation::query()
-            ->where('nhl_game_id', $gameId)
-            ->where('validation_type', NhlGameValidation::TYPE_SUMMARY_BOXSCORE)
-            ->with('deltas')
-            ->first();
-
-        if (! $validation || ! in_array($validation->status, [
-            NhlGameValidation::STATUS_FAILED,
-            NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
-        ], true)) {
-            return [];
-        }
-
-        $deltas = $validation->deltas
-            ->map(static fn (NhlGameValidationDelta $delta): array => [
-                'nhl_player_id' => $delta->nhl_player_id,
-                'field' => $delta->field,
-                'boxscore_value' => $delta->boxscore_value,
-                'summary_value' => $delta->summary_value,
-                'delta' => $delta->delta,
-                'severity' => $delta->severity,
-            ])
-            ->values()
-            ->all();
-
-        return $this->isShiftchartMismatch($gameId, $deltas) ? $deltas : [];
     }
 
     private function stringValue(mixed $value): ?string

@@ -26,6 +26,7 @@ Migrations remain the **sole source of truth**.
 - analytics_identity_links
 - analytics_sessions
 - analytics_visitors
+- api_clients
 - cache
 - cache_locks
 - cap_contract_projections
@@ -99,6 +100,36 @@ Migrations remain the **sole source of truth**.
 - users
 - yahoo_fantasy_connections
 - yahoo_players
+
+---
+
+## api_clients
+
+**Organization-owned:** No
+**Purpose:** Scoped server-to-server API clients for partner ingestion endpoints.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| name | string | No | Human-readable client name |
+| slug | string | No | Unique stable client slug |
+| token_prefix | string(32) | No | Non-secret token prefix for identification |
+| token_hash | string(64) | No | SHA-256 hash of the bearer token |
+| scopes | json | No | Allowed API scopes |
+| last_used_at | timestamp | Yes | Last successful authentication |
+| revoked_at | timestamp | Yes | Revoked clients cannot authenticate |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `slug`
+- Unique: `token_hash`
+- Index: `token_prefix`
+- Index: `revoked_at`
 
 ---
 

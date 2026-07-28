@@ -1,0 +1,34 @@
+name: Server To Server API Clients
+type: Partner API Authentication Pattern
+location:
+  - app/Models/ApiClient.php
+  - app/Console/Commands/CreateApiClientCommand.php
+  - app/Http/Middleware/AuthenticateApiClient.php
+  - app/Http/Controllers/Api/NhlReferenceController.php
+  - database/migrations/2026_07_27_000002_create_api_clients_table.php
+  - routes/api.php
+purpose: Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
+when_to_use:
+  - Creating revocable API tokens for first-party or partner applications.
+  - Protecting reference-data API endpoints consumed by another server.
+  - Exposing DynastyIQ-owned NHL reference data to a scoped integration.
+when_not_to_use:
+  - Browser session authentication.
+  - User-owned OAuth provider credentials.
+  - Public unauthenticated API endpoints.
+  - Bot runtime commands that belong in the Discord bot service.
+rules:
+  - API clients must store only hashed bearer tokens.
+  - Plaintext tokens may be shown only once by the creation command.
+  - API client endpoints must require explicit scopes.
+  - Revoked clients must not authenticate.
+  - Partner-facing payloads must use stable external identifiers rather than DynastyIQ primary keys as their primary lookup keys.
+  - NHL reference endpoints must assume the consumer owns its local league id mapping.
+public_interface:
+  - api-client:create
+  - api.client middleware
+  - api_clients
+  - GET /api/nhl-teams
+  - GET /api/nhl-players
+example_usage: |
+  php artisan api-client:create gner8 --scope=nhl-reference:read

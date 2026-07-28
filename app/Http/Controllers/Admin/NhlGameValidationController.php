@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\RebuildNhlGameImportJob;
+use App\Models\NhlGameSourceStatus;
 use App\Models\NhlGameValidation;
 use App\Models\PlayByPlay;
 use App\Repositories\NhlImportProgressRepo;
@@ -19,6 +20,7 @@ use App\Support\NhlImportStages;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
@@ -48,6 +50,7 @@ class NhlGameValidationController extends Controller
         }
 
         $validations = $query->paginate(25)->withQueryString();
+        $this->attachIndexSummaries($validations->getCollection());
 
         if ($request->expectsJson() && $request->boolean('admin_panel')) {
             return response()->json([
@@ -69,6 +72,132 @@ class NhlGameValidationController extends Controller
             'status' => $status,
             'validationType' => $validationType,
         ]);
+    }
+
+    /**
+     * Attach operator-facing reason summaries to validation index rows.
+     */
+    private function attachIndexSummaries(Collection $validations): void
+    {
+        if ($validations->isEmpty()) {
+            return;
+        }
+
+        $validationIds = $validations->pluck('id')->map(fn ($id): int => (int) $id)->all();
+        $gameIds = $validations->pluck('nhl_game_id')->map(fn ($id): int => (int) $id)->unique()->all();
+        $deltas = DB::table('nhl_game_validation_deltas')
+            ->select(['validation_id', 'field', 'severity'])
+            ->whereIn('validation_id', $validationIds)
+            ->get()
+            ->groupBy(fn ($delta) => (string) $delta->validation_id);
+        $sourceStatuses = DB::table('nhl_game_source_statuses')
+            ->select(['nhl_game_id', 'source', 'status', 'reason'])
+            ->whereIn('nhl_game_id', $gameIds)
+            ->where('status', '!=', NhlGameSourceStatus::STATUS_AVAILABLE)
+            ->orderBy('source')
+            ->get()
+            ->groupBy(fn ($status) => (string) $status->nhl_game_id);
+
+        $validations->each(function (NhlGameValidation $validation) use ($deltas, $sourceStatuses): void {
+            $validationDeltas = $deltas->get((string) $validation->id, collect());
+            $gameSources = $sourceStatuses->get((string) $validation->nhl_game_id, collect());
+
+            $validation->setAttribute(
+                'review_summary',
+                $this->validationReviewSummary($validation, $validationDeltas, $gameSources)
+            );
+            $validation->setAttribute(
+                'source_gap_summaries',
+                $gameSources->map(fn ($source): string => $this->sourceGapSummary($source))->values()->all()
+            );
+        });
+    }
+
+    /**
+     * Build the short reason text shown on the validation index.
+     */
+    private function validationReviewSummary(NhlGameValidation $validation, $deltas, $sourceStatuses): string
+    {
+        if ($validation->status === NhlGameValidation::STATUS_APPROVED) {
+            return 'Auto-approved from trusted source agreement.';
+        }
+
+        if ($validation->status === NhlGameValidation::STATUS_ACCEPTED_EXCEPTION) {
+            return 'Manually accepted exception; audit trail retained.';
+        }
+
+        if ($validation->status === NhlGameValidation::STATUS_INCOMPLETE) {
+            if ($sourceStatuses->isEmpty()) {
+                return 'Source coverage is incomplete; no missing source row was recorded.';
+            }
+
+            return 'Missing source coverage: ' . $sourceStatuses
+                ->map(fn ($source): string => $this->sourceGapSummary($source))
+                ->implode('; ');
+        }
+
+        if ($validation->status === NhlGameValidation::STATUS_INVALIDATED) {
+            return $this->deltaSummary(
+                $deltas,
+                'Cannot determine truth',
+                'No persisted deltas were found for this invalidated validation.'
+            );
+        }
+
+        if ($validation->status === NhlGameValidation::STATUS_SHIFTCHART_MISMATCH) {
+            return $this->deltaSummary(
+                $deltas,
+                'Shift-derived mismatch',
+                'Shiftchart-derived mismatch persisted without row-level deltas.'
+            );
+        }
+
+        if ($validation->status === NhlGameValidation::STATUS_FAILED) {
+            return $this->deltaSummary(
+                $deltas,
+                'Validation failed',
+                'Validation execution failed; open details for available context.'
+            );
+        }
+
+        return 'Review required.';
+    }
+
+    /**
+     * Summarize validation delta fields for the index table.
+     */
+    private function deltaSummary($deltas, string $prefix, string $emptyMessage): string
+    {
+        if ($deltas->isEmpty()) {
+            return $emptyMessage;
+        }
+
+        $fieldCounts = $deltas
+            ->groupBy('field')
+            ->map(fn ($fieldDeltas, $field): array => [
+                'field' => (string) $field,
+                'count' => $fieldDeltas->count(),
+            ])
+            ->sortByDesc('count')
+            ->values();
+        $topFields = $fieldCounts
+            ->take(4)
+            ->map(fn (array $field): string => str_replace('_', ' ', $field['field']) . ' (' . $field['count'] . ')')
+            ->implode(', ');
+        $remaining = max(0, $fieldCounts->count() - 4);
+        $suffix = $remaining > 0 ? ", +{$remaining} more" : '';
+
+        return "{$prefix}: {$deltas->count()} deltas across {$topFields}{$suffix}.";
+    }
+
+    /**
+     * Convert one missing source status into operator-facing text.
+     */
+    private function sourceGapSummary($source): string
+    {
+        $reason = $source->reason ? str_replace('_', ' ', (string) $source->reason) : 'missing';
+
+        return "{$source->source} {$source->status}: {$reason}";
     }
 
     public function show(Request $request, NhlGameValidation $validation): View|JsonResponse

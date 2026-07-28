@@ -9,6 +9,7 @@ use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\SeasonSumJob;
 use App\Jobs\SyncYahooTeamRosterJob;
+use App\Models\ApiClient;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\NhlGameImportRun;
@@ -788,6 +789,135 @@ it('marks a game import run failed when a shot fact job fails', function (): voi
             && $event->runId === $run->id
             && $event->gameId === 2025020001;
     });
+});
+
+it('creates scoped API client tokens for server integrations', function (): void {
+    $this->artisan('api-client:create', [
+        'name' => 'gner8',
+        '--scope' => ['nhl-reference:read'],
+    ])->assertExitCode(0);
+
+    $client = ApiClient::query()->first();
+
+    expect($client)->not->toBeNull()
+        ->and($client->name)->toBe('gner8')
+        ->and($client->slug)->toBe('gner8')
+        ->and(str_starts_with((string) $client->token_prefix, 'diq_gner8_'))->toBeTrue()
+        ->and($client->token_hash)->toHaveLength(64)
+        ->and($client->scopes)->toBe(['nhl-reference:read'])
+        ->and($client->last_used_at)->toBeNull()
+        ->and($client->revoked_at)->toBeNull();
+});
+
+it('requires a scoped API client token for NHL reference endpoints', function (): void {
+    $token = 'diq_gner8_testing-token';
+    ApiClient::create([
+        'name' => 'Gner8',
+        'slug' => 'gner8',
+        'token_prefix' => substr($token, 0, 24),
+        'token_hash' => ApiClient::hashToken($token),
+        'scopes' => ['other:read'],
+    ]);
+
+    $this->getJson('/api/nhl-teams')
+        ->assertUnauthorized()
+        ->assertJsonPath('message', 'API client token is required.');
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-teams')
+        ->assertForbidden()
+        ->assertJsonPath('message', 'API client token is invalid for this scope.');
+});
+
+it('returns NHL teams for scoped API clients without consumer league ids', function (): void {
+    $token = 'diq_gner8_testing-token';
+    $client = ApiClient::create([
+        'name' => 'Gner8',
+        'slug' => 'gner8',
+        'token_prefix' => substr($token, 0, 24),
+        'token_hash' => ApiClient::hashToken($token),
+        'scopes' => ['nhl-reference:read'],
+    ]);
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 14,
+        'abbrev' => 'TBL',
+        'full_name' => 'Tampa Bay Lightning',
+        'common_name' => 'Lightning',
+        'place_name' => 'Tampa Bay',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-teams')
+        ->assertOk()
+        ->assertJsonMissingPath('data.0.league_id')
+        ->assertJsonPath('data.0.external_id', 14)
+        ->assertJsonPath('data.0.slug', 'tampa-bay-lightning')
+        ->assertJsonPath('data.0.name', 'Tampa Bay Lightning')
+        ->assertJsonPath('data.0.abbreviation', 'TBL')
+        ->assertJsonPath('data.0.city', 'Tampa Bay')
+        ->assertJsonPath('data.0.active', true)
+        ->assertJsonPath('data.0.metadata.nhl_id', 14)
+        ->assertJsonPath('data.0.metadata.common_name', 'Lightning');
+
+    expect($client->refresh()->last_used_at)->not->toBeNull();
+});
+
+it('returns paginated NHL players for scoped API clients with head shot urls', function (): void {
+    $token = 'diq_gner8_testing-token';
+    ApiClient::create([
+        'name' => 'Gner8',
+        'slug' => 'gner8',
+        'token_prefix' => substr($token, 0, 24),
+        'token_hash' => ApiClient::hashToken($token),
+        'scopes' => ['nhl-reference:read'],
+    ]);
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 22,
+        'abbrev' => 'EDM',
+        'full_name' => 'Edmonton Oilers',
+        'common_name' => 'Oilers',
+        'place_name' => 'Edmonton',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('players')->insert([
+        'nhl_id' => 8478402,
+        'nhl_team_id' => 22,
+        'full_name' => 'Connor McDavid',
+        'first_name' => 'Connor',
+        'last_name' => 'McDavid',
+        'dob' => '1997-01-13',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'EDM',
+        'current_league_abbrev' => 'NHL',
+        'shoots' => 'L',
+        'head_shot_url' => 'https://assets.example/mcdavid.png',
+        'status' => 'active',
+        'is_goalie' => false,
+        'is_prospect' => false,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-players?per_page=1')
+        ->assertOk()
+        ->assertJsonMissingPath('data.0.league_id')
+        ->assertJsonPath('data.0.external_id', 8478402)
+        ->assertJsonPath('data.0.current_team_external_id', 22)
+        ->assertJsonPath('data.0.slug', 'connor-mcdavid-8478402')
+        ->assertJsonPath('data.0.full_name', 'Connor McDavid')
+        ->assertJsonPath('data.0.position', 'C')
+        ->assertJsonPath('data.0.shoots_or_catches', 'L')
+        ->assertJsonPath('data.0.birth_date', '1997-01-13')
+        ->assertJsonPath('data.0.head_shot_url', 'https://assets.example/mcdavid.png')
+        ->assertJsonPath('data.0.active', true)
+        ->assertJsonPath('data.0.metadata.current_team_abbreviation', 'EDM')
+        ->assertJsonPath('meta.per_page', 1)
+        ->assertJsonPath('meta.total', 1);
 });
 
 it('returns completed shot fact processing runs without processable game rows', function () {

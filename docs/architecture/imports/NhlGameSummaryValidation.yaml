@@ -28,7 +28,8 @@ rules:
   - Validation must persist deltas as invalidated when trusted sources are missing, contradictory, or insufficient to determine the correct summary value, regardless of game type.
   - Invalidated validations may continue without marking the pipeline stage failed.
   - Shiftchart mismatch status may be used only after all documented reconciliation attempts have run, stored shiftcharts are available, the game is not preseason, and every remaining delta is limited to skater or goalie time-on-ice or shift count.
-  - Shiftchart mismatch validations must preserve the original deltas for audit while allowing the pipeline to continue and using official boxscore time-on-ice and shift counts in player game summaries.
+  - Shiftchart mismatch validations must preserve current unresolved shift-derived deltas for audit while allowing the pipeline to continue and using official boxscore time-on-ice and shift counts in player game summaries.
+  - Shiftchart mismatch status must not be preserved after source-backed reconciliation or HTML TOI fallback produces summaries that match official boxscore time-on-ice and shift counts; those validations must approve instead.
   - Goalie shift-count-only deltas must be reconciled to the official boxscore convention when official goalie time on ice already matches the computed summary.
   - Accepted exceptions must keep the validation auditable while allowing downstream trust and rollups to proceed.
   - Skater blocking validation fields are goals, assists, points, penalty minutes, hits, power-play goals, shots on goal, faceoff percentage, time on ice with tolerance, shifts, and blocked shots.

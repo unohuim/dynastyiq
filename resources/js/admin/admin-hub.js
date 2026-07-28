@@ -44,7 +44,9 @@ export default function adminHub(options = {}) {
         hasFantrax: fantraxAvailable,
         triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
         validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
+        activeValidationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
         shiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
+        activeShiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
@@ -138,6 +140,18 @@ export default function adminHub(options = {}) {
             this.initializeImportStreams();
             this.registerImportListeners();
             void this.setTab(this.activeTab, { history: false });
+        },
+
+        handleAdminHubClick(event) {
+            const trigger = event.target?.closest?.('[data-validation-toggle]');
+
+            if (!trigger) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            void this.toggleValidationDetail(trigger);
         },
 
         /* -----------------------------
@@ -261,7 +275,7 @@ export default function adminHub(options = {}) {
             this.validationsError = '';
 
             try {
-                const response = await fetch(this.validationsUrl, {
+                const response = await fetch(this.activeValidationsUrl, {
                     headers: { Accept: 'application/json' },
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -306,7 +320,7 @@ export default function adminHub(options = {}) {
             this.shiftMismatchesError = '';
 
             try {
-                const response = await fetch(this.shiftMismatchesUrl, {
+                const response = await fetch(this.activeShiftMismatchesUrl, {
                     headers: { Accept: 'application/json' },
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -410,8 +424,10 @@ export default function adminHub(options = {}) {
                 this.bindValidationDetailToggles(mount);
 
                 if (mount.matches('[data-admin-validations-mount]')) {
+                    this.activeValidationsUrl = `${url.pathname}${url.search}`;
                     this.validationsLoaded = true;
                 } else if (mount.matches('[data-admin-shift-mismatches-mount]')) {
+                    this.activeShiftMismatchesUrl = `${url.pathname}${url.search}`;
                     this.shiftMismatchesLoaded = true;
                 }
 
@@ -467,9 +483,12 @@ export default function adminHub(options = {}) {
                 return;
             }
 
-            const row = document.querySelector(`[data-validation-detail-row="${validationId}"]`);
-            const shell = document.querySelector(`[data-validation-detail-shell="${validationId}"]`);
-            const target = document.querySelector(`[data-validation-detail-content="${validationId}"]`);
+            const mount = trigger.closest('[data-admin-validations-mount], [data-admin-shift-mismatches-mount]');
+            const root = mount ?? document;
+            const detailKey = `${mount?.dataset?.adminValidationScope ?? 'document'}:${validationId}`;
+            const row = root.querySelector(`[data-validation-detail-row="${validationId}"]`);
+            const shell = root.querySelector(`[data-validation-detail-shell="${validationId}"]`);
+            const target = root.querySelector(`[data-validation-detail-content="${validationId}"]`);
 
             if (!row || !shell || !target) {
                 return;
@@ -484,7 +503,7 @@ export default function adminHub(options = {}) {
 
             this.setValidationDetailOpen(trigger, row, shell, true);
 
-            if (this.validationDetails[validationId]?.loaded) {
+            if (this.validationDetails[detailKey]?.loaded) {
                 return;
             }
 
@@ -505,7 +524,7 @@ export default function adminHub(options = {}) {
                 }
 
                 target.innerHTML = payload.html;
-                this.validationDetails[validationId] = { loaded: true };
+                this.validationDetails[detailKey] = { loaded: true };
                 this.bindValidationActionForms(target);
             } catch (error) {
                 target.innerHTML = `<div class="px-4 py-6 text-sm text-red-600">${this.escapeHtml(error.message ?? 'Unable to load validation details')}</div>`;
@@ -1278,6 +1297,12 @@ export default function adminHub(options = {}) {
             }
 
             return this.gameImportProgressText(run);
+        },
+
+        gameImportRunDetailText(run) {
+            return run?.progress?.last_error
+                || run?.last_error
+                || '';
         },
 
         isGameImportRunCompacted(run) {
