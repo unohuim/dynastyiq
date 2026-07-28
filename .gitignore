@@ -25,3 +25,5 @@ yarn-error.log
 app/Providers/HorizonServiceProvider.php
 
 diq-bot/node_modules/
+
+data/*.dump
