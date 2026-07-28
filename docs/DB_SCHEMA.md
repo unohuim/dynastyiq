@@ -61,6 +61,7 @@ Migrations remain the **sole source of truth**.
 - nhl_games
 - nhl_import_progress
 - nhle_league_factors
+- nhl_play_by_play_dedupe_repairs
 - nhl_player_transactions
 - nhl_season_stats
 - nhl_shifts
@@ -2920,6 +2921,30 @@ Migrations remain the **sole source of truth**.
 - Index: `blocking_player_id`
 - Index: `hitting_player_id`
 - Index: `hittee_player_id`
+- Unique partial index: `play_by_plays_nhl_game_event_unique` on `nhl_game_id`, `nhl_event_id` where `nhl_event_id IS NOT NULL`
+
+---
+
+## nhl_play_by_play_dedupe_repairs
+
+**Organization-owned:** No
+**Purpose:** Tracks NHL games whose duplicate play-by-play rows were removed by the PBP natural-key repair migration and still need derived data rebuilt.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | bigint | No | NHL game id affected by duplicate PBP repair |
+| duplicate_rows_deleted | integer | No | Number of duplicate PBP rows deleted for the game |
+| rebuild_queued_at | timestamp | Yes | Set when the repair rebuild command queues the game |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `nhl_game_id`
 
 ---
 

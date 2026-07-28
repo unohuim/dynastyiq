@@ -1094,6 +1094,7 @@ php artisan nhl:discover --date=2026-01-15
 
 **Purpose:**
 Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Explicit reprocess runs delete game-scoped stage-owned rows before importing or recalculating so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
+Play-by-play imports use `nhl_game_id` plus `nhl_event_id` as the provider natural identity, and that identity is database-enforced for non-null NHL event ids. Duplicate PBP repair stores affected game ids in `nhl_play_by_play_dedupe_repairs` so derived summaries, validations, unit links, and shot facts can be rebuilt after dedupe.
 
 **When to Use:**
 Implementing or changing a single NHL import stage.
