@@ -7,9 +7,11 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
+use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\RebuildNhlGameImportJob;
+use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameSourceStatus;
@@ -72,6 +74,92 @@ class NhlGameImportController extends Controller
         return response()->json([
             'gaps' => $this->sourceGapRows(),
         ]);
+    }
+
+    /**
+     * Queue a duplicate play-by-play scan for an admin repair card.
+     */
+    public function scanDuplicatePlayByPlay(Request $request): JsonResponse
+    {
+        $existingRun = $this->latestDuplicatePbpRepairRun();
+
+        if ($existingRun && in_array($existingRun->status, [
+            NhlGameImportRun::STATUS_QUEUED,
+            NhlGameImportRun::STATUS_RUNNING,
+        ], true)) {
+            return response()->json([
+                'message' => 'Duplicate PBP scan is already active.',
+                'run' => $this->serializeRun($existingRun),
+            ], 202);
+        }
+
+        if ($existingRun && (($existingRun->payload ?? [])['repair_stage'] ?? null) === 'ready') {
+            return response()->json([
+                'message' => 'Duplicate PBP scan is ready.',
+                'run' => $this->serializeRun($existingRun),
+            ], 202);
+        }
+
+        $run = NhlGameImportRun::query()->create([
+            'action' => NhlGameImportRun::ACTION_REPAIR,
+            'mode' => NhlGameImportRun::MODE_DEFAULT,
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'start_date' => now()->toDateString(),
+            'end_date' => now()->toDateString(),
+            'date_count' => 0,
+            'queued_jobs' => 1,
+            'payload' => [
+                'repair' => 'duplicate_pbp',
+                'repair_stage' => 'scanning',
+                'scan_requested_at' => now()->toIso8601String(),
+            ],
+            'created_by' => $request->user()?->id,
+        ]);
+
+        ScanDuplicateNhlPlayByPlayRepairJob::dispatch($run->id);
+        $this->safeBroadcast('duplicate-pbp-scan-queued', $run->id);
+
+        return response()->json([
+            'message' => 'Duplicate PBP scan queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue duplicate play-by-play repair and affected game rebuilds.
+     */
+    public function dedupeDuplicatePlayByPlay(NhlGameImportRun $run): JsonResponse
+    {
+        if (! $this->isDuplicatePbpRepairRun($run)) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This run is not a duplicate PBP repair run.',
+            ]);
+        }
+
+        if ((($run->payload ?? [])['repair_stage'] ?? null) !== 'ready') {
+            throw ValidationException::withMessages([
+                'run_id' => 'Run duplicate PBP scan before deduping.',
+            ]);
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['repair_stage'] = 'queued';
+        $payload['dedupe_requested_at'] = now()->toIso8601String();
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'payload' => $payload,
+            'last_error' => null,
+            'updated_at' => now(),
+        ])->save();
+
+        DedupeNhlPlayByPlayRepairJob::dispatch($run->id);
+        $this->safeBroadcast('duplicate-pbp-dedupe-queued', $run->id);
+
+        return response()->json([
+            'message' => 'Duplicate PBP repair queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
     }
 
     /**
@@ -778,6 +866,10 @@ class NhlGameImportController extends Controller
             return $this->seasonSyncProgressForRun($run);
         }
 
+        if ($this->isDuplicatePbpRepairRun($run)) {
+            return $this->duplicatePbpRepairProgressForRun($run);
+        }
+
         if ($this->isShotFactRun($run)) {
             return $this->shotFactProgressForRun($run);
         }
@@ -834,6 +926,65 @@ class NhlGameImportController extends Controller
             'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? 1 : 0,
             'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? 1 : 0,
             'completed_stage_rows' => $status === NhlGameImportRun::STATUS_COMPLETED ? 1 : 0,
+            'skipped_stage_rows' => 0,
+            'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
+            'percentage' => $percentage,
+            'last_error' => $run->last_error,
+        ];
+    }
+
+    /**
+     * Serialize progress for duplicate-PBP repair runs.
+     *
+     * @return array<string, mixed>
+     */
+    private function duplicatePbpRepairProgressForRun(NhlGameImportRun $run): array
+    {
+        $payload = $run->payload ?? [];
+        $stage = (string) ($payload['repair_stage'] ?? 'scanning');
+
+        if ($stage === 'rebuilding') {
+            $rows = $this->progressQueryForRun($run)
+                ->selectRaw('status, COUNT(*) as aggregate')
+                ->groupBy('status')
+                ->pluck('aggregate', 'status');
+
+            $scheduled = (int) ($rows['scheduled'] ?? 0);
+            $running = (int) ($rows['running'] ?? 0);
+            $completed = (int) ($rows['completed'] ?? 0);
+            $skipped = (int) ($rows['skipped'] ?? 0);
+            $failed = (int) ($rows['error'] ?? 0);
+            $total = $scheduled + $running + $completed + $skipped + $failed;
+            $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 35;
+            $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
+
+            return [
+                'status' => $status,
+                'total_stage_rows' => $total,
+                'scheduled_stage_rows' => $scheduled,
+                'running_stage_rows' => $running,
+                'completed_stage_rows' => $completed,
+                'skipped_stage_rows' => $skipped,
+                'failed_stage_rows' => $failed,
+                'percentage' => $percentage,
+                'last_error' => $run->last_error,
+            ];
+        }
+
+        $status = $run->status;
+        $percentage = match ($stage) {
+            'ready', 'completed', 'failed' => 100,
+            'deduping' => 45,
+            'queued' => 20,
+            default => $status === NhlGameImportRun::STATUS_RUNNING ? 20 : 0,
+        };
+
+        return [
+            'status' => $status,
+            'total_stage_rows' => 1,
+            'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? 1 : 0,
+            'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? 1 : 0,
+            'completed_stage_rows' => in_array($stage, ['ready', 'completed'], true) ? 1 : 0,
             'skipped_stage_rows' => 0,
             'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
             'percentage' => $percentage,
@@ -1020,9 +1171,17 @@ class NhlGameImportController extends Controller
         return (($run->payload ?? [])['process_scope'] ?? null) === 'shots';
     }
 
+    private function isDuplicatePbpRepairRun(NhlGameImportRun $run): bool
+    {
+        return $run->action === NhlGameImportRun::ACTION_REPAIR
+            && (($run->payload ?? [])['repair'] ?? null) === 'duplicate_pbp';
+    }
+
     private function shouldShowPipelineFacts(NhlGameImportRun $run): bool
     {
-        return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC && ! $this->isShotFactRun($run);
+        return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
+            && ! $this->isShotFactRun($run)
+            && ! $this->isDuplicatePbpRepairRun($run);
     }
 
     /**
@@ -1095,6 +1254,7 @@ class NhlGameImportController extends Controller
     {
         if (
             $run->action === NhlGameImportRun::ACTION_SEASON_SYNC
+            || $run->action === NhlGameImportRun::ACTION_REPAIR
             || $run->start_date === null
             || $run->end_date === null
         ) {
@@ -1138,7 +1298,7 @@ class NhlGameImportController extends Controller
     private function activeRunForRange(string $startDate, string $endDate, ?int $exceptRunId = null): ?NhlGameImportRun
     {
         return NhlGameImportRun::query()
-            ->where('action', '!=', NhlGameImportRun::ACTION_SEASON_SYNC)
+            ->whereIn('action', [NhlGameImportRun::ACTION_DISCOVER, NhlGameImportRun::ACTION_PROCESS])
             ->whereIn('status', [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING])
             ->whereDate('start_date', $startDate)
             ->whereDate('end_date', $endDate)
@@ -1153,7 +1313,7 @@ class NhlGameImportController extends Controller
     private function exactRangeRunForRange(string $startDate, string $endDate, ?int $exceptRunId = null): ?NhlGameImportRun
     {
         $runs = NhlGameImportRun::query()
-            ->where('action', '!=', NhlGameImportRun::ACTION_SEASON_SYNC)
+            ->whereIn('action', [NhlGameImportRun::ACTION_DISCOVER, NhlGameImportRun::ACTION_PROCESS])
             ->whereDate('start_date', $startDate)
             ->whereDate('end_date', $endDate)
             ->when($exceptRunId, fn ($query) => $query->where('id', '!=', $exceptRunId))
@@ -1171,6 +1331,7 @@ class NhlGameImportController extends Controller
     private function isActiveGameImportRun(NhlGameImportRun $run): bool
     {
         return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
+            && $run->action !== NhlGameImportRun::ACTION_REPAIR
             && in_array($run->status, [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING], true)
             && $run->start_date !== null
             && $run->end_date !== null;
@@ -1282,6 +1443,10 @@ class NhlGameImportController extends Controller
 
         if ($this->hasRunScopedProgress($run)) {
             return $query->where("{$prefix}run_id", $run->id);
+        }
+
+        if ($run->action === NhlGameImportRun::ACTION_REPAIR) {
+            return $query->whereRaw('1 = 0');
         }
 
         if (
@@ -1450,6 +1615,31 @@ class NhlGameImportController extends Controller
         }
 
         return substr($seasonId, 0, 4) . '-' . substr($seasonId, 6, 2);
+    }
+
+    /**
+     * Return the latest visible duplicate-PBP repair run.
+     */
+    private function latestDuplicatePbpRepairRun(): ?NhlGameImportRun
+    {
+        return NhlGameImportRun::query()
+            ->where('action', NhlGameImportRun::ACTION_REPAIR)
+            ->where('payload->repair', 'duplicate_pbp')
+            ->latest()
+            ->first();
+    }
+
+    private function safeBroadcast(string $status, int $runId): void
+    {
+        try {
+            broadcast(new NhlGameImportStatusUpdated($status, $runId));
+        } catch (Throwable $throwable) {
+            Log::warning('NHL game import broadcast failed.', [
+                'status' => $status,
+                'run_id' => $runId,
+                'error' => $throwable->getMessage(),
+            ]);
+        }
     }
 
     /**

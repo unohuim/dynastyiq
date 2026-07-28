@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Jobs\RebuildNhlGameImportJob;
 use App\Models\NhlGameImportRun;
+use App\Services\NhlDuplicatePlayByPlayRepair;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -27,16 +28,16 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
      */
     protected $description = 'Report or rebuild NHL games affected by duplicate play-by-play rows';
 
-    public function handle(): int
+    public function handle(NhlDuplicatePlayByPlayRepair $repair): int
     {
-        if (! $this->repairLedgerExists()) {
+        if (! $repair->repairLedgerExists()) {
             $this->warn('Repair ledger table does not exist yet. Run migrations before queueing repairs.');
-            $this->reportLiveDuplicates();
+            $this->reportLiveDuplicates($repair);
 
             return self::SUCCESS;
         }
 
-        $this->reportLedger();
+        $this->reportLedger($repair);
 
         if (! (bool) $this->option('queue')) {
             $this->line('');
@@ -45,7 +46,10 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
             return self::SUCCESS;
         }
 
-        $gameIds = $this->repairGameIds();
+        $gameIds = $repair->repairGameIds(
+            (bool) $this->option('all'),
+            $this->limitOption()
+        );
 
         if ($gameIds === []) {
             $this->info('No duplicate-PBP repair games need queueing.');
@@ -59,12 +63,7 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
             RebuildNhlGameImportJob::dispatch($gameId, $run->id);
         }
 
-        DB::table('nhl_play_by_play_dedupe_repairs')
-            ->whereIn('nhl_game_id', $gameIds)
-            ->update([
-                'rebuild_queued_at' => now(),
-                'updated_at' => now(),
-            ]);
+        $repair->markQueued($gameIds);
 
         $this->info(sprintf('Queued %d NHL game rebuilds for duplicate-PBP repair run %d.', count($gameIds), $run->id));
 
@@ -74,67 +73,31 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
     /**
      * Report duplicate PBP rows that still exist before the migration runs.
      */
-    private function reportLiveDuplicates(): void
+    private function reportLiveDuplicates(NhlDuplicatePlayByPlayRepair $repair): void
     {
-        $summary = DB::query()
-            ->fromSub($this->duplicateGameQuery(), 'duplicate_games')
-            ->selectRaw('COUNT(*) as game_count, COALESCE(SUM(duplicate_rows), 0) as duplicate_rows')
-            ->first();
+        $summary = $repair->scan();
 
         $this->line(sprintf(
             'Current duplicate PBP rows: %d games, %d duplicate rows.',
-            (int) ($summary->game_count ?? 0),
-            (int) ($summary->duplicate_rows ?? 0)
+            $summary['game_count'],
+            $summary['duplicate_rows']
         ));
     }
 
     /**
      * Report the persisted post-migration repair ledger.
      */
-    private function reportLedger(): void
+    private function reportLedger(NhlDuplicatePlayByPlayRepair $repair): void
     {
-        $summary = DB::table('nhl_play_by_play_dedupe_repairs')
-            ->selectRaw(
-                'COUNT(*) as game_count,
-                 COALESCE(SUM(duplicate_rows_deleted), 0) as duplicate_rows,
-                 COUNT(*) FILTER (WHERE rebuild_queued_at IS NULL) as unqueued_games,
-                 COUNT(*) FILTER (WHERE rebuild_queued_at IS NOT NULL) as queued_games'
-            )
-            ->first();
+        $summary = $repair->ledgerSummary();
 
         $this->line(sprintf(
             'Repair ledger: %d affected games, %d duplicate rows deleted, %d unqueued, %d queued.',
-            (int) ($summary->game_count ?? 0),
-            (int) ($summary->duplicate_rows ?? 0),
-            (int) ($summary->unqueued_games ?? 0),
-            (int) ($summary->queued_games ?? 0)
+            $summary['game_count'],
+            $summary['duplicate_rows'],
+            $summary['unqueued_games'],
+            $summary['queued_games']
         ));
-    }
-
-    /**
-     * Return duplicate-PBP affected game ids eligible for rebuild.
-     *
-     * @return array<int,int>
-     */
-    private function repairGameIds(): array
-    {
-        $query = DB::table('nhl_play_by_play_dedupe_repairs')
-            ->orderBy('nhl_game_id');
-
-        if (! (bool) $this->option('all')) {
-            $query->whereNull('rebuild_queued_at');
-        }
-
-        $limit = $this->option('limit');
-
-        if ($limit !== null && $limit !== '') {
-            $query->limit(max(1, (int) $limit));
-        }
-
-        return $query
-            ->pluck('nhl_game_id')
-            ->map(fn (mixed $gameId): int => (int) $gameId)
-            ->all();
     }
 
     /**
@@ -150,7 +113,7 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
             ->first();
 
         return NhlGameImportRun::query()->create([
-            'action' => NhlGameImportRun::ACTION_PROCESS,
+            'action' => NhlGameImportRun::ACTION_REPAIR,
             'mode' => NhlGameImportRun::MODE_RANGE,
             'status' => NhlGameImportRun::STATUS_QUEUED,
             'start_date' => (string) ($bounds->latest_date ?? now()->toDateString()),
@@ -159,31 +122,21 @@ class RepairDuplicateNhlPlayByPlayCommand extends Command
             'queued_jobs' => count($gameIds),
             'payload' => [
                 'repair' => 'duplicate_pbp',
+                'repair_stage' => 'rebuilding',
                 'affected_game_ids' => $gameIds,
+                'queued_rebuild_game_count' => count($gameIds),
             ],
         ]);
     }
 
-    /**
-     * Build the live duplicate-game query used before migration repair.
-     */
-    private function duplicateGameQuery()
+    private function limitOption(): ?int
     {
-        return DB::table('play_by_plays')
-            ->selectRaw('nhl_game_id, COUNT(*) - COUNT(DISTINCT nhl_event_id) as duplicate_rows')
-            ->whereNotNull('nhl_event_id')
-            ->groupBy('nhl_game_id')
-            ->havingRaw('COUNT(*) > COUNT(DISTINCT nhl_event_id)');
-    }
+        $limit = $this->option('limit');
 
-    /**
-     * Determine whether the migration-created repair ledger exists.
-     */
-    private function repairLedgerExists(): bool
-    {
-        return DB::table('information_schema.tables')
-            ->where('table_schema', 'public')
-            ->where('table_name', 'nhl_play_by_play_dedupe_repairs')
-            ->exists();
+        if ($limit === null || $limit === '') {
+            return null;
+        }
+
+        return max(1, (int) $limit);
     }
 }

@@ -416,12 +416,14 @@ Do not introduce new enum values without updating this document.
 
 - `discover`
 - `process`
+- `repair`
 - `season-sync`
 
 **Semantic meaning:**
 
 - `discover`: Admin queued NHL game discovery for a date selection.
 - `process`: Admin queued NHL game processing orchestrator jobs for a date selection.
+- `repair`: Admin queued operational repair work that is shown in the Game Imports progress card surface.
 - `season-sync`: Admin queued a season-level rollup from game summaries into season stats.
 
 ### NHL Game Import Run Mode

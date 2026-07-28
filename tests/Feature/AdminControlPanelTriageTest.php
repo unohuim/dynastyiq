@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
+use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\ImportYahooPlayersPageJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
 use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\ApiClient;
@@ -443,6 +445,17 @@ it('blocks authenticated non-admin users from queuing failed-only NHL game impor
         ->postJson(route('admin.nhl-game-imports.rerun-failed'), [
             'run_id' => 1,
         ])
+        ->assertForbidden();
+});
+
+it('blocks guests from queuing duplicate PBP repair scans', function () {
+    $this->postJson(route('admin.nhl-game-imports.duplicate-pbp.scan'))
+        ->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from queuing duplicate PBP repair scans', function () {
+    $this->actingAs(User::factory()->create())
+        ->postJson(route('admin.nhl-game-imports.duplicate-pbp.scan'))
         ->assertForbidden();
 });
 
@@ -1138,6 +1151,61 @@ it('allows super admins to queue NHL game processing for each date in a range', 
     }
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
         return $event->reason === 'processing-queued';
+    });
+});
+
+it('allows super admins to queue duplicate PBP scan runs', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.duplicate-pbp.scan'))
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_REPAIR)
+        ->assertJsonPath('run.payload.repair', 'duplicate_pbp')
+        ->assertJsonPath('run.payload.repair_stage', 'scanning');
+
+    $run = NhlGameImportRun::query()->firstOrFail();
+
+    Bus::assertDispatched(ScanDuplicateNhlPlayByPlayRepairJob::class, function (ScanDuplicateNhlPlayByPlayRepairJob $job) use ($run): bool {
+        return $job->runId === $run->id;
+    });
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'duplicate-pbp-scan-queued' && $event->runId === $run->id;
+    });
+});
+
+it('allows super admins to queue duplicate PBP dedupe from a ready repair run', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_REPAIR,
+        'mode' => NhlGameImportRun::MODE_DEFAULT,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-07-28',
+        'end_date' => '2026-07-28',
+        'date_count' => 0,
+        'queued_jobs' => 1,
+        'payload' => [
+            'repair' => 'duplicate_pbp',
+            'repair_stage' => 'ready',
+            'repair_game_count' => 3,
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.duplicate-pbp.dedupe', $run))
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_REPAIR)
+        ->assertJsonPath('run.status', NhlGameImportRun::STATUS_QUEUED)
+        ->assertJsonPath('run.payload.repair_stage', 'queued');
+
+    Bus::assertDispatched(DedupeNhlPlayByPlayRepairJob::class, function (DedupeNhlPlayByPlayRepairJob $job) use ($run): bool {
+        return $job->runId === $run->id;
+    });
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'duplicate-pbp-dedupe-queued' && $event->runId === $run->id;
     });
 });
 

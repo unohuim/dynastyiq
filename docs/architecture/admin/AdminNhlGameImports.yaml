@@ -4,6 +4,8 @@ location:
   - app/Http/Controllers/Admin/NhlGameImportController.php
   - app/Console/Commands/NhlProcessCommand.php
   - app/Console/Commands/EmptyNhlCommand.php
+  - app/Jobs/ScanDuplicateNhlPlayByPlayRepairJob.php
+  - app/Jobs/DedupeNhlPlayByPlayRepairJob.php
   - app/Jobs/SeasonSumJob.php
   - app/Jobs/RebuildNhlGameImportJob.php
   - app/Jobs/PreflightNhlGameImportRebuildJob.php
@@ -15,10 +17,11 @@ location:
   - database/migrations/2026_06_29_030000_create_nhl_game_import_runs_table.php
   - resources/views/admin/operational.blade.php
   - resources/js/admin/admin-hub.js
-purpose: Let super admins dispatch and monitor NHL game discovery, processing, and season stat rollup jobs from the admin control panel without shelling out to Artisan commands.
+purpose: Let super admins dispatch and monitor NHL game discovery, processing, duplicate play-by-play repair, and season stat rollup jobs from the admin control panel without shelling out to Artisan commands.
 when_to_use:
   - Adding admin UI controls for NHL game discovery date windows.
   - Adding admin UI controls for dispatching NHL game processing orchestrator jobs.
+  - Adding admin UI controls for duplicate play-by-play repair setup and execution.
   - Adding admin UI controls for dispatching season-level NHL stat rollups.
   - Adding admin UI controls for queueing NHL game-derived import data resets.
   - Showing recent admin-queued NHL game import runs and their pipeline progress.
@@ -42,6 +45,8 @@ rules:
   - Completed run rows should suppress stale queued-job/date metadata and keep completed progress summaries concise.
   - Exact same game import date ranges must reuse one visible run row instead of creating duplicate single-date or range rows.
   - Shots-only fact collection launched from a run card must record batch metadata on the selected run, mark that run as processing/completed for the UI lifecycle, and must not create a separate visible game import run row for the same date range.
+  - Duplicate play-by-play repair must run through queued jobs, first scanning into a visible ready state and then repairing rows plus queueing targeted affected-game rebuilds only after the operator presses the ready card action.
+  - Duplicate play-by-play repair run rows must not be collapsed into or block normal date-range discovery and process runs.
   - Re-run launched from an existing game import or discovery run must reuse the existing exact-range run row, queue discovery for that range, and tag the payload so later processing replays existing stage rows for the whole range.
   - Re-run launched from an existing season sync run must queue a new season sync for the same stored season payload.
   - Game-level reruns launched from a run card must preserve that run_id when reseeding progress rows so the same card reflects the rerun.
@@ -64,6 +69,8 @@ public_interface:
   - admin.nhl-game-imports.source-gaps
   - admin.nhl-game-imports.source-gaps.rerun
   - admin.nhl-game-imports.games.rerun
+  - admin.nhl-game-imports.duplicate-pbp.scan
+  - admin.nhl-game-imports.duplicate-pbp.dedupe
   - admin.nhl-game-imports.discover
   - admin.nhl-game-imports.process
   - admin.nhl-game-imports.season-sync
@@ -76,6 +83,8 @@ public_interface:
   - ClearNhlGameImportJob
   - SeedNhlGameImportProgressJob
   - DispatchNhlGameImportPipelineJob
+  - ScanDuplicateNhlPlayByPlayRepairJob
+  - DedupeNhlPlayByPlayRepairJob
   - adminHub gameImports state
 example_usage: |
   NhlDiscoveryJob::dispatch($start, $end);

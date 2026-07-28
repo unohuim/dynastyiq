@@ -22,6 +22,8 @@
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportProcessShotsUrl: @js(route('admin.nhl-game-imports.process-shots')),
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
+            gameImportDuplicatePbpScanUrl: @js(route('admin.nhl-game-imports.duplicate-pbp.scan')),
+            gameImportDuplicatePbpDedupeUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
             leagueRefreshUrl: @js(route('leagues.resync')),
@@ -479,6 +481,14 @@
                             <button
                                 type="button"
                                 class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="submitDuplicatePbpScan()"
+                                :disabled="gameImports.scanningDuplicatePbp"
+                            >
+                                <span x-text="gameImports.scanningDuplicatePbp ? 'Queuing...' : 'DeDupe'">DeDupe</span>
+                            </button>
+                            <button
+                                type="button"
+                                class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                                 @click="openGameImportDrawer()"
                             >
                                 Discovery
@@ -715,13 +725,23 @@
                                                     </div>
                                                 </div>
                                             </template>
+                                            <template x-if="isDuplicatePbpRepairRun(run) && canRunDuplicatePbpDedupe(run)">
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    :disabled="gameImports.dedupingDuplicatePbpRuns[run.id] === true"
+                                                    @click.stop.prevent="runDuplicatePbpDedupe(run)"
+                                                >
+                                                    <span x-text="gameImports.dedupingDuplicatePbpRuns[run.id] === true ? 'Queuing...' : 'DeDupe'">DeDupe</span>
+                                                </button>
+                                            </template>
                                             <template x-if="run.status !== 'completed' && (run.action !== 'discover' || run.processing_started)">
                                                 <div>
                                                     <div><span x-text="formatNumber(run.queued_jobs)"></span> jobs queued</div>
                                                     <div><span x-text="formatNumber(run.date_count)"></span> dates</div>
                                                 </div>
                                             </template>
-                                            <div class="relative" @click.outside="closeGameImportRerunMenu(run)">
+                                            <div x-show="!isDuplicatePbpRepairRun(run)" x-cloak class="relative" @click.outside="closeGameImportRerunMenu(run)">
                                                 <button
                                                     type="button"
                                                     class="inline-flex items-center justify-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"

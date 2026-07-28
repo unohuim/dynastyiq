@@ -54,6 +54,8 @@ export default function adminHub(options = {}) {
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
+        gameImportDuplicatePbpScanUrl: options.gameImportDuplicatePbpScanUrl ?? '/admin/nhl-game-imports/duplicate-pbp/scan',
+        gameImportDuplicatePbpDedupeUrl: options.gameImportDuplicatePbpDedupeUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
         leagueRefreshUrl: options.leagueRefreshUrl ?? '/leagues/resync',
@@ -76,6 +78,8 @@ export default function adminHub(options = {}) {
             processingRuns: {},
             syncingSeason: false,
             emptyingGames: false,
+            scanningDuplicatePbp: false,
+            dedupingDuplicatePbpRuns: {},
             error: '',
             runs: [],
             seasons: [],
@@ -1103,6 +1107,49 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async submitDuplicatePbpScan() {
+            this.gameImports.scanningDuplicatePbp = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(this.gameImportDuplicatePbpScanUrl, {});
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue duplicate PBP scan';
+            } finally {
+                this.gameImports.scanningDuplicatePbp = false;
+            }
+        },
+
+        async runDuplicatePbpDedupe(run) {
+            const runId = run?.id;
+
+            if (!runId || this.gameImports.dedupingDuplicatePbpRuns[runId] === true) {
+                return;
+            }
+
+            this.gameImports.error = '';
+            this.gameImports.dedupingDuplicatePbpRuns = {
+                ...this.gameImports.dedupingDuplicatePbpRuns,
+                [runId]: true,
+            };
+
+            try {
+                await this.sendGameImportRequest(
+                    `${this.gameImportDuplicatePbpDedupeUrl}/${runId}/dedupe`,
+                    {}
+                );
+
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue duplicate PBP repair';
+            } finally {
+                const next = { ...this.gameImports.dedupingDuplicatePbpRuns };
+                delete next[runId];
+                this.gameImports.dedupingDuplicatePbpRuns = next;
+            }
+        },
+
         gameImportRunPayload(run) {
             return {
                 run_id: run.id,
@@ -1144,10 +1191,18 @@ export default function adminHub(options = {}) {
         },
 
         gameImportTitle(run) {
+            if (this.isDuplicatePbpRepairRun(run)) {
+                return 'Duplicate PBP Repair';
+            }
+
             return this.formatGameImportRange(run);
         },
 
         gameImportBadgeText(run) {
+            if (this.isDuplicatePbpRepairRun(run)) {
+                return this.duplicatePbpRepairBadgeText(run);
+            }
+
             if (run.processing_started) {
                 return String(run.status ?? 'queued').toUpperCase();
             }
@@ -1160,6 +1215,10 @@ export default function adminHub(options = {}) {
         },
 
         gameImportBadgeClass(run) {
+            if (this.isDuplicatePbpRepairRun(run)) {
+                return this.duplicatePbpRepairBadgeClass(run);
+            }
+
             if (run.processing_started) {
                 return this.gameImportStatusClass(run.status);
             }
@@ -1169,6 +1228,54 @@ export default function adminHub(options = {}) {
             }
 
             return this.gameImportStatusClass(run.status);
+        },
+
+        isDuplicatePbpRepairRun(run) {
+            return run?.action === 'repair' && run?.payload?.repair === 'duplicate_pbp';
+        },
+
+        duplicatePbpRepairBadgeText(run) {
+            const stage = run?.payload?.repair_stage ?? 'scanning';
+
+            if (stage === 'ready') {
+                return 'READY';
+            }
+
+            if (stage === 'deduping') {
+                return 'DEDUPING';
+            }
+
+            if (stage === 'rebuilding') {
+                if (run?.status === 'completed') {
+                    return 'COMPLETED';
+                }
+
+                return 'REBUILDING';
+            }
+
+            if (stage === 'completed') {
+                return 'COMPLETED';
+            }
+
+            if (stage === 'failed' || run?.status === 'failed') {
+                return 'FAILED';
+            }
+
+            return 'SCANNING';
+        },
+
+        duplicatePbpRepairBadgeClass(run) {
+            const label = this.duplicatePbpRepairBadgeText(run);
+
+            if (label === 'READY' || label === 'COMPLETED') {
+                return 'bg-green-100 text-green-700';
+            }
+
+            if (label === 'FAILED') {
+                return 'bg-red-100 text-red-700';
+            }
+
+            return 'bg-blue-100 text-blue-700';
         },
 
         gameImportStatusClass(status) {
@@ -1259,6 +1366,10 @@ export default function adminHub(options = {}) {
                 return this.gameImportSeasonSyncProgressText(run);
             }
 
+            if (this.isDuplicatePbpRepairRun(run)) {
+                return this.duplicatePbpRepairProgressText(run);
+            }
+
             const progress = run.progress ?? {};
             const total = Number(progress.total_stage_rows) || 0;
             const completed = Number(progress.completed_stage_rows) || 0;
@@ -1271,6 +1382,50 @@ export default function adminHub(options = {}) {
             }
 
             return this.stageProgressText(completed, total, running, failed, skipped);
+        },
+
+        duplicatePbpRepairProgressText(run) {
+            const payload = run?.payload ?? {};
+            const stage = payload.repair_stage ?? 'scanning';
+            const liveGames = Number(payload.live_duplicate_game_count) || 0;
+            const liveRows = Number(payload.live_duplicate_row_count) || 0;
+            const repairGames = Number(payload.repair_game_count) || Number(payload.unqueued_rebuild_game_count) || 0;
+            const repairRows = Number(payload.repair_duplicate_row_count) || Number(payload.ledger_duplicate_row_count) || 0;
+
+            if (stage === 'ready') {
+                if (repairGames === 0 && liveGames === 0) {
+                    return 'No duplicate PBP rows found';
+                }
+
+                return `${this.formatNumber(repairGames || liveGames)} games · ${this.formatNumber(repairRows || liveRows)} duplicate rows`;
+            }
+
+            if (stage === 'rebuilding') {
+                const progress = run.progress ?? {};
+                const total = Number(progress.total_stage_rows) || 0;
+                const completed = Number(progress.completed_stage_rows) || 0;
+                const running = Number(progress.running_stage_rows) || 0;
+                const skipped = Number(progress.skipped_stage_rows) || 0;
+                const failed = Number(progress.failed_stage_rows) || 0;
+
+                return total > 0
+                    ? this.stageProgressText(completed, total, running, failed, skipped)
+                    : 'Queueing affected game rebuilds';
+            }
+
+            if (stage === 'completed') {
+                return `${this.formatNumber(Number(payload.queued_rebuild_game_count) || 0)} affected games queued`;
+            }
+
+            if (stage === 'failed' || run?.status === 'failed') {
+                return 'Duplicate PBP repair failed';
+            }
+
+            if (stage === 'deduping') {
+                return 'Removing duplicate PBP rows';
+            }
+
+            return 'Scanning play-by-play rows';
         },
 
         gameImportSeasonSyncProgressText(run) {
@@ -1587,6 +1742,10 @@ export default function adminHub(options = {}) {
                 return false;
             }
 
+            if (this.isDuplicatePbpRepairRun(run)) {
+                return false;
+            }
+
             if (run.action === 'season-sync') {
                 return Boolean(run?.payload?.season);
             }
@@ -1598,6 +1757,16 @@ export default function adminHub(options = {}) {
             return this.canRerunGameImportRun(run)
                 && run.action !== 'season-sync'
                 && Number(run?.facts?.failed_rerun_game_count || 0) > 0;
+        },
+
+        canRunDuplicatePbpDedupe(run) {
+            return this.isDuplicatePbpRepairRun(run)
+                && run?.payload?.repair_stage === 'ready'
+                && (
+                    Number(run?.payload?.repair_game_count || 0) > 0
+                    || Number(run?.payload?.unqueued_rebuild_game_count || 0) > 0
+                    || Number(run?.payload?.live_duplicate_game_count || 0) > 0
+                );
         },
 
         discoveryFactsText(run) {

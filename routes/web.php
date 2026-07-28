@@ -343,6 +343,11 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.games.rerun');
                 Route::post('/nhl-game-imports/rerun-failed', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunFailedOnly'])
                     ->name('admin.nhl-game-imports.rerun-failed');
+                Route::post('/nhl-game-imports/duplicate-pbp/scan', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'scanDuplicatePlayByPlay'])
+                    ->name('admin.nhl-game-imports.duplicate-pbp.scan');
+                Route::post('/nhl-game-imports/duplicate-pbp/{run}/dedupe', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'dedupeDuplicatePlayByPlay'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-game-imports.duplicate-pbp.dedupe');
                 Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
                     ->name('admin.nhl-game-imports.discover');
                 Route::post('/nhl-game-imports/process-shots', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processShots'])

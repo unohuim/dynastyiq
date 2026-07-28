@@ -2315,10 +2315,10 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery, processing, season stat rollup, and queued game-data reset jobs from the admin control panel. Every run row exposes a Re Run action, Process/Re Run actions update through AJAX without leaving the current tab, and import broadcasts refresh loaded validation panels so resolved validation rows disappear without a page refresh.
+Dispatch and monitor NHL game discovery, processing, duplicate play-by-play repair, season stat rollup, and queued game-data reset jobs from the admin control panel. Every run row exposes a Re Run action, Process/Re Run actions update through AJAX without leaving the current tab, and import broadcasts refresh loaded validation panels so resolved validation rows disappear without a page refresh.
 
 **When to Use:**
-Admin-triggered NHL game discovery, discovery-row processing actions, full run replays, season stat rollups, queued nhl:empty --games resets, recent orchestration progress display, and live validation-panel refreshes.
+Admin-triggered NHL game discovery, discovery-row processing actions, full run replays, duplicate play-by-play repair setup and execution, season stat rollups, queued nhl:empty --games resets, recent orchestration progress display, and live validation-panel refreshes.
 
 **When Not to Use:**
 Synchronous web-request imports, NHL stage transformation ownership, or replacing `nhl_import_progress`.
@@ -2328,6 +2328,8 @@ Synchronous web-request imports, NHL stage transformation ownership, or replacin
 - `admin.nhl-game-imports.source-gaps`
 - `admin.nhl-game-imports.source-gaps.rerun`
 - `admin.nhl-game-imports.games.rerun`
+- `admin.nhl-game-imports.duplicate-pbp.scan`
+- `admin.nhl-game-imports.duplicate-pbp.dedupe`
 - `admin.nhl-game-imports.discover`
 - `admin.nhl-game-imports.process`
 - `admin.nhl-game-imports.season-sync`
