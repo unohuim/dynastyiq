@@ -28,6 +28,7 @@ use App\Services\YahooFantasyPlayerImporter;
 use App\Services\YahooFantasyRosterService;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
@@ -878,6 +879,8 @@ it('returns NHL teams for scoped API clients without consumer league ids', funct
 });
 
 it('returns paginated NHL players for scoped API clients with head shot urls', function (): void {
+    $this->travelTo(Carbon::parse('2026-07-28 12:00:00'));
+
     $token = 'diq_gner8_testing-token';
     ApiClient::create([
         'name' => 'Gner8',
@@ -895,7 +898,7 @@ it('returns paginated NHL players for scoped API clients with head shot urls', f
         'created_at' => now(),
         'updated_at' => now(),
     ]);
-    DB::table('players')->insert([
+    $playerId = DB::table('players')->insertGetId([
         'nhl_id' => 8478402,
         'nhl_team_id' => 22,
         'full_name' => 'Connor McDavid',
@@ -914,6 +917,23 @@ it('returns paginated NHL players for scoped API clients with head shot urls', f
         'created_at' => now(),
         'updated_at' => now(),
     ]);
+    $contract = Contract::create([
+        'player_id' => $playerId,
+        'contract_type' => 'Standard',
+        'contract_length' => '8 years',
+        'contract_value' => 100000000,
+        'expiry_status' => 'UFA',
+        'signing_team' => 'EDM',
+        'signing_date' => '2026-07-01',
+        'signed_by' => 'Edmonton Oilers',
+    ]);
+    $contract->seasons()->create([
+        'season_key' => 20262027,
+        'label' => '2026-27',
+        'cap_hit' => 12500000,
+        'aav' => 12500000,
+        'base_salary' => 12500000,
+    ]);
 
     $this->withHeader('Authorization', 'Bearer ' . $token)
         ->getJson('/api/nhl-players?per_page=1')
@@ -927,6 +947,8 @@ it('returns paginated NHL players for scoped API clients with head shot urls', f
         ->assertJsonPath('data.0.shoots_or_catches', 'L')
         ->assertJsonPath('data.0.birth_date', '1997-01-13')
         ->assertJsonPath('data.0.head_shot_url', 'https://assets.example/mcdavid.png')
+        ->assertJsonPath('data.0.current_cap_hit', 12500000)
+        ->assertJsonPath('data.0.current_cap_hit_season_key', 20262027)
         ->assertJsonPath('data.0.active', true)
         ->assertJsonPath('data.0.metadata.current_team_abbreviation', 'EDM')
         ->assertJsonPath('meta.per_page', 1)
@@ -1207,6 +1229,36 @@ it('allows super admins to queue duplicate PBP dedupe from a ready repair run', 
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
         return $event->reason === 'duplicate-pbp-dedupe-queued' && $event->runId === $run->id;
     });
+});
+
+it('does not queue duplicate PBP dedupe again after repair metadata exists', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_REPAIR,
+        'mode' => NhlGameImportRun::MODE_DEFAULT,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-07-28',
+        'end_date' => '2026-07-28',
+        'date_count' => 0,
+        'queued_jobs' => 1,
+        'payload' => [
+            'repair' => 'duplicate_pbp',
+            'repair_stage' => 'ready',
+            'repair_game_count' => 3,
+            'dedupe_completed_at' => '2026-07-28T12:00:00-04:00',
+            'queued_rebuild_game_count' => 3,
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.duplicate-pbp.dedupe', $run))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('run_id');
+
+    Bus::assertNotDispatched(DedupeNhlPlayByPlayRepairJob::class);
+    Event::assertNotDispatched(NhlGameImportStatusUpdated::class);
 });
 
 it('allows super admins to queue NHL season stat syncs', function () {

@@ -33,6 +33,7 @@ rules:
   - The draft settings payload should include a non-sensitive channel preload status/message so empty channel lists are diagnosable in the drawer.
   - A saved draft notification channel should remain selectable even if the latest Discord channel list omits it.
   - Draft notification channel settings belong to the organization_leagues pivot metadata for the community league.
+  - Scheduled Fantrax draft sync opt-in belongs to organization_leagues.meta.draft_sync.enabled and must default to false.
   - Draft notification channel creation may use the Discord guild channel API when the connected guild and bot token are available.
   - Draft notification channel creation should place new text channels under an inferred text-channel category when available.
   - Draft player stats enrichment should choose the player's latest available stats season, then the stat row with the highest games played in that season.

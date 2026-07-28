@@ -1760,12 +1760,18 @@ export default function adminHub(options = {}) {
         },
 
         canRunDuplicatePbpDedupe(run) {
+            const payload = run?.payload ?? {};
+
             return this.isDuplicatePbpRepairRun(run)
-                && run?.payload?.repair_stage === 'ready'
+                && payload.repair_stage === 'ready'
+                && !payload.dedupe_requested_at
+                && !payload.dedupe_completed_at
+                && !payload.repair_completed_at
+                && Number(payload.queued_rebuild_game_count || 0) === 0
                 && (
-                    Number(run?.payload?.repair_game_count || 0) > 0
-                    || Number(run?.payload?.unqueued_rebuild_game_count || 0) > 0
-                    || Number(run?.payload?.live_duplicate_game_count || 0) > 0
+                    Number(payload.repair_game_count || 0) > 0
+                    || Number(payload.unqueued_rebuild_game_count || 0) > 0
+                    || Number(payload.live_duplicate_game_count || 0) > 0
                 );
         },
 

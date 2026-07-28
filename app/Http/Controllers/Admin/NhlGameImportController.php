@@ -93,7 +93,7 @@ class NhlGameImportController extends Controller
             ], 202);
         }
 
-        if ($existingRun && (($existingRun->payload ?? [])['repair_stage'] ?? null) === 'ready') {
+        if ($existingRun && $this->isDuplicatePbpRepairRunReadyForDedupe($existingRun)) {
             return response()->json([
                 'message' => 'Duplicate PBP scan is ready.',
                 'run' => $this->serializeRun($existingRun),
@@ -139,6 +139,12 @@ class NhlGameImportController extends Controller
         if ((($run->payload ?? [])['repair_stage'] ?? null) !== 'ready') {
             throw ValidationException::withMessages([
                 'run_id' => 'Run duplicate PBP scan before deduping.',
+            ]);
+        }
+
+        if (! $this->isDuplicatePbpRepairRunReadyForDedupe($run)) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This duplicate PBP repair run has already been queued.',
             ]);
         }
 
@@ -957,6 +963,8 @@ class NhlGameImportController extends Controller
             $total = $scheduled + $running + $completed + $skipped + $failed;
             $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 35;
             $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
+            $payload = $this->normalizeCompletedDuplicatePbpRepairRun($run, $payload, $status);
+            $stage = (string) ($payload['repair_stage'] ?? $stage);
 
             return [
                 'status' => $status,
@@ -1627,6 +1635,49 @@ class NhlGameImportController extends Controller
             ->where('payload->repair', 'duplicate_pbp')
             ->latest()
             ->first();
+    }
+
+    private function isDuplicatePbpRepairRunReadyForDedupe(NhlGameImportRun $run): bool
+    {
+        $payload = $run->payload ?? [];
+
+        return (($payload['repair_stage'] ?? null) === 'ready')
+            && ! isset($payload['dedupe_requested_at'])
+            && ! isset($payload['dedupe_completed_at'])
+            && ! isset($payload['repair_completed_at'])
+            && (int) ($payload['queued_rebuild_game_count'] ?? 0) === 0
+            && (
+                (int) ($payload['repair_game_count'] ?? 0) > 0
+                || (int) ($payload['unqueued_rebuild_game_count'] ?? 0) > 0
+                || (int) ($payload['live_duplicate_game_count'] ?? 0) > 0
+            );
+    }
+
+    /**
+     * Persist terminal repair stage once affected rebuild progress has drained.
+     *
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    private function normalizeCompletedDuplicatePbpRepairRun(
+        NhlGameImportRun $run,
+        array $payload,
+        string $status
+    ): array {
+        if ($status !== NhlGameImportRun::STATUS_COMPLETED || (($payload['repair_stage'] ?? null) !== 'rebuilding')) {
+            return $payload;
+        }
+
+        $payload['repair_stage'] = 'completed';
+        $payload['repair_completed_at'] ??= now()->toIso8601String();
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_COMPLETED,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        return $payload;
     }
 
     private function safeBroadcast(string $status, int $runId): void

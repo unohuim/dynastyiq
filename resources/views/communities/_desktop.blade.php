@@ -1315,6 +1315,31 @@
 
             <div class="flex-1 divide-y divide-slate-200 overflow-y-auto px-5">
                 <section class="py-4">
+                    <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Sync</div>
+                    <div class="mt-3 flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-3">
+                        <span class="text-sm font-medium text-slate-700">Sync Draft</span>
+                        <button
+                            type="button"
+                            role="switch"
+                            class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2"
+                            :class="[
+                                draftSyncEnabled ? 'bg-blue-600' : 'bg-slate-300',
+                                draftSyncSaving ? 'cursor-wait opacity-70' : ''
+                            ]"
+                            :aria-checked="draftSyncEnabled ? 'true' : 'false'"
+                            :disabled="draftSyncSaving || !draftSettingsActionUrl"
+                            x-on:click="toggleDraftSync()"
+                        >
+                            <span class="sr-only">Sync Draft</span>
+                            <span
+                                class="inline-block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200 ease-out"
+                                :class="draftSyncEnabled ? 'translate-x-5' : 'translate-x-0.5'"
+                            ></span>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="py-4">
                     <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Clock</div>
                     <div class="mt-3 space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
                         <div x-show="draftOptionsLoading" class="text-xs font-medium text-slate-500">Loading draft options...</div>
@@ -1350,7 +1375,7 @@
                                 <span x-show="!draftTimerCanUpdate && !draftTimerMessage" class="text-slate-500">Connect a draft before saving timer settings.</span>
                             </div>
                             <button type="button" class="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60" x-on:click="saveDraftTimerSettings()" :disabled="draftTimerSaving || !draftTimerCanUpdate">
-                                <span x-show="!draftTimerSaving">Save timer settings</span>
+                                <span x-show="!draftTimerSaving">Save draft settings</span>
                                 <span x-show="draftTimerSaving">Saving...</span>
                             </button>
                         </div>

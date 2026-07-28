@@ -19,7 +19,7 @@
     x-data="toastStack({ flashes: @js($flashMessages) })"
     x-init="boot()"
     @toast.window="handleEvent($event)"
-    class="pointer-events-none fixed inset-0 z-50 flex items-start justify-end px-4 py-6 sm:p-6"
+    class="pointer-events-none fixed inset-0 z-[120] flex items-start justify-end px-4 py-6 sm:p-6"
 >
     <div
         x-ref="liveRegion"

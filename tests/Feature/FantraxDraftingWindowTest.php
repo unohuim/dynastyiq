@@ -81,9 +81,15 @@ beforeEach(function (): void {
             'name' => $overrides['league_name'] ?? 'Community League',
             'sport' => 'hockey',
         ]);
-        $organization->leagues()->attach($league->id, [
+        $leaguePivot = [
             'linked_at' => now(),
-        ]);
+        ];
+
+        if (array_key_exists('league_meta', $overrides)) {
+            $leaguePivot['meta'] = json_encode($overrides['league_meta']);
+        }
+
+        $organization->leagues()->attach($league->id, $leaguePivot);
 
         if (($overrides['connect_fantrax'] ?? true) === true) {
             IntegrationSecret::create([
@@ -996,18 +1002,22 @@ it('removes drafted players from draft queues when fantrax sync resolves a picke
         ->and(DraftQueueItem::query()->where('draft_id', $draft->id)->where('player_id', $player->id)->exists())->toBeFalse();
 });
 
-it('dispatches fantrax draft polling for live canonical fantrax drafts', function (): void {
+it('dispatches fantrax draft polling for opted-in live canonical fantrax drafts', function (): void {
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-live-due-league',
+        'league_meta' => ['draft_sync' => ['enabled' => true]],
     ]);
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-live-fresh-league',
+        'league_meta' => ['draft_sync' => ['enabled' => true]],
     ]);
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-scheduled-league',
+        'league_meta' => ['draft_sync' => ['enabled' => true]],
     ]);
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-complete-league',
+        'league_meta' => ['draft_sync' => ['enabled' => true]],
     ]);
     ($this->createCommunityLeague)([
         'platform_league_id' => 'poll-missing-state-league',
@@ -1040,6 +1050,22 @@ it('dispatches fantrax draft polling for live canonical fantrax drafts', functio
     Bus::assertDispatched(SyncFantraxDraftStateJob::class, static fn (SyncFantraxDraftStateJob $job): bool => $job->platformLeagueId === $liveDuePlatformLeague->id);
     Bus::assertDispatched(SyncFantraxDraftStateJob::class, static fn (SyncFantraxDraftStateJob $job): bool => $job->platformLeagueId === $liveFreshPlatformLeague->id);
     Bus::assertDispatchedTimes(SyncFantraxDraftStateJob::class, 2);
+});
+
+it('does not dispatch fantrax draft polling when community draft sync is disabled by default', function (): void {
+    ($this->createCommunityLeague)([
+        'platform_league_id' => 'poll-default-off-league',
+    ]);
+    $platformLeague = PlatformLeague::query()->where('platform_league_id', 'poll-default-off-league')->firstOrFail();
+    ($this->createDraft)($platformLeague, [
+        'external_draft_id' => 'fantrax:poll-default-off-league:current',
+        'status' => 'live',
+    ]);
+    Bus::fake();
+
+    $this->artisan('fantrax:drafts:poll')->assertSuccessful();
+
+    Bus::assertNotDispatched(SyncFantraxDraftStateJob::class);
 });
 
 it('loads league draft panel from persisted draft payloads when available', function (): void {
@@ -2626,6 +2652,26 @@ it('saves a draft notification channel and creates it on discord when needed', f
             && str_contains($request->url(), 'discord.com/api/v10/guilds/guild-1/channels')
             && ($data['parent_id'] ?? null) === 'text-category';
     });
+});
+
+it('saves community draft sync opt-in settings', function (): void {
+    [$user, $organization, $league] = ($this->createCommunityLeague)([
+        'platform_league_id' => 'draft-sync-options-league',
+    ]);
+
+    $this->actingAs($user)
+        ->putJson("/communities/{$organization->id}/leagues/{$league->id}/draft-settings", [
+            'sync_draft_enabled' => true,
+        ])
+        ->assertOk()
+        ->assertJsonPath('draft_sync.enabled', true);
+
+    $pivotMeta = json_decode(
+        (string) $organization->leagues()->whereKey($league->id)->firstOrFail()->pivot->meta,
+        true
+    );
+
+    expect(data_get($pivotMeta, 'draft_sync.enabled'))->toBeTrue();
 });
 
 it('sends community draft testing picks to discord without tagging users or mutating draft picks', function (): void {

@@ -2440,6 +2440,7 @@ class CommunityLeagues extends Controller
             'pick_clock_minutes' => ['nullable', 'integer', 'min:0', 'max:1440'],
             'pause_between_picks_seconds' => ['nullable', 'integer', 'min:0', 'max:3600'],
             'auto_pick_enabled' => ['nullable', 'boolean'],
+            'sync_draft_enabled' => ['nullable', 'boolean'],
         ]);
 
         $hasChannelPayload = array_key_exists('draft_channel_id', $data)
@@ -2452,6 +2453,7 @@ class CommunityLeagues extends Controller
             || array_key_exists('pick_clock_minutes', $data)
             || array_key_exists('pause_between_picks_seconds', $data)
             || array_key_exists('auto_pick_enabled', $data);
+        $hasDraftSyncPayload = array_key_exists('sync_draft_enabled', $data);
         $discordServer = $this->selectedDiscordServer($community, $league);
         $meta = $this->pivotMeta($league);
 
@@ -2494,6 +2496,10 @@ class CommunityLeagues extends Controller
             data_set($meta, 'draft_timer', $this->normalizeCommunityDraftTimerSettings($data));
         }
 
+        if ($hasDraftSyncPayload) {
+            data_set($meta, 'draft_sync.enabled', (bool) ($data['sync_draft_enabled'] ?? false));
+        }
+
         DB::table('organization_leagues')
             ->where('organization_id', $community->id)
             ->where('league_id', $league->id)
@@ -2511,6 +2517,7 @@ class CommunityLeagues extends Controller
             'channel' => data_get($meta, 'draft_notifications.discord_channel'),
             'transactions_channel' => data_get($meta, 'transactions.discord_channel'),
             'notifications' => $this->draftNotificationOptionsFromMeta($meta),
+            'draft_sync' => $this->draftSyncSettingsFromMeta($meta),
             'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
         ]);
     }
@@ -2824,6 +2831,7 @@ class CommunityLeagues extends Controller
                 ? $selectedTransactionsChannel
                 : null,
             'notifications' => $this->draftNotificationOptionsFromMeta($meta),
+            'draft_sync' => $this->draftSyncSettingsFromMeta($meta),
             'timer' => $this->draftTimerSettingsPayload($this->draftTimerSettingsFromMeta($meta)),
         ];
     }
@@ -2862,6 +2870,19 @@ class CommunityLeagues extends Controller
         return [
             'announce_otc' => (bool) data_get($meta, 'draft_notifications.announce_otc', true),
             'announce_on_deck' => (bool) data_get($meta, 'draft_notifications.announce_on_deck', false),
+        ];
+    }
+
+    /**
+     * Return community-managed draft sync options.
+     *
+     * @param array<string,mixed> $meta
+     * @return array<string,bool>
+     */
+    private function draftSyncSettingsFromMeta(array $meta): array
+    {
+        return [
+            'enabled' => (bool) data_get($meta, 'draft_sync.enabled', false),
         ];
     }
 

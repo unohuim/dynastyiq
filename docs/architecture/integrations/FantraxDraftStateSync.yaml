@@ -27,6 +27,7 @@ rules:
   - Community league page API fallbacks may dispatch payload-backed draft sync jobs instead of forcing a second immediate Fantrax fetch.
   - A pick-made delta occurs when an existing canonical draft_picks row has no provider player id and the latest provider payload supplies one.
   - Explicit draft polling must only dispatch API-backed draft sync jobs for canonical drafts whose platform is fantrax, source_type is platform_mirror, and status is live.
+  - Explicit scheduled draft polling must be opt-in per community league through organization_leagues.meta.draft_sync.enabled; missing or false values must not dispatch Fantrax draft sync jobs.
   - Scheduled, complete, unknown, and missing drafts must not be discovered or refreshed by explicit draft polling.
   - Complete Fantrax mirror drafts must not retain current pick, on-clock, next-pick, or countdown state.
   - Provider pick order must be keyed by provider pick data, preferring overall pick when available.

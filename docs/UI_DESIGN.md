@@ -104,6 +104,16 @@ Authenticated user/account controls and integration controls should live in acco
 
 Navigation eligibility is backend-owned. Client-side updates may patch stale local navigation state after a successful AJAX mutation, but they must not become authorization authority.
 
+### Toggles
+
+- Binary toggle controls must persist immediately when changed.
+- Toggles must not require a separate Save button for the toggled value.
+- Failed toggle saves must restore the previous visual state and show a toast or inline error.
+
+### Toasts
+
+- Toast notifications must render above drawers, slide-overs, modals, dropdowns, and fixed app chrome.
+
 ---
 
 ## Technology Constraints

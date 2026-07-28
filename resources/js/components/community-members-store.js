@@ -1107,6 +1107,9 @@ function communityMembersHub(config) {
         draftChannelMessage: "",
         draftAnnounceOtc: true,
         draftAnnounceOnDeck: false,
+        draftSyncEnabled: false,
+        draftSyncSavedEnabled: false,
+        draftSyncSaving: false,
         draftPickClockHours: 0,
         draftPickClockMinutes: 5,
         draftPickClockSeconds: 0,
@@ -1220,6 +1223,9 @@ function communityMembersHub(config) {
             this.draftChannelMessage = "";
             this.draftAnnounceOtc = true;
             this.draftAnnounceOnDeck = false;
+            this.draftSyncEnabled = false;
+            this.draftSyncSavedEnabled = false;
+            this.draftSyncSaving = false;
             this.draftPickClockHours = 0;
             this.draftPickClockMinutes = 5;
             this.draftPickClockSeconds = 0;
@@ -1833,6 +1839,7 @@ function communityMembersHub(config) {
                     ? `#${selectedTransactionsChannel.name}`
                     : "";
                 this.applyDraftNotificationConfig(config.notifications || {});
+                this.applyDraftSyncConfig(config.draft_sync || {});
                 this.applyDraftTimerConfig(config.timer || {});
             } catch (error) {
                 console.error("[communityDraftOptions] Unable to load options:", error);
@@ -1853,6 +1860,51 @@ function communityMembersHub(config) {
         applyDraftNotificationConfig(notifications) {
             this.draftAnnounceOtc = Boolean(notifications.announce_otc);
             this.draftAnnounceOnDeck = Boolean(notifications.announce_on_deck);
+        },
+        applyDraftSyncConfig(draftSync) {
+            this.draftSyncEnabled = Boolean(draftSync.enabled);
+            this.draftSyncSavedEnabled = this.draftSyncEnabled;
+        },
+        async toggleDraftSync() {
+            if (!this.draftSettingsActionUrl || this.draftSyncSaving) {
+                return;
+            }
+
+            const previousDraftSyncEnabled = this.draftSyncSavedEnabled;
+            const nextDraftSyncEnabled = !this.draftSyncEnabled;
+            this.draftSyncEnabled = nextDraftSyncEnabled;
+            this.draftSyncSaving = true;
+
+            try {
+                const response = await fetch(this.draftSettingsActionUrl, {
+                    method: "PUT",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": csrfToken(),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                    credentials: "same-origin",
+                    body: JSON.stringify({
+                        sync_draft_enabled: nextDraftSyncEnabled,
+                    }),
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok || payload?.ok !== true) {
+                    throw new Error(payload?.message || "Could not save draft sync.");
+                }
+
+                this.applyDraftSyncConfig(payload.draft_sync || {});
+                showToast("success", this.draftSyncEnabled ? "Draft sync enabled" : "Draft sync disabled");
+            } catch (error) {
+                console.error("[communityDraftOptions] Unable to save draft sync:", error);
+                this.draftSyncEnabled = previousDraftSyncEnabled;
+                this.draftSyncSavedEnabled = previousDraftSyncEnabled;
+                showToast("error", error?.message || "Could not save draft sync.");
+            } finally {
+                this.draftSyncSaving = false;
+            }
         },
         normalizedDraftClockSeconds() {
             const hours = Math.max(0, Number(this.draftPickClockHours || 0));
@@ -1990,7 +2042,7 @@ function communityMembersHub(config) {
                 }
 
                 this.applyDraftTimerConfig(payload.timer || {});
-                this.draftTimerMessage = "Draft timer settings saved.";
+                this.draftTimerMessage = "Draft settings saved.";
                 if (this.selectedLeague?.draftSummaryUrl) {
                     this.loadCommunityLeagueDraftSummary();
                 }
