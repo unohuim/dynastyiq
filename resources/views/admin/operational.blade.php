@@ -24,6 +24,7 @@
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
             gameImportDuplicatePbpScanUrl: @js(route('admin.nhl-game-imports.duplicate-pbp.scan')),
             gameImportDuplicatePbpDedupeUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
+            gameImportDuplicatePbpRebuildUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
             leagueRefreshUrl: @js(route('leagues.resync')),
@@ -733,6 +734,16 @@
                                                     @click.stop.prevent="runDuplicatePbpDedupe(run)"
                                                 >
                                                     <span x-text="gameImports.dedupingDuplicatePbpRuns[run.id] === true ? 'Queuing...' : 'DeDupe'">DeDupe</span>
+                                                </button>
+                                            </template>
+                                            <template x-if="isDuplicatePbpRepairRun(run) && canRunDuplicatePbpRebuild(run)">
+                                                <button
+                                                    type="button"
+                                                    class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    :disabled="gameImports.rebuildingDuplicatePbpRuns[run.id] === true"
+                                                    @click.stop.prevent="runDuplicatePbpRebuild(run)"
+                                                >
+                                                    <span x-text="gameImports.rebuildingDuplicatePbpRuns[run.id] === true ? 'Queuing...' : 'Rebuild Affected'">Rebuild Affected</span>
                                                 </button>
                                             </template>
                                             <template x-if="run.status !== 'completed' && (run.action !== 'discover' || run.processing_started)">

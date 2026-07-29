@@ -8,6 +8,7 @@ use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\ImportYahooPlayersPageJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\QueueDuplicatePbpAffectedRebuildsJob;
 use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
 use App\Jobs\SyncYahooTeamRosterJob;
@@ -1259,6 +1260,43 @@ it('does not queue duplicate PBP dedupe again after repair metadata exists', fun
 
     Bus::assertNotDispatched(DedupeNhlPlayByPlayRepairJob::class);
     Event::assertNotDispatched(NhlGameImportStatusUpdated::class);
+});
+
+it('allows super admins to queue duplicate PBP affected-game rebuilds from a rebuild repair run', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_REPAIR,
+        'mode' => NhlGameImportRun::MODE_DEFAULT,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-07-28',
+        'end_date' => '2026-07-28',
+        'date_count' => 1,
+        'queued_jobs' => 0,
+        'payload' => [
+            'repair' => 'duplicate_pbp_rebuild',
+            'repair_stage' => 'ready',
+            'affected_game_count' => 2,
+            'affected_game_ids' => [2025021200, 2025021201],
+            'queued_rebuild_game_count' => 0,
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.duplicate-pbp.rebuild', $run))
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_REPAIR)
+        ->assertJsonPath('run.status', NhlGameImportRun::STATUS_QUEUED)
+        ->assertJsonPath('run.payload.repair', 'duplicate_pbp_rebuild')
+        ->assertJsonPath('run.payload.repair_stage', 'queued');
+
+    Bus::assertDispatched(QueueDuplicatePbpAffectedRebuildsJob::class, function (QueueDuplicatePbpAffectedRebuildsJob $job) use ($run): bool {
+        return $job->runId === $run->id;
+    });
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'duplicate-pbp-rebuild-requested' && $event->runId === $run->id;
+    });
 });
 
 it('allows super admins to queue NHL season stat syncs', function () {

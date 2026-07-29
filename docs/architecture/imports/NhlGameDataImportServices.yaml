@@ -6,6 +6,7 @@ location:
   - app/Console/Commands/RefreshNhlSpecialTeamsSplitsCommand.php
   - app/Console/Commands/RepairDuplicateNhlPlayByPlayCommand.php
   - app/Jobs/DedupeNhlPlayByPlayRepairJob.php
+  - app/Jobs/QueueDuplicatePbpAffectedRebuildsJob.php
   - app/Jobs/RefreshNhlGoalieDecisionJob.php
   - app/Jobs/RefreshNhlSpecialTeamsSplitsJob.php
   - app/Jobs/ScanDuplicateNhlPlayByPlayRepairJob.php
@@ -48,7 +49,7 @@ rules:
   - Play-by-play events are naturally identified by nhl_game_id plus nhl_event_id.
   - The play-by-play natural identity must be database-enforced for non-null NHL event ids so duplicate event rows cannot inflate derived summaries.
   - Live duplicate play-by-play repairs must preserve the affected game ids for targeted derived-data rebuilds after dedupe.
-  - Duplicate play-by-play repair may be initiated from admin UI or CLI, but both entry points must use the same repair behavior and must queue targeted rebuilds from the repair ledger.
+  - Duplicate play-by-play repair may be initiated from admin UI or CLI, but duplicate-row removal must remain separate from affected-game rebuild queueing.
   - Play-by-play imports must preserve raw provider event and details payloads in play_by_plays.metadata for audit and validation context.
   - Derived play-by-play summaries must use NhlPbpEventNormalizer for boxscore-comparable shot, shootout, empty-net, and penalty-minute semantics.
   - Player game summaries are naturally identified by nhl_game_id plus nhl_player_id.

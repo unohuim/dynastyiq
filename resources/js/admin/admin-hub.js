@@ -56,6 +56,7 @@ export default function adminHub(options = {}) {
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
         gameImportDuplicatePbpScanUrl: options.gameImportDuplicatePbpScanUrl ?? '/admin/nhl-game-imports/duplicate-pbp/scan',
         gameImportDuplicatePbpDedupeUrl: options.gameImportDuplicatePbpDedupeUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
+        gameImportDuplicatePbpRebuildUrl: options.gameImportDuplicatePbpRebuildUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
         gameImportSeasonSyncUrl: options.gameImportSeasonSyncUrl ?? '/admin/nhl-game-imports/season-sync',
         gameImportEmptyGamesUrl: options.gameImportEmptyGamesUrl ?? '/admin/nhl-game-imports/empty-games',
         leagueRefreshUrl: options.leagueRefreshUrl ?? '/leagues/resync',
@@ -80,6 +81,7 @@ export default function adminHub(options = {}) {
             emptyingGames: false,
             scanningDuplicatePbp: false,
             dedupingDuplicatePbpRuns: {},
+            rebuildingDuplicatePbpRuns: {},
             error: '',
             runs: [],
             seasons: [],
@@ -1150,6 +1152,35 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async runDuplicatePbpRebuild(run) {
+            const runId = run?.id;
+
+            if (!runId || this.gameImports.rebuildingDuplicatePbpRuns[runId] === true) {
+                return;
+            }
+
+            this.gameImports.error = '';
+            this.gameImports.rebuildingDuplicatePbpRuns = {
+                ...this.gameImports.rebuildingDuplicatePbpRuns,
+                [runId]: true,
+            };
+
+            try {
+                await this.sendGameImportRequest(
+                    `${this.gameImportDuplicatePbpRebuildUrl}/${runId}/rebuild`,
+                    {}
+                );
+
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue affected-game rebuilds';
+            } finally {
+                const next = { ...this.gameImports.rebuildingDuplicatePbpRuns };
+                delete next[runId];
+                this.gameImports.rebuildingDuplicatePbpRuns = next;
+            }
+        },
+
         gameImportRunPayload(run) {
             return {
                 run_id: run.id,
@@ -1192,7 +1223,9 @@ export default function adminHub(options = {}) {
 
         gameImportTitle(run) {
             if (this.isDuplicatePbpRepairRun(run)) {
-                return 'Duplicate PBP Repair';
+                return this.isDuplicatePbpRebuildRun(run)
+                    ? 'Rebuild Affected Games'
+                    : 'Duplicate PBP Repair';
             }
 
             return this.formatGameImportRange(run);
@@ -1231,7 +1264,16 @@ export default function adminHub(options = {}) {
         },
 
         isDuplicatePbpRepairRun(run) {
+            return run?.action === 'repair'
+                && ['duplicate_pbp', 'duplicate_pbp_rebuild'].includes(run?.payload?.repair);
+        },
+
+        isDuplicatePbpDedupeRun(run) {
             return run?.action === 'repair' && run?.payload?.repair === 'duplicate_pbp';
+        },
+
+        isDuplicatePbpRebuildRun(run) {
+            return run?.action === 'repair' && run?.payload?.repair === 'duplicate_pbp_rebuild';
         },
 
         duplicatePbpRepairBadgeText(run) {
@@ -1239,6 +1281,10 @@ export default function adminHub(options = {}) {
 
             if (stage === 'ready') {
                 return 'READY';
+            }
+
+            if (stage === 'queued') {
+                return this.isDuplicatePbpRebuildRun(run) ? 'QUEUED' : 'DEDUPING';
             }
 
             if (stage === 'deduping') {
@@ -1389,10 +1435,15 @@ export default function adminHub(options = {}) {
             const stage = payload.repair_stage ?? 'scanning';
             const liveGames = Number(payload.live_duplicate_game_count) || 0;
             const liveRows = Number(payload.live_duplicate_row_count) || 0;
-            const repairGames = Number(payload.repair_game_count) || Number(payload.unqueued_rebuild_game_count) || 0;
-            const repairRows = Number(payload.repair_duplicate_row_count) || Number(payload.ledger_duplicate_row_count) || 0;
+            const repairGames = Number(payload.repair_game_count) || liveGames;
+            const repairRows = Number(payload.repair_duplicate_row_count) || liveRows;
+            const affectedGames = Number(payload.affected_game_count) || 0;
 
             if (stage === 'ready') {
+                if (this.isDuplicatePbpRebuildRun(run)) {
+                    return `${this.formatNumber(affectedGames)} affected games ready to rebuild`;
+                }
+
                 if (repairGames === 0 && liveGames === 0) {
                     return 'No duplicate PBP rows found';
                 }
@@ -1414,7 +1465,11 @@ export default function adminHub(options = {}) {
             }
 
             if (stage === 'completed') {
-                return `${this.formatNumber(Number(payload.queued_rebuild_game_count) || 0)} affected games queued`;
+                if (this.isDuplicatePbpRebuildRun(run)) {
+                    return `${this.formatNumber(Number(payload.queued_rebuild_game_count) || affectedGames)} affected games rebuilt`;
+                }
+
+                return `${this.formatNumber(Number(payload.duplicate_rows_deleted) || 0)} duplicate rows removed · ${this.formatNumber(affectedGames)} affected games`;
             }
 
             if (stage === 'failed' || run?.status === 'failed') {
@@ -1423,6 +1478,14 @@ export default function adminHub(options = {}) {
 
             if (stage === 'deduping') {
                 return 'Removing duplicate PBP rows';
+            }
+
+            if (stage === 'queued' && this.isDuplicatePbpRebuildRun(run)) {
+                return 'Queueing affected game rebuilds';
+            }
+
+            if (stage === 'queued') {
+                return 'Queueing duplicate row removal';
             }
 
             return 'Scanning play-by-play rows';
@@ -1762,17 +1825,27 @@ export default function adminHub(options = {}) {
         canRunDuplicatePbpDedupe(run) {
             const payload = run?.payload ?? {};
 
-            return this.isDuplicatePbpRepairRun(run)
+            return this.isDuplicatePbpDedupeRun(run)
                 && payload.repair_stage === 'ready'
                 && !payload.dedupe_requested_at
                 && !payload.dedupe_completed_at
                 && !payload.repair_completed_at
-                && Number(payload.queued_rebuild_game_count || 0) === 0
                 && (
                     Number(payload.repair_game_count || 0) > 0
-                    || Number(payload.unqueued_rebuild_game_count || 0) > 0
                     || Number(payload.live_duplicate_game_count || 0) > 0
                 );
+        },
+
+        canRunDuplicatePbpRebuild(run) {
+            const payload = run?.payload ?? {};
+
+            return this.isDuplicatePbpRebuildRun(run)
+                && payload.repair_stage === 'ready'
+                && !payload.rebuild_requested_at
+                && !payload.rebuild_queued_at
+                && !payload.repair_completed_at
+                && Number(payload.affected_game_count || 0) > 0
+                && Number(payload.queued_rebuild_game_count || 0) === 0;
         },
 
         discoveryFactsText(run) {

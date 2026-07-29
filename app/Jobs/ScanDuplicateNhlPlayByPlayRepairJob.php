@@ -69,8 +69,6 @@ class ScanDuplicateNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
             $payload = $run->payload ?? [];
             $scan = $repair->scan();
             $ledger = $repair->ledgerSummary();
-            $readyGameCount = max($scan['game_count'], $ledger['unqueued_games']);
-            $readyDuplicateRows = max($scan['duplicate_rows'], $ledger['duplicate_rows']);
 
             $payload['repair_stage'] = 'ready';
             $payload['scan_completed_at'] = now()->toIso8601String();
@@ -80,8 +78,9 @@ class ScanDuplicateNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
             $payload['ledger_duplicate_row_count'] = $ledger['duplicate_rows'];
             $payload['unqueued_rebuild_game_count'] = $ledger['unqueued_games'];
             $payload['queued_rebuild_game_count'] = $ledger['queued_games'];
-            $payload['repair_game_count'] = $readyGameCount;
-            $payload['repair_duplicate_row_count'] = $readyDuplicateRows;
+            $payload['historical_rebuild_game_count'] = $ledger['unqueued_games'];
+            $payload['repair_game_count'] = $scan['game_count'];
+            $payload['repair_duplicate_row_count'] = $scan['duplicate_rows'];
 
             $run->forceFill([
                 'status' => NhlGameImportRun::STATUS_COMPLETED,

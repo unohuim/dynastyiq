@@ -10,6 +10,7 @@ use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\QueueDuplicatePbpAffectedRebuildsJob;
 use App\Jobs\RebuildNhlGameImportJob;
 use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
@@ -130,7 +131,7 @@ class NhlGameImportController extends Controller
      */
     public function dedupeDuplicatePlayByPlay(NhlGameImportRun $run): JsonResponse
     {
-        if (! $this->isDuplicatePbpRepairRun($run)) {
+        if (! $this->isDuplicatePbpDedupeRun($run)) {
             throw ValidationException::withMessages([
                 'run_id' => 'This run is not a duplicate PBP repair run.',
             ]);
@@ -164,6 +165,43 @@ class NhlGameImportController extends Controller
 
         return response()->json([
             'message' => 'Duplicate PBP repair queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue rebuilds for games affected by a completed duplicate play-by-play repair.
+     */
+    public function rebuildDuplicatePlayByPlay(NhlGameImportRun $run): JsonResponse
+    {
+        if (! $this->isDuplicatePbpRebuildRun($run)) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This run is not a duplicate PBP rebuild run.',
+            ]);
+        }
+
+        if (! $this->isDuplicatePbpRebuildRunReady($run)) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This affected-game rebuild has already been queued.',
+            ]);
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['repair_stage'] = 'queued';
+        $payload['rebuild_requested_at'] = now()->toIso8601String();
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'payload' => $payload,
+            'last_error' => null,
+            'updated_at' => now(),
+        ])->save();
+
+        QueueDuplicatePbpAffectedRebuildsJob::dispatch($run->id);
+        $this->safeBroadcast('duplicate-pbp-rebuild-requested', $run->id);
+
+        return response()->json([
+            'message' => 'Duplicate PBP affected-game rebuild queued.',
             'run' => $this->serializeRun($run->refresh()),
         ], 202);
     }
@@ -1182,7 +1220,22 @@ class NhlGameImportController extends Controller
     private function isDuplicatePbpRepairRun(NhlGameImportRun $run): bool
     {
         return $run->action === NhlGameImportRun::ACTION_REPAIR
+            && in_array((($run->payload ?? [])['repair'] ?? null), [
+                'duplicate_pbp',
+                'duplicate_pbp_rebuild',
+            ], true);
+    }
+
+    private function isDuplicatePbpDedupeRun(NhlGameImportRun $run): bool
+    {
+        return $run->action === NhlGameImportRun::ACTION_REPAIR
             && (($run->payload ?? [])['repair'] ?? null) === 'duplicate_pbp';
+    }
+
+    private function isDuplicatePbpRebuildRun(NhlGameImportRun $run): bool
+    {
+        return $run->action === NhlGameImportRun::ACTION_REPAIR
+            && (($run->payload ?? [])['repair'] ?? null) === 'duplicate_pbp_rebuild';
     }
 
     private function shouldShowPipelineFacts(NhlGameImportRun $run): bool
@@ -1641,16 +1694,28 @@ class NhlGameImportController extends Controller
     {
         $payload = $run->payload ?? [];
 
-        return (($payload['repair_stage'] ?? null) === 'ready')
+        return $this->isDuplicatePbpDedupeRun($run)
+            && (($payload['repair_stage'] ?? null) === 'ready')
             && ! isset($payload['dedupe_requested_at'])
             && ! isset($payload['dedupe_completed_at'])
             && ! isset($payload['repair_completed_at'])
-            && (int) ($payload['queued_rebuild_game_count'] ?? 0) === 0
             && (
                 (int) ($payload['repair_game_count'] ?? 0) > 0
-                || (int) ($payload['unqueued_rebuild_game_count'] ?? 0) > 0
                 || (int) ($payload['live_duplicate_game_count'] ?? 0) > 0
             );
+    }
+
+    private function isDuplicatePbpRebuildRunReady(NhlGameImportRun $run): bool
+    {
+        $payload = $run->payload ?? [];
+
+        return $this->isDuplicatePbpRebuildRun($run)
+            && (($payload['repair_stage'] ?? null) === 'ready')
+            && ! isset($payload['rebuild_requested_at'])
+            && ! isset($payload['rebuild_queued_at'])
+            && ! isset($payload['repair_completed_at'])
+            && (int) ($payload['affected_game_count'] ?? 0) > 0
+            && (int) ($payload['queued_rebuild_game_count'] ?? 0) === 0;
     }
 
     /**

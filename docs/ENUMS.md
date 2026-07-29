@@ -1712,6 +1712,27 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Game Import Repair Type
+
+**Name:** NHL game import repair type
+**Storage location(s):** `nhl_game_import_runs.payload.repair` (JSON string value)
+**Allowed values currently emitted:**
+
+- `duplicate_pbp`
+- `duplicate_pbp_rebuild`
+
+**Semantic meaning:**
+
+- `duplicate_pbp`: Scan for and remove duplicate `play_by_plays` rows for the same NHL game/event natural key.
+- `duplicate_pbp_rebuild`: Explicitly rebuild games affected by a completed duplicate-PBP repair.
+
+**Notes:**
+
+- Duplicate-PBP row removal must not automatically queue affected-game rebuilds.
+- Rebuild progress belongs to `duplicate_pbp_rebuild` runs.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:

@@ -18,9 +18,9 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Repairs duplicate NHL play-by-play rows and prepares a separate affected-game rebuild run.
+ * Queues explicit rebuilds for games affected by a completed duplicate-PBP repair.
  */
-class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
+class QueueDuplicatePbpAffectedRebuildsJob implements ShouldQueue, ShouldBeUnique
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -35,7 +35,7 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
     /**
      * @var int
      */
-    public int $timeout = 900;
+    public int $timeout = 300;
 
     public function __construct(public int $runId)
     {
@@ -44,7 +44,7 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
 
     public function uniqueId(): string
     {
-        return 'duplicate-pbp-dedupe';
+        return "duplicate-pbp-rebuild:{$this->runId}";
     }
 
     /**
@@ -53,7 +53,7 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
     public function tags(): array
     {
         return [
-            'nhl-duplicate-pbp-dedupe',
+            'nhl-duplicate-pbp-rebuild',
             "run-id:{$this->runId}",
         ];
     }
@@ -67,39 +67,74 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
         }
 
         try {
-            $this->markStage($run, 'deduping');
-            $dedupe = $repair->dedupeLiveRows();
-            $gameIds = $dedupe['affected_game_ids'];
+            $payload = $run->payload ?? [];
+            $gameIds = $this->affectedGameIds($payload);
+
+            if ($gameIds === []) {
+                $payload['repair_stage'] = 'completed';
+                $payload['rebuild_completed_at'] = now()->toIso8601String();
+
+                $run->forceFill([
+                    'status' => NhlGameImportRun::STATUS_COMPLETED,
+                    'queued_jobs' => 0,
+                    'payload' => $payload,
+                    'last_error' => null,
+                    'updated_at' => now(),
+                ])->save();
+
+                $this->broadcastStatus('duplicate-pbp-rebuild-completed');
+
+                return;
+            }
+
+            foreach ($gameIds as $gameId) {
+                RebuildNhlGameImportJob::dispatch($gameId, $this->runId);
+            }
+
+            $repair->markQueued($gameIds);
 
             $bounds = $this->boundsForGames($gameIds);
-            $rebuildRun = $gameIds === []
-                ? null
-                : $this->createRebuildRun($run, $gameIds, $bounds);
-            $payload = $run->payload ?? [];
-            $payload['repair_stage'] = 'completed';
-            $payload['dedupe_completed_at'] = now()->toIso8601String();
-            $payload['duplicate_rows_deleted'] = $dedupe['duplicate_rows_deleted'];
-            $payload['affected_game_ids'] = $gameIds;
-            $payload['affected_game_count'] = count($gameIds);
-            $payload['rebuild_run_id'] = $rebuildRun?->id;
+            $payload['repair_stage'] = 'rebuilding';
+            $payload['rebuild_queued_at'] = now()->toIso8601String();
+            $payload['queued_rebuild_game_count'] = count($gameIds);
 
             $run->forceFill([
-                'status' => NhlGameImportRun::STATUS_COMPLETED,
+                'status' => NhlGameImportRun::STATUS_RUNNING,
                 'start_date' => $bounds['start_date'] ?? $run->start_date,
                 'end_date' => $bounds['end_date'] ?? $run->end_date,
                 'date_count' => $bounds['date_count'] ?? $run->date_count,
-                'queued_jobs' => 0,
+                'queued_jobs' => count($gameIds),
                 'payload' => $payload,
                 'last_error' => null,
                 'updated_at' => now(),
             ])->save();
 
-            $this->broadcastStatus('duplicate-pbp-dedupe-completed');
+            $this->broadcastStatus('duplicate-pbp-rebuild-queued');
         } catch (Throwable $throwable) {
             $this->markFailed($run, $throwable);
 
             throw $throwable;
         }
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<int,int>
+     */
+    private function affectedGameIds(array $payload): array
+    {
+        $gameIds = $payload['affected_game_ids'] ?? [];
+
+        if (! is_array($gameIds)) {
+            return [];
+        }
+
+        return collect($gameIds)
+            ->filter(fn (mixed $gameId): bool => is_numeric($gameId))
+            ->map(fn (mixed $gameId): int => (int) $gameId)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**
@@ -124,54 +159,11 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
         ];
     }
 
-    /**
-     * Create a separate ready card for rebuilding games affected by the dedupe.
-     *
-     * @param array<int,int> $gameIds
-     * @param array{start_date?:string, end_date?:string, date_count?:int} $bounds
-     */
-    private function createRebuildRun(NhlGameImportRun $sourceRun, array $gameIds, array $bounds): NhlGameImportRun
-    {
-        return NhlGameImportRun::query()->create([
-            'action' => NhlGameImportRun::ACTION_REPAIR,
-            'mode' => NhlGameImportRun::MODE_DEFAULT,
-            'status' => NhlGameImportRun::STATUS_COMPLETED,
-            'start_date' => $bounds['start_date'] ?? now()->toDateString(),
-            'end_date' => $bounds['end_date'] ?? now()->toDateString(),
-            'date_count' => $bounds['date_count'] ?? count($gameIds),
-            'queued_jobs' => 0,
-            'payload' => [
-                'repair' => 'duplicate_pbp_rebuild',
-                'repair_stage' => 'ready',
-                'source_dedupe_run_id' => $sourceRun->id,
-                'affected_game_ids' => $gameIds,
-                'affected_game_count' => count($gameIds),
-                'queued_rebuild_game_count' => 0,
-                'created_from_dedupe_at' => now()->toIso8601String(),
-            ],
-            'created_by' => $sourceRun->created_by,
-        ]);
-    }
-
-    private function markStage(NhlGameImportRun $run, string $stage): void
-    {
-        $payload = $run->payload ?? [];
-        $payload['repair_stage'] = $stage;
-
-        $run->forceFill([
-            'status' => NhlGameImportRun::STATUS_RUNNING,
-            'payload' => $payload,
-            'updated_at' => now(),
-        ])->save();
-
-        $this->broadcastStatus('duplicate-pbp-' . $stage);
-    }
-
     private function markFailed(NhlGameImportRun $run, Throwable $throwable): void
     {
         $payload = $run->payload ?? [];
         $payload['repair_stage'] = 'failed';
-        $payload['dedupe_failed_at'] = now()->toIso8601String();
+        $payload['rebuild_failed_at'] = now()->toIso8601String();
         $payload['repair_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
 
         $run->forceFill([
@@ -181,12 +173,12 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
             'updated_at' => now(),
         ])->save();
 
-        Log::error('Duplicate NHL play-by-play repair failed.', [
+        Log::error('Duplicate NHL play-by-play affected-game rebuild queueing failed.', [
             'run_id' => $run->id,
             'error' => $throwable->getMessage(),
         ]);
 
-        $this->broadcastStatus('duplicate-pbp-dedupe-failed');
+        $this->broadcastStatus('duplicate-pbp-rebuild-failed');
     }
 
     private function broadcastStatus(string $status): void
@@ -194,7 +186,7 @@ class DedupeNhlPlayByPlayRepairJob implements ShouldQueue, ShouldBeUnique
         try {
             broadcast(new NhlGameImportStatusUpdated($status, $this->runId));
         } catch (Throwable $throwable) {
-            Log::warning('NHL duplicate PBP repair broadcast failed.', [
+            Log::warning('NHL duplicate PBP rebuild broadcast failed.', [
                 'run_id' => $this->runId,
                 'status' => $status,
                 'error' => $throwable->getMessage(),
