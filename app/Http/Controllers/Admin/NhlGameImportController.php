@@ -21,6 +21,7 @@ use App\Repositories\NhlImportProgressRepo;
 use App\Services\AdminImports;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
+use App\Services\NhlPbpEventNormalizer;
 use App\Support\NhlImportStages;
 use Illuminate\Bus\Batch;
 use Illuminate\Http\JsonResponse;
@@ -275,7 +276,12 @@ class NhlGameImportController extends Controller
             ? $this->rerunRangeFromRun($rerunSourceRun)
             : $this->normalizeDateSelection($input, true);
 
-        $activeRun = $this->activeRunForRange($range['start']->toDateString(), $range['end']->toDateString());
+        $activeRun = $rerunSourceRun
+            ? null
+            : $this->activeRunForRange(
+                $range['start']->toDateString(),
+                $range['end']->toDateString()
+            );
 
         if ($activeRun) {
             return response()->json([
@@ -284,7 +290,11 @@ class NhlGameImportController extends Controller
             ], 202);
         }
 
-        $existingRun = $this->exactRangeRunForRange($range['start']->toDateString(), $range['end']->toDateString());
+        $existingRun = $rerunSourceRun
+            ?: $this->exactRangeRunForRange(
+                $range['start']->toDateString(),
+                $range['end']->toDateString()
+            );
 
         if ($existingRun && ! $rerunSourceRun) {
             return response()->json([
@@ -428,7 +438,7 @@ class NhlGameImportController extends Controller
         ]);
         $sourceRun = $this->rerunSourceRunFromInput($input);
         $range = $this->rerunRangeFromRun($sourceRun);
-        $gameIds = $this->gameIdsForRunRange($sourceRun);
+        $gameIds = array_values(array_unique($this->gameIdsForRunRange($sourceRun)));
 
         if ($gameIds === []) {
             throw ValidationException::withMessages([
@@ -436,6 +446,7 @@ class NhlGameImportController extends Controller
             ]);
         }
 
+        $shotFactCounts = self::shotFactCountsForGameIds($gameIds);
         $jobs = array_map(
             fn (int $gameId): BuildNhlShotAttemptFactsJob => new BuildNhlShotAttemptFactsJob($gameId, $sourceRun->id),
             $gameIds,
@@ -456,6 +467,11 @@ class NhlGameImportController extends Controller
         $payload['process_scope'] = 'shots';
         $payload['shot_fact_batch_id'] = $batch->id;
         $payload['shot_fact_game_count'] = count($gameIds);
+        $payload['shot_fact_game_ids'] = $gameIds;
+        $payload['shot_fact_candidate_game_count'] = $shotFactCounts['candidate_game_count'];
+        $payload['shot_fact_processable_game_count'] = $shotFactCounts['processable_game_count'];
+        $payload['shot_fact_unprocessable_game_count'] = $shotFactCounts['unprocessable_game_count'];
+        $payload['shot_fact_processed_game_count'] = $shotFactCounts['processed_game_count'];
         $payload['shot_fact_requested_at'] = now()->toIso8601String();
         $payload['shot_fact_requested_by'] = $request->user()?->id;
         $payload['processing_started_at'] = now()->toIso8601String();
@@ -1334,7 +1350,8 @@ class NhlGameImportController extends Controller
         $directProgressCount = $this->directProgressCountForRun($run);
 
         return sprintf(
-            '%d:%d:%010d:%d:%010d',
+            '%d:%d:%d:%010d:%d:%010d',
+            $this->isQueuedDiscoveryRerun($run) ? 1 : 0,
             $directProgressCount > 0 ? 1 : 0,
             $this->isActiveGameImportRun($run) ? 1 : 0,
             $directProgressCount,
@@ -1351,6 +1368,18 @@ class NhlGameImportController extends Controller
         return (int) DB::table('nhl_import_progress')
             ->where('run_id', $run->id)
             ->count();
+    }
+
+    private function isQueuedDiscoveryRerun(NhlGameImportRun $run): bool
+    {
+        $payload = $run->payload ?? [];
+
+        return $run->action === NhlGameImportRun::ACTION_DISCOVER
+            && ! isset($payload['processing_started_at'])
+            && (
+                isset($payload['rerun_from_run_id'])
+                || isset($payload['rediscovered_from_run_id'])
+            );
     }
 
     /**
@@ -1437,7 +1466,7 @@ class NhlGameImportController extends Controller
                 $range['end']->toDateString(),
                 $range['start']->toDateString(),
             ])
-            ->orderBy('game_date')
+            ->distinct()
             ->orderBy('nhl_game_id')
             ->pluck('nhl_game_id')
             ->map(fn ($gameId): int => (int) $gameId)
@@ -1532,8 +1561,15 @@ class NhlGameImportController extends Controller
         }
 
         $payload = $run->payload ?? [];
+        $gameIds = array_map('intval', $payload['shot_fact_game_ids'] ?? []);
+        $shotFactCounts = self::shotFactCountsForGameIds($gameIds);
+
         $payload['shot_fact_batch_id'] = $batchId;
         $payload['shot_fact_completed_at'] = now()->toIso8601String();
+        $payload['shot_fact_candidate_game_count'] = $shotFactCounts['candidate_game_count'];
+        $payload['shot_fact_processable_game_count'] = $shotFactCounts['processable_game_count'];
+        $payload['shot_fact_unprocessable_game_count'] = $shotFactCounts['unprocessable_game_count'];
+        $payload['shot_fact_processed_game_count'] = $shotFactCounts['processed_game_count'];
 
         $run->forceFill([
             'status' => NhlGameImportRun::STATUS_COMPLETED,
@@ -1542,6 +1578,58 @@ class NhlGameImportController extends Controller
         ])->save();
 
         broadcast(new NhlGameImportStatusUpdated('shot-facts-completed', $runId));
+    }
+
+    /**
+     * Count shot-fact coverage for a known list of NHL games.
+     *
+     * @param array<int,int> $gameIds
+     * @return array{candidate_game_count: int, processable_game_count: int, unprocessable_game_count: int, processed_game_count: int}
+     */
+    private static function shotFactCountsForGameIds(array $gameIds): array
+    {
+        $gameIds = array_values(array_unique(array_map('intval', $gameIds)));
+
+        if ($gameIds === []) {
+            return [
+                'candidate_game_count' => 0,
+                'processable_game_count' => 0,
+                'unprocessable_game_count' => 0,
+                'processed_game_count' => 0,
+            ];
+        }
+
+        $normalizer = app(NhlPbpEventNormalizer::class);
+        $processableGameCount = (int) DB::table('play_by_plays as plays')
+            ->whereIn('plays.nhl_game_id', $gameIds)
+            ->where(function ($query) use ($normalizer): void {
+                $query
+                    ->whereRaw($normalizer->shotAttemptSqlPredicate('plays'))
+                    ->orWhereRaw(self::penaltyShotAttemptSqlPredicate('plays'));
+            })
+            ->distinct()
+            ->count('plays.nhl_game_id');
+        $processedGameCount = (int) DB::table('nhl_shot_attempts_facts')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->count('nhl_game_id');
+
+        return [
+            'candidate_game_count' => count($gameIds),
+            'processable_game_count' => $processableGameCount,
+            'unprocessable_game_count' => max(0, count($gameIds) - $processableGameCount),
+            'processed_game_count' => $processedGameCount,
+        ];
+    }
+
+    private static function penaltyShotAttemptSqlPredicate(string $alias): string
+    {
+        $metadata = "LOWER(COALESCE(CAST({$alias}.metadata AS TEXT),''))";
+
+        return "({$alias}.desc_key LIKE 'ps-%' "
+            . "OR {$metadata} LIKE '%\"is_penalty_shot_attempt\":true%' "
+            . "OR {$metadata} LIKE '%\"is_penalty_shot_attempt\": true%' "
+            . "OR {$metadata} LIKE '%penalty shot%')";
     }
 
     private static function recordShotFactBatchFailure(int $runId, string $batchId, Throwable $throwable): void

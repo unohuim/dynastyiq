@@ -1403,7 +1403,8 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `id`
-- Unique: `(game_id, import_type)`
+- Unique partial index: `(game_id, import_type)` where `run_id IS NULL`
+- Unique partial index: `(run_id, game_id, import_type)` where `run_id IS NOT NULL`
 - FK: `run_id` -> `nhl_game_import_runs.id` (`nullOnDelete`)
 - Index: `(run_id, status)`
 - Index: `(run_id, game_date)`
@@ -1416,6 +1417,7 @@ Migrations remain the **sole source of truth**.
 
 - `NhlImportOrchestrator` advances game imports in order: play-by-play -> summary -> boxscore -> shifts -> shift units -> event connections -> HTML PBP verification -> game unit summaries -> validation.
 - New scheduled rows created by admin or CLI discovery are linked to `nhl_game_import_runs` through `run_id`; null `run_id` rows remain legacy-compatible and are read by date range.
+- Run-scoped rows are unique per run/game/stage so separate admin runs can track the same NHL game stage without colliding with earlier runs.
 
 ---
 
@@ -2974,7 +2976,9 @@ Migrations remain the **sole source of truth**.
 | team_id | integer | Yes | Shooting/event-owner team |
 | opponent_team_id | integer | Yes | Opposing team |
 | shooter_player_id | integer | Yes | Shooter |
+| shooter_shoots | string(1) | Yes | Shooter handedness snapshot from `players.shoots` |
 | goalie_player_id | integer | Yes | Goalie in net |
+| goalie_catches | string(1) | Yes | Goalie catches snapshot from `players.shoots` |
 | blocking_player_id | integer | Yes | Shot blocker |
 | period | integer | Yes | Period |
 | period_type | string(12) | Yes | Provider period type |
@@ -2994,6 +2998,9 @@ Migrations remain the **sole source of truth**.
 | shot_distance | decimal(8,2) | Yes | Shot distance from target net |
 | shot_angle | decimal(7,3) | Yes | Signed shot angle |
 | abs_shot_angle | decimal(7,3) | Yes | Absolute shot angle used by buckets |
+| shot_side | string(16) | Yes | Signed-angle side bucket: `left`, `right`, `center`, or `unknown` |
+| is_off_wing_attempt | boolean | Yes | Reserved for shooter hand vs shot-side classification after signed-angle convention validation |
+| goalie_hand_matchup_bucket | string(32) | Yes | Shooter-vs-goalie handedness bucket |
 | distance_bucket | string(32) | Yes | Deterministic distance bucket |
 | angle_bucket | string(32) | Yes | Deterministic angle bucket |
 | zone_code | string(12) | Yes | Provider zone code |

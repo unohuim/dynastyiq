@@ -20,7 +20,7 @@ Schedule::command('cap:import --per-page=100 --all=true')
     ->unlessBetween('08:00', '12:00');
 
 Schedule::command('nhl:discover --days=2')
-    ->dailyAt('07:50')
+    ->dailyAt('03:50')
     ->timezone('America/Toronto')
     ->unlessBetween('08:00', '12:00');
 Schedule::command('nhl:process')
@@ -28,7 +28,7 @@ Schedule::command('nhl:process')
     ->timezone('America/Toronto')
     ->unlessBetween('08:00', '12:00');
 Schedule::command('patreon:sync-nightly')
-    ->dailyAt('02:00')
+    ->dailyAt('03:15')
     ->timezone('America/Toronto')
     ->unlessBetween('08:00', '12:00');
 Schedule::command('leagues:refresh-connected')

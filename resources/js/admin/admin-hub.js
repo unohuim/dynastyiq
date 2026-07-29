@@ -945,7 +945,7 @@ export default function adminHub(options = {}) {
                 await this.sendGameImportRequest(
                     url,
                     payload
-                );
+                ).then((response) => this.mergeGameImportRun(response?.run));
 
                 await this.loadGameImports({ background: true });
                 await this.refreshValidationContainers();
@@ -1189,6 +1189,19 @@ export default function adminHub(options = {}) {
             };
         },
 
+        mergeGameImportRun(run) {
+            if (!run?.id) {
+                return;
+            }
+
+            const runs = Array.isArray(this.gameImports.runs) ? this.gameImports.runs : [];
+            const index = runs.findIndex((item) => item.id === run.id);
+
+            this.gameImports.runs = index === -1
+                ? [run, ...runs]
+                : runs.map((item) => (item.id === run.id ? run : item));
+        },
+
         async sendGameImportRequest(url, body) {
             const response = await fetch(url, {
                 method: 'POST',
@@ -1266,6 +1279,10 @@ export default function adminHub(options = {}) {
         isDuplicatePbpRepairRun(run) {
             return run?.action === 'repair'
                 && ['duplicate_pbp', 'duplicate_pbp_rebuild'].includes(run?.payload?.repair);
+        },
+
+        isShotFactRun(run) {
+            return run?.payload?.process_scope === 'shots';
         },
 
         isDuplicatePbpDedupeRun(run) {
@@ -1510,6 +1527,10 @@ export default function adminHub(options = {}) {
         },
 
         gameImportSummaryText(run) {
+            if (this.isShotFactRun(run)) {
+                return this.gameImportShotFactSummaryText(run);
+            }
+
             if (run.action === 'discover' && !run.processing_started) {
                 return this.discoveryFactsText(run);
             }
@@ -1530,6 +1551,10 @@ export default function adminHub(options = {}) {
         },
 
         gameImportCompactSummaryText(run) {
+            if (this.isShotFactRun(run)) {
+                return this.gameImportShotFactSummaryText(run);
+            }
+
             const games = Array.isArray(run?.games) ? run.games : [];
             const facts = run?.facts ?? {};
             const total = Number(facts.discovered_game_count) || games.length || 0;
@@ -1549,6 +1574,31 @@ export default function adminHub(options = {}) {
                 `${this.formatNumber(skipped)} skipped`,
                 `${this.formatNumber(failed)} failed`,
             ].join(' - ');
+        },
+
+        gameImportShotFactSummaryText(run) {
+            const payload = run?.payload ?? {};
+            const failed = Array.isArray(payload.shot_fact_failed_game_ids)
+                ? payload.shot_fact_failed_game_ids.length
+                : 0;
+            const queued = Number(payload.shot_fact_game_count) || Number(run?.queued_jobs) || 0;
+            const processable = Number(payload.shot_fact_processable_game_count) || queued;
+            const processed = Number(payload.shot_fact_processed_game_count)
+                || (run?.status === 'completed' ? Math.max(0, processable - failed) : 0);
+            const noEligible = Number(payload.shot_fact_unprocessable_game_count) || Math.max(0, queued - processable);
+            const parts = [
+                `${this.formatNumber(processed)} / ${this.formatNumber(processable)} processable games built`,
+            ];
+
+            if (noEligible > 0) {
+                parts.push(`${this.formatNumber(noEligible)} no eligible attempts`);
+            }
+
+            if (failed > 0) {
+                parts.push(`${this.formatNumber(failed)} failed`);
+            }
+
+            return parts.join(' · ');
         },
 
         gameImportAccordionId(run) {

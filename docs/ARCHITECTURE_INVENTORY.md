@@ -979,7 +979,7 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
 
 **When to Use:**
-Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range.
+Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, snapshotting shooter/goalie handedness context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range with explicit selected/processable/no-eligible game counts.
 
 **When Not to Use:**
 Storing expected-goals probabilities, danger labels, model thresholds, or trained model outputs.
@@ -1398,9 +1398,10 @@ app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();
 **Location:**
 - `app/Repositories/NhlImportProgressRepo.php`
 - `database/migrations/2025_08_13_155830_nhl_import_progress.php`
+- `database/migrations/2026_07_29_000001_make_nhl_import_progress_unique_per_run.php`
 
 **Purpose:**
-Centralize reads and writes to `nhl_import_progress` for import claim, status, dependency, and stale-job behavior.
+Centralize reads and writes to `nhl_import_progress` for import claim, status, dependency, stale-job behavior, and run-aware game/stage uniqueness.
 
 **When to Use:**
 Any code that mutates or checks NHL import progress state.
@@ -2315,10 +2316,10 @@ Route::post('/player-triage/identities/{identity}/link', [PlayerTriageController
 - `docs/architecture/admin/AdminNhlGameImports.yaml`
 
 **Purpose:**
-Dispatch and monitor NHL game discovery, processing, duplicate play-by-play repair, season stat rollup, and queued game-data reset jobs from the admin control panel. Every run row exposes a Re Run action, Process/Re Run actions update through AJAX without leaving the current tab, and import broadcasts refresh loaded validation panels so resolved validation rows disappear without a page refresh.
+Dispatch and monitor NHL game discovery, processing, shots-only fact collection, duplicate play-by-play repair, season stat rollup, and queued game-data reset jobs from the admin control panel. Every run row exposes a Re Run action, Process/Re Run actions update through AJAX without leaving the current tab, shots-only completed rows summarize processed versus processable games, and import broadcasts refresh loaded validation panels so resolved validation rows disappear without a page refresh.
 
 **When to Use:**
-Admin-triggered NHL game discovery, discovery-row processing actions, full run replays, duplicate play-by-play repair setup and execution, season stat rollups, queued nhl:empty --games resets, recent orchestration progress display, and live validation-panel refreshes.
+Admin-triggered NHL game discovery, discovery-row processing actions, shots-only fact collection from imported play-by-play, full run replays, duplicate play-by-play repair setup and execution, season stat rollups, queued nhl:empty --games resets, recent orchestration progress display, and live validation-panel refreshes.
 
 **When Not to Use:**
 Synchronous web-request imports, NHL stage transformation ownership, or replacing `nhl_import_progress`.
@@ -2332,6 +2333,7 @@ Synchronous web-request imports, NHL stage transformation ownership, or replacin
 - `admin.nhl-game-imports.duplicate-pbp.dedupe`
 - `admin.nhl-game-imports.discover`
 - `admin.nhl-game-imports.process`
+- `admin.nhl-game-imports.process-shots`
 - `admin.nhl-game-imports.season-sync`
 - `admin.nhl-game-imports.empty-games`
 - `NhlGameImportRun`

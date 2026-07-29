@@ -179,7 +179,9 @@ it('does not duplicate an nhl identity when reimporting the same player', functi
 });
 
 it('creates a canonical player for a new nhl authority identity', function () {
-    ($this->fakeNhlLanding)(($this->nhlPayload)());
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'shootsCatches' => 'R',
+    ]));
 
     app(ImportNHLPlayer::class)->import('8478402');
 
@@ -188,6 +190,17 @@ it('creates a canonical player for a new nhl authority identity', function () {
     expect($player)->not->toBeNull();
     expect($player->nhl_id)->toBe(8478402);
     expect($player->full_name)->toBe('Auston Matthews');
+    expect($player->shoots)->toBe('R');
+});
+
+it('ignores invalid nhl player handedness values', function () {
+    ($this->fakeNhlLanding)(($this->nhlPayload)([
+        'shootsCatches' => 'ambidextrous',
+    ]));
+
+    app(ImportNHLPlayer::class)->import('8478402');
+
+    expect(Player::first()->shoots)->toBeNull();
 });
 
 it('calculates goalie saves save percentage and gaa from landing season totals', function () {

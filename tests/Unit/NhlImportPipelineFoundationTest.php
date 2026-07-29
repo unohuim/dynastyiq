@@ -403,6 +403,39 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
         'created_at' => now(),
         'updated_at' => now(),
     ]);
+    DB::table('players')->insert([
+        [
+            'nhl_id' => 8470001,
+            'first_name' => 'Left',
+            'last_name' => 'Shooter',
+            'full_name' => 'Left Shooter',
+            'shoots' => 'L',
+            'position' => 'LW',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_id' => 8470002,
+            'first_name' => 'Right',
+            'last_name' => 'Shooter',
+            'full_name' => 'Right Shooter',
+            'shoots' => 'R',
+            'position' => 'RW',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_id' => 8471001,
+            'first_name' => 'Left',
+            'last_name' => 'Goalie',
+            'full_name' => 'Left Goalie',
+            'shoots' => 'L',
+            'position' => 'G',
+            'is_goalie' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
     DB::table('play_by_plays')->insert([
         [
             'id' => 9000,
@@ -531,8 +564,16 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
         ->and((bool) $rushFact->is_rush_attempt)->toBeTrue()
         ->and((bool) $rushFact->is_rush_sequence)->toBeTrue()
         ->and($rushFact->rush_sequence_origin_play_by_play_id)->toBe(9001)
+        ->and($rushFact->shooter_shoots)->toBe('L')
+        ->and($rushFact->goalie_catches)->toBe('L')
+        ->and($rushFact->shot_side)->toBe('left')
+        ->and($rushFact->is_off_wing_attempt)->toBeNull()
+        ->and($rushFact->goalie_hand_matchup_bucket)->toBe('shooter_l_vs_goalie_l')
         ->and($goalFact->attempt_result)->toBe('goal')
         ->and((bool) $goalFact->is_goal)->toBeTrue()
+        ->and($goalFact->shooter_shoots)->toBe('R')
+        ->and($goalFact->shot_side)->toBe('right')
+        ->and($goalFact->goalie_hand_matchup_bucket)->toBe('shooter_r_vs_goalie_l')
         ->and((bool) $goalFact->is_rebound)->toBeTrue()
         ->and((bool) $goalFact->is_rush_attempt)->toBeFalse()
         ->and((bool) $goalFact->is_rush_sequence)->toBeTrue()

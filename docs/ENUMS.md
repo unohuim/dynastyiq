@@ -1678,12 +1678,15 @@ Do not introduce new enum values without updating this document.
 - Period buckets: `p1`, `p2`, `p3`, `ot`, `other`, `unknown`.
 - Time buckets: `early_period`, `middle_period`, `late_period`, `final_5`, `unknown`.
 - Zone buckets: `offensive`, `neutral`, `defensive`, `unknown`.
+- Shot side values: `left`, `right`, `center`, `unknown`.
+- Goalie hand matchup buckets: `shooter_l_vs_goalie_l`, `shooter_l_vs_goalie_r`, `shooter_r_vs_goalie_l`, `shooter_r_vs_goalie_r`, `unknown`.
 
 **Semantic meaning:**
 
 - Buckets are deterministic feature labels used for exploratory goal-rate analysis and future expected-goals models.
 - Buckets do not imply high, medium, or low danger by themselves.
 - Rush buckets distinguish direct transition attempts from rebounds that inherit rush context inside the rebound window.
+- Shooter and goalie handedness snapshots are context features; `is_off_wing_attempt` remains nullable until signed-angle rink-side convention is validated.
 - Probability-derived danger labels belong to future versioned prediction outputs, not to `nhl_shot_attempts_facts`.
 
 **Notes:**

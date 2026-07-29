@@ -568,6 +568,78 @@ it('allows super admins to rerun discovery for a previous NHL game import run ra
     });
 });
 
+it('reruns discovery from the clicked active same-range NHL game import run', function () {
+    Bus::fake();
+
+    $sourceRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 365,
+        'queued_jobs' => 365,
+        'payload' => ['season' => '20252026'],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('message', 'Discovery queued.')
+        ->assertJsonPath('run.id', $sourceRun->id)
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.status', NhlGameImportRun::STATUS_QUEUED)
+        ->assertJsonPath('run.payload.rerun_from_run_id', $sourceRun->id);
+
+    Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job) use ($sourceRun): bool {
+        return $job->start->toDateString() === '2026-08-31'
+            && $job->end->toDateString() === '2025-09-01'
+            && $job->runId === $sourceRun->id;
+    });
+});
+
+it('reruns discovery from the clicked NHL game import run when another same-range run is active', function () {
+    Bus::fake();
+
+    $sourceRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 365,
+        'queued_jobs' => 365,
+        'payload' => ['season' => '20252026'],
+    ]);
+    $otherActiveRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 365,
+        'queued_jobs' => 365,
+        'payload' => ['season' => '20252026'],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.discover'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('message', 'Discovery queued.')
+        ->assertJsonPath('run.id', $sourceRun->id)
+        ->assertJsonPath('run.payload.rerun_from_run_id', $sourceRun->id);
+
+    expect($otherActiveRun->refresh()->status)->toBe(NhlGameImportRun::STATUS_RUNNING);
+
+    Bus::assertDispatched(NhlDiscoveryJob::class, function (NhlDiscoveryJob $job) use ($sourceRun): bool {
+        return $job->runId === $sourceRun->id;
+    });
+});
+
 it('returns an existing completed same-range NHL game import run instead of creating duplicate discovery work', function () {
     Bus::fake();
 
@@ -713,6 +785,28 @@ it('allows super admins to queue shot fact processing for a game import run rang
             'updated_at' => $now,
         ]);
     }
+    DB::table('play_by_plays')->insert([
+        [
+            'nhl_game_id' => 2025020001,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'shot-on-goal',
+            'shot_type' => 'wrist',
+            'period_type' => 'REG',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+        [
+            'nhl_game_id' => 2025020002,
+            'period' => 1,
+            'seconds_in_game' => 180,
+            'type_desc_key' => 'goal',
+            'shot_type' => null,
+            'period_type' => 'REG',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+    ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
         ->postJson(route('admin.nhl-game-imports.process-shots'), [
@@ -724,7 +818,11 @@ it('allows super admins to queue shot fact processing for a game import run rang
         ->assertJsonPath('run.status', NhlGameImportRun::STATUS_RUNNING)
         ->assertJsonPath('run.processing_started', true)
         ->assertJsonPath('run.payload.process_scope', 'shots')
-        ->assertJsonPath('run.payload.shot_fact_game_count', 2);
+        ->assertJsonPath('run.payload.shot_fact_game_count', 2)
+        ->assertJsonPath('run.payload.shot_fact_candidate_game_count', 2)
+        ->assertJsonPath('run.payload.shot_fact_processable_game_count', 1)
+        ->assertJsonPath('run.payload.shot_fact_unprocessable_game_count', 1)
+        ->assertJsonPath('run.payload.shot_fact_processed_game_count', 0);
 
     $run = $sourceRun->refresh();
 
@@ -743,6 +841,9 @@ it('allows super admins to queue shot fact processing for a game import run rang
         ->and($run->queued_jobs)->toBe(2)
         ->and($run->payload['process_scope'])->toBe('shots')
         ->and($run->payload['shot_fact_game_count'])->toBe(2)
+        ->and($run->payload['shot_fact_game_ids'])->toBe([2025020001, 2025020002])
+        ->and($run->payload['shot_fact_processable_game_count'])->toBe(1)
+        ->and($run->payload['shot_fact_unprocessable_game_count'])->toBe(1)
         ->and($run->payload['processing_started_at'])->not->toBeNull();
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
         return $event->reason === 'shot-facts-queued' && $event->runId === $run->id;
@@ -1686,6 +1787,67 @@ it('collapses completed duplicate same-range NHL game import runs in status payl
     expect(collect($runs)->pluck('id')->all())->toBe([$progressRun->id])
         ->and(collect($runs)->pluck('id')->contains($emptyRun->id))->toBeFalse()
         ->and($runs[0]['facts']['discovered_game_count'])->toBe(4);
+});
+
+it('prefers queued discovery rerun rows over completed same-range progress rows in status payloads', function () {
+    $now = now();
+    $processedRun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 365,
+        'queued_jobs' => 365,
+        'payload' => [
+            'season' => '20252026',
+            'processing_started_at' => $now->copy()->subDay()->toIso8601String(),
+        ],
+        'created_at' => $now->copy()->subDay(),
+        'updated_at' => $now->copy()->subDay(),
+    ]);
+    $rerun = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_QUEUED,
+        'start_date' => '2026-08-31',
+        'end_date' => '2025-09-01',
+        'date_count' => 365,
+        'queued_jobs' => 365,
+        'payload' => [
+            'season' => '20252026',
+            'rerun_from_run_id' => $processedRun->id,
+        ],
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    foreach ([2025021229, 2025021230] as $gameId) {
+        foreach (NhlImportStages::ordered() as $stage) {
+            DB::table('nhl_import_progress')->insert([
+                'run_id' => $processedRun->id,
+                'season_id' => '20252026',
+                'game_date' => '2026-04-06',
+                'game_id' => (string) $gameId,
+                'game_type' => 2,
+                'import_type' => $stage,
+                'status' => 'completed',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+    }
+
+    $runs = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-game-imports.status'))
+        ->assertOk()
+        ->assertJsonIsArray('runs')
+        ->json('runs');
+
+    expect(collect($runs)->pluck('id')->all())->toBe([$rerun->id])
+        ->and($runs[0]['action'])->toBe(NhlGameImportRun::ACTION_DISCOVER)
+        ->and($runs[0]['processing_started'])->toBeFalse()
+        ->and($runs[0]['payload']['rerun_from_run_id'])->toBe($processedRun->id);
 });
 
 it('hides per-game rows for clean completed NHL game import runs', function () {

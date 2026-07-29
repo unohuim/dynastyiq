@@ -82,6 +82,7 @@ class ImportNHLPlayer
         $player->country_code          = $data['birthCountry'] ?? null;
         $player->position              = $data['position'] ?? null;
         $player->pos_type              = in_array($player->position, ['L', 'R', 'C'], true) ? 'F' : $player->position;
+        $player->shoots                = $this->normalizeShootsCatches($data['shootsCatches'] ?? null);
         $player->current_league_abbrev = 'NHL';
         if (is_array($data['draftDetails'] ?? null)) {
             $this->applyDraftDetails($player, $data['draftDetails']);
@@ -351,6 +352,13 @@ class ImportNHLPlayer
         ksort($value);
 
         return $value;
+    }
+
+    private function normalizeShootsCatches(mixed $value): ?string
+    {
+        $normalized = strtoupper(trim((string) $value));
+
+        return in_array($normalized, ['L', 'R'], true) ? $normalized : null;
     }
 
     /**

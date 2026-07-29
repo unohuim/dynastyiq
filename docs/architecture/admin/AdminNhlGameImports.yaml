@@ -45,7 +45,8 @@ rules:
   - Run-level Process button state must be tracked per run so only the clicked run changes to queued or processing labeling.
   - Completed run rows should suppress stale queued-job/date metadata and keep completed progress summaries concise.
   - Exact same game import date ranges must reuse one visible run row instead of creating duplicate single-date or range rows.
-  - Shots-only fact collection launched from a run card must record batch metadata on the selected run, mark that run as processing/completed for the UI lifecycle, and must not create a separate visible game import run row for the same date range.
+  - Shots-only fact collection launched from a run card must record batch metadata and candidate, processable, unprocessable, and processed game counts on the selected run, mark that run as processing/completed for the UI lifecycle, and must not create a separate visible game import run row for the same date range.
+  - Completed shots-only run summaries must use shot-fact coverage wording instead of generic game-import active/skipped/failed row counts.
   - Duplicate play-by-play repair must run through queued jobs, first scanning into a visible ready state and then repairing duplicate rows only after the operator presses the ready card action.
   - Rebuilding games affected by duplicate play-by-play repair must be a separate visible repair run and operator action from duplicate-row removal.
   - Duplicate play-by-play repair run rows must not be collapsed into or block normal date-range discovery and process runs.
@@ -76,6 +77,7 @@ public_interface:
   - admin.nhl-game-imports.duplicate-pbp.rebuild
   - admin.nhl-game-imports.discover
   - admin.nhl-game-imports.process
+  - admin.nhl-game-imports.process-shots
   - admin.nhl-game-imports.season-sync
   - admin.nhl-game-imports.empty-games
   - NhlGameImportController

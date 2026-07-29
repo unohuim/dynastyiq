@@ -689,7 +689,7 @@
                                             </div>
                                         </div>
                                         <div class="flex flex-wrap items-center justify-end gap-1.5 text-xs text-gray-600 sm:text-right">
-                                            <template x-if="run.action === 'discover' && !run.processing_started">
+                                            <template x-if="canProcessGameImportRun(run)">
                                                 <div class="relative" @click.outside="closeGameImportProcessMenu(run)">
                                                     <button
                                                         type="button"
