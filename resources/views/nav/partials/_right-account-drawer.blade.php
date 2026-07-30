@@ -173,33 +173,6 @@
                         <span class="text-sm">Profile</span>
                     </a>
 
-                    @auth
-                        @php
-                            $canUseAdmin = auth()->user()?->roles()->where('slug', 'super-admin')->exists()
-                                || auth()->user()?->roles()->where('level', '>=', 99)->exists();
-                        @endphp
-                        <a href="{{ route('admin.dashboard') }}"
-                            class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
-                            <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round"
-                                    d="M12 3.75l7.5 3.75v5.25c0 4.28-4.35 6.9-7.5 7.5-3.15-.6-7.5-3.22-7.5-7.5V7.5L12 3.75z" />
-                            </svg>
-                            <span class="text-sm">Admin Control Panel</span>
-                        </a>
-                        @if($canUseAdmin)
-                            <a href="{{ route('admin.nhl-shot-attempts.index') }}"
-                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
-                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                    stroke-width="1.5">
-                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                        d="M3.75 12h16.5M12 3.75v16.5M6.75 6.75l10.5 10.5M17.25 6.75l-10.5 10.5" />
-                                </svg>
-                                <span class="text-sm">Shot Attempts</span>
-                            </a>
-                        @endif
-                    @endauth
-
                     <form method="POST" action="{{ route('logout') }}">
                         @csrf
                         <button type="submit"
@@ -214,6 +187,39 @@
                     </form>
                 </div>
             </div>
+
+            @auth
+                @php
+                    $canUseAdmin = auth()->user()?->roles()->where('slug', 'super-admin')->exists()
+                        || auth()->user()?->roles()->where('level', '>=', 99)->exists();
+                @endphp
+
+                @if($canUseAdmin)
+                    <div class="mb-2">
+                        <h3 class="px-3 mb-2 text-[10px] font-semibold tracking-wider text-gray-400 uppercase">Admin</h3>
+                        <div class="space-y-1">
+                            <a href="{{ route('admin.dashboard') }}"
+                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M12 3.75l7.5 3.75v5.25c0 4.28-4.35 6.9-7.5 7.5-3.15-.6-7.5-3.22-7.5-7.5V7.5L12 3.75z" />
+                                </svg>
+                                <span class="text-sm">Admin Control Panel</span>
+                            </a>
+                            <a href="{{ route('admin.nhl-shot-attempts.index') }}"
+                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M3.75 12h16.5M12 3.75v16.5M6.75 6.75l10.5 10.5M17.25 6.75l-10.5 10.5" />
+                                </svg>
+                                <span class="text-sm">Admin Shot Attempts</span>
+                            </a>
+                        </div>
+                    </div>
+                @endif
+            @endauth
         </div>
     </section>
 </div>

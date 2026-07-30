@@ -300,7 +300,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         | ADMIN API (SPA JSON for Alpine)
         |--------------------------------------------------------------------------
         |
-        | ⭐ This is the ONLY NEW ROUTE ADDED.
+        | JSON endpoints used by the admin control panel.
         |
         */
 
@@ -308,9 +308,13 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->middleware(['admin.super', 'admin.lifecycle'])
             ->group(function () {
 
-                // 🔥 Added JSON endpoint for admin player list
                 Route::get('/api/players', [\App\Http\Controllers\Admin\AdminPlayersController::class, 'index'])
                     ->name('admin.api.players');
+
+                Route::get('/api-keys', [\App\Http\Controllers\Admin\ApiKeyController::class, 'index'])
+                    ->name('admin.api-keys.index');
+                Route::post('/api-keys', [\App\Http\Controllers\Admin\ApiKeyController::class, 'store'])
+                    ->name('admin.api-keys.store');
 
                 // Imports
                 Route::get('/imports', [\App\Http\Controllers\Admin\ImportsController::class, 'index'])

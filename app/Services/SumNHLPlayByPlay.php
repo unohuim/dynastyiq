@@ -10,6 +10,7 @@ use App\Models\NhlGameSummary;
 use App\Models\PlayByPlay;
 use App\Models\Player;
 use App\Services\ImportNHLPlayer;
+use InvalidArgumentException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
@@ -529,6 +530,18 @@ class SumNHLPlayByPlay
                 'nhl_game_id' => $nhlGameId,
                 'nhl_player_id' => $playerId,
                 'status' => 404,
+            ]);
+
+            return ImportNHLPlayer::playerExists((string) $playerId);
+        } catch (InvalidArgumentException $exception) {
+            if ($exception->getMessage() !== 'NHL identity payload is missing playerId.') {
+                throw $exception;
+            }
+
+            Log::info('Skipping NHL game summary row for player with invalid landing payload.', [
+                'nhl_game_id' => $nhlGameId,
+                'nhl_player_id' => $playerId,
+                'message' => $exception->getMessage(),
             ]);
 
             return ImportNHLPlayer::playerExists((string) $playerId);

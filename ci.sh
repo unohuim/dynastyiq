@@ -4,6 +4,7 @@ set -euo pipefail
 LOG_FILE="ci.output"
 : > "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
+PHP_CI_MEMORY_LIMIT="${CI_PHP_MEMORY_LIMIT:-512M}"
 
 require_cmd() {
   local cmd="$1"
@@ -73,7 +74,7 @@ export_ci_db_env
 composer install --no-interaction --prefer-dist --optimize-autoloader
 
 # --- App key (CI) ---
-php artisan key:generate --env=ci --force
+php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" artisan key:generate --env=ci --force
 
 # --- Permissions (safe no-op if not needed) ---
 chmod -R 777 storage bootstrap/cache 2>/dev/null || true
@@ -113,10 +114,10 @@ if grep -qE '^\s*DB_CONNECTION=pgsql\s*$' .env.ci; then
     export DB_PASSWORD=""
   fi
 
-  php artisan migrate --env=ci --force
+  php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" artisan migrate --env=ci --force
 elif grep -qE '^\s*DB_CONNECTION=' .env.ci; then
-  php artisan migrate --env=ci --force
+  php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" artisan migrate --env=ci --force
 fi
 
 # --- Run tests ---
-php artisan test
+php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" artisan test

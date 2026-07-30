@@ -33,7 +33,7 @@ return new class extends Migration
             $table->unsignedInteger('items_count')->default(0);
 
             // Status of this import
-            $table->enum('status', ['scheduled', 'running', 'error', 'completed'])
+            $table->enum('status', ['scheduled', 'running', 'error', 'completed', 'skipped'])
                   ->default('scheduled');
 
             // When this game/import type was first discovered/queued

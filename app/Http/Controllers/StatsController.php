@@ -526,12 +526,22 @@ class StatsController extends BaseController
                 ->firstOrFail();
         }
 
-        return Perspective::forUser($user)
+        $perspective = Perspective::forUser($user)
             ->where(static function ($query) use ($requestedPerspective): void {
                 $query->where('slug', $requestedPerspective)
                     ->orWhere('name', $requestedPerspective);
             })
-            ->firstOrFail();
+            ->first();
+
+        if ($perspective !== null) {
+            return $perspective;
+        }
+
+        if (in_array($requestedPerspective, ['prospects', 'prospects-goalies'], true)) {
+            return $this->defaultSavedStatsPerspective($user);
+        }
+
+        abort(404);
     }
 
     private function connectedLeaguesForUser($user): array

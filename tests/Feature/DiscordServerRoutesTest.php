@@ -199,10 +199,7 @@ it('rejects empty guild selections when attaching discord servers', function () 
             'guild_ids' => [],
         ]);
 
-    $response->assertRedirect(route('communities.index', [
-        'active' => $organization->id,
-        'tab' => 'connections',
-    ]));
+    $response->assertRedirect(route('communities.index'));
     $response->assertSessionHasErrors('guild_ids');
 });
 
@@ -223,10 +220,7 @@ it('rejects unauthorized guild selections when attaching discord servers', funct
             'guild_ids' => ['999'],
         ]);
 
-    $response->assertRedirect(route('communities.index', [
-        'active' => $organization->id,
-        'tab' => 'connections',
-    ]));
+    $response->assertRedirect(route('communities.index'));
     $response->assertSessionHas('error', 'Invalid selection.');
     $this->assertDatabaseMissing('discord_servers', [
         'organization_id' => $organization->id,
@@ -289,7 +283,10 @@ it('connects allowed guilds and clears session after attach', function () {
             'guild_ids' => ['123'],
         ]);
 
-    $response->assertRedirect(route('communities.index'));
+    $response->assertRedirect(route('communities.index', [
+        'active' => $organization->id,
+        'tab' => 'connections',
+    ]));
     $response->assertSessionHas('success', '1 server(s) connected.');
     $response->assertSessionMissing('discord.connect.org_id');
     $response->assertSessionMissing('discord.connect.user_id');
@@ -327,7 +324,10 @@ it('does not import discord members when attaching allowed guilds', function () 
             'guild_ids' => ['123'],
         ]);
 
-    $response->assertRedirect(route('communities.index'));
+    $response->assertRedirect(route('communities.index', [
+        'active' => $organization->id,
+        'tab' => 'connections',
+    ]));
     $response->assertSessionHas('success', '1 server(s) connected.');
     $response->assertSessionMissing('error');
 

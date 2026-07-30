@@ -90,6 +90,12 @@ beforeEach(function (): void {
         }
 
         $organization->leagues()->attach($league->id, $leaguePivot);
+        LeagueUserRole::create([
+            'league_id' => $league->id,
+            'user_id' => $user->id,
+            'role' => 'commissioner',
+            'permissions' => [],
+        ]);
 
         if (($overrides['connect_fantrax'] ?? true) === true) {
             IntegrationSecret::create([
@@ -172,6 +178,15 @@ beforeEach(function (): void {
     $this->discordRequestPayload = static function ($request): array {
         $data = $request->data();
         $payload = $data['payload_json'] ?? null;
+
+        if ($payload === null && is_array($data)) {
+            foreach ($data as $part) {
+                if (is_array($part) && ($part['name'] ?? null) === 'payload_json') {
+                    $payload = $part['contents'] ?? null;
+                    break;
+                }
+            }
+        }
 
         if (is_array($payload)) {
             $payload = $payload[0] ?? null;
@@ -1119,11 +1134,6 @@ it('scopes division scoped draft central rows to the viewer division', function 
             ],
         ],
     ])->save();
-    LeagueUserRole::create([
-        'league_id' => $league->id,
-        'user_id' => $user->id,
-        'role' => 'commissioner',
-    ]);
     $draft = ($this->createDraft)($platformLeague, [
         'external_draft_id' => 'fantrax:division-visible-draft-league:current',
         'status' => 'live',
@@ -1376,11 +1386,6 @@ it('scopes division scoped league teams and roster players to the viewer divisio
             ],
         ],
     ])->save();
-    LeagueUserRole::create([
-        'league_id' => $league->id,
-        'user_id' => $user->id,
-        'role' => 'commissioner',
-    ]);
     $gretzkyTeam = PlatformTeam::query()
         ->where('platform_league_id', $platformLeague->id)
         ->where('platform_team_id', 'team-1')
@@ -1975,7 +1980,11 @@ it('posts a rendered trade transaction card attachment to the configured discord
     $controller = app(\App\Http\Controllers\CommunityLeagues::class);
     $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
     $method->setAccessible(true);
-    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+    $summary = $method->invoke(
+        $controller,
+        $organization->leagues()->whereKey($league->id)->firstOrFail(),
+        [$transaction->id]
+    );
 
     expect($summary)->toMatchArray([
         'configured' => true,
@@ -1988,7 +1997,6 @@ it('posts a rendered trade transaction card attachment to the configured discord
 
         return $request->url() === 'https://discord.com/api/v10/channels/transactions-channel/messages'
             && $request->method() === 'POST'
-            && array_key_exists('payload_json', $request->data())
             && ($payload['content'] ?? null) === ''
             && $payload['allowed_mentions']['parse'] === [];
     });
@@ -2035,7 +2043,11 @@ it('counts trade transaction announcements as failed when card rendering is unav
     $controller = app(\App\Http\Controllers\CommunityLeagues::class);
     $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
     $method->setAccessible(true);
-    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+    $summary = $method->invoke(
+        $controller,
+        $organization->leagues()->whereKey($league->id)->firstOrFail(),
+        [$transaction->id]
+    );
 
     expect($summary)->toMatchArray([
         'configured' => true,
@@ -2119,7 +2131,11 @@ it('posts a rendered claim drop transaction card attachment to the configured di
     $controller = app(\App\Http\Controllers\CommunityLeagues::class);
     $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
     $method->setAccessible(true);
-    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+    $summary = $method->invoke(
+        $controller,
+        $organization->leagues()->whereKey($league->id)->firstOrFail(),
+        [$transaction->id]
+    );
 
     expect($summary)->toMatchArray([
         'configured' => true,
@@ -2132,7 +2148,6 @@ it('posts a rendered claim drop transaction card attachment to the configured di
 
         return $request->url() === 'https://discord.com/api/v10/channels/transactions-channel/messages'
             && $request->method() === 'POST'
-            && array_key_exists('payload_json', $request->data())
             && ($payload['content'] ?? null) === ''
             && $payload['allowed_mentions']['parse'] === [];
     });
@@ -2179,7 +2194,11 @@ it('counts claim drop transaction announcements as failed when card rendering is
     $controller = app(\App\Http\Controllers\CommunityLeagues::class);
     $method = new \ReflectionMethod($controller, 'announceNewPlatformTransactions');
     $method->setAccessible(true);
-    $summary = $method->invoke($controller, $league->refresh(), [$transaction->id]);
+    $summary = $method->invoke(
+        $controller,
+        $organization->leagues()->whereKey($league->id)->firstOrFail(),
+        [$transaction->id]
+    );
 
     expect($summary)->toMatchArray([
         'configured' => true,
@@ -2791,7 +2810,6 @@ it('sends community draft testing picks to discord without tagging users or muta
 
         return $request->url() === 'https://discord.com/api/v10/channels/draft-channel/messages'
             && $request->method() === 'POST'
-            && array_key_exists('payload_json', $request->data())
             && $payload['content'] === 'Team One selects Test Prospect with pick 1. Team Two is now OTC. Team Three is on deck.'
             && $payload['allowed_mentions']['parse'] === []
             && $payload['allowed_mentions']['users'] === [];

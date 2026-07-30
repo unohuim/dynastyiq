@@ -27,6 +27,7 @@
             gameImportDuplicatePbpRebuildUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
             gameImportSeasonSyncUrl: @js(route('admin.nhl-game-imports.season-sync')),
             gameImportEmptyGamesUrl: @js(route('admin.nhl-game-imports.empty-games')),
+            apiKeysUrl: @js(route('admin.api-keys.index')),
             leagueRefreshUrl: @js(route('leagues.resync')),
         })"
         x-init="init()"
@@ -106,6 +107,15 @@
                     :class="activeTab === 'triage' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
                 >
                     Triage
+                </button>
+                <button
+                    type="button"
+                    class="border-b-2 px-0 pb-3 text-sm font-semibold"
+                    data-track="admin.tab.api-keys"
+                    @click="setTab('api-keys')"
+                    :class="activeTab === 'api-keys' ? 'border-indigo-500 text-indigo-700' : 'border-transparent text-gray-600 hover:text-gray-800'"
+                >
+                    API Keys
                 </button>
             </div>
         </div>
@@ -443,6 +453,138 @@
                             <div x-show="(activity.recent_sessions ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
                                 No sessions recorded yet.
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="activeTab === 'api-keys'" x-cloak>
+                <div class="border-y border-gray-200 bg-white">
+                    <div class="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-900">API Keys</h3>
+                            <p class="mt-0.5 text-xs text-gray-500">Scoped server-to-server access for connected apps.</p>
+                        </div>
+                        <div class="text-xs text-gray-500">
+                            <span x-text="formatNumber(apiKeys.items.length)"></span>
+                            <span x-text="apiKeys.items.length === 1 ? 'key' : 'keys'"></span>
+                        </div>
+                    </div>
+
+                    <div
+                        x-show="apiKeys.error"
+                        x-cloak
+                        class="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                        x-text="apiKeys.error"
+                    ></div>
+
+                    <form class="border-b border-gray-200 px-4 py-4" @submit.prevent="createApiKey()">
+                        <div class="grid gap-4 lg:grid-cols-[minmax(14rem,0.8fr)_minmax(0,1fr)_auto] lg:items-end">
+                            <label class="block">
+                                <span class="text-xs font-semibold uppercase text-gray-500">Name</span>
+                                <input
+                                    type="text"
+                                    class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    x-model="apiKeys.form.name"
+                                    placeholder="gner8"
+                                >
+                            </label>
+
+                            <div>
+                                <div class="text-xs font-semibold uppercase text-gray-500">Scopes</div>
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    <template x-for="scope in apiKeys.availableScopes" :key="scope.value">
+                                        <label class="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 shadow-sm">
+                                            <input
+                                                type="checkbox"
+                                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                x-model="apiKeys.form.scopes"
+                                                :value="scope.value"
+                                            >
+                                            <span x-text="scope.label"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                :disabled="apiKeys.creating"
+                            >
+                                <span x-text="apiKeys.creating ? 'Creating...' : 'Create Key'"></span>
+                            </button>
+                        </div>
+                    </form>
+
+                    <div
+                        x-show="apiKeys.createdToken"
+                        x-cloak
+                        class="border-b border-emerald-200 bg-emerald-50 px-4 py-4"
+                    >
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div class="min-w-0">
+                                <div class="text-sm font-semibold text-emerald-900">New token</div>
+                                <code class="mt-1 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-xs text-emerald-900 ring-1 ring-emerald-200" x-text="apiKeys.createdToken"></code>
+                            </div>
+                            <button
+                                type="button"
+                                class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-emerald-300 bg-white text-emerald-700 shadow-sm hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                @click="copyApiKeyToken(apiKeys.createdToken)"
+                                :disabled="!apiKeys.createdToken"
+                                aria-label="Copy API token"
+                                title="Copy API token"
+                            >
+                                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                    <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div x-show="apiKeys.copied" x-cloak class="mt-2 text-xs font-semibold text-emerald-700">
+                            Copied
+                        </div>
+                    </div>
+
+                    <div x-show="apiKeys.loading" x-cloak class="px-4 py-8 text-sm text-gray-500">
+                        Loading API keys...
+                    </div>
+
+                    <div x-show="!apiKeys.loading" class="divide-y divide-gray-200">
+                        <template x-for="key in apiKeys.items" :key="key.id">
+                            <div class="grid gap-3 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_14rem_10rem_9rem] lg:items-center">
+                                <div class="min-w-0">
+                                    <div class="flex min-w-0 flex-wrap items-center gap-2">
+                                        <span class="truncate text-sm font-semibold text-gray-900" x-text="key.name"></span>
+                                        <span
+                                            class="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase ring-1"
+                                            :class="apiKeyStatusClass(key)"
+                                            x-text="key.status"
+                                        ></span>
+                                    </div>
+                                    <div class="mt-1 truncate text-xs text-gray-500" x-text="key.slug"></div>
+                                </div>
+
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="scope in key.scopes" :key="`${key.id}-${scope}`">
+                                        <span class="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-[10px] font-semibold text-gray-700" x-text="apiKeyScopeLabel(scope)"></span>
+                                    </template>
+                                </div>
+
+                                <div>
+                                    <div class="text-[10px] font-semibold uppercase text-gray-500">Prefix</div>
+                                    <code class="mt-1 block truncate font-mono text-xs text-gray-700" x-text="key.token_prefix"></code>
+                                </div>
+
+                                <div class="text-xs text-gray-500 lg:text-right">
+                                    <div>Created <span x-text="formatDateTime(key.created_at)"></span></div>
+                                    <div>Used <span x-text="formatDateTime(key.last_used_at)"></span></div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="apiKeys.items.length === 0" class="px-4 py-8 text-sm text-gray-500">
+                            No API keys have been created.
                         </div>
                     </div>
                 </div>

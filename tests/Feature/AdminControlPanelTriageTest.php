@@ -247,6 +247,7 @@ it('groups NHL shot attempt aggregates by team abbreviation', function () {
         'team_id' => 10,
         'shot_distance' => 12.5,
         'abs_shot_angle' => 18.0,
+        'shot_type_bucket' => 'wrist',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
@@ -322,6 +323,7 @@ it('displays goalie names in NHL shot attempt aggregate groupings', function () 
         'is_goal' => false,
         'team_id' => 10,
         'goalie_player_id' => 8470001,
+        'shot_type_bucket' => 'wrist',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
@@ -380,6 +382,7 @@ it('displays shooter names in NHL shot attempt aggregate groupings', function ()
         'is_goal' => false,
         'team_id' => 10,
         'shooter_player_id' => 8470002,
+        'shot_type_bucket' => 'wrist',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
@@ -1558,20 +1561,26 @@ it('returns NHL game import status with pipeline progress counts', function () {
         'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
     ]);
 
-    DB::table('nhl_games')->insert([
-        'nhl_game_id' => 2025020001,
-        'season_id' => '20252026',
-        'game_type' => 2,
-        'game_date' => '2026-01-15',
-        'game_dow' => 'Thu',
-        'game_month' => 'Jan',
-        'home_team_id' => 1,
-        'home_team_abbrev' => 'TOR',
-        'away_team_id' => 2,
-        'away_team_abbrev' => 'MTL',
-        'created_at' => $now,
-        'updated_at' => $now,
-    ]);
+    foreach ([
+        ['id' => 2025020001, 'date' => '2026-01-15'],
+        ['id' => 2025020002, 'date' => '2026-01-16'],
+        ['id' => 2025020003, 'date' => '2026-01-17'],
+    ] as $game) {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $game['id'],
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => $game['date'],
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
 
     foreach ([
         ['date' => '2026-01-15', 'type' => 'pbp', 'status' => 'completed'],
@@ -1604,13 +1613,15 @@ it('returns NHL game import status with pipeline progress counts', function () {
         ->assertJsonPath('runs.0.facts.discovered_game_count', 3)
         ->assertJsonPath('runs.0.facts.scheduled_stage_rows', 1)
         ->assertJsonPath('runs.0.facts.total_stage_rows', 3)
-        ->assertJsonPath('runs.0.games.0.game_id', 2025020001)
-        ->assertJsonPath('runs.0.games.0.game_date', '2026-01-15')
+        ->assertJsonPath('runs.0.games.0.game_id', 2025020002)
+        ->assertJsonPath('runs.0.games.0.game_date', '2026-01-16')
         ->assertJsonPath('runs.0.games.0.away_team_abbrev', 'MTL')
         ->assertJsonPath('runs.0.games.0.home_team_abbrev', 'TOR')
         ->assertJsonPath('runs.0.games.0.total_stage_rows', 1)
-        ->assertJsonPath('runs.0.games.0.completed_stage_rows', 1)
-        ->assertJsonPath('runs.0.games.0.percentage', 100)
+        ->assertJsonPath('runs.0.games.0.running_stage_rows', 1)
+        ->assertJsonPath('runs.0.games.0.percentage', 0)
+        ->assertJsonPath('runs.0.games.1.game_id', 2025020003)
+        ->assertJsonPath('runs.0.games.1.scheduled_stage_rows', 1)
         ->assertJsonPath('processable.date_count', 1);
 });
 
@@ -1673,13 +1684,9 @@ it('does not show reassigned reprocess progress on older processed discovery run
         ->assertOk()
         ->json('runs');
 
-    $oldPayload = collect($runs)->firstWhere('id', $oldRun->id);
     $reprocessPayload = collect($runs)->firstWhere('id', $reprocessRun->id);
 
-    expect($oldPayload['status'])->toBe(NhlGameImportRun::STATUS_COMPLETED)
-        ->and($oldPayload['progress']['total_stage_rows'])->toBe(0)
-        ->and($oldPayload['progress']['running_stage_rows'])->toBe(0)
-        ->and($oldPayload['games'])->toBe([])
+    expect(collect($runs)->pluck('id')->contains($oldRun->id))->toBeFalse()
         ->and($reprocessPayload['status'])->toBe(NhlGameImportRun::STATUS_RUNNING)
         ->and($reprocessPayload['progress']['total_stage_rows'])->toBe(3)
         ->and($reprocessPayload['progress']['completed_stage_rows'])->toBe(1)
@@ -1978,7 +1985,7 @@ it('hides stale successful game imports while keeping failed games visible', fun
         ->assertOk()
         ->json('runs.0');
 
-    expect(collect($payload['games'])->pluck('game_id')->all())->toBe(['2025020002'])
+    expect(collect($payload['games'])->pluck('game_id')->all())->toBe([2025020002])
         ->and($payload['games'][0]['failed_stage_rows'])->toBe(1)
         ->and($payload['games'][0]['last_error'])->toBe('Validation failed.');
 });

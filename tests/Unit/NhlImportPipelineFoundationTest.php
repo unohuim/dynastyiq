@@ -86,6 +86,26 @@ beforeEach(function (): void {
             );
         }
     };
+
+    $this->insertGame = function (
+        int $gameId = 2026020001,
+        array $overrides = []
+    ): void {
+        DB::table('nhl_games')->insert(array_merge([
+            'nhl_game_id' => $gameId,
+            'season_id' => '20262027',
+            'game_type' => 2,
+            'game_date' => '2026-10-01',
+            'game_dow' => 'Thu',
+            'game_month' => 'Oct',
+            'home_team_id' => 10,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 8,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ], $overrides));
+    };
 });
 
 afterEach(function (): void {
@@ -274,6 +294,7 @@ it('deletes stale game troubleshooting directories when a processing stage succe
 
 it('deletes game troubleshooting directories when processing approves summary validation', function (): void {
     Bus::fake();
+    ($this->insertGame)(2026020001);
     ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
     NhlGameValidation::create([
         'nhl_game_id' => 2026020001,
@@ -292,6 +313,7 @@ it('deletes game troubleshooting directories when processing approves summary va
 
 it('retains game troubleshooting directories when processing keeps invalidated summary validation', function (): void {
     Bus::fake();
+    ($this->insertGame)(2026020001);
     ($this->insertProgress)(2026020001, NhlImportStages::VALIDATE_SUMMARY, 'running');
     NhlGameValidation::create([
         'nhl_game_id' => 2026020001,
@@ -372,8 +394,9 @@ it('records source preflight statuses with exact provider URLs', function (): vo
 
     expect($result['allowed'])->toBeTrue()
         ->and($result['core_allowed'])->toBeTrue()
-        ->and($result['on_ice_allowed'])->toBeFalse()
-        ->and($result['message'])->toBe('NHL source preflight blocked import: shifts:empty_shiftcharts');
+        ->and($result['on_ice_allowed'])->toBeTrue()
+        ->and($result['message'])->toBeNull()
+        ->and($result['on_ice_message'])->toBe('NHL source preflight blocked import: shifts:empty_shiftcharts');
     $this->assertDatabaseHas('nhl_game_source_statuses', [
         'nhl_game_id' => 2026020001,
         'source' => 'pbp',
@@ -412,6 +435,7 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'full_name' => 'Left Shooter',
             'shoots' => 'L',
             'position' => 'LW',
+            'is_goalie' => false,
             'created_at' => now(),
             'updated_at' => now(),
         ],
@@ -422,6 +446,7 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'full_name' => 'Right Shooter',
             'shoots' => 'R',
             'position' => 'RW',
+            'is_goalie' => false,
             'created_at' => now(),
             'updated_at' => now(),
         ],
@@ -453,7 +478,15 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'situation_code' => '1551',
             'strength' => 'EV',
             'sort_order' => 0,
+            'x_coord' => null,
+            'y_coord' => null,
+            'shot_distance' => null,
+            'shot_angle' => null,
             'zone_code' => 'N',
+            'shot_type' => null,
+            'shooting_player_id' => null,
+            'scoring_player_id' => null,
+            'goalie_in_net_player_id' => null,
             'home_score' => 0,
             'away_score' => 0,
             'created_at' => now(),
@@ -481,6 +514,7 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'zone_code' => 'O',
             'shot_type' => 'wrist',
             'shooting_player_id' => 8470001,
+            'scoring_player_id' => null,
             'goalie_in_net_player_id' => 8471001,
             'home_score' => 0,
             'away_score' => 0,
@@ -508,6 +542,7 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'shot_angle' => 12.995,
             'zone_code' => 'O',
             'shot_type' => 'snap',
+            'shooting_player_id' => null,
             'scoring_player_id' => 8470002,
             'goalie_in_net_player_id' => 8471001,
             'home_score' => 1,
@@ -537,6 +572,7 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'zone_code' => 'O',
             'shot_type' => 'wrist',
             'shooting_player_id' => 8470001,
+            'scoring_player_id' => null,
             'goalie_in_net_player_id' => 8471001,
             'home_score' => 0,
             'away_score' => 0,
@@ -563,6 +599,8 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'shot_distance' => 15.00,
             'shot_angle' => 0.000,
             'zone_code' => 'O',
+            'shot_type' => null,
+            'shooting_player_id' => null,
             'scoring_player_id' => 8470002,
             'goalie_in_net_player_id' => 8471001,
             'home_score' => 2,
@@ -598,13 +636,13 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
         ->and($rushFact->rush_sequence_origin_play_by_play_id)->toBe(9001)
         ->and($rushFact->shooter_shoots)->toBe('L')
         ->and($rushFact->goalie_catches)->toBe('L')
-        ->and($rushFact->shot_side)->toBe('left')
+        ->and($rushFact->shot_side)->toBe('center')
         ->and($rushFact->is_off_wing_attempt)->toBeNull()
         ->and($rushFact->goalie_hand_matchup_bucket)->toBe('shooter_l_vs_goalie_l')
         ->and($goalFact->attempt_result)->toBe('goal')
         ->and((bool) $goalFact->is_goal)->toBeTrue()
         ->and($goalFact->shooter_shoots)->toBe('R')
-        ->and($goalFact->shot_side)->toBe('right')
+        ->and($goalFact->shot_side)->toBe('center')
         ->and($goalFact->goalie_hand_matchup_bucket)->toBe('shooter_r_vs_goalie_l')
         ->and((bool) $goalFact->is_rebound)->toBeTrue()
         ->and((bool) $goalFact->is_rush_attempt)->toBeFalse()

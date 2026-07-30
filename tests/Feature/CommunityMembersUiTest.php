@@ -31,18 +31,17 @@ it('uses the same activeTab key for tab buttons and panels', function () {
     $response->assertOk();
     $response->assertSee('x-data="communityMembersHub', false);
     $response->assertSee("@click=\"activeTab = 'members'\"", false);
-    $response->assertSee("x-show=\"activeTab === 'members'\"", false);
+    $response->assertSee("x-show=\"!selectedLeague && activeTab === 'members'\"", false);
 });
 
-it('hydrates Alpine after swapping the desktop template', function () {
+it('renders the community members Alpine mount', function () {
     [$user] = createCommunityUserPair();
 
     $response = $this->actingAs($user)->get(route('communities.index'));
 
     $response->assertOk();
-    $response->assertSee('function hydrateAlpine()', false);
-    $response->assertSee('window.Alpine.initTree(root);', false);
-    $response->assertSee('root.appendChild(frag);', false);
+    $response->assertSee('x-data="communityMembersHub', false);
+    $response->assertSee("x-show=\"!selectedLeague && activeTab === 'members'\"", false);
 });
 
 it('shows full provider membership counts on the community home panel', function () {

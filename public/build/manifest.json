@@ -4,12 +4,12 @@
     "name": "toast-stack"
   },
   "resources/css/app.css": {
-    "file": "assets/app-C1h17RWk.css",
+    "file": "assets/app-DYoe-u1n.css",
     "src": "resources/css/app.css",
     "isEntry": true
   },
   "resources/js/app.js": {
-    "file": "assets/app-C95x6Vhm.js",
+    "file": "assets/app-CW8cFllc.js",
     "name": "app",
     "src": "resources/js/app.js",
     "isEntry": true,
@@ -24,7 +24,7 @@
     ]
   },
   "resources/js/pages/stats-page.js": {
-    "file": "assets/stats-page-CnH7ftp_.js",
+    "file": "assets/stats-page-DLwu64Ro.js",
     "name": "stats-page",
     "src": "resources/js/pages/stats-page.js",
     "isEntry": true,

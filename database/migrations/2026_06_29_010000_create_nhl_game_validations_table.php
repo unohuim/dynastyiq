@@ -16,6 +16,9 @@ return new class extends Migration
                 'approved',
                 'failed',
                 'accepted_exception',
+                'incomplete',
+                'invalidated',
+                'shiftchart-mismatch',
             ]);
             $table->unsignedInteger('mismatch_count')->default(0);
             $table->timestamp('checked_at')->nullable();

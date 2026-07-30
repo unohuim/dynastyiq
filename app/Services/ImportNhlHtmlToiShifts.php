@@ -33,8 +33,9 @@ class ImportNhlHtmlToiShifts
         }
 
         $reportUrls = $this->locator->reportUrls($gameId);
-        $awayUrl = $reportUrls['toiAway'] ?? null;
-        $homeUrl = $reportUrls['toiHome'] ?? null;
+        $fallbackUrls = $this->fallbackReportUrls($game);
+        $awayUrl = $reportUrls['toiAway'] ?? $fallbackUrls['toiAway'];
+        $homeUrl = $reportUrls['toiHome'] ?? $fallbackUrls['toiHome'];
         $rows = [
             ...$this->parseReport($this->fetchHtml($awayUrl), strtoupper((string) $game->away_team_abbrev), $gameId),
             ...$this->parseReport($this->fetchHtml($homeUrl), strtoupper((string) $game->home_team_abbrev), $gameId),
@@ -79,6 +80,23 @@ class ImportNhlHtmlToiShifts
         } catch (\Throwable) {
             return '';
         }
+    }
+
+    /**
+     * Build standard NHL TV/TH HTML report URLs when right-rail is incomplete.
+     *
+     * @return array{toiAway:string,toiHome:string}
+     */
+    private function fallbackReportUrls(NhlGame $game): array
+    {
+        $season = (string) $game->season_id;
+        $gameId = (string) $game->nhl_game_id;
+        $reportNumber = substr($gameId, -6);
+
+        return [
+            'toiAway' => "https://www.nhl.com/scores/htmlreports/{$season}/TV{$reportNumber}.HTM",
+            'toiHome' => "https://www.nhl.com/scores/htmlreports/{$season}/TH{$reportNumber}.HTM",
+        ];
     }
 
     /**

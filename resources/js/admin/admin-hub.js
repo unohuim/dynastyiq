@@ -29,7 +29,7 @@ export default function adminHub(options = {}) {
     const requestedTab = new URLSearchParams(
         typeof window !== 'undefined' && window.location?.search ? window.location.search : ''
     ).get('tab');
-    const validInitialTabs = ['imports', 'platform-imports', 'users', 'activity', 'game-imports', 'triage', 'validations', 'shift-mismatches'];
+    const validInitialTabs = ['imports', 'platform-imports', 'users', 'activity', 'api-keys', 'game-imports', 'triage', 'validations', 'shift-mismatches'];
 
     const initialTab = validInitialTabs.includes(requestedTab) ? requestedTab : 'imports';
     const initialSource = nhlAvailable ? 'nhl' : fantraxAvailable ? 'fantrax' : 'nhl';
@@ -47,6 +47,7 @@ export default function adminHub(options = {}) {
         activeValidationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
         shiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
         activeShiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
+        apiKeysUrl: options.apiKeysUrl ?? '/admin/api-keys',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
@@ -71,6 +72,23 @@ export default function adminHub(options = {}) {
         shiftMismatchesError: '',
         validationRebuilds: {},
         validationDetails: {},
+        apiKeys: {
+            loading: false,
+            loaded: false,
+            creating: false,
+            error: '',
+            createdToken: '',
+            copied: false,
+            items: [],
+            availableScopes: [
+                { value: 'nhl-reference:read', label: 'NHL Reference Read' },
+                { value: 'nhl-stats:read', label: 'NHL Stats Read' },
+            ],
+            form: {
+                name: 'gner8',
+                scopes: ['nhl-reference:read', 'nhl-stats:read'],
+            },
+        },
         gameImports: {
             drawerOpen: false,
             loading: false,
@@ -201,6 +219,10 @@ export default function adminHub(options = {}) {
 
             if (tab === 'shift-mismatches') {
                 await this.loadShiftMismatches();
+            }
+
+            if (tab === 'api-keys') {
+                await this.loadApiKeys();
             }
 
             if (tab === 'game-imports') {
@@ -1232,6 +1254,115 @@ export default function adminHub(options = {}) {
             }
 
             return errors[firstKey]?.[0] ?? null;
+        },
+
+        /* -----------------------------
+         * API Keys
+         * --------------------------- */
+
+        async loadApiKeys(options = {}) {
+            const force = Boolean(options.force);
+
+            if ((!force && this.apiKeys.loaded) || this.apiKeys.loading) {
+                return;
+            }
+
+            this.apiKeys.loading = true;
+            this.apiKeys.error = '';
+
+            try {
+                const response = await fetch(this.apiKeysUrl, {
+                    headers: { Accept: 'application/json' },
+                });
+                const payload = await response.json().catch(() => ({}));
+
+                if (!response.ok) {
+                    throw new Error(payload.message ?? 'Unable to load API keys');
+                }
+
+                this.apiKeys.items = Array.isArray(payload.api_keys) ? payload.api_keys : [];
+                this.apiKeys.availableScopes = Array.isArray(payload.available_scopes)
+                    ? payload.available_scopes
+                    : this.apiKeys.availableScopes;
+                this.apiKeys.loaded = true;
+            } catch (error) {
+                this.apiKeys.error = error.message ?? 'Unable to load API keys';
+            } finally {
+                this.apiKeys.loading = false;
+            }
+        },
+
+        async createApiKey() {
+            if (this.apiKeys.creating) {
+                return;
+            }
+
+            this.apiKeys.creating = true;
+            this.apiKeys.error = '';
+            this.apiKeys.createdToken = '';
+            this.apiKeys.copied = false;
+
+            try {
+                const response = await this.sendGameImportRequest(this.apiKeysUrl, {
+                    name: this.apiKeys.form.name,
+                    scopes: this.apiKeys.form.scopes,
+                });
+
+                if (response.api_key?.id) {
+                    this.apiKeys.items = [
+                        response.api_key,
+                        ...this.apiKeys.items.filter((item) => item.id !== response.api_key.id),
+                    ];
+                }
+
+                this.apiKeys.createdToken = response.token ?? '';
+                this.apiKeys.form.name = '';
+            } catch (error) {
+                this.apiKeys.error = error.message ?? 'Unable to create API key';
+            } finally {
+                this.apiKeys.creating = false;
+            }
+        },
+
+        async copyApiKeyToken(token) {
+            if (!token) {
+                return;
+            }
+
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(token);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = token;
+                    textarea.setAttribute('readonly', 'readonly');
+                    textarea.style.position = 'fixed';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+
+                this.apiKeys.copied = true;
+                globalThis.setTimeout(() => {
+                    this.apiKeys.copied = false;
+                }, 2000);
+            } catch {
+                this.apiKeys.error = 'Unable to copy token to clipboard';
+            }
+        },
+
+        apiKeyScopeLabel(scope) {
+            return this.apiKeys.availableScopes.find((item) => item.value === scope)?.label ?? scope;
+        },
+
+        apiKeyStatusClass(key) {
+            if (key?.status === 'revoked') {
+                return 'bg-red-50 text-red-700 ring-red-600/20';
+            }
+
+            return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
         },
 
         gameImportTitle(run) {

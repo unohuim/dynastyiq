@@ -3,7 +3,9 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -12,6 +14,13 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (! $this->isPostgres()) {
+            $this->createRepairLedger();
+            $this->createNaturalKeyIndex();
+
+            return;
+        }
+
         DB::transaction(function (): void {
             $this->createRepairLedger();
             $this->buildDuplicateMap();
@@ -23,11 +32,7 @@ return new class extends Migration
             $this->deleteDuplicatePlayByPlays();
         });
 
-        DB::statement(<<<'SQL'
-            CREATE UNIQUE INDEX IF NOT EXISTS play_by_plays_nhl_game_event_unique
-            ON play_by_plays (nhl_game_id, nhl_event_id)
-            WHERE nhl_event_id IS NOT NULL
-        SQL);
+        $this->createNaturalKeyIndex();
     }
 
     /**
@@ -44,6 +49,22 @@ return new class extends Migration
      */
     private function createRepairLedger(): void
     {
+        if (! $this->isPostgres()) {
+            if (Schema::hasTable('nhl_play_by_play_dedupe_repairs')) {
+                return;
+            }
+
+            Schema::create('nhl_play_by_play_dedupe_repairs', function (Blueprint $table): void {
+                $table->id();
+                $table->unsignedBigInteger('nhl_game_id')->unique();
+                $table->integer('duplicate_rows_deleted')->default(0);
+                $table->timestamp('rebuild_queued_at')->nullable();
+                $table->timestamps();
+            });
+
+            return;
+        }
+
         DB::statement(<<<'SQL'
             CREATE TABLE IF NOT EXISTS nhl_play_by_play_dedupe_repairs (
                 id BIGSERIAL PRIMARY KEY,
@@ -222,6 +243,10 @@ return new class extends Migration
      */
     private function tableExists(string $table): bool
     {
+        if (! $this->isPostgres()) {
+            return Schema::hasTable($table);
+        }
+
         return (bool) DB::table('information_schema.tables')
             ->where('table_schema', 'public')
             ->where('table_name', $table)
@@ -233,10 +258,34 @@ return new class extends Migration
      */
     private function columnExists(string $table, string $column): bool
     {
+        if (! $this->isPostgres()) {
+            return Schema::hasColumn($table, $column);
+        }
+
         return (bool) DB::table('information_schema.columns')
             ->where('table_schema', 'public')
             ->where('table_name', $table)
             ->where('column_name', $column)
             ->exists();
+    }
+
+    /**
+     * Create the nullable NHL provider event natural-key index.
+     */
+    private function createNaturalKeyIndex(): void
+    {
+        DB::statement(<<<'SQL'
+            CREATE UNIQUE INDEX IF NOT EXISTS play_by_plays_nhl_game_event_unique
+            ON play_by_plays (nhl_game_id, nhl_event_id)
+            WHERE nhl_event_id IS NOT NULL
+        SQL);
+    }
+
+    /**
+     * Determine whether this migration is running against PostgreSQL.
+     */
+    private function isPostgres(): bool
+    {
+        return DB::connection()->getDriverName() === 'pgsql';
     }
 };

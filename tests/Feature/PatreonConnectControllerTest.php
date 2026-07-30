@@ -556,7 +556,7 @@ class PatreonConnectControllerTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('Patreon');
-        $response->assertSee('Community Members');
+        $response->assertSee('Members');
         $response->assertSee('Tester');
 
         Carbon::setTestNow();
