@@ -447,11 +447,37 @@ class NhlGameImportController extends Controller
         }
 
         $shotFactCounts = self::shotFactCountsForGameIds($gameIds);
+        $payload = [
+            'start' => $range['start']->toDateString(),
+            'end' => $range['end']->toDateString(),
+            'process_scope' => 'shots',
+            'shot_fact_game_count' => count($gameIds),
+            'shot_fact_game_ids' => $gameIds,
+            'shot_fact_candidate_game_count' => $shotFactCounts['candidate_game_count'],
+            'shot_fact_processable_game_count' => $shotFactCounts['processable_game_count'],
+            'shot_fact_unprocessable_game_count' => $shotFactCounts['unprocessable_game_count'],
+            'shot_fact_processed_game_count' => $shotFactCounts['processed_game_count'],
+            'shot_fact_requested_at' => now()->toIso8601String(),
+            'shot_fact_requested_by' => $request->user()?->id,
+            'shot_fact_source_run_id' => $sourceRun->id,
+        ];
+
+        $shotRun = NhlGameImportRun::query()->create([
+            'action' => NhlGameImportRun::ACTION_PROCESS,
+            'mode' => $range['mode'],
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'start_date' => $range['start']->toDateString(),
+            'end_date' => $range['end']->toDateString(),
+            'date_count' => count($this->dateStrings($range['start'], $range['end'])),
+            'queued_jobs' => count($gameIds),
+            'payload' => $payload,
+            'created_by' => $request->user()?->id,
+        ]);
+        $runId = (int) $shotRun->id;
         $jobs = array_map(
-            fn (int $gameId): BuildNhlShotAttemptFactsJob => new BuildNhlShotAttemptFactsJob($gameId, $sourceRun->id),
+            fn (int $gameId): BuildNhlShotAttemptFactsJob => new BuildNhlShotAttemptFactsJob($gameId, $runId),
             $gameIds,
         );
-        $runId = (int) $sourceRun->id;
 
         $batch = Bus::batch($jobs)
             ->then(function (Batch $batch) use ($runId): void {
@@ -463,30 +489,19 @@ class NhlGameImportController extends Controller
             ->name('NHL:ShotAttemptFacts:' . $runId)
             ->dispatch();
 
-        $payload = $sourceRun->payload ?? [];
-        $payload['process_scope'] = 'shots';
+        $payload = $shotRun->payload ?? [];
         $payload['shot_fact_batch_id'] = $batch->id;
-        $payload['shot_fact_game_count'] = count($gameIds);
-        $payload['shot_fact_game_ids'] = $gameIds;
-        $payload['shot_fact_candidate_game_count'] = $shotFactCounts['candidate_game_count'];
-        $payload['shot_fact_processable_game_count'] = $shotFactCounts['processable_game_count'];
-        $payload['shot_fact_unprocessable_game_count'] = $shotFactCounts['unprocessable_game_count'];
-        $payload['shot_fact_processed_game_count'] = $shotFactCounts['processed_game_count'];
-        $payload['shot_fact_requested_at'] = now()->toIso8601String();
-        $payload['shot_fact_requested_by'] = $request->user()?->id;
         $payload['processing_started_at'] = now()->toIso8601String();
         $payload['processing_requested_by'] = $request->user()?->id;
 
-        $sourceRun->update([
-            'status' => NhlGameImportRun::STATUS_RUNNING,
-            'queued_jobs' => count($gameIds),
+        $shotRun->update([
             'payload' => $payload,
         ]);
-        broadcast(new NhlGameImportStatusUpdated('shot-facts-queued', $sourceRun->id));
+        broadcast(new NhlGameImportStatusUpdated('shot-facts-queued', $shotRun->id));
 
         return response()->json([
             'message' => 'Shot attempt facts queued.',
-            'run' => $this->serializeRun($sourceRun->refresh()),
+            'run' => $this->serializeRun($shotRun->refresh()),
         ], 202);
     }
 

@@ -816,18 +816,20 @@ it('allows super admins to queue shot fact processing for a game import run rang
             'run_id' => $sourceRun->id,
         ])
         ->assertAccepted()
-        ->assertJsonPath('run.id', $sourceRun->id)
-        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_PROCESS)
         ->assertJsonPath('run.status', NhlGameImportRun::STATUS_RUNNING)
         ->assertJsonPath('run.processing_started', true)
         ->assertJsonPath('run.payload.process_scope', 'shots')
+        ->assertJsonPath('run.payload.shot_fact_source_run_id', $sourceRun->id)
         ->assertJsonPath('run.payload.shot_fact_game_count', 2)
         ->assertJsonPath('run.payload.shot_fact_candidate_game_count', 2)
         ->assertJsonPath('run.payload.shot_fact_processable_game_count', 1)
         ->assertJsonPath('run.payload.shot_fact_unprocessable_game_count', 1)
         ->assertJsonPath('run.payload.shot_fact_processed_game_count', 0);
 
-    $run = $sourceRun->refresh();
+    $run = NhlGameImportRun::query()
+        ->where('id', '!=', $sourceRun->id)
+        ->firstOrFail();
 
     Bus::assertBatched(function ($batch) use ($run): bool {
         $jobs = collect($batch->jobs)
@@ -839,10 +841,14 @@ it('allows super admins to queue shot fact processing for a game import run rang
             && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
             && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];
     });
-    expect(NhlGameImportRun::query()->count())->toBe(1)
+    expect(NhlGameImportRun::query()->count())->toBe(2)
+        ->and($sourceRun->refresh()->status)->toBe(NhlGameImportRun::STATUS_COMPLETED)
+        ->and($sourceRun->payload)->toBe(['start' => '2026-01-17', 'end' => '2026-01-15'])
         ->and($run->status)->toBe(NhlGameImportRun::STATUS_RUNNING)
+        ->and($run->action)->toBe(NhlGameImportRun::ACTION_PROCESS)
         ->and($run->queued_jobs)->toBe(2)
         ->and($run->payload['process_scope'])->toBe('shots')
+        ->and($run->payload['shot_fact_source_run_id'])->toBe($sourceRun->id)
         ->and($run->payload['shot_fact_game_count'])->toBe(2)
         ->and($run->payload['shot_fact_game_ids'])->toBe([2025020001, 2025020002])
         ->and($run->payload['shot_fact_processable_game_count'])->toBe(1)
@@ -874,6 +880,45 @@ it('rejects shot fact processing when a game import run has no games', function 
         ->assertJsonValidationErrors('run_id');
 
     expect(NhlGameImportRun::query()->count())->toBe(1);
+});
+
+it('does not let NHL process supervisor claim shot-scoped runs', function () {
+    Queue::fake([NhlOrchestratorJob::class]);
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => [
+            'date' => '2026-01-15',
+            'process_scope' => 'shots',
+            'processing_started_at' => '2026-07-30T12:00:00+00:00',
+        ],
+    ]);
+
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => $run->id,
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020001',
+        'game_type' => 2,
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'scheduled',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->artisan('nhl:process')
+        ->expectsOutput('No discovery run with scheduled work.')
+        ->assertExitCode(0);
+
+    Queue::assertNotPushed(NhlOrchestratorJob::class);
+    Event::assertNotDispatched(NhlGameImportStatusUpdated::class);
+    expect(DB::table('nhl_import_progress')->where('run_id', $run->id)->value('status'))->toBe('scheduled');
 });
 
 it('marks a game import run failed when a shot fact job fails', function (): void {

@@ -57,6 +57,10 @@ class NhlProcessCommand extends Command
             ->whereIn('status', [NhlGameImportRun::STATUS_RUNNING, NhlGameImportRun::STATUS_QUEUED])
             ->whereNotNull('start_date')
             ->whereNotNull('end_date')
+            ->where(function ($query): void {
+                $query->whereNull('payload->process_scope')
+                    ->orWhere('payload->process_scope', '!=', 'shots');
+            })
             ->whereExists(function ($query): void {
                 $query->selectRaw('1')
                     ->from('nhl_import_progress')
