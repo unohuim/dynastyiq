@@ -15,6 +15,7 @@ use App\Console\Commands\NhlDiscoverCommand;
 use App\Console\Commands\NhlProcessCommand;
 use App\Console\Commands\PatreonNightlySync;
 use App\Console\Commands\RepairDuplicateNhlPlayByPlayCommand;
+use App\Console\Commands\RefreshNhlPlayerMetadataCommand;
 use App\Console\Commands\RefreshNhlProspectFlagsCommand;
 use App\Console\Commands\SumNhlSeasonCommand;
 use App\Http\Middleware\AdminLifecycleMiddleware;
@@ -39,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
         GenerateDraftPickCardImageCommand::class,
         NhlApiCommand::class,
         RepairDuplicateNhlPlayByPlayCommand::class,
+        RefreshNhlPlayerMetadataCommand::class,
         RefreshNhlProspectFlagsCommand::class,
     ])
     ->withRouting(

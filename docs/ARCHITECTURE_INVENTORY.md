@@ -49,6 +49,8 @@ Each entry includes:
 - `app/Console/Commands/CreateApiClientCommand.php`
 - `app/Http/Middleware/AuthenticateApiClient.php`
 - `app/Http/Controllers/Api/NhlReferenceController.php`
+- `app/Http/Controllers/Api/NhlSeasonStatsController.php`
+- `app/Services/NhlSeasonStatsPayload.php`
 - `database/migrations/2026_07_27_000002_create_api_clients_table.php`
 - `routes/api.php`
 
@@ -56,7 +58,7 @@ Each entry includes:
 Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
 
 **When to Use:**
-Creating revocable API tokens, protecting partner API endpoints, or exposing scoped DynastyIQ reference data to another server.
+Creating revocable API tokens, protecting partner API endpoints, or exposing scoped DynastyIQ reference/stat data to another server.
 
 **When Not to Use:**
 Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discord bot runtime commands.
@@ -67,10 +69,13 @@ Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discor
 - `api_clients`
 - `/api/nhl-teams`
 - `/api/nhl-players`
+- `/api/nhl-season-stats`
+
+NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports.
 
 **Example Usage:**
 ```bash
-php artisan api-client:create gner8 --scope=nhl-reference:read
+php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read
 ```
 
 ---
@@ -973,13 +978,14 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 - `app/Jobs/BuildNhlShotAttemptFactsJob.php`
 - `app/Services/BuildNhlShotAttemptFacts.php`
 - `database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php`
+- `database/migrations/2026_07_30_000001_add_biometric_snapshot_fields_to_nhl_shot_attempts_facts_table.php`
 - `docs/architecture/stats/NhlShotAttemptFacts.yaml`
 
 **Purpose:**
 Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
 
 **When to Use:**
-Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, snapshotting shooter/goalie handedness context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range with explicit selected/processable/no-eligible game counts.
+Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, snapshotting shooter/goalie handedness and biometric context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range with explicit selected/processable/no-eligible game counts.
 
 **When Not to Use:**
 Storing expected-goals probabilities, danger labels, model thresholds, or trained model outputs.
@@ -998,6 +1004,49 @@ Storing expected-goals probabilities, danger labels, model thresholds, or traine
 SELECT distance_bucket, angle_bucket, COUNT(*) AS attempts
 FROM nhl_shot_attempts_facts
 GROUP BY distance_bucket, angle_bucket;
+```
+
+---
+
+### NHL Expected Goals Model
+
+**Name:** NHL Expected Goals Model
+**Type:** Versioned Probability Model Pattern
+**Location:**
+- `app/Console/Commands/BackfillNhlExpectedGoalsCommand.php`
+- `app/Models/NhlExpectedGoalsModel.php`
+- `app/Models/NhlExpectedGoalsModelBucket.php`
+- `app/Models/NhlShotAttemptPrediction.php`
+- `app/Services/NhlExpectedGoalsBackfiller.php`
+- `database/migrations/2026_07_29_000003_create_nhl_expected_goals_tables.php`
+- `database/migrations/2026_07_29_000004_add_prediction_target_to_nhl_expected_goals_tables.php`
+- `docs/architecture/stats/NhlExpectedGoalsModel.yaml`
+- `data/shot_attempts_model_analysis_20252026.md`
+- `data/shot_attempts_model_input_20252026.csv`
+
+**Purpose:**
+Define the invariant rules and first-pass backfill path for deriving expected-goals probabilities from validated NHL shot-attempt facts.
+
+**When to Use:**
+Designing xG models, comparing observed goal rates with controlled model weights, documenting feature assumptions, or backfilling draft historical xG/xGA predictions.
+
+**When Not to Use:**
+Importing play-by-play, changing shot-fact construction, storing xG on shot facts, or treating draft model outputs as published production signals before calibration is approved.
+
+**Public Interface:**
+- `nhl:xg:backfill`
+- `nhl_expected_goals_models`
+- `nhl_expected_goals_model_buckets`
+- `nhl_shot_attempt_predictions`
+- `nhl_shot_attempts_facts`
+- `NhlExpectedGoalsBackfiller`
+- `docs/architecture/stats/NhlExpectedGoalsModel.yaml`
+- `data/shot_attempts_model_input_20252026.csv`
+- `data/shot_attempts_model_analysis_20252026.md`
+
+**Example Usage:**
+```text
+Train on classified non-empty-net shot facts, validate on held-out games, calibrate predicted probability bands, then store versioned predictions only after approval.
 ```
 
 ---
@@ -1435,6 +1484,8 @@ if ($repo->claim($gameId, 'pbp')) {
 - `app/Models/PlayerExternalIdentity.php`
 - `app/Events/PlayerExternalIdentityLinked.php`
 - `app/Console/Commands/ResolveNhlCommand.php`
+- `app/Console/Commands/RefreshNhlPlayerMetadataCommand.php`
+- `app/Jobs/RefreshNhlPlayerMetadataChunkJob.php`
 - `app/Jobs/ImportPlayersJob.php`
 - `app/Jobs/ImportNhlDraftPicksJob.php`
 - `app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php`
@@ -1462,6 +1513,7 @@ NHL draft identities check existing canonical players by normalized name and com
 NHL draft imports resolve or create the canonical prospect before landing refresh, then use a draft payload NHL player id, an existing canonical `nhl_id`, or the NHL Stats cayenne lookup to refresh NHL landing metadata and upsert stats when an NHL id can be found.
 NHL roster and prospect landing imports retry transient provider failures for the individual NHL player id and record persistent transient failures without aborting the whole team import.
 NHL roster, prospect, and draft per-player landing failures are recorded and skipped without aborting the broader import run.
+NHL player landing imports persist canonical player birth date, handedness, height, and weight when the landing payload provides those fields.
 Non-NHL provider identity links may queue asynchronous NHL identity enrichment for canonical players without `nhl_id`; enrichment only updates the canonical player after exactly one NHL Stats player candidate is validated through the NHL player landing endpoint.
 Canonical player creates and identity-evidence updates may queue the same asynchronous NHL identity enrichment when `nhl_id` is null and first-name, last-name, and position-type evidence is usable.
 `NhlPlayerIdentityLookup` is the shared NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from either a canonical player or first-name, last-name, and position-type evidence.
@@ -2201,6 +2253,9 @@ event(new BotFantraxLinked($user));
 - `app/Services/AdminImports.php`
 - `app/Http/Controllers/Admin/ImportsController.php`
 - `app/Jobs/RunImportCommandJob.php`
+- `app/Console/Commands/RefreshNhlPlayerMetadataCommand.php`
+- `app/Jobs/RefreshNhlPlayerMetadataChunkJob.php`
+- `bootstrap/app.php`
 - `resources/views/admin/imports.blade.php`
 - `resources/js/admin/admin-hub.js`
 
@@ -2216,6 +2271,7 @@ NHL stage orchestration, which is handled by the NHL import pipeline.
 **Public Interface:**
 - `AdminImports::sources()`
 - `AdminImports::dispatch()`
+- `nhl:refresh-player-metadata`
 - `admin.imports`
 - `admin.imports.run`
 - `admin.imports.retry`
@@ -2357,13 +2413,13 @@ SeasonSumJob::dispatch($seasonId, $runId);
 - `docs/architecture/admin/AdminNhlShotAttempts.yaml`
 
 **Purpose:**
-Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, and QA coverage before expected-goals modeling.
+Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric impact cuts, QA coverage, and expected-goals model review.
 
 **When to Use:**
-Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, and auditing missing or suspicious shot-fact fields.
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts, and auditing missing or suspicious shot-fact fields.
 
 **When Not to Use:**
-Running imports, mutating shot facts, replacing Game Imports, or storing xG outputs.
+Running imports, mutating shot facts, replacing Game Imports, or adding biometric fields into model training without separate approval.
 
 **Public Interface:**
 - `admin.nhl-shot-attempts.index`
@@ -2551,6 +2607,8 @@ Blocking confirmations, form validation summaries, or persistent status panels.
 **Public Interface:**
 - `toast-stack.js`
 - `toast-container.blade.php`
+
+Toasts must render above drawers, slide-overs, modals, dropdowns, and fixed app chrome.
 
 **Example Usage:**
 ```js

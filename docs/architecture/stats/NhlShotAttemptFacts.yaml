@@ -6,13 +6,14 @@ location:
   - app/Services/BuildNhlShotAttemptFacts.php
   - database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php
   - database/migrations/2026_07_29_000002_add_handedness_fields_to_nhl_shot_attempts_facts_table.php
+  - database/migrations/2026_07_30_000001_add_biometric_snapshot_fields_to_nhl_shot_attempts_facts_table.php
   - docs/architecture/stats/NhlShotAttemptFacts.yaml
 purpose: Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
 when_to_use:
   - Building an analytical source table for shot attempts from play_by_plays.
   - Deriving stable shot context such as result, surface, geometry buckets, rebound flags, strength, score state, and net state.
   - Producing sanitized aggregate extracts for AI-assisted or statistical shot-quality exploration.
-  - Feeding future expected-goals prediction and summary tables.
+  - Feeding versioned expected-goals prediction and summary tables.
   - Queueing shots-only fact collection from an admin-selected game import run range.
 when_not_to_use:
   - Storing expected-goals probabilities or high/medium/low danger labels.
@@ -28,16 +29,20 @@ rules:
   - Shot geometry facts must reuse the canonical ShotGeometryService-derived distance and angle semantics.
   - Score snapshots and score-state buckets must represent the pre-event game state before the shot outcome changes the score, derived from the ordered goal timeline rather than trusting per-row provider score snapshots.
   - Rush context must distinguish direct rush attempts from same-team rebounds that inherit rush sequence context inside the rebound window.
-  - Shooter handedness, goalie catches hand, signed-angle side, and goalie hand matchup may be snapshotted as analysis context from canonical player records.
-  - Off-wing shot-attempt classification must remain nullable until the signed-angle rink-side convention is validated against real shot examples.
+  - Shooter handedness, goalie catches hand, goalie-perspective shot side, and goalie hand matchup may be snapshotted as analysis context from canonical player records.
+  - Shooter and goalie height, weight, and age-at-game may be snapshotted from canonical player records so historical facts do not drift when player records change.
+  - Off-wing shot-attempt classification must use goalie-perspective side plus shooter handedness and remain nullable when side, handedness, or classified shot type is unavailable.
   - Bucket labels must remain deterministic feature labels and must not imply goal probability by themselves.
-  - Expected-goals probabilities, danger labels, and model outputs belong in future versioned prediction tables.
+  - Predictive bucket analysis must exclude unknown shot type buckets by default while preserving unknown shot type rows in raw fact storage.
+  - Expected-goals probabilities, danger labels, and model outputs belong in versioned expected-goals prediction tables.
   - Aggregate AI review must use sanitized exports or grouped facts and must remain advisory until validated against holdout data.
   - Sparse bucket combinations must fall back to broader groupings before they are used for probability estimates.
   - Shots-only admin processing must upsert shot facts from already imported play-by-play and must not fetch providers or run the full NHL import pipeline.
   - Shots-only admin runs must distinguish games selected for processing from games with at least one eligible shot-attempt source event so zero-attempt limited-scoring games do not look like failed or missing processing.
 public_interface:
   - nhl_shot_attempts_facts
+  - nhl_shot_attempt_predictions
+  - nhl_expected_goals_models
   - play_by_plays.id
   - admin.nhl-game-imports.process-shots
   - BuildNhlShotAttemptFacts

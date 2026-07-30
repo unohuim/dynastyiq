@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\Api\DiscordWebhookController;
 use App\Http\Controllers\Api\NhlReferenceController;
+use App\Http\Controllers\Api\NhlSeasonStatsController;
 use App\Http\Controllers\StatsController;
 use App\Http\Controllers\PatreonWebhookController;
 
@@ -49,6 +50,11 @@ Route::middleware('api.client:nhl-reference:read')->group(function (): void {
         ->name('api.nhl-reference.teams');
     Route::get('/nhl-players', [NhlReferenceController::class, 'players'])
         ->name('api.nhl-reference.players');
+});
+
+Route::middleware('api.client:nhl-stats:read')->group(function (): void {
+    Route::get('/nhl-season-stats', NhlSeasonStatsController::class)
+        ->name('api.nhl-season-stats.index');
 });
 
 

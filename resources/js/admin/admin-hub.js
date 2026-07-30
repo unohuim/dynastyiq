@@ -2133,7 +2133,7 @@ export default function adminHub(options = {}) {
             this.streams[key].open = !this.streams[key].open;
         },
 
-        async startImport(key) {
+        async startImport(key, action = null) {
             const config = this.imports.find((i) => i.key === key);
             if (!config?.run_url) {
                 return;
@@ -2159,6 +2159,7 @@ export default function adminHub(options = {}) {
                             .querySelector('meta[name="csrf-token"]')
                             ?.getAttribute('content'),
                     },
+                    body: JSON.stringify(action ? { action } : {}),
                 });
 
                 if (!response.ok) {

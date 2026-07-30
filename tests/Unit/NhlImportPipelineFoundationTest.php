@@ -18,6 +18,7 @@ use App\Services\BuildNhlShotAttemptFacts;
 use App\Services\NhlDiscoverGames;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
+use App\Services\NhlPbpEventNormalizer;
 use App\Support\NhlImportStages;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -542,13 +543,40 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
             'created_at' => now(),
             'updated_at' => now(),
         ],
+        [
+            'id' => 9004,
+            'nhl_game_id' => 2025020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'period_type' => 'REG',
+            'seconds_in_period' => 500,
+            'seconds_in_game' => 500,
+            'seconds_remaining' => 3100,
+            'seconds_since_last_event' => 160,
+            'type_desc_key' => 'goal',
+            'nhl_event_id' => '104',
+            'situation_code' => '1551',
+            'strength' => 'EV',
+            'sort_order' => 4,
+            'x_coord' => 74,
+            'y_coord' => 0,
+            'shot_distance' => 15.00,
+            'shot_angle' => 0.000,
+            'zone_code' => 'O',
+            'scoring_player_id' => 8470002,
+            'goalie_in_net_player_id' => 8471001,
+            'home_score' => 2,
+            'away_score' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
     ]);
 
     $builder = app(BuildNhlShotAttemptFacts::class);
 
-    expect($builder->buildForGame(2025020001))->toBe(3)
-        ->and($builder->buildForGame(2025020001))->toBe(3)
-        ->and(DB::table('nhl_shot_attempts_facts')->count())->toBe(3);
+    expect($builder->buildForGame(2025020001))->toBe(4)
+        ->and($builder->buildForGame(2025020001))->toBe(4)
+        ->and(DB::table('nhl_shot_attempts_facts')->count())->toBe(4);
 
     $goalFact = DB::table('nhl_shot_attempts_facts')
         ->where('play_by_play_id', 9002)
@@ -559,6 +587,10 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
     $postGoalFact = DB::table('nhl_shot_attempts_facts')
         ->where('play_by_play_id', 9003)
         ->first();
+    $unknownShotTypeGoalFact = DB::table('nhl_shot_attempts_facts')
+        ->where('play_by_play_id', 9004)
+        ->first();
+    $unknownShotTypeGoalPlay = \App\Models\PlayByPlay::query()->find(9004);
 
     expect($rushFact->rush_bucket)->toBe('rush_attempt')
         ->and((bool) $rushFact->is_rush_attempt)->toBeTrue()
@@ -589,7 +621,12 @@ it('builds deterministic NHL shot attempt facts from imported play by play', fun
         ->and($goalFact->shot_type_bucket)->toBe('snap')
         ->and($postGoalFact->home_score)->toBe(1)
         ->and($postGoalFact->away_score)->toBe(0)
-        ->and($postGoalFact->score_state_bucket)->toBe('leading_by_1');
+        ->and($postGoalFact->score_state_bucket)->toBe('leading_by_1')
+        ->and($unknownShotTypeGoalFact->attempt_result)->toBe('goal')
+        ->and((bool) $unknownShotTypeGoalFact->is_shot_on_goal)->toBeTrue()
+        ->and((bool) $unknownShotTypeGoalFact->is_unblocked_attempt)->toBeTrue()
+        ->and($unknownShotTypeGoalFact->shot_type_bucket)->toBe('unknown')
+        ->and(app(NhlPbpEventNormalizer::class)->isShotOnGoal($unknownShotTypeGoalPlay))->toBeFalse();
 });
 
 it('processes only ready scheduled stages for a date', function (): void {

@@ -365,6 +365,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // NHL shot attempt analysis
                 Route::get('/nhl-shot-attempts', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'index'])
                     ->name('admin.nhl-shot-attempts.index');
+                Route::post('/nhl-shot-attempts/xg', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildXg'])
+                    ->name('admin.nhl-shot-attempts.xg.build');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])

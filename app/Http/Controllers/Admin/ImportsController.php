@@ -47,6 +47,7 @@ class ImportsController extends Controller
                 'run_url' => $this->importRunUrl($source),
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'can_rerun_failed' => (bool) ($source['can_retry'] ?? true),
+                'actions' => $source['actions'] ?? [],
             ];
         })->all();
 
@@ -55,7 +56,7 @@ class ImportsController extends Controller
 
     public function run(Request $request, string $key)
     {
-        $batch = $this->imports->dispatch($key);
+        $batch = $this->imports->dispatch($key, $request->string('action')->toString());
 
         if ($request->wantsJson()) {
             $importRun = ImportRun::query()->where('batch_id', $batch->id)->first();
@@ -86,7 +87,7 @@ class ImportsController extends Controller
 
     public function retry(Request $request, string $key)
     {
-        $batch = $this->imports->dispatch($key);
+        $batch = $this->imports->dispatch($key, $request->string('action')->toString());
 
         if ($request->wantsJson()) {
             $importRun = ImportRun::query()->where('batch_id', $batch->id)->first();

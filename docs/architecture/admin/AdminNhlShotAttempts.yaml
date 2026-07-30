@@ -5,30 +5,41 @@ location:
   - resources/views/admin/nhl-shot-attempts/index.blade.php
   - routes/web.php
   - resources/views/nav/partials/_right-account-drawer.blade.php
-purpose: Provide a super-admin panel for reviewing NHL shot-attempt facts, aggregate rates, bucket behavior, and QA coverage before expected-goals modeling.
+purpose: Provide a super-admin panel for reviewing NHL shot-attempt facts, aggregate rates, bucket behavior, QA coverage, and expected-goals model outputs.
 when_to_use:
   - Inspecting raw rows from nhl_shot_attempts_facts.
   - Reviewing grouped shot-attempt rates by team, player, strength, result, or bucket.
   - Comparing goal rates across distance and angle bucket combinations.
+  - Reviewing predictive grouped cuts that exclude unknown shot types, empty-net attempts, and shootout attempts by default.
+  - Reviewing observed biometric impact cuts for shooter and goalie age, height, and weight after fact snapshots are rebuilt.
+  - Building and reviewing bucket-smoothed xG and xSOG predictions for an imported season.
   - Auditing missing or suspicious shot-attempt fact fields.
 when_not_to_use:
   - Running NHL game imports or shot-fact build jobs.
   - Replacing the Game Imports operational run ledger.
-  - Storing expected-goals model outputs or danger labels.
   - Building public stats pages for non-admin users.
 rules:
   - The panel must remain super-admin protected through admin middleware.
   - The panel reads from nhl_shot_attempts_facts and must not mutate shot facts.
+  - The shot model build action may write only to versioned expected-goals model, bucket, and prediction tables.
   - The first version should use server-rendered tabs and query-string filters without new page-local JavaScript state.
-  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, and QA checks.
+  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, predictive cuts, biometric impact review, xG review, and QA checks.
+  - Predictive grouped cuts must show attempts, goals, goal rate, shots on goal, shooting percentage, average distance, and average angle with a minimum-attempt threshold.
+  - Biometric impact review must remain read-only and must not add age, height, or weight into model training until separately approved.
+  - Biometric impact review must show observed SOG rate, goal rate, average xG per SAT, and goals minus xG when a latest goal model is available.
+  - The xG tab must expose a queued build button, model history, latest-model bucket probabilities, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
+  - Dense xG result sections must render as default-collapsed accordions and remember expanded state in localStorage scoped to the admin shot-attempts xG page.
   - Aggregate columns must sort through whitelisted query-string keys and display the active sort direction.
+  - Presented xG tables must sort through whitelisted query-string keys and display the active sort direction.
   - Aggregate grouping must support team abbreviation, rebound state, and previous event type.
   - Shooter and goalie aggregate grouping should display resolved player names while keeping the stable shooter_player_id and goalie_player_id query parameters.
   - Missing-table environments must degrade with an operator-readable empty state instead of failing the page.
   - The account drawer link must appear below Admin Control Panel only for users who can access super-admin routes.
 public_interface:
   - admin.nhl-shot-attempts.index
+  - admin.nhl-shot-attempts.xg.build
   - NhlShotAttemptController::index()
+  - NhlShotAttemptController::buildXg()
   - resources/views/admin/nhl-shot-attempts/index.blade.php
 example_usage: |
   GET /admin/nhl-shot-attempts?tab=buckets&season_id=20252026

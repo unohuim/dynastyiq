@@ -172,6 +172,7 @@ Navigation eligibility is backend-owned. Client-side updates may patch stale loc
 - Use clean, flat lists.
 - Avoid heavy borders.
 - Use subtle dividers only when necessary.
+- Data tables created or materially touched must expose sortable headers for every presented column unless a column is explicitly non-data or sorting would mislead the user.
 - Row click must not mean edit; use explicit actions.
 - Row action menus should use a vertical `...` pattern on the far right unless there is only one obvious action.
 - Menus must not be clipped by parent section/card shells.

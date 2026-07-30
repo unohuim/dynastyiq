@@ -49,10 +49,20 @@
 
                             <div class="flex flex-wrap gap-2 lg:justify-end">
                                 @if(!empty($import['run_url']))
-                                    <form method="POST" action="{{ $import['run_url'] }}">
-                                        @csrf
-                                        <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
-                                    </form>
+                                    @if($import['key'] === 'nhl' && !empty($import['actions']))
+                                        @foreach($import['actions'] as $action)
+                                            <form method="POST" action="{{ $import['run_url'] }}">
+                                                @csrf
+                                                <input type="hidden" name="action" value="{{ $action['key'] }}">
+                                                <x-primary-button type="submit" data-admin-import-button>{{ $action['label'] }}</x-primary-button>
+                                            </form>
+                                        @endforeach
+                                    @else
+                                        <form method="POST" action="{{ $import['run_url'] }}">
+                                            @csrf
+                                            <x-primary-button type="submit" data-admin-import-button>Run Now</x-primary-button>
+                                        </form>
+                                    @endif
                                 @else
                                     <x-secondary-button type="button" disabled>Coming Soon</x-secondary-button>
                                 @endif

@@ -1678,7 +1678,7 @@ Do not introduce new enum values without updating this document.
 - Period buckets: `p1`, `p2`, `p3`, `ot`, `other`, `unknown`.
 - Time buckets: `early_period`, `middle_period`, `late_period`, `final_5`, `unknown`.
 - Zone buckets: `offensive`, `neutral`, `defensive`, `unknown`.
-- Shot side values: `left`, `right`, `center`, `unknown`.
+- Shot side values: `left`, `right`, `center`, `unknown`; side is from the goalie perspective for the attacking net.
 - Goalie hand matchup buckets: `shooter_l_vs_goalie_l`, `shooter_l_vs_goalie_r`, `shooter_r_vs_goalie_l`, `shooter_r_vs_goalie_r`, `unknown`.
 
 **Semantic meaning:**
@@ -1686,13 +1686,195 @@ Do not introduce new enum values without updating this document.
 - Buckets are deterministic feature labels used for exploratory goal-rate analysis and future expected-goals models.
 - Buckets do not imply high, medium, or low danger by themselves.
 - Rush buckets distinguish direct transition attempts from rebounds that inherit rush context inside the rebound window.
-- Shooter and goalie handedness snapshots are context features; `is_off_wing_attempt` remains nullable until signed-angle rink-side convention is validated.
+- Shooter and goalie handedness, height, weight, and age-at-game snapshots are context features; `is_off_wing_attempt` is nullable when goalie-perspective side, shooter handedness, or classified shot type is unavailable.
+- Unknown shot type rows remain valid raw facts, but predictive bucket analysis excludes `shot_type_bucket = unknown` by default.
 - Probability-derived danger labels belong to future versioned prediction outputs, not to `nhl_shot_attempts_facts`.
 
 **Notes:**
 
 - Bucket columns are string-backed and not database constrained.
 - Sparse bucket combinations must be widened or backed off before they are used as probability estimates.
+
+---
+
+### NHL Shot Attempt Predictive Group
+
+**Name:** NHL shot attempt predictive group
+**Storage location(s):** `admin.nhl-shot-attempts.index` query parameter `predictive_group`
+**Allowed values currently emitted:**
+
+- `distance_shot_type`
+- `distance_rebound`
+- `distance_rush`
+- `distance_strength_shot_type`
+- `previous_event_timing`
+- `shot_type_offwing_strength`
+
+**Semantic meaning:**
+
+- Predictive groups define fixed admin-only analysis cuts for inspecting observed goal rates from classified, non-empty-net, non-shootout shot-attempt facts.
+
+**Notes:**
+
+- Predictive groups are report modes, not stored model outputs.
+
+---
+
+### NHL Expected Goals Model Type
+
+**Name:** NHL expected-goals model type
+**Storage location(s):** `nhl_expected_goals_models.model_type` (string column)
+**Allowed values currently emitted:**
+
+- `bucket_smoothed`
+
+**Semantic meaning:**
+
+- `bucket_smoothed`: Explainable bucket fallback model that smooths observed goal rates toward the league baseline.
+
+**Notes:**
+
+- Future logistic or machine-learning model types must be added here before use.
+
+---
+
+### NHL Expected Goals Model Status
+
+**Name:** NHL expected-goals model status
+**Storage location(s):** `nhl_expected_goals_models.status` (string column)
+**Allowed values currently emitted:**
+
+- `queued`
+- `running`
+- `draft`
+- `failed`
+
+**Semantic meaning:**
+
+- `queued`: Model build has been requested and is waiting for a queue worker.
+- `running`: Model buckets or shot predictions are currently being generated.
+- `draft`: Model output is available for admin review and historical analysis but is not approved for public/product use.
+- `failed`: Model build failed before producing reviewable output.
+
+---
+
+### NHL Shot Attempt Prediction Target
+
+**Name:** NHL shot attempt prediction target
+**Storage location(s):** `nhl_expected_goals_models.prediction_target`, `nhl_shot_attempt_predictions.prediction_target` (string columns)
+**Allowed values currently emitted:**
+
+- `goal`
+- `shot_on_goal`
+
+**Semantic meaning:**
+
+- `goal`: Probability that a SAT attempt becomes a goal. Summed as xG.
+- `shot_on_goal`: Probability that a SAT attempt becomes a shot on goal. Summed as xSOG.
+
+**Notes:**
+
+- Both targets use the same SAT context feature system.
+- `attempt_result` must not be used as a model input because it leaks the target outcome.
+
+---
+
+### NHL Shot Attempt Prediction Exclusion Reason
+
+**Name:** NHL shot attempt prediction exclusion reason
+**Storage location(s):** `nhl_shot_attempt_predictions.exclusion_reason` (nullable string column)
+**Allowed values currently emitted:**
+
+- `unknown_shot_type`
+- `empty_net`
+- `shootout`
+
+**Semantic meaning:**
+
+- `unknown_shot_type`: Shot fact is retained but excluded from this model because NHL did not classify the shot type.
+- `empty_net`: Shot fact is excluded because normal goalie-facing xG does not apply.
+- `shootout`: Shot fact is excluded because shootout attempts are not normal game-state attempts.
+
+**Notes:**
+
+- `NULL` means the shot attempt was scored by the model.
+
+---
+
+### NHL Season Stats API Stat Group
+
+**Name:** NHL season stats API stat group
+**Storage location(s):** `GET /api/nhl-season-stats` query parameter `stat_group`, payload `stat_types[].stat_group`, `player_stats[].stat_group`, `player_stat_features[].stat_group`
+**Allowed values currently emitted:**
+
+- `basic`
+- `on_ice`
+- `expected`
+
+**Semantic meaning:**
+
+- `basic`: Player boxscore and season-summary totals.
+- `on_ice`: Player on-ice event counts while the player was on the ice.
+- `expected`: Shot-attempt probability outputs and derived xG/xSOG metrics.
+
+---
+
+### NHL Season Stats API Window Key
+
+**Name:** NHL season stats API window key
+**Storage location(s):** `GET /api/nhl-season-stats` query parameter `window_key`, payload `player_stats[].window_key`, `player_stat_features[].window_key`, `player_stat_features[].baseline_window_key`
+**Allowed values currently emitted:**
+
+- `season`
+- `last_5`
+- `last_10`
+- `last_20`
+
+**Semantic meaning:**
+
+- `season`: Full requested season and game type.
+- `last_5`: Most recent 5 qualifying player games in the requested season and game type.
+- `last_10`: Most recent 10 qualifying player games in the requested season and game type.
+- `last_20`: Most recent 20 qualifying player games in the requested season and game type.
+
+---
+
+### NHL Season Stats API Stat Slug
+
+**Name:** NHL season stats API stat slug
+**Storage location(s):** `GET /api/nhl-season-stats` payload `stat_types[].slug`, `player_stats[].stat_slug`, `player_stat_features[].stat_slug`
+**Allowed values currently emitted:**
+
+- `games_played`
+- `goals`
+- `assists`
+- `points`
+- `shots_on_goal`
+- `sat`
+- `toi_seconds`
+- `on_ice_toi_seconds`
+- `on_ice_gf`
+- `on_ice_ga`
+- `on_ice_sf`
+- `on_ice_sa`
+- `on_ice_satf`
+- `on_ice_sata`
+- `ixg`
+- `xsog`
+- `xg_per_sat`
+- `xsog_per_sat`
+- `sog_minus_xsog`
+- `goals_minus_ixg`
+- `ixg_share`
+- `on_ice_xgf`
+- `on_ice_xga`
+- `on_ice_xg_pct`
+- `on_ice_xg_diff`
+
+**Notes:**
+
+- The payload sends `league_abbrev` instead of a consumer-owned `league_id`.
+- gner8 resolves `league_abbrev`, `season_key`, `nhl_player_id`, and `stat_slug` to its local database ids.
 
 ---
 

@@ -1,0 +1,64 @@
+name: NHL Expected Goals Model
+type: Versioned Probability Model Pattern
+location:
+  - app/Console/Commands/BackfillNhlExpectedGoalsCommand.php
+  - app/Models/NhlExpectedGoalsModel.php
+  - app/Models/NhlExpectedGoalsModelBucket.php
+  - app/Models/NhlShotAttemptPrediction.php
+  - app/Services/NhlExpectedGoalsBackfiller.php
+  - database/migrations/2026_07_29_000003_create_nhl_expected_goals_tables.php
+  - database/migrations/2026_07_29_000004_add_prediction_target_to_nhl_expected_goals_tables.php
+  - docs/architecture/stats/NhlExpectedGoalsModel.yaml
+  - data/shot_attempts_model_analysis_20252026.md
+  - data/shot_attempts_model_input_20252026.csv
+purpose: Define the invariant rules for deriving expected-goals probabilities from NHL shot-attempt facts after the facts layer has been validated.
+when_to_use:
+  - Designing expected-goals probability models from nhl_shot_attempts_facts.
+  - Backfilling historical xG and xGA from validated shot-attempt facts.
+  - Backfilling historical xSOG from validated shot-attempt facts.
+  - Comparing observed shot-context goal rates with controlled model weights.
+  - Deciding which shot-attempt features can feed future xG predictions.
+  - Documenting modeling assumptions from local exploratory analysis before implementing stored predictions.
+when_not_to_use:
+  - Importing raw NHL play-by-play.
+  - Changing shot-attempt fact construction rules.
+  - Treating exploratory coefficients as production betting signals.
+  - Storing xG directly on nhl_shot_attempts_facts.
+  - Treating draft model outputs as published production signals before calibration and holdout validation are approved.
+rules:
+  - Shot outcome training samples must use classified shot types and exclude shootout attempts and empty-net attempts by default.
+  - Unknown shot type rows remain valid raw shot-attempt facts but must not feed predictive buckets or model training unless an explicit model version documents that choice.
+  - Raw grouped goal rates are discovery evidence only; factor weights require controlled modeling such as logistic regression or a successor approved model.
+  - Distance must be included as a primary continuous feature unless a future model version proves a superior transformation.
+  - Shot side and off-wing context must be treated as interaction candidates with distance, shot type, strength, and lane context rather than standalone danger labels.
+  - Rebound and rush context must be modeled with distance, timing, and previous-event interactions because raw lift can be absorbed by nearby location and event-sequence context.
+  - Previous event type and previous event timing are approved first-pass context features.
+  - Power-play and penalty-kill strength context may affect probability after controlling for location and shot type.
+  - Any model used for production xG must be evaluated on holdout games that were not used for fitting.
+  - First-pass bucket-smoothed xG predictions may be stored as draft model output for review and historical aggregation.
+  - First-pass bucket-smoothed xSOG predictions may be stored as draft model output for review and historical aggregation.
+  - xG must be modeled directly as P(goal | SAT context); xSOG must be modeled separately as P(shot_on_goal | SAT context).
+  - xG must not be calculated by multiplying xSOG by P(goal | SOG), because that compounds calibration error and changes the modeled target.
+  - The attempt result must not be used as an input feature for goal or shot-on-goal targets because it leaks the outcome.
+  - Production xG probabilities must be calibrated against observed outcomes before public display or downstream use.
+  - Calibration must compare predicted probability bands against actual goal rates and correct overconfidence before storing final expected-goals values.
+  - Model outputs, coefficients, calibration bands, and scored shot predictions belong in versioned xG tables, not in nhl_shot_attempts_facts.
+  - Historical xG and xGA must be derived by summing versioned goal-target shot-attempt prediction values by team_id or opponent_team_id.
+  - Historical xSOG must be derived by summing versioned shot_on_goal-target shot-attempt prediction values by shooter_player_id or team_id.
+  - Backfills must write predictions by model, prediction target, and shot-attempt fact id so reruns update rather than duplicate scored attempts.
+  - Analysis artifacts under data/ are evidence and bootstrap context, not canonical architecture authority.
+public_interface:
+  - nhl:xg:backfill
+  - nhl_expected_goals_models
+  - nhl_expected_goals_model_buckets
+  - nhl_shot_attempt_predictions
+  - nhl_shot_attempts_facts
+  - NhlExpectedGoalsBackfiller
+  - NhlExpectedGoalsModel
+  - NhlExpectedGoalsModelBucket
+  - NhlShotAttemptPrediction
+  - data/shot_attempts_model_input_20252026.csv
+  - data/shot_attempts_model_analysis_20252026.md
+  - docs/architecture/stats/NhlExpectedGoalsModel.yaml
+example_usage: |
+  php artisan nhl:xg:backfill --season=20252026 --version=bucket_smoothed_xg_v1 --target=goal --dry-run

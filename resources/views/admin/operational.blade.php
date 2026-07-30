@@ -133,13 +133,48 @@
                                             <span x-text="fantraxLeagueRefresh.running ? 'Refreshing...' : 'Refresh Leagues'"></span>
                                         </x-secondary-button>
                                     @endif
-                                    <x-primary-button
-                                        type="button"
-                                        x-on:click="startImport('{{ $import['key'] }}')"
-                                        x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
-                                    >
-                                        {{ $import['key'] === 'fantrax' ? 'Import' : 'Run Now' }}
-                                    </x-primary-button>
+                                    @if ($import['key'] === 'nhl' && !empty($import['actions']))
+                                        <div class="relative" x-data="{ open: false }" x-on:click.outside="open = false">
+                                            <x-primary-button
+                                                type="button"
+                                                x-on:click="open = !open"
+                                                x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
+                                                aria-haspopup="menu"
+                                                x-bind:aria-expanded="open ? 'true' : 'false'"
+                                            >
+                                                <span>Run Now</span>
+                                                <svg class="ml-2 h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                                </svg>
+                                            </x-primary-button>
+                                            <div
+                                                x-show="open"
+                                                x-transition
+                                                x-cloak
+                                                class="absolute right-0 z-50 mt-2 w-40 border border-gray-200 bg-white py-1 shadow-lg"
+                                                role="menu"
+                                            >
+                                                @foreach($import['actions'] as $action)
+                                                    <button
+                                                        type="button"
+                                                        class="flex w-full items-center px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                                                        x-on:click="open = false; startImport('{{ $import['key'] }}', '{{ $action['key'] }}')"
+                                                        role="menuitem"
+                                                    >
+                                                        {{ $action['label'] }}
+                                                    </button>
+                                                @endforeach
+                                            </div>
+                                        </div>
+                                    @else
+                                        <x-primary-button
+                                            type="button"
+                                            x-on:click="startImport('{{ $import['key'] }}')"
+                                            x-bind:disabled="streams['{{ $import['key'] }}']?.running === true"
+                                        >
+                                            {{ $import['key'] === 'fantrax' ? 'Import' : 'Run Now' }}
+                                        </x-primary-button>
+                                    @endif
                                 </div>
                             </div>
 

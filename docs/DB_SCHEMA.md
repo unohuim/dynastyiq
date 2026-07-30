@@ -55,6 +55,8 @@ Migrations remain the **sole source of truth**.
 - membership_tiers
 - memberships
 - nhl_boxscores
+- nhl_expected_goals_model_buckets
+- nhl_expected_goals_models
 - nhl_game_import_runs
 - nhl_game_source_statuses
 - nhl_game_summaries
@@ -65,6 +67,8 @@ Migrations remain the **sole source of truth**.
 - nhl_player_transactions
 - nhl_season_stats
 - nhl_shifts
+- nhl_shot_attempt_predictions
+- nhl_shot_attempts_facts
 - nhl_teams
 - nhl_unit_game_summaries
 - nhl_unit_players
@@ -2950,6 +2954,71 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_expected_goals_models
+
+**Organization-owned:** No
+**Purpose:** Versioned expected-goals or expected-shots-on-goal model definitions used to score shot-attempt facts.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| name | string(80) | No | Model name |
+| version | string(80) | No | Model version |
+| model_type | string(80) | No | Model family; defaults to `bucket_smoothed` |
+| prediction_target | string(32) | No | Prediction target; defaults to `goal` |
+| training_season_id | string(8) | Yes | Season used for training |
+| minimum_bucket_attempts | unsignedInteger | No | Minimum attempts before bucket fallback |
+| smoothing_prior_attempts | unsignedInteger | No | League-average smoothing prior |
+| training_filters | json | Yes | Training filter metadata |
+| feature_config | json | Yes | Feature configuration |
+| calibration_config | json | Yes | Calibration configuration |
+| metrics | json | Yes | Model metrics |
+| status | string(32) | No | Model status; defaults to `draft` |
+| trained_at | timestamp | Yes | Training timestamp |
+| published_at | timestamp | Yes | Publication timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(name, version, prediction_target)` (`uq_nhl_xg_models_name_version_target`)
+- Index: `(training_season_id, status)` (`ix_nhl_xg_models_training_status`)
+
+---
+
+## nhl_expected_goals_model_buckets
+
+**Organization-owned:** No
+**Purpose:** Stores observed and smoothed probability buckets for a versioned expected-goals model.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| bucket_key | string(600) | No | Stable bucket identity |
+| fallback_level | unsignedTinyInteger | No | Bucket fallback depth used by the model |
+| bucket_dimensions | json | No | Bucket dimensions |
+| attempts | unsignedInteger | No | Training attempts in bucket |
+| goals | unsignedInteger | No | Training goals in bucket |
+| raw_goal_rate | decimal(9,6) | No | Raw observed target rate |
+| smoothed_goal_probability | decimal(9,6) | No | Smoothed target probability |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- Unique: `(expected_goals_model_id, bucket_key)` (`uq_nhl_xg_buckets_model_key`)
+- Index: `(expected_goals_model_id, fallback_level)` (`ix_nhl_xg_buckets_level`)
+
+---
+
 ## nhl_shot_attempts_facts
 
 **Organization-owned:** No
@@ -2977,8 +3046,14 @@ Migrations remain the **sole source of truth**.
 | opponent_team_id | integer | Yes | Opposing team |
 | shooter_player_id | integer | Yes | Shooter |
 | shooter_shoots | string(1) | Yes | Shooter handedness snapshot from `players.shoots` |
+| shooter_height_inches | integer | Yes | Shooter height snapshot parsed from `players.height` |
+| shooter_weight_lbs | integer | Yes | Shooter weight snapshot from `players.weight` |
+| shooter_age_years | decimal(5,2) | Yes | Shooter age at `game_date` from `players.dob` |
 | goalie_player_id | integer | Yes | Goalie in net |
 | goalie_catches | string(1) | Yes | Goalie catches snapshot from `players.shoots` |
+| goalie_height_inches | integer | Yes | Goalie height snapshot parsed from `players.height` |
+| goalie_weight_lbs | integer | Yes | Goalie weight snapshot from `players.weight` |
+| goalie_age_years | decimal(5,2) | Yes | Goalie age at `game_date` from `players.dob` |
 | blocking_player_id | integer | Yes | Shot blocker |
 | period | integer | Yes | Period |
 | period_type | string(12) | Yes | Provider period type |
@@ -3038,6 +3113,54 @@ Migrations remain the **sole source of truth**.
 - Index: `(nhl_game_id, goalie_player_id)` (`ix_nhl_saf_game_goalie`)
 - Index: `(distance_bucket, angle_bucket, strength_bucket, shot_type_bucket)` (`ix_nhl_saf_bucket_inputs`)
 - Index: `(attempt_result, is_unblocked_attempt, is_shot_on_goal)` (`ix_nhl_saf_attempt_surface`)
+
+---
+
+## nhl_shot_attempt_predictions
+
+**Organization-owned:** No
+**Purpose:** Stores per-shot prediction outputs for versioned expected-goals and expected-shots-on-goal models.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| prediction_target | string(32) | No | Prediction target; defaults to `goal` |
+| shot_attempt_fact_id | bigint | No | FK -> `nhl_shot_attempts_facts.id` |
+| play_by_play_id | bigint | No | FK -> `play_by_plays.id` |
+| nhl_game_id | bigint | No | FK -> `nhl_games.nhl_game_id` |
+| season_id | string(8) | Yes | NHL season id |
+| game_date | date | Yes | Game date |
+| team_id | integer | Yes | Shooting/event-owner team |
+| opponent_team_id | integer | Yes | Opposing team |
+| shooter_player_id | integer | Yes | Shooter NHL id |
+| goalie_player_id | integer | Yes | Goalie NHL id |
+| is_scored | boolean | No | Whether the shot fact received a model score |
+| exclusion_reason | string(80) | Yes | Why the row was excluded from scoring |
+| raw_xg | decimal(9,6) | Yes | Raw model probability |
+| calibrated_xg | decimal(9,6) | Yes | Calibrated probability |
+| xg | decimal(9,6) | Yes | Active probability value used by summaries |
+| matched_bucket_key | string(600) | Yes | Bucket key used for scoring |
+| fallback_level | unsignedTinyInteger | Yes | Fallback depth used for scoring |
+| matched_bucket_payload | json | Yes | Matched bucket details |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_attempt_fact_id` references `nhl_shot_attempts_facts.id` with cascade delete
+- FK: `play_by_play_id` references `play_by_plays.id` with cascade delete
+- FK: `nhl_game_id` references `nhl_games.nhl_game_id` with cascade delete
+- Unique: `(expected_goals_model_id, shot_attempt_fact_id)` (`uq_nhl_xg_predictions_model_fact`)
+- Index: `(expected_goals_model_id, season_id, game_date)` (`ix_nhl_xg_predictions_model_date`)
+- Index: `(expected_goals_model_id, nhl_game_id, team_id)` (`ix_nhl_xg_predictions_game_team`)
+- Index: `(expected_goals_model_id, team_id, game_date)` (`ix_nhl_xg_predictions_team_date`)
+- Index: `(expected_goals_model_id, opponent_team_id, game_date)` (`ix_nhl_xg_predictions_opp_date`)
+- Index: `(prediction_target, season_id, game_date)` (`ix_nhl_xg_predictions_target_date`)
 
 ---
 

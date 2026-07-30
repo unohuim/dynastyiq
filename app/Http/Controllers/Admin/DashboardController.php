@@ -50,6 +50,7 @@ class DashboardController extends Controller
                 'run_url' => $this->importRunUrl($source),
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
+                'actions' => $source['actions'] ?? [],
             ];
         });
 

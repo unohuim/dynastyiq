@@ -16,7 +16,27 @@ class AdminImports
     public function sources()
     {
         return collect([
-            ['key' => 'nhl', 'label' => 'NHL Players', 'group' => 'player', 'command' => 'nhl:import', 'options' => ['--players' => true]],
+            [
+                'key' => 'nhl',
+                'label' => 'NHL Players',
+                'group' => 'player',
+                'command' => 'nhl:import',
+                'options' => ['--players' => true],
+                'actions' => [
+                    [
+                        'key' => 'full',
+                        'label' => 'Full Run',
+                        'command' => 'nhl:import',
+                        'options' => ['--players' => true],
+                    ],
+                    [
+                        'key' => 'update-db',
+                        'label' => 'Update DB',
+                        'command' => 'nhl:refresh-player-metadata',
+                        'options' => [],
+                    ],
+                ],
+            ],
             [
                 'key' => 'nhl-resolve-players',
                 'label' => 'Resolve NHL Players',
@@ -73,9 +93,12 @@ class AdminImports
         return $source;
     }
 
-    public function dispatch(string $key): Batch
+    /**
+     * Dispatch an admin import source.
+     */
+    public function dispatch(string $key, ?string $action = null): Batch
     {
-        $source = $this->source($key);
+        $source = $this->sourceForAction($key, $action);
 
         abort_unless(isset($source['command']), 409, 'This import source is not backed by an Artisan command.');
 
@@ -104,5 +127,28 @@ class AdminImports
         $importRun->update(['batch_id' => $batch->id]);
 
         return $batch;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function sourceForAction(string $key, ?string $action): array
+    {
+        $source = $this->source($key);
+
+        if ($action === null || $action === '' || $action === 'full') {
+            return $source;
+        }
+
+        $actions = collect($source['actions'] ?? []);
+        $selected = $actions->firstWhere('key', $action);
+
+        abort_unless(is_array($selected), 404);
+
+        $merged = array_merge($source, $selected);
+        $merged['key'] = $source['key'];
+        $merged['action'] = $selected['key'];
+
+        return $merged;
     }
 }

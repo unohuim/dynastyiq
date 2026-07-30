@@ -4,6 +4,8 @@ location:
   - app/Models/PlayerExternalIdentity.php
   - app/Events/PlayerExternalIdentityLinked.php
   - app/Console/Commands/ResolveNhlCommand.php
+  - app/Console/Commands/RefreshNhlPlayerMetadataCommand.php
+  - app/Jobs/RefreshNhlPlayerMetadataChunkJob.php
   - app/Jobs/ImportPlayersJob.php
   - app/Jobs/ImportNhlDraftPicksJob.php
   - app/Jobs/ResolveCanonicalPlayerNhlIdentityJob.php
@@ -32,6 +34,9 @@ rules:
   - NHL roster and prospect discovery must remember run-level normalized-name plus position-type fingerprints so later draft discovery can avoid duplicate canonical player creation without per-pick database checks.
   - NHL roster and prospect landing imports must retry transient provider failures for the individual NHL player id and record persistent transient failures without aborting the whole team import.
   - NHL roster, prospect, and draft per-player landing failures must be recorded and skipped without aborting the broader import run.
+  - NHL player landing imports must persist canonical player birth date, handedness, height, and weight when the landing payload provides those fields.
+  - The NHL player metadata refresh command must iterate existing players.nhl_id rows and refresh canonical landing metadata directly, because roster and prospect discovery endpoints are not complete coverage for historical local players.
+  - NHL player metadata refreshes from existing players.nhl_id rows must run as bounded chunk jobs so worker concurrency, retries, and failure isolation are available.
   - NHL draft discovery must be dispatched only after the roster and prospect discovery batch completes for the same import run.
   - NHL draft identities must check existing canonical players by normalized name and compatible position type before creating a minimal canonical prospect player.
   - NHL draft identities may create minimal canonical prospect players with nhl_id null only when no matching roster or prospect fingerprint was seen in the same import run and resolver evidence finds no canonical player.
@@ -86,6 +91,8 @@ public_interface:
   - ImportPlayersJob
   - ImportNhlDraftPicksJob
   - ResolveNhlCommand
+  - RefreshNhlPlayerMetadataCommand
+  - RefreshNhlPlayerMetadataChunkJob
   - ResolveCanonicalPlayerNhlIdentityJob
   - RefreshNhlPlayerLandingJob
   - PlayerNhlIdentityObserver

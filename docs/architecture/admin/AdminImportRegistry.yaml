@@ -4,6 +4,9 @@ location:
   - app/Services/AdminImports.php
   - app/Http/Controllers/Admin/ImportsController.php
   - app/Jobs/RunImportCommandJob.php
+  - app/Console/Commands/RefreshNhlPlayerMetadataCommand.php
+  - app/Jobs/RefreshNhlPlayerMetadataChunkJob.php
+  - bootstrap/app.php
   - resources/views/admin/imports.blade.php
   - resources/js/admin/admin-hub.js
 purpose: Define manually runnable import sources and dispatch them as queue batches from the admin UI.
@@ -20,6 +23,9 @@ rules:
   - OAuth-backed proof imports may use a direct bounded admin JSON endpoint only after an approved token storage model exists.
   - Admin import run progress should be read from import_runs progress fields rather than parsing command output.
   - NHL, Fantrax, and CapWages admin imports should update import_runs progress totals and processed counts when run from the admin panel.
+  - Admin import sources may expose named actions when one visible workflow needs multiple command-backed modes; named actions must still dispatch through the same queued admin import path and keep progress under the visible import source key.
+  - The NHL Players Update DB action must refresh existing canonical players from players.nhl_id through NHL player landing payloads and must not depend on roster or prospect discovery coverage.
+  - The NHL Players Update DB action must dispatch bounded chunk jobs under one visible import run so multiple queue workers can process metadata refreshes concurrently while the UI reports aggregate progress.
   - NHL resolution imports may queue reconciliation work for existing canonical players with null NHL ids and should report the command dispatch sweep through import_runs.
   - Fantrax admin imports should process player records in bounded sequential chunk jobs so resolver work does not exceed queue worker timeouts.
   - Empty commands for provider-owned imports must delete only provider-owned imported records and must preserve canonical players.
@@ -28,6 +34,7 @@ rules:
 public_interface:
   - AdminImports::sources()
   - AdminImports::dispatch()
+  - nhl:refresh-player-metadata
   - admin.imports
   - admin.imports.run
   - admin.imports.status

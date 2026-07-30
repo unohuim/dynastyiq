@@ -16,6 +16,7 @@ when_not_to_use:
   - Persistent status panels.
 rules:
   - Toasts are non-blocking feedback.
+  - Toast containers must render above drawers, slide-overs, modals, dropdowns, and fixed app chrome.
   - Toast behavior must remain covered by component tests when modified.
   - New toast usage must follow docs/UI_DESIGN.md feedback rules.
 public_interface:
@@ -25,4 +26,3 @@ example_usage: |
   window.dispatchEvent(new CustomEvent('toast', {
       detail: { type: 'success', message: 'Saved.' },
   }));
-

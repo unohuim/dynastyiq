@@ -83,6 +83,8 @@ class ImportNHLPlayer
         $player->position              = $data['position'] ?? null;
         $player->pos_type              = in_array($player->position, ['L', 'R', 'C'], true) ? 'F' : $player->position;
         $player->shoots                = $this->normalizeShootsCatches($data['shootsCatches'] ?? null);
+        $player->height                = $this->formatHeightFromInches($data['heightInInches'] ?? null);
+        $player->weight                = $this->nullableIntValue($data['weightInPounds'] ?? null);
         $player->current_league_abbrev = 'NHL';
         if (is_array($data['draftDetails'] ?? null)) {
             $this->applyDraftDetails($player, $data['draftDetails']);
@@ -359,6 +361,26 @@ class ImportNHLPlayer
         $normalized = strtoupper(trim((string) $value));
 
         return in_array($normalized, ['L', 'R'], true) ? $normalized : null;
+    }
+
+    private function formatHeightFromInches(mixed $value): ?string
+    {
+        if (! is_numeric($value)) {
+            return null;
+        }
+
+        $inches = (int) $value;
+
+        if ($inches <= 0) {
+            return null;
+        }
+
+        return sprintf("%d'%d\"", intdiv($inches, 12), $inches % 12);
+    }
+
+    private function nullableIntValue(mixed $value): ?int
+    {
+        return is_numeric($value) ? (int) $value : null;
     }
 
     /**

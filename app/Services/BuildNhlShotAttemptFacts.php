@@ -6,6 +6,8 @@ namespace App\Services;
 
 use App\Models\NhlGame;
 use App\Models\PlayByPlay;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -15,10 +17,6 @@ class BuildNhlShotAttemptFacts
 {
     private const FACT_VERSION = 'shot_attempt_facts_v1';
     private const REBOUND_WINDOW_SECONDS = 3;
-
-    public function __construct(private readonly NhlPbpEventNormalizer $normalizer)
-    {
-    }
 
     /**
      * Upsert shot-attempt facts for one NHL game.
@@ -38,7 +36,7 @@ class BuildNhlShotAttemptFacts
             ->orderBy('sort_order')
             ->orderBy('id')
             ->get();
-        $playerHands = $this->playerHandsForPlays($plays);
+        $playerProfiles = $this->playerProfilesForPlays($plays);
 
         $rows = [];
         $previousPlay = null;
@@ -50,7 +48,7 @@ class BuildNhlShotAttemptFacts
         ];
 
         foreach ($plays as $play) {
-            if (! $this->normalizer->isShotAttempt($play) && ! $this->normalizer->isPenaltyShotAttempt($play)) {
+            if (! $this->isShotAttemptFactSource($play) && ! $this->isPenaltyShotAttempt($play)) {
                 $this->applyGoalToScoreboard($scoreboard, $play, $game);
                 $previousPlay = $play;
                 continue;
@@ -67,7 +65,7 @@ class BuildNhlShotAttemptFacts
                 $previousTeamShot,
                 $scoreboard,
                 $rushContext,
-                $playerHands
+                $playerProfiles
             );
 
             if ($teamId !== null) {
@@ -109,19 +107,21 @@ class BuildNhlShotAttemptFacts
         ?PlayByPlay $previousTeamShot,
         array $scoreSnapshot,
         array $rushContext,
-        array $playerHands
+        array $playerProfiles
     ): array {
         $teamId = $this->nullableInt($play->event_owner_team_id);
         $opponentTeamId = $this->opponentTeamId($game, $teamId);
         $shooterPlayerId = $this->nullableInt($play->shooting_player_id ?? $play->scoring_player_id);
         $goaliePlayerId = $this->nullableInt($play->goalie_in_net_player_id);
-        $shooterShoots = $this->normalizeHand($shooterPlayerId ? ($playerHands[$shooterPlayerId] ?? null) : null);
-        $goalieCatches = $this->normalizeHand($goaliePlayerId ? ($playerHands[$goaliePlayerId] ?? null) : null);
-        $isPenaltyShot = $this->normalizer->isPenaltyShotAttempt($play);
-        $isShotOnGoal = $this->normalizer->isShotOnGoal($play);
-        $isUnblocked = $this->normalizer->isUnblockedShotAttempt($play) || $isPenaltyShot;
+        $shooterProfile = $shooterPlayerId ? ($playerProfiles[$shooterPlayerId] ?? []) : [];
+        $goalieProfile = $goaliePlayerId ? ($playerProfiles[$goaliePlayerId] ?? []) : [];
+        $shooterShoots = $this->normalizeHand($shooterProfile['shoots'] ?? null);
+        $goalieCatches = $this->normalizeHand($goalieProfile['shoots'] ?? null);
+        $isPenaltyShot = $this->isPenaltyShotAttempt($play);
+        $isShotOnGoal = $this->isShotOnGoalFact($play);
+        $isUnblocked = $this->isUnblockedShotAttemptFact($play) || $isPenaltyShot;
         $isGoal = (string) $play->type_desc_key === 'goal';
-        $isEmptyNet = $this->normalizer->isEmptyNetAgainst(
+        $isEmptyNet = $this->isEmptyNetAgainst(
             $play,
             $this->nullableInt($game->home_team_id),
             $this->nullableInt($game->away_team_id)
@@ -130,7 +130,8 @@ class BuildNhlShotAttemptFacts
         $previousShotDelta = $this->secondsDelta($play, $previousTeamShot);
         $isRebound = $previousShotDelta !== null && $previousShotDelta <= self::REBOUND_WINDOW_SECONDS;
         $absAngle = $play->shot_angle !== null ? abs((float) $play->shot_angle) : null;
-        $shotSide = $this->shotSide($play->shot_angle);
+        $shotSide = $this->shotSide($play, $game, $teamId);
+        $isOffWingAttempt = $this->isOffWingAttempt($shooterShoots, $shotSide, $play->shot_type);
         $scoreDifferential = $this->scoreDifferential(
             $scoreSnapshot['home_score'],
             $scoreSnapshot['away_score'],
@@ -157,8 +158,14 @@ class BuildNhlShotAttemptFacts
             'opponent_team_id' => $opponentTeamId,
             'shooter_player_id' => $shooterPlayerId,
             'shooter_shoots' => $shooterShoots,
+            'shooter_height_inches' => $shooterProfile['height_inches'] ?? null,
+            'shooter_weight_lbs' => $shooterProfile['weight_lbs'] ?? null,
+            'shooter_age_years' => $this->ageYearsAtGame($shooterProfile['dob'] ?? null, $game->game_date),
             'goalie_player_id' => $goaliePlayerId,
             'goalie_catches' => $goalieCatches,
+            'goalie_height_inches' => $goalieProfile['height_inches'] ?? null,
+            'goalie_weight_lbs' => $goalieProfile['weight_lbs'] ?? null,
+            'goalie_age_years' => $this->ageYearsAtGame($goalieProfile['dob'] ?? null, $game->game_date),
             'blocking_player_id' => $this->nullableInt($play->blocking_player_id),
             'period' => $this->nullableInt($play->period),
             'period_type' => $play->period_type,
@@ -179,7 +186,7 @@ class BuildNhlShotAttemptFacts
             'shot_angle' => $play->shot_angle,
             'abs_shot_angle' => $absAngle,
             'shot_side' => $shotSide,
-            'is_off_wing_attempt' => null,
+            'is_off_wing_attempt' => $isOffWingAttempt,
             'goalie_hand_matchup_bucket' => $this->goalieHandMatchupBucket($shooterShoots, $goalieCatches),
             'distance_bucket' => $this->distanceBucket($play->shot_distance),
             'angle_bucket' => $this->angleBucket($absAngle),
@@ -212,12 +219,12 @@ class BuildNhlShotAttemptFacts
     }
 
     /**
-     * Return normalized L/R hand values keyed by NHL player id.
+     * Return player context snapshots keyed by NHL player id.
      *
      * @param \Illuminate\Support\Collection<int, PlayByPlay> $plays
-     * @return array<int,string>
+     * @return array<int,array{shoots:?string,height_inches:?int,weight_lbs:?int,dob:mixed}>
      */
-    private function playerHandsForPlays($plays): array
+    private function playerProfilesForPlays($plays): array
     {
         $playerIds = $plays
             ->flatMap(fn (PlayByPlay $play): array => [
@@ -235,11 +242,102 @@ class BuildNhlShotAttemptFacts
 
         return DB::table('players')
             ->whereIn('nhl_id', $playerIds)
-            ->whereNotNull('shoots')
-            ->pluck('shoots', 'nhl_id')
-            ->map(fn ($hand): ?string => $this->normalizeHand($hand))
-            ->filter()
+            ->select(['nhl_id', 'shoots', 'height', 'weight', 'dob'])
+            ->get()
+            ->mapWithKeys(fn (object $player): array => [
+                (int) $player->nhl_id => [
+                    'shoots' => $this->normalizeHand($player->shoots),
+                    'height_inches' => $this->heightInches($player->height),
+                    'weight_lbs' => $this->nullableInt($player->weight),
+                    'dob' => $player->dob,
+                ],
+            ])
             ->all();
+    }
+
+    private function isShootout(PlayByPlay $play): bool
+    {
+        return $play->period_type === 'SO';
+    }
+
+    private function isShotAttemptFactSource(PlayByPlay $play): bool
+    {
+        if ($this->isShootout($play)) {
+            return false;
+        }
+
+        return in_array((string) $play->type_desc_key, [
+            'shot-on-goal',
+            'missed-shot',
+            'blocked-shot',
+            'goal',
+        ], true);
+    }
+
+    private function isShotOnGoalFact(PlayByPlay $play): bool
+    {
+        if ($this->isShootout($play)) {
+            return false;
+        }
+
+        return in_array((string) $play->type_desc_key, ['shot-on-goal', 'goal'], true);
+    }
+
+    private function isUnblockedShotAttemptFact(PlayByPlay $play): bool
+    {
+        if ($this->isShootout($play)) {
+            return false;
+        }
+
+        return $this->isShotOnGoalFact($play) || (string) $play->type_desc_key === 'missed-shot';
+    }
+
+    private function isPenaltyShotAttempt(PlayByPlay $play): bool
+    {
+        $metadata = $play->metadata ?? [];
+
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true) ?: [];
+        }
+
+        if (is_array($metadata) && ($metadata['is_penalty_shot_attempt'] ?? false) === true) {
+            return true;
+        }
+
+        $details = is_array($metadata) ? ($metadata['details'] ?? []) : [];
+        $description = strtolower((string) ($play->html_description ?? ''));
+
+        return str_starts_with(strtolower((string) ($play->desc_key ?? $details['descKey'] ?? '')), 'ps-')
+            || str_contains($description, 'penalty shot');
+    }
+
+    private function isEmptyNetAgainst(PlayByPlay $play, ?int $homeTeamId, ?int $awayTeamId): bool
+    {
+        if ($this->isShootout($play)) {
+            return false;
+        }
+
+        $ownerTeamId = $this->nullableInt($play->event_owner_team_id);
+
+        if ($ownerTeamId === null || $homeTeamId === null || $awayTeamId === null) {
+            return false;
+        }
+
+        $situationCode = substr((string) ($play->situation_code ?? ''), 0, 4);
+
+        if (strlen($situationCode) < 4) {
+            return false;
+        }
+
+        if ($ownerTeamId === $homeTeamId) {
+            return $situationCode[0] === '0';
+        }
+
+        if ($ownerTeamId === $awayTeamId) {
+            return $situationCode[3] === '0';
+        }
+
+        return false;
     }
 
     private function attemptResult(PlayByPlay $play, bool $isPenaltyShot, bool $isGoal): string
@@ -308,7 +406,7 @@ class BuildNhlShotAttemptFacts
         ?PlayByPlay $previousTeamShot,
         ?array $previousRushSequence
     ): array {
-        if ($this->normalizer->isEmptyNetAgainst(
+        if ($this->isEmptyNetAgainst(
             $play,
             $this->nullableInt($game->home_team_id),
             $this->nullableInt($game->away_team_id)
@@ -569,19 +667,65 @@ class BuildNhlShotAttemptFacts
         return 'other';
     }
 
-    private function shotSide(mixed $shotAngle): string
+    private function shotSide(PlayByPlay $play, NhlGame $game, ?int $teamId): string
     {
-        if ($shotAngle === null || $shotAngle === '') {
+        $yCoord = $this->nullableInt($play->y_coord);
+
+        if ($yCoord === null) {
             return 'unknown';
         }
 
-        $angle = (float) $shotAngle;
+        if (abs($yCoord) < 10) {
+            return 'center';
+        }
 
-        return match (true) {
-            $angle < 0 => 'left',
-            $angle > 0 => 'right',
-            default => 'center',
-        };
+        $attackingNetSide = $this->attackingNetSide($play, $game, $teamId);
+
+        if ($attackingNetSide === null) {
+            return 'unknown';
+        }
+
+        if ($attackingNetSide === 'right') {
+            return $yCoord < 0 ? 'left' : 'right';
+        }
+
+        return $yCoord > 0 ? 'left' : 'right';
+    }
+
+    private function attackingNetSide(PlayByPlay $play, NhlGame $game, ?int $teamId): ?string
+    {
+        $homeDefendingSide = strtolower(trim((string) $play->home_team_defending_side));
+
+        if (! in_array($homeDefendingSide, ['left', 'right'], true) || $teamId === null) {
+            return null;
+        }
+
+        $homeTeamId = $this->nullableInt($game->home_team_id);
+        $awayTeamId = $this->nullableInt($game->away_team_id);
+
+        if ($teamId === $homeTeamId) {
+            return $homeDefendingSide === 'left' ? 'right' : 'left';
+        }
+
+        if ($teamId === $awayTeamId) {
+            return $homeDefendingSide;
+        }
+
+        return null;
+    }
+
+    private function isOffWingAttempt(?string $shooterShoots, string $shotSide, ?string $shotType): ?bool
+    {
+        if ($this->shotTypeBucket($shotType) === 'unknown') {
+            return null;
+        }
+
+        if ($shooterShoots === null || ! in_array($shotSide, ['left', 'right'], true)) {
+            return null;
+        }
+
+        return ($shooterShoots === 'R' && $shotSide === 'left')
+            || ($shooterShoots === 'L' && $shotSide === 'right');
     }
 
     private function normalizeHand(mixed $hand): ?string
@@ -598,6 +742,51 @@ class BuildNhlShotAttemptFacts
         }
 
         return 'shooter_' . strtolower($shooterShoots) . '_vs_goalie_' . strtolower($goalieCatches);
+    }
+
+    private function heightInches(mixed $height): ?int
+    {
+        $height = trim((string) $height);
+
+        if ($height === '') {
+            return null;
+        }
+
+        if (preg_match('/^(\d+)\s*[\'-]\s*(\d+)/', $height, $matches) === 1) {
+            return ((int) $matches[1] * 12) + (int) $matches[2];
+        }
+
+        if (ctype_digit($height)) {
+            $inches = (int) $height;
+
+            return $inches > 0 ? $inches : null;
+        }
+
+        return null;
+    }
+
+    private function ageYearsAtGame(mixed $dob, mixed $gameDate): ?float
+    {
+        if ($dob === null || $gameDate === null) {
+            return null;
+        }
+
+        try {
+            $birthDate = $dob instanceof CarbonInterface
+                ? CarbonImmutable::instance($dob)
+                : CarbonImmutable::parse((string) $dob);
+            $playedOn = $gameDate instanceof CarbonInterface
+                ? CarbonImmutable::instance($gameDate)
+                : CarbonImmutable::parse((string) $gameDate);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($birthDate->greaterThan($playedOn)) {
+            return null;
+        }
+
+        return round($birthDate->diffInDays($playedOn) / 365.2425, 2);
     }
 
     private function secondsDelta(PlayByPlay $play, ?PlayByPlay $previousPlay): ?int

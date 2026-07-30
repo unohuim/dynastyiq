@@ -5,6 +5,8 @@ location:
   - app/Console/Commands/CreateApiClientCommand.php
   - app/Http/Middleware/AuthenticateApiClient.php
   - app/Http/Controllers/Api/NhlReferenceController.php
+  - app/Http/Controllers/Api/NhlSeasonStatsController.php
+  - app/Services/NhlSeasonStatsPayload.php
   - database/migrations/2026_07_27_000002_create_api_clients_table.php
   - routes/api.php
 purpose: Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
@@ -12,6 +14,7 @@ when_to_use:
   - Creating revocable API tokens for first-party or partner applications.
   - Protecting reference-data API endpoints consumed by another server.
   - Exposing DynastyIQ-owned NHL reference data to a scoped integration.
+  - Exposing DynastyIQ-owned NHL season stats and expected-stat outputs to a scoped integration.
 when_not_to_use:
   - Browser session authentication.
   - User-owned OAuth provider credentials.
@@ -24,11 +27,16 @@ rules:
   - Revoked clients must not authenticate.
   - Partner-facing payloads must use stable external identifiers rather than DynastyIQ primary keys as their primary lookup keys.
   - NHL reference endpoints must assume the consumer owns its local league id mapping.
+  - NHL season stats endpoints must send league_abbrev and stable NHL lookup keys, not consumer-owned league_id values.
+  - NHL season stats endpoints must require the explicit nhl-stats:read scope.
+  - NHL season stats endpoints must support stat_group and window_key slicing so consumers can import full seasons through bounded chunked requests.
+  - NHL season stats player_stats rows must expose consistent supported windows across basic, on_ice, and expected stat groups: season, last_5, last_10, and last_20 when qualifying data exists.
 public_interface:
   - api-client:create
   - api.client middleware
   - api_clients
   - GET /api/nhl-teams
   - GET /api/nhl-players
+  - GET /api/nhl-season-stats
 example_usage: |
-  php artisan api-client:create gner8 --scope=nhl-reference:read
+  php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read

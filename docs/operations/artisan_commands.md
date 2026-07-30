@@ -11,8 +11,11 @@ Do not run import, sync, migration, queue, scheduler, or destructive commands fr
 | `php artisan nhl:discover` | Dispatches jobs | Discover NHL games for a date window and queue per-day discovery jobs. | Options include `--date`, `--season`, `--start`, `--end`, `--days`, and `--newdays`. |
 | `php artisan nhl:process` | Dispatches/claims jobs | Supervise run-aware NHL import orchestration for queued discovery runs. | Processes scheduled game stages through the orchestrator. |
 | `php artisan nhl:import --players` | Dispatches batch/jobs | Import NHL team player pools, then draft picks. | Supports `--import-run-id` for admin tracking. |
+| `php artisan nhl:refresh-player-metadata` | Dispatches batch/jobs | Refresh existing canonical NHL players from NHL player landing payloads. | Supports `--import-run-id`; admin Update DB uses bounded chunk jobs so multiple workers can process concurrently. |
 | `php artisan nhl:resolve --players` | Dispatches jobs by default | Resolve canonical players without NHL IDs. | Use `--inline` to run directly instead of queueing resolver jobs. |
 | `php artisan nhl:sum --season=20252026` | Dispatches job | Rebuild season aggregates from `nhl_game_summaries`. | Required after changing game summaries that affect season totals. |
+| `php artisan nhl:xg:backfill --season=20252026 --target=goal` | Runs directly; admin UI may dispatch job | Train/backfill bucket-smoothed expected-goals or expected-shots-on-goal predictions from shot-attempt facts. | Supports `--target=goal`, `--target=shot_on_goal`, `--version`, `--min-attempts`, `--prior`, and `--dry-run`. |
+| `php artisan nhl:repair-duplicate-pbp` | Reports by default; dispatches jobs with `--queue` | Report duplicate-PBP repair ledger status and optionally queue affected game rebuilds. | Duplicate-row removal is separate from rebuild queueing; supports `--queue`, `--limit`, and `--all`. |
 | `php artisan nhl:refresh-goalie-decisions --season=20252026 --queue` | Dispatches jobs with `--queue`; runs directly otherwise | Refresh goalie decisions from NHL boxscore goalie rows without reprocessing PBP, shifts, or units. | Also supports `--game-id`, `--date-from`, and `--date-to`; run `nhl:sum` afterward. Use `--queue` for season/window backfills. |
 | `php artisan nhl:refresh-special-teams-splits --season=20252026 --queue` | Dispatches jobs with `--queue`; runs directly otherwise | Rebuild PBP-derived game-summary special-teams splits from already imported play-by-play rows. | Skips goalie boxscore reconciliation; also supports `--game-id`, `--date-from`, and `--date-to`; run `nhl:sum` afterward. Use `--queue` for season/window backfills. |
 | `php artisan nhl:backfill-shot-geometry` | Runs directly | Compute missing shot distance and angle values for shot-attempt play rows. | Supports `--game-id` and `--chunk`. |
@@ -30,6 +33,12 @@ Do not run import, sync, migration, queue, scheduler, or destructive commands fr
 | `php artisan fantrax:import-category-definitions` | Runs directly | Import Fantrax scoring-category dictionary definitions from CSV. | Default path is `docs/import-templates/fantrax_category_alignment.csv`; supports `--import-run-id`. |
 | `php artisan fantrax:inspect-logos` | Runs directly | Inspect Fantrax payloads for logo-like keys and image URLs. | Diagnostic command only; Fantrax logo support is tabled. |
 | `php artisan fx:empty` | Runs directly, destructive | Remove Fantrax-owned imported player data. | Does not delete canonical players or league connections. |
+
+## API
+
+| Command | Runs | Purpose | Notes |
+| --- | --- | --- | --- |
+| `php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read` | Runs directly | Create a scoped server-to-server API bearer token. | Plaintext token is shown once; revoke or rotate old clients in `api_clients` when needed. |
 
 ## Platform Leagues
 
