@@ -20,6 +20,7 @@ Do not run import, sync, migration, queue, scheduler, or destructive commands fr
 | `php artisan nhl:refresh-special-teams-splits --season=20252026 --queue` | Dispatches jobs with `--queue`; runs directly otherwise | Rebuild PBP-derived game-summary special-teams splits from already imported play-by-play rows. | Skips goalie boxscore reconciliation; also supports `--game-id`, `--date-from`, and `--date-to`; run `nhl:sum` afterward. Use `--queue` for season/window backfills. |
 | `php artisan nhl:backfill-shot-geometry` | Runs directly | Compute missing shot distance and angle values for shot-attempt play rows. | Supports `--game-id` and `--chunk`. |
 | `php artisan nhl:shots:empty-facts --force` | Runs directly, destructive | Remove `nhl_shot_attempts_facts` and dependent shot prediction rows. | Prompts for confirmation unless `--force` is provided; uses Postgres `TRUNCATE ... RESTART IDENTITY CASCADE`. |
+| `php artisan nhl:imports:empty-progress --force` | Runs directly, destructive | Remove `nhl_import_progress` and `nhl_game_import_runs` rows. | Prompts for confirmation unless `--force` is provided; clears admin Game Imports orchestration/progress state without deleting imported game data. |
 | `php artisan nhl:empty --games` | Runs directly, destructive | Remove NHL game-derived import data. | Preserves canonical players and NHL team reference data. |
 | `php artisan nhl:empty --players` | Runs directly, destructive | Remove NHL player stats and NHL/NHL draft player external identities. | Preserves canonical players and game-derived import data. |
 
