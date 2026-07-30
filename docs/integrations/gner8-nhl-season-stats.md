@@ -71,7 +71,7 @@ Top-level payload:
 | `league_abbrev` | string | Always `NHL`. gner8 maps this to its local `league_id`. |
 | `season` | object | Requested season metadata. |
 | `stat_types` | array | All stat definitions currently emitted by DynastyIQ. |
-| `player_stats` | array | Player stat values by stat type and window. |
+| `player_stats` | array | Skater and goalie stat values by stat type and window. |
 | `player_stat_features` | array | Derived comparison features, currently recent expected-rate vs season baseline. |
 | `meta` | object | Source and request metadata. |
 
@@ -168,7 +168,7 @@ Top-level payload:
 
 ## Windows
 
-DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected` player stat rows when the player has qualifying data for that window.
+DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected` player stat rows when the player has qualifying data for that window. Goalie rows use the same endpoint, same `player_stats[]` shape, and distinct goalie stat slugs.
 
 | Window | Meaning |
 | --- | --- |
@@ -188,6 +188,23 @@ DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected`
 | `shots_on_goal` | `basic` | `shots` | Shots on goal. |
 | `sat` | `basic` | `attempts` | Shot attempts. |
 | `toi_seconds` | `basic` | `seconds` | Total time on ice in seconds. |
+| `goalie_starts` | `basic` | `games` | Goalie starts. |
+| `goalie_relief_appearances` | `basic` | `games` | Goalie relief appearances. |
+| `goalie_wins` | `basic` | `wins` | Goalie wins, including overtime and shootout wins. |
+| `goalie_losses` | `basic` | `losses` | Regulation goalie losses. |
+| `goalie_ot_losses` | `basic` | `losses` | Overtime goalie losses. |
+| `goalie_overtime_wins` | `basic` | `wins` | Overtime goalie wins. |
+| `goalie_shootout_wins` | `basic` | `wins` | Shootout goalie wins. |
+| `goalie_shootout_losses` | `basic` | `losses` | Shootout goalie losses. |
+| `goalie_shots_against` | `basic` | `shots` | Goalie shots against. |
+| `goalie_saves` | `basic` | `saves` | Goalie saves. |
+| `goalie_goals_against` | `basic` | `goals` | Goalie goals against. |
+| `goalie_save_percentage` | `basic` | `percent` | Saves divided by shots against. |
+| `goalie_goals_against_average` | `basic` | `goals` | Goals against per 60 goalie TOI minutes. |
+| `goalie_shutouts` | `basic` | `shutouts` | Goalie shutouts. |
+| `goalie_quality_starts` | `basic` | `starts` | Goalie quality starts. |
+| `goalie_really_bad_starts` | `basic` | `starts` | Goalie really bad starts. |
+| `goalie_quality_start_percentage` | `basic` | `percent` | Quality starts divided by starts. |
 | `on_ice_toi_seconds` | `on_ice` | `seconds` | On-ice time in seconds. |
 | `on_ice_gf` | `on_ice` | `goals` | Goals for while on ice. |
 | `on_ice_ga` | `on_ice` | `goals` | Goals against while on ice. |
@@ -206,6 +223,11 @@ DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected`
 | `on_ice_xga` | `expected` | `goals` | Expected goals against while on ice. |
 | `on_ice_xg_pct` | `expected` | `percent` | On-ice xG share: xGF / (xGF + xGA). |
 | `on_ice_xg_diff` | `expected` | `goals` | On-ice xGF minus xGA. |
+| `goalie_xga` | `expected` | `goals` | Expected goals against assigned to the goalie in net. |
+| `goalie_xsoga` | `expected` | `shots` | Expected shots on goal against assigned to the goalie in net. |
+| `goalie_xsaves` | `expected` | `saves` | Expected saves: `goalie_xsoga - goalie_xga`. |
+| `goalie_gsax` | `expected` | `goals` | Goals saved above expected: `goalie_xga - actual goals against`. |
+| `goalie_xsave_percentage` | `expected` | `percent` | Expected save percentage: `goalie_xsaves / goalie_xsoga`. |
 
 ## Ingestion Order
 
@@ -256,4 +278,5 @@ foreach ($statGroups as $statGroup) {
 - Expected stats require DynastyIQ xG and xSOG predictions for the requested season.
 - On-ice expected stats require DynastyIQ event-to-shift links.
 - A row is emitted only when the player has qualifying data for that stat/window.
+- Goalie expected stats require shot-attempt facts with `goalie_player_id` and scored xG/xSOG predictions.
 - Feature rows currently compare recent `last_10` expected-rate values against the season baseline.

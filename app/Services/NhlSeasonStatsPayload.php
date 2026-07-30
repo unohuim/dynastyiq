@@ -233,6 +233,23 @@ class NhlSeasonStatsPayload
             $this->statType('shots_on_goal', 'Shots On Goal', 'basic', 'integer', 'shots', true, true, true),
             $this->statType('sat', 'Shot Attempts', 'basic', 'integer', 'attempts', true, true, true),
             $this->statType('toi_seconds', 'TOI Seconds', 'basic', 'integer', 'seconds', false, false, true),
+            $this->statType('goalie_starts', 'Goalie Starts', 'basic', 'integer', 'games', true, false, true),
+            $this->statType('goalie_relief_appearances', 'Goalie Relief Appearances', 'basic', 'integer', 'games', true, false, true),
+            $this->statType('goalie_wins', 'Goalie Wins', 'basic', 'integer', 'wins', true, false, true),
+            $this->statType('goalie_losses', 'Goalie Losses', 'basic', 'integer', 'losses', true, false, false),
+            $this->statType('goalie_ot_losses', 'Goalie Overtime Losses', 'basic', 'integer', 'losses', true, false, false),
+            $this->statType('goalie_overtime_wins', 'Goalie Overtime Wins', 'basic', 'integer', 'wins', true, false, true),
+            $this->statType('goalie_shootout_wins', 'Goalie Shootout Wins', 'basic', 'integer', 'wins', true, false, true),
+            $this->statType('goalie_shootout_losses', 'Goalie Shootout Losses', 'basic', 'integer', 'losses', true, false, false),
+            $this->statType('goalie_shots_against', 'Goalie Shots Against', 'basic', 'integer', 'shots', true, true, false),
+            $this->statType('goalie_saves', 'Goalie Saves', 'basic', 'integer', 'saves', true, true, true),
+            $this->statType('goalie_goals_against', 'Goalie Goals Against', 'basic', 'integer', 'goals', true, true, false),
+            $this->statType('goalie_save_percentage', 'Goalie Save Percentage', 'basic', 'percentage', 'percent', false, false, true),
+            $this->statType('goalie_goals_against_average', 'Goalie Goals Against Average', 'basic', 'decimal', 'goals', false, false, false),
+            $this->statType('goalie_shutouts', 'Goalie Shutouts', 'basic', 'integer', 'shutouts', true, false, true),
+            $this->statType('goalie_quality_starts', 'Goalie Quality Starts', 'basic', 'integer', 'starts', true, false, true),
+            $this->statType('goalie_really_bad_starts', 'Goalie Really Bad Starts', 'basic', 'integer', 'starts', true, false, false),
+            $this->statType('goalie_quality_start_percentage', 'Goalie Quality Start Percentage', 'basic', 'percentage', 'percent', false, false, true),
             $this->statType('on_ice_toi_seconds', 'On-Ice TOI Seconds', 'on_ice', 'integer', 'seconds', false, false, true),
             $this->statType('on_ice_gf', 'On-Ice Goals For', 'on_ice', 'integer', 'goals', true, true, true),
             $this->statType('on_ice_ga', 'On-Ice Goals Against', 'on_ice', 'integer', 'goals', true, true, false),
@@ -251,6 +268,11 @@ class NhlSeasonStatsPayload
             $this->statType('on_ice_xga', 'On-Ice xGA', 'expected', 'decimal', 'goals', true, true, false),
             $this->statType('on_ice_xg_pct', 'On-Ice xG%', 'expected', 'percentage', 'percent', false, false, true),
             $this->statType('on_ice_xg_diff', 'On-Ice xG Diff', 'expected', 'decimal', 'goals', false, false, true),
+            $this->statType('goalie_xga', 'Goalie xGA', 'expected', 'decimal', 'goals', true, true, false),
+            $this->statType('goalie_xsoga', 'Goalie xSOG Against', 'expected', 'decimal', 'shots', true, true, false),
+            $this->statType('goalie_xsaves', 'Goalie Expected Saves', 'expected', 'decimal', 'saves', true, true, true),
+            $this->statType('goalie_gsax', 'Goalie Goals Saved Above Expected', 'expected', 'decimal', 'goals', true, true, true),
+            $this->statType('goalie_xsave_percentage', 'Goalie Expected Save Percentage', 'expected', 'percentage', 'percent', false, false, true),
         ];
     }
 
@@ -306,14 +328,24 @@ class NhlSeasonStatsPayload
             'sat' => 'sat',
             'toi_seconds' => 'toi',
         ];
+        $goalieStats = $this->goalieBasicStats();
 
         return DB::table('nhl_season_stats')
             ->where('season_id', $seasonKey)
             ->where('game_type', $gameType)
-            ->select(['nhl_player_id', 'nhl_team_id', 'gp', 'g', 'a', 'pts', 'sog', 'sat', 'toi'])
+            ->select(array_merge(
+                ['nhl_player_id', 'nhl_team_id', 'gp', 'g', 'a', 'pts', 'sog', 'sat', 'toi'],
+                array_values($goalieStats)
+            ))
             ->get()
-            ->flatMap(function (object $row) use ($stats, $seasonKey, $season, $sourceFetchedAt, $statTypeGroups): array {
-                return collect($stats)
+            ->flatMap(function (object $row) use (
+                $stats,
+                $seasonKey,
+                $season,
+                $sourceFetchedAt,
+                $statTypeGroups
+            ): array {
+                $rows = collect($stats)
                     ->map(fn (string $column, string $slug): array => $this->playerStatRow(
                         seasonKey: $seasonKey,
                         nhlPlayerId: (int) $row->nhl_player_id,
@@ -329,6 +361,28 @@ class NhlSeasonStatsPayload
                     ))
                     ->values()
                     ->all();
+
+                if (! $this->hasGoalieBasicEvidence($row)) {
+                    return $rows;
+                }
+
+                foreach ($this->goalieBasicValues($row) as $slug => $value) {
+                    $rows[] = $this->playerStatRow(
+                        seasonKey: $seasonKey,
+                        nhlPlayerId: (int) $row->nhl_player_id,
+                        statSlug: $slug,
+                        statGroup: $statTypeGroups[$slug] ?? 'basic',
+                        windowKey: 'season',
+                        windowGames: (int) $row->gp,
+                        startDate: $season['starts_on'] ?? null,
+                        endDate: $season['ends_on'] ?? null,
+                        value: $value,
+                        sourceFetchedAt: $sourceFetchedAt,
+                        metadata: ['nhl_team_id' => (int) $row->nhl_team_id, 'position_group' => 'goalie']
+                    );
+                }
+
+                return $rows;
             });
     }
 
@@ -383,6 +437,29 @@ class NhlSeasonStatsPayload
                             metadata: ['nhl_team_id' => $row->nhl_team_id !== null ? (int) $row->nhl_team_id : null]
                         );
                     }
+
+                    if (! $this->hasGoalieBasicWindowEvidence($row, $windowGames)) {
+                        continue;
+                    }
+
+                    foreach ($this->goalieBasicWindowValues($row, $windowGames) as $slug => $value) {
+                        $rows[] = $this->playerStatRow(
+                            seasonKey: $seasonKey,
+                            nhlPlayerId: (int) $row->nhl_player_id,
+                            statSlug: $slug,
+                            statGroup: $statTypeGroups[$slug] ?? 'basic',
+                            windowKey: 'last_' . $windowGames,
+                            windowGames: $actualGames,
+                            startDate: $row->{'start_date_' . $windowGames} ?? null,
+                            endDate: $row->{'end_date_' . $windowGames} ?? null,
+                            value: $value,
+                            sourceFetchedAt: $sourceFetchedAt,
+                            metadata: [
+                                'nhl_team_id' => $row->nhl_team_id !== null ? (int) $row->nhl_team_id : null,
+                                'position_group' => 'goalie',
+                            ]
+                        );
+                    }
                 }
 
                 return $rows;
@@ -405,7 +482,28 @@ WITH player_games AS (
         SUM(summaries.pts) as pts,
         SUM(summaries.sog) as sog,
         SUM(summaries.sat) as sat,
-        SUM(summaries.toi) as toi
+        SUM(summaries.toi) as toi,
+        SUM(summaries.sa) as sa,
+        SUM(summaries.sv) as sv,
+        SUM(summaries.ga) as ga,
+        SUM(summaries.evsa) as evsa,
+        SUM(summaries.evsv) as evsv,
+        SUM(summaries.ppsa) as ppsa,
+        SUM(summaries.ppsv) as ppsv,
+        SUM(summaries.pksa) as pksa,
+        SUM(summaries.pksv) as pksv,
+        SUM(summaries.shosv) as shosv,
+        SUM(summaries.so) as so,
+        SUM(CASE WHEN summaries.goalie_started THEN 1 ELSE 0 END) as starts,
+        SUM(CASE WHEN summaries.goalie_decision IS NOT NULL AND summaries.toi > 0 AND NOT summaries.goalie_started THEN 1 ELSE 0 END) as relief_appearances,
+        SUM(CASE WHEN summaries.goalie_decision IN ('W', 'OTW', 'SOW') THEN 1 ELSE 0 END) as wins,
+        SUM(CASE WHEN summaries.goalie_decision = 'L' THEN 1 ELSE 0 END) as losses,
+        SUM(CASE WHEN summaries.goalie_decision = 'OTL' THEN 1 ELSE 0 END) as ot_losses,
+        SUM(CASE WHEN summaries.goalie_decision = 'OTW' THEN 1 ELSE 0 END) as overtime_wins,
+        SUM(CASE WHEN summaries.goalie_decision = 'SOW' THEN 1 ELSE 0 END) as shootout_wins,
+        SUM(CASE WHEN summaries.goalie_decision = 'SOL' THEN 1 ELSE 0 END) as shootout_losses,
+        SUM(CASE WHEN summaries.quality_start THEN 1 ELSE 0 END) as quality_starts,
+        SUM(CASE WHEN summaries.really_bad_start THEN 1 ELSE 0 END) as really_bad_starts
     FROM nhl_game_summaries summaries
     INNER JOIN nhl_games games ON games.nhl_game_id = summaries.nhl_game_id
     INNER JOIN players ON players.nhl_id = summaries.nhl_player_id
@@ -452,6 +550,27 @@ SELECT
     SUM(sog) FILTER (WHERE recent_rank <= 5) as sog_5,
     SUM(sat) FILTER (WHERE recent_rank <= 5) as sat_5,
     SUM(toi) FILTER (WHERE recent_rank <= 5) as toi_5,
+    SUM(sa) FILTER (WHERE recent_rank <= 5) as sa_5,
+    SUM(sv) FILTER (WHERE recent_rank <= 5) as sv_5,
+    SUM(ga) FILTER (WHERE recent_rank <= 5) as ga_5,
+    SUM(evsa) FILTER (WHERE recent_rank <= 5) as evsa_5,
+    SUM(evsv) FILTER (WHERE recent_rank <= 5) as evsv_5,
+    SUM(ppsa) FILTER (WHERE recent_rank <= 5) as ppsa_5,
+    SUM(ppsv) FILTER (WHERE recent_rank <= 5) as ppsv_5,
+    SUM(pksa) FILTER (WHERE recent_rank <= 5) as pksa_5,
+    SUM(pksv) FILTER (WHERE recent_rank <= 5) as pksv_5,
+    SUM(shosv) FILTER (WHERE recent_rank <= 5) as shosv_5,
+    SUM(so) FILTER (WHERE recent_rank <= 5) as so_5,
+    SUM(starts) FILTER (WHERE recent_rank <= 5) as starts_5,
+    SUM(relief_appearances) FILTER (WHERE recent_rank <= 5) as relief_appearances_5,
+    SUM(wins) FILTER (WHERE recent_rank <= 5) as wins_5,
+    SUM(losses) FILTER (WHERE recent_rank <= 5) as losses_5,
+    SUM(ot_losses) FILTER (WHERE recent_rank <= 5) as ot_losses_5,
+    SUM(overtime_wins) FILTER (WHERE recent_rank <= 5) as overtime_wins_5,
+    SUM(shootout_wins) FILTER (WHERE recent_rank <= 5) as shootout_wins_5,
+    SUM(shootout_losses) FILTER (WHERE recent_rank <= 5) as shootout_losses_5,
+    SUM(quality_starts) FILTER (WHERE recent_rank <= 5) as quality_starts_5,
+    SUM(really_bad_starts) FILTER (WHERE recent_rank <= 5) as really_bad_starts_5,
     COUNT(*) FILTER (WHERE recent_rank <= 10) as gp_10,
     MIN(game_date) FILTER (WHERE recent_rank <= 10) as start_date_10,
     MAX(game_date) FILTER (WHERE recent_rank <= 10) as end_date_10,
@@ -461,6 +580,27 @@ SELECT
     SUM(sog) FILTER (WHERE recent_rank <= 10) as sog_10,
     SUM(sat) FILTER (WHERE recent_rank <= 10) as sat_10,
     SUM(toi) FILTER (WHERE recent_rank <= 10) as toi_10,
+    SUM(sa) FILTER (WHERE recent_rank <= 10) as sa_10,
+    SUM(sv) FILTER (WHERE recent_rank <= 10) as sv_10,
+    SUM(ga) FILTER (WHERE recent_rank <= 10) as ga_10,
+    SUM(evsa) FILTER (WHERE recent_rank <= 10) as evsa_10,
+    SUM(evsv) FILTER (WHERE recent_rank <= 10) as evsv_10,
+    SUM(ppsa) FILTER (WHERE recent_rank <= 10) as ppsa_10,
+    SUM(ppsv) FILTER (WHERE recent_rank <= 10) as ppsv_10,
+    SUM(pksa) FILTER (WHERE recent_rank <= 10) as pksa_10,
+    SUM(pksv) FILTER (WHERE recent_rank <= 10) as pksv_10,
+    SUM(shosv) FILTER (WHERE recent_rank <= 10) as shosv_10,
+    SUM(so) FILTER (WHERE recent_rank <= 10) as so_10,
+    SUM(starts) FILTER (WHERE recent_rank <= 10) as starts_10,
+    SUM(relief_appearances) FILTER (WHERE recent_rank <= 10) as relief_appearances_10,
+    SUM(wins) FILTER (WHERE recent_rank <= 10) as wins_10,
+    SUM(losses) FILTER (WHERE recent_rank <= 10) as losses_10,
+    SUM(ot_losses) FILTER (WHERE recent_rank <= 10) as ot_losses_10,
+    SUM(overtime_wins) FILTER (WHERE recent_rank <= 10) as overtime_wins_10,
+    SUM(shootout_wins) FILTER (WHERE recent_rank <= 10) as shootout_wins_10,
+    SUM(shootout_losses) FILTER (WHERE recent_rank <= 10) as shootout_losses_10,
+    SUM(quality_starts) FILTER (WHERE recent_rank <= 10) as quality_starts_10,
+    SUM(really_bad_starts) FILTER (WHERE recent_rank <= 10) as really_bad_starts_10,
     COUNT(*) FILTER (WHERE recent_rank <= 20) as gp_20,
     MIN(game_date) FILTER (WHERE recent_rank <= 20) as start_date_20,
     MAX(game_date) FILTER (WHERE recent_rank <= 20) as end_date_20,
@@ -469,12 +609,126 @@ SELECT
     SUM(pts) FILTER (WHERE recent_rank <= 20) as pts_20,
     SUM(sog) FILTER (WHERE recent_rank <= 20) as sog_20,
     SUM(sat) FILTER (WHERE recent_rank <= 20) as sat_20,
-    SUM(toi) FILTER (WHERE recent_rank <= 20) as toi_20
+    SUM(toi) FILTER (WHERE recent_rank <= 20) as toi_20,
+    SUM(sa) FILTER (WHERE recent_rank <= 20) as sa_20,
+    SUM(sv) FILTER (WHERE recent_rank <= 20) as sv_20,
+    SUM(ga) FILTER (WHERE recent_rank <= 20) as ga_20,
+    SUM(evsa) FILTER (WHERE recent_rank <= 20) as evsa_20,
+    SUM(evsv) FILTER (WHERE recent_rank <= 20) as evsv_20,
+    SUM(ppsa) FILTER (WHERE recent_rank <= 20) as ppsa_20,
+    SUM(ppsv) FILTER (WHERE recent_rank <= 20) as ppsv_20,
+    SUM(pksa) FILTER (WHERE recent_rank <= 20) as pksa_20,
+    SUM(pksv) FILTER (WHERE recent_rank <= 20) as pksv_20,
+    SUM(shosv) FILTER (WHERE recent_rank <= 20) as shosv_20,
+    SUM(so) FILTER (WHERE recent_rank <= 20) as so_20,
+    SUM(starts) FILTER (WHERE recent_rank <= 20) as starts_20,
+    SUM(relief_appearances) FILTER (WHERE recent_rank <= 20) as relief_appearances_20,
+    SUM(wins) FILTER (WHERE recent_rank <= 20) as wins_20,
+    SUM(losses) FILTER (WHERE recent_rank <= 20) as losses_20,
+    SUM(ot_losses) FILTER (WHERE recent_rank <= 20) as ot_losses_20,
+    SUM(overtime_wins) FILTER (WHERE recent_rank <= 20) as overtime_wins_20,
+    SUM(shootout_wins) FILTER (WHERE recent_rank <= 20) as shootout_wins_20,
+    SUM(shootout_losses) FILTER (WHERE recent_rank <= 20) as shootout_losses_20,
+    SUM(quality_starts) FILTER (WHERE recent_rank <= 20) as quality_starts_20,
+    SUM(really_bad_starts) FILTER (WHERE recent_rank <= 20) as really_bad_starts_20
 FROM ranked_games
 GROUP BY nhl_player_id
 SQL;
 
         return collect(DB::select($sql, [$seasonKey, $gameType]));
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    private function goalieBasicStats(): array
+    {
+        return [
+            'goalie_starts' => 'starts',
+            'goalie_relief_appearances' => 'relief_appearances',
+            'goalie_wins' => 'wins',
+            'goalie_losses' => 'losses',
+            'goalie_ot_losses' => 'ot_losses',
+            'goalie_overtime_wins' => 'overtime_wins',
+            'goalie_shootout_wins' => 'shootout_wins',
+            'goalie_shootout_losses' => 'shootout_losses',
+            'goalie_shots_against' => 'sa',
+            'goalie_saves' => 'sv',
+            'goalie_goals_against' => 'ga',
+            'goalie_shutouts' => 'so',
+            'goalie_quality_starts' => 'quality_starts',
+            'goalie_really_bad_starts' => 'really_bad_starts',
+        ];
+    }
+
+    private function hasGoalieBasicEvidence(object $row): bool
+    {
+        foreach ($this->goalieBasicStats() as $column) {
+            if ((float) ($row->{$column} ?? 0) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string,float|int|null>
+     */
+    private function goalieBasicValues(object $row): array
+    {
+        $values = collect($this->goalieBasicStats())
+            ->mapWithKeys(fn (string $column, string $slug): array => [$slug => $row->{$column} ?? 0])
+            ->all();
+
+        $shotsAgainst = (float) ($row->sa ?? 0);
+        $saves = (float) ($row->sv ?? 0);
+        $goalsAgainst = (float) ($row->ga ?? 0);
+        $toi = (float) ($row->toi ?? 0);
+        $starts = (float) ($row->starts ?? 0);
+        $qualityStarts = (float) ($row->quality_starts ?? 0);
+
+        $values['goalie_save_percentage'] = $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : 0.0;
+        $values['goalie_goals_against_average'] = $toi > 0 ? round(($goalsAgainst * 3600) / $toi, 3) : 0.0;
+        $values['goalie_quality_start_percentage'] = $starts > 0 ? round($qualityStarts / $starts, 3) : 0.0;
+
+        return $values;
+    }
+
+    private function hasGoalieBasicWindowEvidence(object $row, int $windowGames): bool
+    {
+        foreach ($this->goalieBasicStats() as $column) {
+            if ((float) ($row->{$column . '_' . $windowGames} ?? 0) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string,float|int|null>
+     */
+    private function goalieBasicWindowValues(object $row, int $windowGames): array
+    {
+        $values = collect($this->goalieBasicStats())
+            ->mapWithKeys(fn (string $column, string $slug): array => [
+                $slug => $row->{$column . '_' . $windowGames} ?? 0,
+            ])
+            ->all();
+
+        $shotsAgainst = (float) ($row->{'sa_' . $windowGames} ?? 0);
+        $saves = (float) ($row->{'sv_' . $windowGames} ?? 0);
+        $goalsAgainst = (float) ($row->{'ga_' . $windowGames} ?? 0);
+        $toi = (float) ($row->{'toi_' . $windowGames} ?? 0);
+        $starts = (float) ($row->{'starts_' . $windowGames} ?? 0);
+        $qualityStarts = (float) ($row->{'quality_starts_' . $windowGames} ?? 0);
+
+        $values['goalie_save_percentage'] = $shotsAgainst > 0 ? round($saves / $shotsAgainst, 3) : 0.0;
+        $values['goalie_goals_against_average'] = $toi > 0 ? round(($goalsAgainst * 3600) / $toi, 3) : 0.0;
+        $values['goalie_quality_start_percentage'] = $starts > 0 ? round($qualityStarts / $starts, 3) : 0.0;
+
+        return $values;
     }
 
     /**
@@ -706,7 +960,8 @@ SQL;
                     ->values()
                     ->all();
             })
-            ->merge($this->onIceExpectedStats($seasonKey, $gameType, $models, $sourceFetchedAt, $statTypeGroups));
+            ->merge($this->onIceExpectedStats($seasonKey, $gameType, $models, $sourceFetchedAt, $statTypeGroups))
+            ->merge($this->goalieExpectedSeasonStats($seasonKey, $gameType, $models, $sourceFetchedAt, $statTypeGroups));
     }
 
     /**
@@ -757,6 +1012,87 @@ SELECT
     CASE WHEN team_totals.team_ixg > 0 THEN player_totals.ixg / team_totals.team_ixg ELSE NULL END as ixg_share
 FROM player_totals
 LEFT JOIN team_totals ON team_totals.team_id = player_totals.team_id
+SQL;
+
+        return collect(DB::select($sql, [
+            $models['goal'],
+            NhlExpectedGoalsBackfiller::TARGET_GOAL,
+            $models['shot_on_goal'],
+            NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL,
+            $seasonKey,
+            $gameType,
+        ]));
+    }
+
+    /**
+     * @param array<string,string> $statTypeGroups
+     * @param array{goal:int|null,shot_on_goal:int|null} $models
+     * @return Collection<int,array<string,mixed>>
+     */
+    private function goalieExpectedSeasonStats(
+        string $seasonKey,
+        int $gameType,
+        array $models,
+        string $sourceFetchedAt,
+        array $statTypeGroups
+    ): Collection {
+        return $this->goalieExpectedRows($seasonKey, $gameType, $models)
+            ->flatMap(function (object $row) use ($seasonKey, $sourceFetchedAt, $statTypeGroups): array {
+                return collect($this->goalieExpectedValues($row))
+                    ->map(fn (mixed $value, string $slug): array => $this->playerStatRow(
+                        seasonKey: $seasonKey,
+                        nhlPlayerId: (int) $row->nhl_player_id,
+                        statSlug: $slug,
+                        statGroup: $statTypeGroups[$slug] ?? 'expected',
+                        windowKey: 'season',
+                        windowGames: (int) $row->window_games,
+                        startDate: $row->start_date ?? null,
+                        endDate: $row->end_date ?? null,
+                        value: $value,
+                        sourceFetchedAt: $sourceFetchedAt,
+                        metadata: [
+                            'nhl_team_id' => $row->nhl_team_id !== null ? (int) $row->nhl_team_id : null,
+                            'position_group' => 'goalie',
+                        ]
+                    ))
+                    ->values()
+                    ->all();
+            });
+    }
+
+    /**
+     * @param array{goal:int|null,shot_on_goal:int|null} $models
+     * @return Collection<int,object>
+     */
+    private function goalieExpectedRows(string $seasonKey, int $gameType, array $models): Collection
+    {
+        $sql = <<<SQL
+SELECT
+    facts.goalie_player_id as nhl_player_id,
+    MAX(facts.opponent_team_id) as nhl_team_id,
+    COUNT(DISTINCT facts.nhl_game_id) as window_games,
+    MIN(facts.game_date) as start_date,
+    MAX(facts.game_date) as end_date,
+    SUM(CASE WHEN facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_against,
+    SUM(CASE WHEN facts.is_goal THEN 1 ELSE 0 END) as goals_against,
+    SUM(goal_predictions.xg) as goalie_xga,
+    SUM(sog_predictions.xg) as goalie_xsoga
+FROM nhl_shot_attempts_facts facts
+INNER JOIN nhl_games games ON games.nhl_game_id = facts.nhl_game_id
+INNER JOIN nhl_shot_attempt_predictions goal_predictions
+    ON goal_predictions.shot_attempt_fact_id = facts.id
+    AND goal_predictions.expected_goals_model_id = ?
+    AND goal_predictions.prediction_target = ?
+    AND goal_predictions.is_scored = true
+INNER JOIN nhl_shot_attempt_predictions sog_predictions
+    ON sog_predictions.shot_attempt_fact_id = facts.id
+    AND sog_predictions.expected_goals_model_id = ?
+    AND sog_predictions.prediction_target = ?
+    AND sog_predictions.is_scored = true
+WHERE facts.season_id = ?
+    AND games.game_type = ?
+    AND facts.goalie_player_id IS NOT NULL
+GROUP BY facts.goalie_player_id
 SQL;
 
         return collect(DB::select($sql, [
@@ -889,6 +1225,14 @@ SQL;
                 return $rows;
             })
             ->merge($this->onIceExpectedWindowStats(
+                $seasonKey,
+                $gameType,
+                $models,
+                $sourceFetchedAt,
+                $statTypeGroups,
+                $windowKey
+            ))
+            ->merge($this->goalieExpectedWindowStats(
                 $seasonKey,
                 $gameType,
                 $models,
@@ -1125,6 +1469,169 @@ SQL;
             $seasonKey,
             $gameType,
         ]));
+    }
+
+    /**
+     * @param array<string,string> $statTypeGroups
+     * @param array{goal:int|null,shot_on_goal:int|null} $models
+     * @return Collection<int,array<string,mixed>>
+     */
+    private function goalieExpectedWindowStats(
+        string $seasonKey,
+        int $gameType,
+        array $models,
+        string $sourceFetchedAt,
+        array $statTypeGroups,
+        ?string $windowKey = null
+    ): Collection {
+        return $this->goalieExpectedWindowRows($seasonKey, $gameType, $models)
+            ->flatMap(function (object $row) use ($seasonKey, $sourceFetchedAt, $statTypeGroups, $windowKey): array {
+                $rows = [];
+
+                foreach ($this->rollingWindows($windowKey) as $windowGames) {
+                    $actualGames = (int) ($row->{'window_games_' . $windowGames} ?? 0);
+
+                    if ($actualGames === 0) {
+                        continue;
+                    }
+
+                    foreach ($this->goalieExpectedWindowValues($row, $windowGames) as $slug => $value) {
+                        $rows[] = $this->playerStatRow(
+                            seasonKey: $seasonKey,
+                            nhlPlayerId: (int) $row->nhl_player_id,
+                            statSlug: $slug,
+                            statGroup: $statTypeGroups[$slug] ?? 'expected',
+                            windowKey: 'last_' . $windowGames,
+                            windowGames: $actualGames,
+                            startDate: $row->{'start_date_' . $windowGames} ?? null,
+                            endDate: $row->{'end_date_' . $windowGames} ?? null,
+                            value: $value,
+                            sourceFetchedAt: $sourceFetchedAt,
+                            metadata: [
+                                'nhl_team_id' => $row->nhl_team_id !== null ? (int) $row->nhl_team_id : null,
+                                'position_group' => 'goalie',
+                            ]
+                        );
+                    }
+                }
+
+                return $rows;
+            });
+    }
+
+    /**
+     * @param array{goal:int|null,shot_on_goal:int|null} $models
+     * @return Collection<int,object>
+     */
+    private function goalieExpectedWindowRows(string $seasonKey, int $gameType, array $models): Collection
+    {
+        $sql = <<<SQL
+WITH goalie_games AS (
+    SELECT
+        facts.goalie_player_id as nhl_player_id,
+        MAX(facts.opponent_team_id) as nhl_team_id,
+        facts.game_date,
+        SUM(CASE WHEN facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_against,
+        SUM(CASE WHEN facts.is_goal THEN 1 ELSE 0 END) as goals_against,
+        SUM(goal_predictions.xg) as goalie_xga,
+        SUM(sog_predictions.xg) as goalie_xsoga
+    FROM nhl_shot_attempts_facts facts
+    INNER JOIN nhl_games games ON games.nhl_game_id = facts.nhl_game_id
+    INNER JOIN nhl_shot_attempt_predictions goal_predictions
+        ON goal_predictions.shot_attempt_fact_id = facts.id
+        AND goal_predictions.expected_goals_model_id = ?
+        AND goal_predictions.prediction_target = ?
+        AND goal_predictions.is_scored = true
+    INNER JOIN nhl_shot_attempt_predictions sog_predictions
+        ON sog_predictions.shot_attempt_fact_id = facts.id
+        AND sog_predictions.expected_goals_model_id = ?
+        AND sog_predictions.prediction_target = ?
+        AND sog_predictions.is_scored = true
+    WHERE facts.season_id = ?
+        AND games.game_type = ?
+        AND facts.goalie_player_id IS NOT NULL
+    GROUP BY facts.goalie_player_id, facts.game_date
+),
+ranked_games AS (
+    SELECT
+        goalie_games.*,
+        ROW_NUMBER() OVER (PARTITION BY goalie_games.nhl_player_id ORDER BY goalie_games.game_date DESC) as recent_rank
+    FROM goalie_games
+)
+SELECT
+    nhl_player_id,
+    MAX(nhl_team_id) as nhl_team_id,
+    COUNT(*) FILTER (WHERE recent_rank <= 5) as window_games_5,
+    MIN(game_date) FILTER (WHERE recent_rank <= 5) as start_date_5,
+    MAX(game_date) FILTER (WHERE recent_rank <= 5) as end_date_5,
+    SUM(shots_against) FILTER (WHERE recent_rank <= 5) as shots_against_5,
+    SUM(goals_against) FILTER (WHERE recent_rank <= 5) as goals_against_5,
+    SUM(goalie_xga) FILTER (WHERE recent_rank <= 5) as goalie_xga_5,
+    SUM(goalie_xsoga) FILTER (WHERE recent_rank <= 5) as goalie_xsoga_5,
+    COUNT(*) FILTER (WHERE recent_rank <= 10) as window_games_10,
+    MIN(game_date) FILTER (WHERE recent_rank <= 10) as start_date_10,
+    MAX(game_date) FILTER (WHERE recent_rank <= 10) as end_date_10,
+    SUM(shots_against) FILTER (WHERE recent_rank <= 10) as shots_against_10,
+    SUM(goals_against) FILTER (WHERE recent_rank <= 10) as goals_against_10,
+    SUM(goalie_xga) FILTER (WHERE recent_rank <= 10) as goalie_xga_10,
+    SUM(goalie_xsoga) FILTER (WHERE recent_rank <= 10) as goalie_xsoga_10,
+    COUNT(*) FILTER (WHERE recent_rank <= 20) as window_games_20,
+    MIN(game_date) FILTER (WHERE recent_rank <= 20) as start_date_20,
+    MAX(game_date) FILTER (WHERE recent_rank <= 20) as end_date_20,
+    SUM(shots_against) FILTER (WHERE recent_rank <= 20) as shots_against_20,
+    SUM(goals_against) FILTER (WHERE recent_rank <= 20) as goals_against_20,
+    SUM(goalie_xga) FILTER (WHERE recent_rank <= 20) as goalie_xga_20,
+    SUM(goalie_xsoga) FILTER (WHERE recent_rank <= 20) as goalie_xsoga_20
+FROM ranked_games
+GROUP BY nhl_player_id
+SQL;
+
+        return collect(DB::select($sql, [
+            $models['goal'],
+            NhlExpectedGoalsBackfiller::TARGET_GOAL,
+            $models['shot_on_goal'],
+            NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL,
+            $seasonKey,
+            $gameType,
+        ]));
+    }
+
+    /**
+     * @return array<string,float>
+     */
+    private function goalieExpectedValues(object $row): array
+    {
+        $xga = (float) ($row->goalie_xga ?? 0);
+        $xsoga = (float) ($row->goalie_xsoga ?? 0);
+        $goalsAgainst = (float) ($row->goals_against ?? 0);
+        $xsaves = $xsoga - $xga;
+
+        return [
+            'goalie_xga' => $xga,
+            'goalie_xsoga' => $xsoga,
+            'goalie_xsaves' => $xsaves,
+            'goalie_gsax' => $xga - $goalsAgainst,
+            'goalie_xsave_percentage' => $xsoga > 0 ? $xsaves / $xsoga : 0.0,
+        ];
+    }
+
+    /**
+     * @return array<string,float>
+     */
+    private function goalieExpectedWindowValues(object $row, int $windowGames): array
+    {
+        $xga = (float) ($row->{'goalie_xga_' . $windowGames} ?? 0);
+        $xsoga = (float) ($row->{'goalie_xsoga_' . $windowGames} ?? 0);
+        $goalsAgainst = (float) ($row->{'goals_against_' . $windowGames} ?? 0);
+        $xsaves = $xsoga - $xga;
+
+        return [
+            'goalie_xga' => $xga,
+            'goalie_xsoga' => $xsoga,
+            'goalie_xsaves' => $xsaves,
+            'goalie_gsax' => $xga - $goalsAgainst,
+            'goalie_xsave_percentage' => $xsoga > 0 ? $xsaves / $xsoga : 0.0,
+        ];
     }
 
     /**

@@ -66,7 +66,7 @@ public/build/assets/app-DYoe-u1n.css         136.29 kB │ gzip: 20.95 kB
 public/build/assets/toast-stack-DEzYpMu9.js   62.95 kB │ gzip: 22.34 kB
 public/build/assets/stats-page-DLwu64Ro.js    95.61 kB │ gzip: 24.18 kB
 public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
-✓ built in 1.32s
+✓ built in 1.33s
 
    INFO  Nothing to migrate.  
 
@@ -74,7 +74,7 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
 \
 
    PASS  Tests\Unit\NhlImportPipelineFoundationTest
-  ✓ it defines the canonical NHL import stages in pipeline order         0.99s  
+  ✓ it defines the canonical NHL import stages in pipeline order         0.82s  
   ✓ it defines no dependencies for the first PBP stage                   0.01s  
   ✓ it defines PBP as the summary dependency                             0.01s  
   ✓ it defines all upstream dependencies for the terminal validation st… 0.01s  
@@ -83,19 +83,19 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it maps stage names to their queue job classes                       0.01s  
   ✓ it maps stage names to the actual NHL import timeout config keys     0.01s  
   ✓ it atomically claims a scheduled progress row by marking it running  0.02s  
-  ✓ it does not claim a completed progress row                           0.02s  
-  ✓ it does not claim a missing progress row                             0.02s  
-  ✓ it reports a row as running after it has been claimed                0.02s  
-  ✓ it counts only completed dependency rows                             0.02s  
+  ✓ it does not claim a completed progress row                           0.01s  
+  ✓ it does not claim a missing progress row                             0.01s  
+  ✓ it reports a row as running after it has been claimed                0.01s  
+  ✓ it counts only completed dependency rows                             0.01s  
   ✓ it does not mark a dependent stage ready when its dependency is inc… 0.02s  
   ✓ it marks a dependent stage ready when its dependencies are complete… 0.02s  
   ✓ it does not mark a stage ready when the target row is not scheduled  0.02s  
   ✓ it dispatches a claimed PBP job and leaves the row running           0.02s  
-  ✓ it does not dispatch a duplicate job after the row has already been… 0.02s  
+  ✓ it does not dispatch a duplicate job after the row has already been… 0.01s  
   ✓ it deletes stale game troubleshooting directories when a processing… 0.02s  
   ✓ it deletes game troubleshooting directories when processing approve… 0.03s  
   ✓ it retains game troubleshooting directories when processing keeps i… 0.02s  
-  ✓ it skips on-ice stages and still dispatches validation when only th… 0.03s  
+  ✓ it skips on-ice stages and still dispatches validation when only th… 0.02s  
   ✓ it records source preflight statuses with exact provider URLs        0.03s  
   ✓ it builds deterministic NHL shot attempt facts from imported play b… 0.04s  
   ✓ it processes only ready scheduled stages for a date                  0.02s  
@@ -105,14 +105,14 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it does not mark fresh running rows as stale                         0.02s  
   ✓ it records command-line single-date discovery as an admin-visible g… 0.02s  
   ✓ it records command-line range discovery as an admin-visible game im… 0.02s  
-  ✓ it seeds discovered completed games with every canonical import sta… 0.02s  
+  ✓ it seeds discovered completed games with every canonical import sta… 0.03s  
   ✓ it does not seed unfinished discovered games                         0.02s  
 
    PASS  Tests\Unit\NhlImportProgressRepoTest
   ✓ mark stale running to error updates old rows                         0.03s  
 
    PASS  Tests\Unit\Patreon\MembershipSyncServiceTest
-  ✓ logs events when membership changes                                  0.03s  
+  ✓ logs events when membership changes                                  0.04s  
   ✓ skips logging when no changes                                        0.02s  
   ✓ reuses existing membership for profile when provider match missing   0.02s  
 
@@ -142,34 +142,34 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it blocks non super admins from api key management                   0.04s  
   ✓ it lists api keys without exposing plaintext tokens                  0.03s  
   ✓ it creates a scoped api key and returns the plaintext token once     0.03s  
-  ✓ it rejects duplicate api key slugs                                   0.03s  
+  ✓ it rejects duplicate api key slugs                                   0.02s  
   ✓ it rejects unknown api key scopes                                    0.02s  
 
    PASS  Tests\Feature\AdminControlPanelTriageTest
   ✓ it blocks guests from the player triage inbox                        0.02s  
   ✓ it blocks authenticated non-admin users from the player triage inbo… 0.02s  
-  ✓ it redirects direct player triage page visits back to the admin pan… 0.02s  
+  ✓ it redirects direct player triage page visits back to the admin pan… 0.03s  
   ✓ it blocks guests from the player triage detail json endpoint         0.02s  
   ✓ it blocks authenticated non-admin users from the player triage deta… 0.02s  
   ✓ it blocks guests from the Yahoo OAuth proof redirect                 0.02s  
   ✓ it blocks authenticated non-admin users from the Yahoo OAuth proof…  0.03s  
   ✓ it shows Yahoo connect in the authenticated account drawer           0.04s  
-  ✓ it shows Yahoo connected in the authenticated account drawer         0.04s  
+  ✓ it shows Yahoo connected in the authenticated account drawer         0.03s  
   ✓ it blocks guests from the NHL game import status endpoint            0.02s  
   ✓ it blocks authenticated non-admin users from the NHL game import st… 0.02s  
   ✓ it blocks guests from the NHL shot attempts admin panel              0.02s  
   ✓ it blocks authenticated non-admin users from the NHL shot attempts…  0.02s  
-  ✓ it allows super admins to view the NHL shot attempts admin panel     0.05s  
-  ✓ it shows NHL shot attempts in the account drawer for super admins    0.03s  
+  ✓ it allows super admins to view the NHL shot attempts admin panel     0.06s  
+  ✓ it shows NHL shot attempts in the account drawer for super admins    0.04s  
   ✓ it groups NHL shot attempt aggregates by team abbreviation           0.05s  
-  ✓ it renders sortable NHL shot attempt aggregate columns and rebound…  0.04s  
-  ✓ it displays goalie names in NHL shot attempt aggregate groupings     0.06s  
+  ✓ it renders sortable NHL shot attempt aggregate columns and rebound…  0.05s  
+  ✓ it displays goalie names in NHL shot attempt aggregate groupings     0.07s  
   ✓ it displays shooter names in NHL shot attempt aggregate groupings    0.05s  
   ✓ it blocks guests from queuing NHL game discovery                     0.02s  
   ✓ it blocks authenticated non-admin users from queuing NHL game disco… 0.02s  
-  ✓ it blocks guests from queuing NHL game processing                    0.01s  
+  ✓ it blocks guests from queuing NHL game processing                    0.02s  
   ✓ it blocks authenticated non-admin users from queuing NHL game proce… 0.02s  
-  ✓ it blocks guests from queuing NHL shot fact processing               0.01s  
+  ✓ it blocks guests from queuing NHL shot fact processing               0.02s  
   ✓ it blocks authenticated non-admin users from queuing NHL shot fact…  0.02s  
   ✓ it blocks guests from queuing failed-only NHL game import reruns     0.02s  
   ✓ it blocks authenticated non-admin users from queuing failed-only NH… 0.02s  
@@ -179,14 +179,14 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it blocks authenticated non-admin users from queuing NHL season sta… 0.02s  
   ✓ it allows super admins to queue NHL game discovery for a single dat… 0.04s  
   ✓ it allows super admins to queue NHL game discovery for a range       0.04s  
-  ✓ it allows super admins to rerun discovery for a previous NHL game i… 0.03s  
-  ✓ it reruns discovery from the clicked active same-range NHL game imp… 0.04s  
-  ✓ it reruns discovery from the clicked NHL game import run when anoth… 0.04s  
+  ✓ it allows super admins to rerun discovery for a previous NHL game i… 0.04s  
+  ✓ it reruns discovery from the clicked active same-range NHL game imp… 0.03s  
+  ✓ it reruns discovery from the clicked NHL game import run when anoth… 0.03s  
   ✓ it returns an existing completed same-range NHL game import run ins… 0.03s  
   ✓ it returns an active same-range NHL game import run instead of crea… 0.03s  
   ✓ it returns an active same-range NHL game import run instead of proc… 0.03s  
   ✓ it allows super admins to queue shot fact processing for a game imp… 0.04s  
-  ✓ it rejects shot fact processing when a game import run has no games  0.03s  
+  ✓ it rejects shot fact processing when a game import run has no games  0.04s  
   ✓ it marks a game import run failed when a shot fact job fails         0.02s  
   ✓ it creates scoped API client tokens for server integrations          0.02s  
   ✓ it requires a scoped API client token for NHL reference endpoints    0.02s  
@@ -197,13 +197,13 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it rejects failed-only NHL game import reruns when there are no fai… 0.03s  
   ✓ it allows super admins to queue NHL game processing for each date i… 0.03s  
   ✓ it allows super admins to queue duplicate PBP scan runs              0.03s  
-  ✓ it allows super admins to queue duplicate PBP dedupe from a ready r… 0.02s  
+  ✓ it allows super admins to queue duplicate PBP dedupe from a ready r… 0.03s  
   ✓ it does not queue duplicate PBP dedupe again after repair metadata…  0.02s  
   ✓ it allows super admins to queue duplicate PBP affected-game rebuild… 0.03s  
   ✓ it allows super admins to queue NHL season stat syncs                0.03s  
   ✓ it rejects invalid NHL season stat sync selections                   0.02s  
   ✓ it queues NHL game processing from a discovery run without creating… 0.04s  
-  ✓ it defaults NHL game processing to today when no date option is pro… 0.03s  
+  ✓ it defaults NHL game processing to today when no date option is pro… 0.04s  
   ✓ it requires an explicit NHL discovery date selection                 0.02s  
   ✓ it rejects ambiguous NHL discovery date selections                   0.02s  
   ✓ it allows large NHL discovery date ranges because processing is dat… 0.03s  
@@ -211,15 +211,15 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it does not show reassigned reprocess progress on older processed d… 0.03s  
   ✓ it hides stale ready discovery duplicates when a same-range game im… 0.03s  
   ✓ it collapses completed duplicate same-range NHL game import runs in… 0.04s  
-  ✓ it prefers queued discovery rerun rows over completed same-range pr… 0.03s  
-  ✓ it hides per-game rows for clean completed NHL game import runs      0.03s  
-  ✓ it hides stale successful game imports while keeping failed games v… 0.03s  
+  ✓ it prefers queued discovery rerun rows over completed same-range pr… 0.04s  
+  ✓ it hides per-game rows for clean completed NHL game import runs      0.04s  
+  ✓ it hides stale successful game imports while keeping failed games v… 0.04s  
   ✓ it does not complete discovered NHL game import runs until discover… 0.03s  
-  ✓ it returns discovered NHL game import runs as completed after disco… 0.02s  
+  ✓ it returns discovered NHL game import runs as completed after disco… 0.03s  
   ✓ it returns NHL season options and season sync progress in game impo… 0.02s  
   ✓ it blocks guests from the user Yahoo OAuth redirect                  0.01s  
   ✓ it redirects authenticated users to Yahoo authorization with the us… 0.02s  
-  ✓ it persists a user Yahoo OAuth callback and redirects back to the s… 0.05s  
+  ✓ it persists a user Yahoo OAuth callback and redirects back to the s… 0.04s  
   ✓ it syncs Yahoo team roster players through staging identities and r… 0.04s  
   ✓ it ignores unsafe Yahoo OAuth return urls                            0.02s  
   ✓ it redirects super admins to Yahoo authorization with configured OA… 0.02s  
@@ -232,9 +232,9 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it blocks authenticated non-admin users from importing Yahoo player… 0.02s  
   ✓ it requires a Yahoo OAuth connection before importing Yahoo players  0.02s  
   ✓ it refreshes an expired Yahoo connection before queued player page…  0.03s  
-  ✓ it imports bounded Yahoo player collection pages into yahoo players  0.03s  
+  ✓ it imports bounded Yahoo player collection pages into yahoo players  0.05s  
   ✓ it queues an all-player Yahoo import from the admin import endpoint  0.03s  
-  ✓ it completes queued Yahoo imports when a player page is short        0.03s  
+  ✓ it completes queued Yahoo imports when a player page is short        0.04s  
   ✓ it upserts Yahoo players idempotently by player key                  0.03s  
   ✓ it auto-links imported Yahoo identities when canonical evidence rea… 0.03s  
   ✓ it empties Yahoo imported player data without deleting canonical pl… 0.03s  
@@ -244,7 +244,7 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it allows super admins to view the player triage inbox               0.02s  
   ✓ it returns lean embedded player triage json after the initial fragm… 0.02s  
   ✓ it returns the embedded player triage fragment when explicitly requ… 0.02s  
-  ✓ it shows unresolved identity statuses in the default inbox           0.03s  
+  ✓ it shows unresolved identity statuses in the default inbox           0.02s  
   ✓ it hides high confidence resolver recommendations from the default…  0.03s  
   ✓ it shows high confidence resolver recommendations when all identiti… 0.03s  
   ✓ it hides matched and ignored identities from the default inbox       0.03s  
@@ -256,17 +256,17 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it filters source identities to rows without canonical records       0.03s  
   ✓ it filters source identities to rows with canonical records when ma… 0.03s  
   ✓ it can show all source identities with the triage state segment      0.03s  
-  ✓ it filters source identities missing a matching source identity      0.04s  
+  ✓ it filters source identities missing a matching source identity      0.03s  
   ✓ it shows coverage state instead of resolver recommendation in sourc… 0.04s  
-  ✓ it shows matching source suggestions in source matching detail mode  0.03s  
+  ✓ it shows matching source suggestions in source matching detail mode  0.04s  
   ✓ it limits matching source suggestions to unlinked exact normalized…  0.04s  
-  ✓ it allows matching source search to find unlinked compatible positi… 0.03s  
-  ✓ it links a matching source identity to the selected source canonica… 0.03s  
+  ✓ it allows matching source search to find unlinked compatible positi… 0.04s  
+  ✓ it links a matching source identity to the selected source canonica… 0.04s  
   ✓ it returns linked matching source identity details as json           0.04s  
-  ✓ it creates a canonical prospect player from an external identity an… 0.04s  
+  ✓ it creates a canonical prospect player from an external identity an… 0.05s  
   ✓ it shows matched source details instead of matching source search w… 0.04s  
   ✓ it filters source identities missing a matching source when search…  0.04s  
-  ✓ it filters source identities that have a matching source identity    0.03s  
+  ✓ it filters source identities that have a matching source identity    0.04s  
   ✓ it filters identities by display name search                         0.03s  
   ✓ it filters identities by provider player id search                   0.03s  
   ✓ it filters identities by unmatched reason                            0.03s  
@@ -274,24 +274,24 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it shows linked external sources for a selected canonical-linked id… 0.03s  
   ✓ it shows linked identities as player records without source action…  0.03s  
   ✓ it shows player dob when a selected identity is linked               0.03s  
-  ✓ it shows last contract summary when a linked player has capwages co… 0.04s  
-  ✓ it shows suggested external matches when no canonical candidate exi… 0.04s  
+  ✓ it shows last contract summary when a linked player has capwages co… 0.03s  
+  ✓ it shows suggested external matches when no canonical candidate exi… 0.03s  
   ✓ it shows suggested external matches alongside canonical candidates…  0.03s  
   ✓ it shows current resolver recommendation confidence instead of stal… 0.03s  
   ✓ it shows an empty inbox state when no identities match filters       0.03s  
   ✓ it shows suggested player matches for normalized identity names      0.03s  
   ✓ it orders same-name suggestions by matching birthdate first          0.03s  
-  ✓ it searches canonical players manually by name                       0.04s  
-  ✓ it manual player search excludes players already linked to the sele… 0.03s  
-  ✓ it manual player search filters results by selected identity positi… 0.04s  
+  ✓ it searches canonical players manually by name                       0.03s  
+  ✓ it manual player search excludes players already linked to the sele… 0.04s  
+  ✓ it manual player search filters results by selected identity positi… 0.03s  
   ✓ it searches canonical players manually by nhl id                     0.03s  
-  ✓ it requires a canonical player when linking an identity              0.03s  
+  ✓ it requires a canonical player when linking an identity              0.02s  
   ✓ it blocks guests from applying resolver recommendations              0.02s  
-  ✓ it links an identity to a selected canonical player                  0.04s  
-  ✓ it links a suggested external source to the selected identity canon… 0.04s  
+  ✓ it links an identity to a selected canonical player                  0.03s  
+  ✓ it links a suggested external source to the selected identity canon… 0.03s  
   ✓ it applies the current resolver recommendation to an identity        0.03s  
   ✓ it marks an identity as ignored                                      0.03s  
-  ✓ it defers an identity without changing its match state               0.03s  
+  ✓ it defers an identity without changing its match state               0.02s  
   ✓ it returns a JSON triage fragment for the inbox                      0.03s  
   ✓ it returns loaded and total counts when the JSON inbox payload is c… 0.11s  
   ✓ it returns source comparison JSON when linked player dates are raw…  0.02s  
@@ -300,16 +300,16 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it returns JSON when linking a canonical player                      0.03s  
   ✓ it returns JSON validation errors when linking without a canonical…  0.02s  
   ✓ it returns JSON when linking a suggested external source             0.04s  
-  ✓ it returns JSON errors when external source linking has no canonica… 0.03s  
-  ✓ it returns JSON when applying resolver recommendations               0.04s  
+  ✓ it returns JSON errors when external source linking has no canonica… 0.02s  
+  ✓ it returns JSON when applying resolver recommendations               0.03s  
   ✓ it returns JSON when ignoring an identity                            0.03s  
   ✓ it returns JSON when deferring an identity without changing state    0.03s  
   ✓ it returns JSON when creating a canonical player                     0.04s  
   ✓ it blocks guests from the imports page                               0.02s  
   ✓ it blocks authenticated non-admin users from the imports page        0.02s  
   ✓ it shows current import workflow buttons to super admins             0.05s  
-  ✓ it shows the admin player imports card list in registry order        0.06s  
-  ✓ it shows Yahoo as a triage source after Yahoo identities are import… 0.04s  
+  ✓ it shows the admin player imports card list in registry order        0.05s  
+  ✓ it shows Yahoo as a triage source after Yahoo identities are import… 0.03s  
 
    WARN  Tests\Feature\ApiTokenPermissionsTest
   - api token permissions can be updated → API support is not enabled.   0.05s  
@@ -323,44 +323,44 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ other browser sessions can be logged out                             0.03s  
 
    PASS  Tests\Feature\CommunityMembersUiTest
-  ✓ it uses the same activeTab key for tab buttons and panels            0.07s  
-  ✓ it renders the community members Alpine mount                        0.06s  
+  ✓ it uses the same activeTab key for tab buttons and panels            0.05s  
+  ✓ it renders the community members Alpine mount                        0.05s  
   ✓ it shows full provider membership counts on the community home pane… 0.07s  
-  ✓ it registers the community members store inside the app bundle       0.02s  
+  ✓ it registers the community members store inside the app bundle       0.01s  
 
    PASS  Tests\Feature\CommunityTierValidationTest
   ✓ prevents creating a second free tier for an organization             0.03s  
-  ✓ allows paid tiers even when a free tier exists                       0.03s  
+  ✓ allows paid tiers even when a free tier exists                       0.02s  
 
    WARN  Tests\Feature\CreateApiTokenTest
   - api tokens can be created → API support is not enabled.              0.02s  
 
    PASS  Tests\Feature\DeleteAccountTest
-  ✓ user accounts can be deleted                                         0.05s  
+  ✓ user accounts can be deleted                                         0.04s  
   ✓ correct password must be provided before account can be deleted      0.02s  
 
    WARN  Tests\Feature\DeleteApiTokenTest
   - api tokens can be deleted → API support is not enabled.              0.02s  
 
    PASS  Tests\Feature\DiscordServerRoutesTest
-  ✓ it requires authentication to start discord server linking           0.02s  
+  ✓ it requires authentication to start discord server linking           0.03s  
   ✓ it denies non-admin users from starting discord server linking       0.02s  
-  ✓ it starts discord server linking with encrypted organization contex… 0.02s  
+  ✓ it starts discord server linking with encrypted organization contex… 0.03s  
   ✓ it requires authentication to attach discord servers                 0.02s  
-  ✓ it rejects empty guild selections when attaching discord servers     0.03s  
+  ✓ it rejects empty guild selections when attaching discord servers     0.02s  
   ✓ it rejects unauthorized guild selections when attaching discord ser… 0.03s  
-  ✓ it denies non-admin users from attaching discord servers             0.02s  
+  ✓ it denies non-admin users from attaching discord servers             0.03s  
   ✓ it connects allowed guilds and clears session after attach           0.03s  
   ✓ it does not import discord members when attaching allowed guilds     0.03s  
   ✓ it stores discord guild icon metadata when attaching allowed guilds  0.03s  
-  ✓ it requires authentication to refresh discord community members      0.02s  
+  ✓ it requires authentication to refresh discord community members      0.03s  
   ✓ it denies non-admin users from refreshing discord community members  0.03s  
   ✓ it returns not found when refreshing a discord server from another…  0.02s  
   ✓ it refreshes discord community members for admins                    0.03s  
   ✓ it requires authentication to refresh all discord community members  0.02s  
   ✓ it denies non-admin users from refreshing all discord community mem… 0.03s  
   ✓ it refreshes all discord community servers for admins and returns a… 0.02s  
-  ✓ it returns an empty aggregate summary when refreshing all discord m… 0.02s  
+  ✓ it returns an empty aggregate summary when refreshing all discord m… 0.03s  
   ✓ it returns the sync error when refreshing all discord members fails… 0.02s  
   ✓ it requires authentication to refresh community members from connec… 0.02s  
   ✓ it denies non-admin users from refreshing community members from co… 0.02s  
@@ -372,14 +372,14 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it returns not found when starting a discord bot install for anothe… 0.03s  
   ✓ it renders discord bot install callback data for the opener window   0.02s  
   ✓ it returns installed discord bot status when the bot can access the… 0.02s  
-  ✓ it returns missing discord bot status when the bot cannot access th… 0.02s  
+  ✓ it returns missing discord bot status when the bot cannot access th… 0.03s  
   ✓ it requires authentication to remove discord servers from communiti… 0.02s  
-  ✓ it denies non-admin users from removing discord servers from commun… 0.02s  
+  ✓ it denies non-admin users from removing discord servers from commun… 0.03s  
   ✓ it returns not found when removing a discord server from another co… 0.02s  
   ✓ it removes discord servers and clears associated community league d… 0.03s  
-  ✓ it keeps discord memberships when removing only the discord server…  0.02s  
+  ✓ it keeps discord memberships when removing only the discord server…  0.03s  
   ✓ it removes discord memberships from that discord server when reques… 0.03s  
-  ✓ it removes retained discord memberships after the same guild is rec… 0.03s  
+  ✓ it removes retained discord memberships after the same guild is rec… 0.04s  
   ✓ it does not remove manual or patreon members when removing discord…  0.03s  
   ✓ it redirects after removing discord servers from communities throug… 0.03s  
   ✓ it redirects invalid discord server callback state with an error     0.02s  
@@ -388,41 +388,41 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
 
    WARN  Tests\Feature\EmailVerificationTest
   - email verification screen can be rendered → Email verification not…  0.02s  
-  - email can be verified → Email verification not enabled.              0.02s  
+  - email can be verified → Email verification not enabled.              0.01s  
   - email can not verified with invalid hash → Email verification not e… 0.02s  
 
    PASS  Tests\Feature\FantasyIntegrationStateTest
-  ✓ fantrax save returns ready integration state when active league ass… 0.41s  
+  ✓ fantrax save returns ready integration state when active league ass… 0.42s  
   ✓ fantrax secret without active league assignment does not show leagu… 0.03s  
-  ✓ fantrax active league assignment drives show leagues state when con… 0.02s  
+  ✓ fantrax active league assignment drives show leagues state when con… 0.03s  
   ✓ active fantrax league assignment without secret does not show leagu… 0.02s  
   ✓ yahoo connection without active league assignment does not show lea… 0.02s  
   ✓ yahoo connection with active league assignment is ready              0.02s  
 
    PASS  Tests\Feature\FantraxDraftingWindowTest
   ✓ it uses a human readable draft date as the title                     0.02s  
-  ✓ it falls back to a generic draft title when no date exists           0.01s  
+  ✓ it falls back to a generic draft title when no date exists           0.02s  
   ✓ it returns the draft date as an ISO timestamp when it can be parsed… 0.01s  
   ✓ it uses draft results draft date when league info has no draft date  0.01s  
   ✓ it marks the draft live when the draft date has passed and current…  0.01s  
   ✓ it marks the draft scheduled when the draft date is in the future    0.01s  
-  ✓ it marks the draft complete when the draft date has passed and no c… 0.02s  
-  ✓ it returns an unavailable payload when the draft endpoint fails      0.02s  
+  ✓ it marks the draft complete when the draft date has passed and no c… 0.01s  
+  ✓ it returns an unavailable payload when the draft endpoint fails      0.01s  
   ✓ it normalizes draft rows from the results key                        0.01s  
   ✓ it normalizes draft rows from the draftResults key                   0.02s  
   ✓ it normalizes draft rows from the draftPicks key used by Fantrax dr… 0.01s  
-  ✓ it keeps unmade draft picks blank when no player id exists           0.02s  
-  ✓ it marks only the next unmade draft pick for the loading experience  0.02s  
-  ✓ it marks the first unmade draft pick even when later picks are alre… 0.02s  
-  ✓ it defaults the active round to the next unmade draft pick round     0.02s  
+  ✓ it keeps unmade draft picks blank when no player id exists           0.01s  
+  ✓ it marks only the next unmade draft pick for the loading experience  0.01s  
+  ✓ it marks the first unmade draft pick even when later picks are alre… 0.01s  
+  ✓ it defaults the active round to the next unmade draft pick round     0.01s  
   ✓ it defaults the active round to the last round when every visible p… 0.02s  
   ✓ it exposes fantrax draft pick timestamps for draft room countdowns   0.01s  
   ✓ it persists a baseline fantrax draft and pick rows from provider pa… 0.04s  
   ✓ it detects a new fantrax draft selection when a canonical unmade pi… 0.04s  
-  ✓ it updates current roster memberships immediately when a draft pick… 0.03s  
-  ✓ it persists fantrax league shape without treating normal divisions…  0.06s  
+  ✓ it updates current roster memberships immediately when a draft pick… 0.04s  
+  ✓ it persists fantrax league shape without treating normal divisions…  0.05s  
   ✓ it uses division grouped fantrax player info for roster eligibility… 0.05s  
-  ✓ it preserves division scoped fantrax draft slots without dispatchin… 0.04s  
+  ✓ it preserves division scoped fantrax draft slots without dispatchin… 0.03s  
   ✓ it removes stale fantrax draft picks whose provider keys disappear…  0.03s  
   ✓ it refreshes an existing fantrax draft mirror during league sync     0.04s  
   ✓ it dispatches a pick event when a division scoped pending fantrax s… 0.04s  
@@ -430,65 +430,65 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it dispatches fantrax draft polling for opted-in live canonical fan… 0.05s  
   ✓ it does not dispatch fantrax draft polling when community draft syn… 0.03s  
   ✓ it loads league draft panel from persisted draft payloads when avai… 0.08s  
-  ✓ it scopes division scoped draft central rows to the viewer division  0.07s  
-  ✓ it scopes community draft tab rows to the active provider division…  0.12s  
-  ✓ it does not scope community draft summaries for single player pool…  0.05s  
+  ✓ it scopes division scoped draft central rows to the viewer division  0.09s  
+  ✓ it scopes community draft tab rows to the active provider division…  0.13s  
+  ✓ it does not scope community draft summaries for single player pool…  0.04s  
   ✓ it scopes division scoped league teams and roster players to the vi… 0.06s  
   ✓ it shows draft creation empty state when no canonical draft exists   0.06s  
   ✓ it announces a new fantrax draft pick to the configured discord dra… 0.05s  
   ✓ it uses goalie stat columns for drafted goalie discord cards         0.04s  
   ✓ it persists fantrax logo candidates by normalized team name when pr… 0.03s  
-  ✓ it reports unmatched fantrax logo candidates when no local team can… 0.02s  
+  ✓ it reports unmatched fantrax logo candidates when no local team can… 0.03s  
   ✓ it persists explicit fantrax tmLogo candidate urls instead of treat… 0.03s  
   ✓ it skips logo candidates from other fantrax leagues during selected… 0.03s  
   ✓ it posts a rendered trade transaction card attachment to the config… 0.04s  
   ✓ it counts trade transaction announcements as failed when card rende… 0.03s  
   ✓ it posts a rendered claim drop transaction card attachment to the c… 0.04s  
   ✓ it counts claim drop transaction announcements as failed when card…  0.03s  
-  ✓ it resolves platform transaction trade teams by name when provider…  0.03s  
+  ✓ it resolves platform transaction trade teams by name when provider…  0.04s  
   ✓ it fails trade transaction card rendering when a configured team lo… 0.05s  
   ✓ it uses discord avatars for trade transaction team images only when… 0.06s  
   ✓ it renders claim and drop transaction cards with player images and…  0.10s  
   ✓ it announces a fantrax draft pick only once when duplicate listener… 0.12s  
-  ✓ it saves a draft notification channel and creates it on discord whe… 0.04s  
-  ✓ it saves community draft sync opt-in settings                        0.04s  
+  ✓ it saves a draft notification channel and creates it on discord whe… 0.03s  
+  ✓ it saves community draft sync opt-in settings                        0.03s  
   ✓ it sends community draft testing picks to discord without tagging u… 0.04s  
   ✓ it preloads draft notification channels from the connected discord…  0.06s  
   ✓ it updates a community league name without clearing the selected di… 0.03s  
-  ✓ it surfaces a draft notification channel preload message when the b… 0.06s  
+  ✓ it surfaces a draft notification channel preload message when the b… 0.07s  
   ✓ it surfaces the discord status code when draft notification channel… 0.06s  
   ✓ it normalizes draft rows from a bare result array                    0.01s  
-  ✓ it joins drafting team names from league info when result rows only… 0.01s  
+  ✓ it joins drafting team names from league info when result rows only… 0.02s  
   ✓ it prefers the team name from the draft result row when both source… 0.01s  
   ✓ it drops name-only drafted rows because they do not have a stable p… 0.02s  
   ✓ it keeps drafted player rows with a provider player id even when th… 0.02s  
-  ✓ it uses locally stored fantrax player names when draft rows only in… 0.02s  
-  ✓ it carries canonical ids from the local fantrax player map when ava… 0.02s  
-  ✓ it carries player avatar position league and latest stats from the…  0.02s  
+  ✓ it uses locally stored fantrax player names when draft rows only in… 0.01s  
+  ✓ it carries canonical ids from the local fantrax player map when ava… 0.01s  
+  ✓ it carries player avatar position league and latest stats from the…  0.01s  
   ✓ it normalizes round pick and overall pick values as integers         0.01s  
-  ✓ it sorts drafted rows by overall pick when available                 0.02s  
+  ✓ it sorts drafted rows by overall pick when available                 0.01s  
   ✓ it segments drafted rows by round pages                              0.01s  
   ✓ it normalizes nested player and team payload shapes                  0.01s  
   ✓ it uses draft status when rows exist and no date is available        0.02s  
   ✓ it returns an available empty payload for an unconnected league dra… 0.01s  
   ✓ it renders the desktop drafting window on the community league show… 0.07s  
-  ✓ it prefers the canonical fantrax mirror draft over a newer manual d… 0.18s  
-  ✓ it renders the latest-season league where the drafted player played… 0.06s  
+  ✓ it prefers the canonical fantrax mirror draft over a newer manual d… 0.20s  
+  ✓ it renders the latest-season league where the drafted player played… 0.07s  
   ✓ it falls back to a linked fantrax external identity when no fantrax… 0.07s  
-  ✓ it renders an inline drafting error when Fantrax draft results fail  0.11s  
-  ✓ it does not call Fantrax draft endpoints for an unconnected communi… 0.07s  
+  ✓ it renders an inline drafting error when Fantrax draft results fail  0.06s  
+  ✓ it does not call Fantrax draft endpoints for an unconnected communi… 0.05s  
   ✓ it blocks guests from the community league show page                 0.03s  
   ✓ it blocks users outside the community from the community league sho… 0.03s  
 
    PASS  Tests\Feature\FantraxUserControllerTest
-  ✓ save returns json response and triggers side effects when leagues r… 0.05s  
+  ✓ save returns json response and triggers side effects when leagues r… 0.04s  
   ✓ save redirects and sets flash when leagues returned                  0.02s  
   ✓ save handles request exception for json requests                     0.02s  
   ✓ save handles request exception for form requests                     0.02s  
   ✓ save returns error when no leagues found                             0.02s  
   ✓ save does not persist secret or dispatch event when no leagues foun… 0.02s  
-  ✓ save returns form error when no leagues found                        0.02s  
-  ✓ disconnect deletes secret and sets status message                    0.02s  
+  ✓ save returns form error when no leagues found                        0.03s  
+  ✓ disconnect deletes secret and sets status message                    0.03s  
   ✓ fantrax logo profile connection blocks non super admins              0.02s  
   ✓ fantrax logo profile connection initializes configured profile for…  0.02s  
 
@@ -496,44 +496,44 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it deduplicates players that appear across seasons and prospects     0.02s  
   ✓ it uses the cache guard to skip re-dispatching the same player payl… 0.02s  
   ✓ it keeps import run caches isolated per importRunId                  0.02s  
-  ✓ it dispatches a job per team when the import command is executed     0.05s  
+  ✓ it dispatches a job per team when the import command is executed     0.04s  
 
    PASS  Tests\Feature\LeaguesAccessTest
   ✓ it direct leagues access redirects when fantrax is not ready         0.03s  
   ✓ it leagues page renders when fantrax secret and active league assig… 0.06s  
   ✓ it leagues page renders when yahoo connection and active league ass… 0.06s  
   ✓ it top level league refresh queues fantrax leagues for super admins  0.07s  
-  ✓ it fantrax roster display derives eligibility from platform slot us… 0.05s  
+  ✓ it fantrax roster display derives eligibility from platform slot us… 0.06s  
   ✓ it creating a community league assigns the acting user as league co… 0.03s  
-  ✓ it league settings are gated by league-scoped commissioner role      0.09s  
-  ✓ it community league commissioners can create private roster share l… 0.03s  
-  ✓ it community league commissioners see roster share buttons on team…  0.21s  
-  ✓ it super admins see roster share buttons without league commissione… 0.23s  
-  ✓ it super admins can create roster share links without league commis… 0.11s  
-  ✓ it community league teams payload includes roster share fields for…  0.06s  
-  ✓ it roster share copy becomes available only after the link is publi… 0.06s  
-  ✓ it public roster share URLs require a public non expired link        0.08s  
-  ✓ it non commissioners cannot manage roster share links                0.05s  
+  ✓ it league settings are gated by league-scoped commissioner role      0.10s  
+  ✓ it community league commissioners can create private roster share l… 0.04s  
+  ✓ it community league commissioners see roster share buttons on team…  0.19s  
+  ✓ it super admins see roster share buttons without league commissione… 0.19s  
+  ✓ it super admins can create roster share links without league commis… 0.04s  
+  ✓ it community league teams payload includes roster share fields for…  0.04s  
+  ✓ it roster share copy becomes available only after the link is publi… 0.05s  
+  ✓ it public roster share URLs require a public non expired link        0.05s  
+  ✓ it non commissioners cannot manage roster share links                0.04s  
   ✓ it league commissioner backfill assigns organization owners only by… 0.03s  
   ✓ it league commissioner backfill can include organization admins whe… 0.03s  
-  ✓ it leagues page left list excludes user hidden leagues               0.07s  
+  ✓ it leagues page left list excludes user hidden leagues               0.06s  
   ✓ it leagues page left list excludes hidden leagues for super admins   0.06s  
   ✓ it leagues options drawer includes user hidden leagues               0.07s  
   ✓ it leagues page renders provider league logos when available         0.07s  
   ✓ it leagues page prefers the current user team logo over the provide… 0.07s  
   ✓ it leagues page keeps initials fallback when no provider league log… 0.06s  
-  ✓ it fantrax league sync stores provider league and team logo urls     0.43s  
-  ✓ it fantrax league sync does not derive team logo urls from provider… 0.43s  
-  ✓ it fantrax league sync accepts alternate provider logo field names   0.42s  
-  ✓ it fantrax league sync preserves team logo urls when later payloads… 0.67s  
-  ✓ it queued fantrax league refresh does not derive team logo urls      0.05s  
+  ✓ it fantrax league sync stores provider league and team logo urls     0.36s  
+  ✓ it fantrax league sync does not derive team logo urls from provider… 0.38s  
+  ✓ it fantrax league sync accepts alternate provider logo field names   0.39s  
+  ✓ it fantrax league sync preserves team logo urls when later payloads… 0.58s  
+  ✓ it queued fantrax league refresh does not derive team logo urls      0.03s  
   ✓ it queued fantrax league refresh stores explicit team logo urls whe… 0.03s  
-  ✓ it leagues page uses the current user saved league order             0.09s  
-  ✓ it visible league access orders by user sort order before name fall… 0.04s  
+  ✓ it leagues page uses the current user saved league order             0.07s  
+  ✓ it visible league access orders by user sort order before name fall… 0.03s  
   ✓ it visible league access filters hidden leagues without removing ac… 0.03s  
-  ✓ it league order endpoint persists the current user league order      0.04s  
-  ✓ it league order endpoint rejects leagues outside the current user a… 0.05s  
-  ✓ it league order endpoint rejects inactive current user assignments   0.04s  
+  ✓ it league order endpoint persists the current user league order      0.03s  
+  ✓ it league order endpoint rejects leagues outside the current user a… 0.03s  
+  ✓ it league order endpoint rejects inactive current user assignments   0.03s  
   ✓ it league order endpoint rejects users without a ready provider      0.03s  
   ✓ it league order endpoint requires authentication                     0.02s  
   ✓ it league visibility endpoint hides a current user league            0.03s  
@@ -542,11 +542,11 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it league visibility endpoint requires boolean visibility            0.03s  
   ✓ it league visibility endpoint rejects leagues outside the current u… 0.03s  
   ✓ it league visibility endpoint rejects inactive current user assignm… 0.03s  
-  ✓ it league visibility endpoint rejects users without a ready provide… 0.03s  
+  ✓ it league visibility endpoint rejects users without a ready provide… 0.02s  
   ✓ it league visibility endpoint requires authentication                0.02s  
-  ✓ it non super admins cannot refresh leagues through the refresh endp… 0.03s  
+  ✓ it non super admins cannot refresh leagues through the refresh endp… 0.02s  
 
-   FAIL  Tests\Feature\NhlGameValidationTest
+   PASS  Tests\Feature\NhlGameValidationTest
   ✓ it returns no deltas when exact comparable totals match              0.04s  
   ✓ it returns a field delta when an exact comparable total differs      0.03s  
   ✓ it does not return a missing summary delta when a boxscore player h… 0.02s  
@@ -555,11 +555,11 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it tolerates one second time-on-ice drift                            0.02s  
   ✓ it returns a time-on-ice delta beyond tolerance                      0.02s  
   ✓ it does not validate faceoff counts giveaways or takeaways           0.02s  
-  ✓ it normalizes faceoff percentage before validation                   0.02s  
+  ✓ it normalizes faceoff percentage before validation                   0.03s  
   ✓ it returns a faceoff percentage delta when normalized percentages d… 0.03s  
   ✓ it returns deltas for retained skater validation fields              0.02s  
-  ✓ it tolerates the boxscore penalty-minute gap for committed match pe… 0.02s  
-  ✓ it keeps ordinary penalty-minute mismatches blocking without a comm… 0.02s  
+  ✓ it tolerates the boxscore penalty-minute gap for committed match pe… 0.03s  
+  ✓ it keeps ordinary penalty-minute mismatches blocking without a comm… 0.03s  
   ✓ it does not validate skater special teams fields absent from the NH… 0.02s  
   ✓ it persists raw play-by-play event metadata during import            0.02s  
   ✓ it uses penalty shot penalty situation to classify same-clock goal…  0.04s  
@@ -571,59 +571,59 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it rebuilds event-unit links idempotently for a game                 0.03s  
   ✓ it uses boxscore shot semantics for unit shot aggregations           0.04s  
   ✓ it returns goalie-only deltas for persisted and derived goalie fiel… 0.02s  
-  ✓ it does not validate offensive goalie fields absent from the NHL bo… 0.02s  
+  ✓ it does not validate offensive goalie fields absent from the NHL bo… 0.03s  
   ✓ it uses official goalie strength goals against instead of deriving…  0.02s  
   ✓ it clears game-scoped source and derived rows before a reprocess PB… 0.04s  
   ✓ it keeps normal PBP stage processing idempotent without reprocess c… 0.03s  
   ✓ it persists an approved validation when no deltas exist              0.03s  
-  ✓ it persists an incomplete validation when core deltas pass but shif… 0.02s  
+  ✓ it persists an incomplete validation when core deltas pass but shif… 0.03s  
   ✓ it allows on-ice stages to run when stored shiftcharts are missing   0.02s  
-  ⨯ it falls back to TV and TH time-on-ice reports when shiftcharts are… 0.02s  
-  ✓ it reconciles tiny zero appearance goalie toi artifacts when pbp do… 0.03s  
-  ⨯ it keeps zero appearance goalie toi artifacts at thirty seconds inv… 0.03s  
-  ✓ it lists games with missing source records for admin rerun triage    0.03s  
+  ✓ it falls back to TV and TH time-on-ice reports when shiftcharts are… 0.03s  
+  ✓ it reconciles tiny zero appearance goalie toi artifacts when pbp do… 0.04s  
+  ✓ it does not create review deltas for zero appearance goalie toi art… 0.03s  
+  ✓ it lists games with missing source records for admin rerun triage    0.02s  
   ✓ it requires authentication for source gap admin endpoints            0.02s  
   ✓ it blocks non-admin users from source gap admin endpoints            0.03s  
   ✓ it queues only shift-derived stages when a missing shifts source re… 0.04s  
   ✓ it rebuilds the full game when a missing core source recovers        0.03s  
   ✓ it keeps a game in source gaps when a rerun still finds a missing c… 0.03s  
   ✓ it rebuilds a stopped game import from the admin rerun endpoint      0.03s  
-  ⨯ it writes raw provider troubleshooting files when a game import sta… 0.02s  
+  ✓ it writes raw provider troubleshooting files when a game import sta… 0.02s  
   ✓ it persists an invalidated validation with field deltas when truth…  0.04s  
   ✓ it uses the same invalidated validation status for unresolved prese… 0.04s  
   ✓ it invalidates unresolved validation deltas for regular season game… 0.04s  
-  ⨯ it marks regular season shift-only deltas as shiftchart mismatch an… 0.03s  
-  ⨯ it keeps shiftchart mismatch status after official boxscore totals…  0.04s  
+  ✓ it approves regular season shift-only deltas after applying officia… 0.04s  
+  ✓ it keeps approved status after official boxscore totals have alread… 0.04s  
   ✓ it invalidates mixed shift and scoring deltas without overwriting s… 0.04s  
   ✓ it invalidates unresolved validation deltas for playoff games        0.04s  
-  ⨯ it reconciles goalie shift-count-only deltas when official goalie t… 0.03s  
+  ✓ it reconciles goalie shift-count-only deltas when official goalie t… 0.03s  
   ✓ it lets preseason invalidated validation jobs complete without fail… 0.05s  
-  ⨯ it lets shiftchart mismatch validation jobs complete without failin… 0.04s  
+  ✓ it lets shiftchart mismatch validation jobs complete without failin… 0.04s  
   ✓ it lets unresolved regular season validation jobs complete as inval… 0.04s  
-  ⨯ it writes troubleshooting markdown snapshots when validation is inv… 0.03s  
-  ⨯ it includes linked unit context for plus-minus troubleshooting snap… 0.04s  
+  ✓ it writes troubleshooting markdown snapshots when validation is inv… 0.03s  
+  ✓ it includes linked unit context for plus-minus troubleshooting snap… 0.04s  
   ✓ it replaces stale deltas on rerun                                    0.04s  
   ✓ it updates game summary time on ice and shifts after importing raw…  0.03s  
-  ✓ it ignores shiftchart rows for teams outside the imported game       0.02s  
-  ⨯ it drops shiftchart-only players missing from both boxscore and pbp  0.03s  
+  ✓ it ignores shiftchart rows for teams outside the imported game       0.03s  
+  ✓ it drops shiftchart-only players missing from both boxscore and pbp  0.03s  
   ✓ it drops goalie shiftchart artifacts when pbp proves the goalie was… 0.03s  
-  ⨯ it trims overtime shiftchart rows after pbp proves the game ended e… 0.02s  
+  ✓ it trims overtime shiftchart rows after pbp proves the game ended e… 0.04s  
   ✓ it drops a malformed goalie shift row when official goalie toi exac… 0.03s  
-  ✓ it keeps goalie shift rows when no suspicious row exactly reconcile… 0.03s  
-  ⨯ it reconciles shiftchart artifacts against boxscore shift targets w… 0.03s  
+  ✓ it keeps goalie shift rows when no suspicious row exactly reconcile… 0.02s  
+  ✓ it reconciles shiftchart artifacts against boxscore shift targets w… 0.03s  
   ✓ it drops skater shiftchart artifacts inside a committed major penal… 0.04s  
   ✓ it uses a contained alternate shift row when it exactly reconciles…  0.04s  
   ✓ it uses a duplicate shift alternative when it exactly fixes boxscor… 0.02s  
-  ✓ it uses a shorter duplicate shift alternative when it exactly fixes… 0.03s  
+  ✓ it uses a shorter duplicate shift alternative when it exactly fixes… 0.02s  
   ✓ it keeps the selected duplicate shift when it already matches offic… 0.03s  
-  ✓ it does not guess between duplicate shift alternatives when none ex… 0.03s  
+  ✓ it does not guess between duplicate shift alternatives when none ex… 0.02s  
   ✓ it drops a thirty-second-or-less shift artifact when it exactly mat… 0.04s  
   ✓ it keeps a short reused shift number when official targets prove it… 0.04s  
   ✓ it drops a thirty-two-second shift artifact when official targets e… 0.02s  
   ✓ it drops impossible over-cap skater shifts when pbp manpower and bo… 0.05s  
   ✓ it borrows official skater shift count when shiftcharts are missing… 0.04s  
   ✓ it transfers summary-only toi between paired skaters when boxscore…  0.05s  
-  ✓ it documents validate-summary in the canonical stage order           0.02s  
+  ✓ it documents validate-summary in the canonical stage order           0.01s  
   ✓ it places shifts after boxscore so shifts can reconcile against off… 0.01s  
   ✓ it places validate-summary after game unit aggregation               0.01s  
   ✓ it requires upstream imports before validate-summary can run         0.01s  
@@ -632,44 +632,44 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it places HTML PBP verification between event linking and game unit… 0.01s  
   ✓ it parses NHL HTML PBP text-flow rows from official reports          0.01s  
   ✓ it parses NHL HTML PBP when report text is collapsed into one strin… 0.01s  
-  ✓ it normalizes delayed penalty rows and skips challenge result rows…  0.02s  
+  ✓ it normalizes delayed penalty rows and skips challenge result rows…  0.01s  
   ✓ it parses the saved NHL PBP HTM sample file                          0.20s  
   ✓ it marks shift-units ready once upstream imports are completed       0.02s  
   ✓ it does not mark validation ready until game unit aggregation compl… 0.02s  
-  ✓ it dispatches validation after game unit aggregation completes       0.03s  
-  ✓ it blocks guests from validation triage                              0.02s  
+  ✓ it dispatches validation after game unit aggregation completes       0.02s  
+  ✓ it blocks guests from validation triage                              0.01s  
   ✓ it blocks non-admin users from validation triage                     0.02s  
   ✓ it returns validation triage JSON to super admins                    0.03s  
-  ✓ it returns embedded validation triage HTML to super admins           0.04s  
-  ✓ it shows validation deltas as JSON to super admins                   0.04s  
+  ✓ it returns embedded validation triage HTML to super admins           0.03s  
+  ✓ it shows validation deltas as JSON to super admins                   0.03s  
   ✓ it returns embedded validation detail HTML to super admins           0.04s  
-  ⨯ it approves matching HTML PBP and upserts unit shift player positio… 0.03s  
-  ⨯ it records unavailable HTML PBP as incomplete non-fatal review cont… 0.02s  
-  ⨯ it records HTML and API PBP disagreements as failed PBP source mism… 0.02s  
-  ⨯ it ignores terminal period-end on-ice disagreements during HTML PBP… 0.03s  
-  ⨯ it matches shootout failed-shot-attempt API rows to HTML missed-sho… 0.03s  
-  ⨯ it matches HTML PBP by clock and type instead of report row number   0.02s  
-  ⨯ it writes HTML PBP troubleshooting payloads when verification fails  0.02s  
-  ⨯ it writes source event payloads and shift context for on-ice troubl… 0.04s  
-  ⨯ it creates missing HTML PBP troubleshooting payload files from raw…  0.02s  
-  ⨯ it returns embedded PBP source mismatch triage HTML to super admins  0.03s  
-  ⨯ it returns recent PBP games for admin enrichment                     0.03s  
-  ⨯ it treats an event at the exact shift start as inside the source-on… 0.05s  
-  ⨯ it ignores terminal period-end on-ice disagreements in source-only…  0.04s  
-  ⨯ it ignores penalty-shot on-ice disagreements in source-only Full PB… 0.04s  
-  ⨯ it returns a source-only Full PBP review step and writes source mis… 0.03s  
-  ⨯ it enriches a recent PBP game from the admin PBP tab                 0.03s  
+  ✓ it approves matching HTML PBP and upserts unit shift player positio… 0.04s  
+  ✓ it records unavailable HTML PBP as incomplete non-fatal review cont… 0.02s  
+  ✓ it records HTML and API PBP disagreements as failed PBP source mism… 0.03s  
+  ✓ it ignores terminal period-end on-ice disagreements during HTML PBP… 0.04s  
+  ✓ it matches shootout failed-shot-attempt API rows to HTML missed-sho… 0.03s  
+  ✓ it matches HTML PBP by clock and type instead of report row number   0.03s  
+  ✓ it writes HTML PBP troubleshooting payloads when verification fails  0.03s  
+  ✓ it writes source event payloads and shift context for on-ice troubl… 0.04s  
+  ✓ it creates missing HTML PBP troubleshooting payload files from raw…  0.03s  
+  ✓ it returns embedded PBP source mismatch triage HTML to super admins  0.03s  
+  ✓ it returns recent PBP games for admin enrichment                     0.03s  
+  ✓ it treats an event at the exact shift start as inside the source-on… 0.03s  
+  ✓ it ignores terminal period-end on-ice disagreements in source-only…  0.03s  
+  ✓ it ignores penalty-shot on-ice disagreements in source-only Full PB… 0.03s  
+  ✓ it returns a source-only Full PBP review step and writes source mis… 0.03s  
+  ✓ it enriches a recent PBP game from the admin PBP tab                 0.03s  
   ✓ it rebuilds event shifts for one PBP game from the admin PBP tab     0.03s  
-  ✓ it does not link penalty-shot attempts to normal unit shifts         0.04s  
-  ⨯ it rebuilds event links with HTML PBP and TV TOI when shiftcharts d… 0.06s  
-  ✓ it lets super admins accept API PBP as canonical for source mismatc… 0.03s  
+  ✓ it does not link penalty-shot attempts to normal unit shifts         0.03s  
+  ✓ it rebuilds event links with HTML PBP and TV TOI when shiftcharts d… 0.08s  
+  ✓ it lets super admins accept API PBP as canonical for source mismatc… 0.02s  
   ✓ it blocks guests and non-admins from PBP source mismatch actions     0.03s  
   ✓ it lets super admins resolve PBP source mismatches with position-on… 0.03s  
   ✓ it accepts a validation exception without dispatching unit work      0.03s  
-  ✓ it reruns unresolved validation and marks validation progress compl… 0.07s  
+  ✓ it reruns unresolved validation and marks validation progress compl… 0.06s  
   ✓ it reruns invalidated preseason validation and marks validation pro… 0.06s  
-  ⨯ it reruns shiftchart mismatch validation and marks validation progr… 0.04s  
-  ✓ it reruns validation without dispatching unit work when totals now…  0.03s  
+  ✓ it reruns shiftchart mismatch validation and marks validation progr… 0.05s  
+  ✓ it reruns validation without dispatching unit work when totals now…  0.04s  
   ✓ it queues a summary rerun from validation triage                     0.03s  
   ✓ it queues a boxscore rerun from validation triage                    0.03s  
   ✓ it rejects unsupported play-by-play game types before storing event… 0.02s  
@@ -678,22 +678,22 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
    PASS  Tests\Feature\NhlStrengthOnIceStatsTest
   ✓ it builds the same unit hash regardless of player order              0.04s  
   ✓ it builds a different unit hash for a different unit type            0.02s  
-  ✓ it resolves the same unit for the same sorted composition            0.02s  
-  ✓ it stores normalized composition player ids on resolved units        0.02s  
+  ✓ it resolves the same unit for the same sorted composition            0.03s  
+  ✓ it stores normalized composition player ids on resolved units        0.03s  
   ✓ it syncs resolved unit players into the pivot table                  0.02s  
-  ✓ it creates EV unit strength summaries from forward unit shifts       0.03s  
-  ✓ it creates PP unit strength summaries from power-play units          0.03s  
-  ✓ it creates PK unit strength summaries from penalty-kill units        0.03s  
-  ✓ it counts goals for while the unit is on ice                         0.03s  
+  ✓ it creates EV unit strength summaries from forward unit shifts       0.04s  
+  ✓ it creates PP unit strength summaries from power-play units          0.04s  
+  ✓ it creates PK unit strength summaries from penalty-kill units        0.04s  
+  ✓ it counts goals for while the unit is on ice                         0.04s  
   ✓ it counts goals against while the unit is on ice                     0.04s  
   ✓ it calculates plus minus from even-strength linked goal events       0.05s  
   ✓ it reconciles persisted plus minus to official boxscore values when… 0.04s  
-  ✓ it excludes power-play goals from plus minus                         0.03s  
-  ✓ it includes shorthanded goals in plus minus                          0.03s  
+  ✓ it excludes power-play goals from plus minus                         0.04s  
+  ✓ it includes shorthanded goals in plus minus                          0.04s  
   ✓ it deduplicates a player linked through multiple units on the same…  0.03s  
   ✓ it excludes penalty shot goals from plus minus                       0.03s  
-  ✓ it counts goals as shots for                                         0.02s  
-  ✓ it counts missed shots as Fenwick and shot attempts                  0.02s  
+  ✓ it counts goals as shots for                                         0.03s  
+  ✓ it counts missed shots as Fenwick and shot attempts                  0.03s  
   ✓ it counts blocked shots as shot attempts and blocks for the defendi… 0.03s  
   ✓ it counts faceoff wins and totals                                    0.03s  
   ✓ it creates player strength summaries from unit membership            0.03s  
@@ -703,55 +703,55 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it derives per-game slices from totals                               0.03s  
   ✓ it derives per-60 slices from totals                                 0.03s  
   ✓ it filters query results by date range                               0.03s  
-  ✓ it returns no rows for a date range outside the game date            0.02s  
+  ✓ it returns no rows for a date range outside the game date            0.03s  
   ✓ it rolls goalie fantasy fields into nhl season stats                 0.03s  
   ✓ it counts goalie games played from goalie evidence when time on ice… 0.03s  
-  ✓ it uses official boxscore goalie decisions before primary goalie fa… 0.02s  
+  ✓ it uses official boxscore goalie decisions before primary goalie fa… 0.03s  
   ✓ it exposes native advanced skater aliases and perspective position…  0.09s  
   ✓ it keeps native goalie goals against when goalie scoring columns sh… 0.05s  
   ✓ it defaults line combos to the latest season regular-season segment  0.04s  
   ✓ it renders player avatars in line combo season cards                 0.04s  
   ✓ it renders penalty kill units as forwards row above defense row whe… 0.04s  
   ✓ it filters line combo season totals by preseason segment             0.04s  
-  ✓ it aggregates line combo strength summaries across the selected sea… 0.03s  
+  ✓ it aggregates line combo strength summaries across the selected sea… 0.04s  
   ✓ it sorts line combo season totals by the selected aggregate column   0.04s  
-  ✓ it filters line combo season totals by selected season               0.04s  
-  ✓ it defaults the stats page to skaters instead of the first visible…  0.05s  
+  ✓ it filters line combo season totals by selected season               0.05s  
+  ✓ it defaults the stats page to skaters instead of the first visible…  0.06s  
   ✓ it uses official boxscore toi for stats page per-60 rate calculatio… 0.05s  
-  ✓ it maps wing position filters to stored NHL left and right position… 0.05s  
+  ✓ it maps wing position filters to stored NHL left and right position… 0.06s  
   ✓ it limits the prospects perspective to players marked as prospects   0.03s  
   ✓ it exposes prospect goalie stats from legacy stats goalie columns    0.04s  
   ✓ it groups prospect stats by player and league while summing same le… 0.04s  
 
    PASS  Tests\Feature\PasswordConfirmationTest
   ✓ confirm password screen can be rendered                              0.03s  
-  ✓ password can be confirmed                                            0.03s  
+  ✓ password can be confirmed                                            0.02s  
   ✓ password is not confirmed with invalid password                      0.22s  
 
    PASS  Tests\Feature\PasswordResetTest
-  ✓ reset password link screen can be rendered                           0.04s  
-  ✓ reset password link can be requested                                 0.04s  
+  ✓ reset password link screen can be rendered                           0.03s  
+  ✓ reset password link can be requested                                 0.03s  
   ✓ reset password screen can be rendered                                0.03s  
-  ✓ password can be reset with valid token                               0.04s  
+  ✓ password can be reset with valid token                               0.03s  
 
-   FAIL  Tests\Feature\PatreonConnectControllerTest
+   PASS  Tests\Feature\PatreonConnectControllerTest
   ✓ callback with invalid state redirects with error                     0.02s  
   ✓ callback preserves existing webhook secret                           0.03s  
   ✓ redirect falls back to callback route when config missing            0.02s  
   ✓ callback uses callback route when redirect not configured            0.03s  
   ✓ callback requires existing organization                              0.02s  
   ✓ redirect builds oauth url with expected parameters                   0.02s  
-  ✓ callback rejects state for different user                            0.03s  
+  ✓ callback rejects state for different user                            0.02s  
   ✓ callback missing code returns error                                  0.02s  
   ✓ callback creates connected account with tokens and metadata          0.03s  
-  ✓ disconnect deletes account and returns json                          0.03s  
-  ✓ manual sync endpoint returns payload for authorized user             0.03s  
+  ✓ disconnect deletes account and returns json                          0.02s  
+  ✓ manual sync endpoint returns payload for authorized user             0.02s  
   ✓ callback missing code returns error without creating account         0.02s  
-  ⨯ memberships section shows connected patreon account after callback   0.07s  
+  ✓ memberships section shows connected patreon account after callback   0.06s  
   ✓ callback fetches campaign when identity has no campaign              0.03s  
 
    PASS  Tests\Feature\PatreonNightlySyncTest
-  ✓ command processes connected accounts                                 0.03s  
+  ✓ command processes connected accounts                                 0.02s  
 
    PASS  Tests\Feature\PatreonWebhookControllerTest
   ✓ guard rejects invalid signature                                      0.02s  
@@ -761,42 +761,42 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ handle webhook updates account and records event                     0.03s  
 
    PASS  Tests\Feature\PlatformLeagueScoringCategoriesTest
-  ✓ it syncs a provider category into a first-class row                  0.03s  
-  ✓ it normalizes Fantrax skating shorthand groups                       0.04s  
+  ✓ it syncs a provider category into a first-class row                  0.02s  
+  ✓ it normalizes Fantrax skating shorthand groups                       0.02s  
   ✓ it normalizes Fantrax goalie shorthand groups                        0.02s  
   ✓ it keeps the richer duplicate category row for the same identity     0.02s  
-  ✓ it deletes stale rows that disappear from the provider payload       0.03s  
-  ✓ it preserves a manual mapping keyed by provider category id          0.02s  
+  ✓ it deletes stale rows that disappear from the provider payload       0.02s  
+  ✓ it preserves a manual mapping keyed by provider category id          0.03s  
   ✓ it preserves a manual mapping keyed by normalized identity           0.02s  
   ✓ it links a dictionary mapping by provider label                      0.02s  
   ✓ it persists required schema columns from enriched categories         0.02s  
   ✓ it uses persisted rows before legacy scoring settings payload rows   0.02s  
   ✓ it falls back to legacy scoring settings when no rows exist          0.02s  
-  ✓ it returns persisted manual mappings by identity                     0.02s  
+  ✓ it returns persisted manual mappings by identity                     0.04s  
   ✓ it falls back to legacy manual mappings when no rows exist           0.02s  
   ✓ it returns false when updating manual mappings without persisted ro… 0.02s  
   ✓ it updates persisted manual mappings with stat options               0.03s  
-  ✓ it updates persisted manual mappings with dictionary options         0.02s  
+  ✓ it updates persisted manual mappings with dictionary options         0.03s  
   ✓ it marks rows supported from an explicit supported flag              0.02s  
   ✓ it marks rows supported when a stat key exists                       0.02s  
   ✓ it persists position values for provider categories                  0.02s  
   ✓ it normalizes Fantrax points league category config points as scori… 0.01s  
-  ✓ it orders payload rows by sort order                                 0.03s  
+  ✓ it orders payload rows by sort order                                 0.02s  
   ✓ it stores numeric values and leaves non numeric values null          0.02s  
   ✓ it wraps scalar raw provider values for audit context                0.02s  
 
    PASS  Tests\Feature\PlayerIdentityResolutionTest
-  ✓ it upserts an nhl external identity when importing an nhl player     0.04s  
+  ✓ it upserts an nhl external identity when importing an nhl player     0.03s  
   ✓ it does not duplicate an nhl identity when reimporting the same pla… 0.03s  
-  ✓ it creates a canonical player for a new nhl authority identity       0.03s  
-  ✓ it ignores invalid nhl player handedness values                      0.03s  
+  ✓ it creates a canonical player for a new nhl authority identity       0.02s  
+  ✓ it ignores invalid nhl player handedness values                      0.02s  
   ✓ it calculates goalie saves save percentage and gaa from landing sea… 0.03s  
   ✓ it deduplicates repeated nhl landing season total rows before writi… 0.03s  
   ✓ it keeps the last provider row when duplicate nhl landing stat iden… 0.03s  
   ✓ it resolves canonical nhl team id from abbrev when player landing o… 0.03s  
   ✓ it links the nhl identity to the created canonical player            0.03s  
   ✓ it updates a linked canonical player on reimport                     0.03s  
-  ✓ it preserves the raw nhl payload on the identity                     0.03s  
+  ✓ it preserves the raw nhl payload on the identity                     0.02s  
   ✓ it stores matched status and confidence after import                 0.02s  
   ✓ it sets first and last seen timestamps on first import               0.03s  
   ✓ it preserves first seen and refreshes last seen on reimport          0.03s  
@@ -808,28 +808,28 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it throws when an nhl identity payload misses the provider player i… 0.02s  
   ✓ it rejects matched identity results without a canonical player refe… 0.02s  
   ✓ it rejects undocumented identity match statuses                      0.02s  
-  ✓ it rejects identity match confidence outside the percentage range    0.02s  
+  ✓ it rejects identity match confidence outside the percentage range    0.01s  
   ✓ it keeps the prospect flag when importing a prospect                 0.03s  
   ✓ it updates current league from prospect stats                        0.03s  
   ✓ it service playerExists returns true after import                    0.03s  
-  ✓ it legacy import wrapper delegates to the identity workflow          0.07s  
+  ✓ it legacy import wrapper delegates to the identity workflow          0.03s  
   ✓ it queued nhl player job uses the identity workflow                  0.03s  
-  ✓ it fantrax import upserts an external identity                       0.02s  
+  ✓ it fantrax import upserts an external identity                       0.03s  
   ✓ it fantrax import skips team aggregate rows before identity upsert   0.02s  
   ✓ it fantrax import skips rows with team aggregate position markers    0.02s  
   ✓ it fantrax known provider id links to an existing canonical player   0.03s  
-  ✓ it fantrax exact normalized name and birthdate auto-links            0.03s  
+  ✓ it fantrax exact normalized name and birthdate auto-links            0.02s  
   ✓ it fantrax ambiguous threshold-passing names become conflicts        0.02s  
   ✓ it fantrax exact normalized name only remains a candidate below the… 0.03s  
   ✓ it fantrax exact normalized name plus position type auto-links at t… 0.03s  
-  ✓ it nhl provider identities auto-link at the name plus position type… 0.02s  
-  ✓ it fantrax exact normalized name plus position and team auto-links…  0.02s  
-  ✓ it fantrax compact apostrophe surname auto-links to canonical punct… 0.03s  
-  ✓ it fantrax supporting evidence can disambiguate one threshold-passi… 0.03s  
-  ✓ it fantrax ignores wrong position type candidates when deciding mul… 0.03s  
-  ✓ it fantrax still conflicts when multiple same position type candida… 0.03s  
+  ✓ it nhl provider identities auto-link at the name plus position type… 0.03s  
+  ✓ it fantrax exact normalized name plus position and team auto-links…  0.03s  
+  ✓ it fantrax compact apostrophe surname auto-links to canonical punct… 0.02s  
+  ✓ it fantrax supporting evidence can disambiguate one threshold-passi… 0.02s  
+  ✓ it fantrax ignores wrong position type candidates when deciding mul… 0.02s  
+  ✓ it fantrax still conflicts when multiple same position type candida… 0.02s  
   ✓ it capwages name-only provider identities auto-link at the lower pr… 0.03s  
-  ✓ it capwages ignores wrong position type candidates when deciding mu… 0.04s  
+  ✓ it capwages ignores wrong position type candidates when deciding mu… 0.03s  
   ✓ it capwages exact normalized name plus position type persists an au… 0.03s  
   ✓ it imports nhl team references from the nhl stats endpoint           0.02s  
   ✓ it nhl team import updates duplicate abbrev rows from the stats end… 0.02s  
@@ -839,14 +839,14 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it nhl draft import creates a minimal canonical prospect for picks…  0.03s  
   ✓ it nhl draft import resolves missing player ids through cayenne and… 0.04s  
   ✓ it nhl identity enrichment merges a duplicate null-id player into t… 0.06s  
-  ✓ it nhl draft import links an existing player by name and position t… 0.03s  
+  ✓ it nhl draft import links an existing player by name and position t… 0.04s  
   ✓ it nhl player import job discovers roster and prospect players once… 0.02s  
   ✓ it retries transient NHL player landing failures during inline play… 0.04s  
-  ✓ it records persistent transient NHL player landing failures and con… 0.06s  
-  ✓ it records non transient NHL player landing failures and continues…  0.04s  
-  ✓ it records draft pick landing failures and continues importing late… 0.07s  
-  ✓ it capwages full team names normalize through nhl teams for name pl… 0.05s  
-  ✓ it capwages nested personal info birthdate contributes plus plus sc… 0.04s  
+  ✓ it records persistent transient NHL player landing failures and con… 0.04s  
+  ✓ it records non transient NHL player landing failures and continues…  0.03s  
+  ✓ it records draft pick landing failures and continues importing late… 0.04s  
+  ✓ it capwages full team names normalize through nhl teams for name pl… 0.03s  
+  ✓ it capwages nested personal info birthdate contributes plus plus sc… 0.03s  
   ✓ it fantrax insufficient name data remains unmatched with a reason    0.02s  
   ✓ it fantrax import remains idempotent for identity and legacy player… 0.03s  
   ✓ it capwages import creates a canonical non-prospect player for elig… 0.04s  
@@ -856,30 +856,30 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it capwages import skips identities with no contract seasons         0.02s  
   ✓ it capwages import preserves provider access failures instead of la… 0.02s  
   ✓ it capwages import skips identities whose latest contract season is… 0.02s  
-  ✓ it capwages import ignores current season buyout rows when deciding… 0.02s  
+  ✓ it capwages import ignores current season buyout rows when deciding… 0.03s  
   ✓ it capwages import allows identities whose latest contract season m… 0.03s  
-  ✓ it capwages import stores provider profile data for eligible identi… 0.05s  
+  ✓ it capwages import stores provider profile data for eligible identi… 0.04s  
   ✓ it capwages import extracts transaction dates from acquisition pros… 0.06s  
   ✓ it capwages import leaves draft acquisition transaction dates empty  0.03s  
-  ✓ it capwages import leaves transaction dates empty when acquisition…  0.03s  
+  ✓ it capwages import leaves transaction dates empty when acquisition…  0.05s  
   ✓ it capwages import creates a signed transaction when it materialize… 0.04s  
   ✓ it capwages import does not duplicate signed transactions for an ex… 0.04s  
   ✓ it capwages reconciliation creates missing signed transactions for…  0.03s  
   ✓ it public transactions page renders the javascript mount shell       0.02s  
   ✓ it transactions payload exposes canonical player avatar data         0.02s  
-  ✓ it transactions payload exposes canonical player current contract s… 0.03s  
+  ✓ it transactions payload exposes canonical player current contract s… 0.10s  
   ✓ it signed transactions payload uses the linked players latest canon… 0.03s  
   ✓ it transactions payload sorts dated rows newest first before undate… 0.02s  
-  ✓ it transactions payload sorts dated rows oldest first when requeste… 0.03s  
-  ✓ it transactions payload filters by transaction type                  0.02s  
+  ✓ it transactions payload sorts dated rows oldest first when requeste… 0.02s  
+  ✓ it transactions payload filters by transaction type                  0.03s  
   ✓ it transactions payload excludes draft drafted and transfer transac… 0.02s  
   ✓ it transactions payload type options exclude draft drafted and tran… 0.02s  
   ✓ it transactions payload searches player names descriptions and unli… 0.03s  
   ✓ it dispatches an identity linked event when an identity player link… 0.02s  
   ✓ it does not dispatch an identity linked event when the identity rem… 0.02s  
-  ✓ it matches fantrax first name y and i ending variants when last nam… 0.03s  
+  ✓ it matches fantrax first name y and i ending variants when last nam… 0.02s  
   ✓ it updates fantrax player rows and queues league syncs when fantrax… 0.02s  
-  ✓ it queues capwages contract refresh when a capwages identity is lin… 0.02s  
+  ✓ it queues capwages contract refresh when a capwages identity is lin… 0.03s  
   ✓ it uses cached capwages profile payload without queueing refresh wh… 0.03s  
   ✓ it does not queue capwages contract refresh for non-capwages linked… 0.02s  
   ✓ it queues NHL identity resolution when a non-NHL identity links to…  0.02s  
@@ -893,9 +893,9 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it resolves an NHL player id from first last and position evidence   0.02s  
   ✓ it returns null when NHL name position evidence has multiple viable… 0.02s  
   ✓ it filters NHL Stats last-name matches down to the exact current-te… 0.03s  
-  ✓ it merges a duplicate player when NHL resolution finds an already o… 0.04s  
-  ✓ it moves source identities to the owner when NHL resolution merges…  0.04s  
-  ✓ it stores NHL candidate identities without mutating a player when m… 0.03s  
+  ✓ it merges a duplicate player when NHL resolution finds an already o… 0.05s  
+  ✓ it moves source identities to the owner when NHL resolution merges…  0.05s  
+  ✓ it stores NHL candidate identities without mutating a player when m… 0.02s  
   ✓ it keeps NHL identity resolution jobs unique per canonical player    0.02s  
   ✓ it keeps NHL landing refresh jobs unique per NHL player id           0.02s  
   ✓ it NHL landing refresh jobs preserve prospect status while importin… 0.03s  
@@ -903,98 +903,98 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it queues an NHL landing refresh when a player receives a new NHL i… 0.02s  
   ✓ it does not queue an NHL landing refresh for unrelated player updat… 0.02s  
   ✓ it queues NHL resolution jobs for canonical players without NHL ids  0.02s  
-  ✓ it resolves NHL identities inline for admin import runs without que… 0.04s  
+  ✓ it resolves NHL identities inline for admin import runs without que… 0.05s  
   ✓ it requires a resolver target for the NHL resolve command            0.02s  
   ✓ it refreshes capwages detail and materializes contracts after a del… 0.03s  
   ✓ it uses cached capwages payload when refresh detail is blocked by t… 0.03s  
   ✓ it keeps capwages contract refresh jobs unique per identity          0.02s  
   ✓ it skips capwages contract refresh when the identity no longer exis… 0.02s  
   ✓ it capwages matched identity applies contract data to the linked ca… 0.04s  
-  ✓ it capwages import remains idempotent for identities contracts and…  0.04s  
+  ✓ it capwages import remains idempotent for identities contracts and…  0.05s  
   ✓ it capwages import uses same-day provider cached raw payload before… 0.04s  
-  ✓ it capwages import refreshes detail when cached provider payload is… 0.04s  
+  ✓ it capwages import refreshes detail when cached provider payload is… 0.05s  
   ✓ it capwages page import dispatches the next page without delay afte… 0.02s  
   ✓ it capwages page import skips player detail server errors and conti… 0.02s  
   ✓ it capwages page import skips player detail connection failures and… 0.02s  
   ✓ it provider audit counts include every documented identity status    0.02s  
 
    PASS  Tests\Feature\PlayersAvailableEventTest
-  ✓ it broadcasts when the first nhl player is imported                  0.05s  
-  ✓ it broadcasts when the first fantrax player is imported              0.02s  
+  ✓ it broadcasts when the first nhl player is imported                  0.06s  
+  ✓ it broadcasts when the first fantrax player is imported              0.03s  
 
    PASS  Tests\Feature\ProfileInformationTest
-  ✓ current profile information is available                             0.03s  
+  ✓ current profile information is available                             0.02s  
   ✓ profile information can be updated                                   0.03s  
 
    WARN  Tests\Feature\RegistrationTest
   ✓ registration screen can be rendered                                  0.02s  
   - registration screen cannot be rendered if support is disabled → Reg… 0.02s  
-  ✓ new users can register                                               0.02s  
+  ✓ new users can register                                               0.03s  
 
-   FAIL  Tests\Feature\StatsPayloadPipelineTest
-  ✓ it creates an empty filter set without a request                     0.02s  
+   PASS  Tests\Feature\StatsPayloadPipelineTest
+  ✓ it creates an empty filter set without a request                     0.01s  
   ✓ it normalizes position filter arrays by trimming blanks              0.02s  
-  ✓ it normalizes scalar filter query values into lists                  0.02s  
-  ✓ it parses numeric min and max query ranges as floats                 0.02s  
-  ✓ it parses draft year range query bounds as positive integers         0.02s  
+  ✓ it normalizes scalar filter query values into lists                  0.01s  
+  ✓ it parses numeric min and max query ranges as floats                 0.01s  
+  ✓ it parses draft year range query bounds as positive integers         0.01s  
   ✓ it keeps non numeric range bounds as null                            0.01s  
-  ✓ it returns position echo payloads for applied metadata               0.02s  
+  ✓ it returns position echo payloads for applied metadata               0.01s  
   ✓ it creates query context defaults from a request                     0.02s  
-  ✓ it sanitizes invalid slice and game type values in query context     0.02s  
+  ✓ it sanitizes invalid slice and game type values in query context     0.01s  
   ✓ it prefers season_id over season in query context                    0.01s  
-  ✓ it normalizes blank column group to null in query context            0.01s  
-  ✓ it keeps goalie column group and draft context in query context      0.01s  
+  ✓ it normalizes blank column group to null in query context            0.02s  
+  ✓ it keeps goalie column group and draft context in query context      0.02s  
   ✓ it returns a cloned query context with a resolved perspective        0.01s  
-  ✓ it builds virtual schema for derived filters from assembled rows     0.01s  
+  ✓ it builds virtual schema for derived filters from assembled rows     0.02s  
   ✓ it returns no applied derived filters without a request              0.01s  
-  ✓ it filters derived rows by games played range                        0.02s  
-  ✓ it filters derived rows by contract value range                      0.01s  
+  ✓ it filters derived rows by games played range                        0.01s  
+  ✓ it filters derived rows by contract value range                      0.02s  
   ✓ it filters derived rows by contract last year range                  0.01s  
   ✓ it echoes multiple applied derived filter ranges                     0.01s  
-  ✓ it keeps prospect rows split by league outside draft context         0.01s  
+  ✓ it keeps prospect rows split by league outside draft context         0.02s  
   ✓ it groups draft context prospect rows by player and keeps the highe… 0.01s  
   ✓ it uses canonical player draft fields in assembled rows              0.02s  
   ✓ it decorates existing payload rows with fantasy ownership metadata   0.03s  
-  ✓ it scopes fantrax league ownership hydration to the viewer division  0.03s  
-  ✓ it appends roster only rows missing from the payload                 0.02s  
+  ✓ it scopes fantrax league ownership hydration to the viewer division  0.04s  
+  ✓ it appends roster only rows missing from the payload                 0.03s  
   ✓ it does not count reserve or injured players against configured act… 0.04s  
-  ✓ it hydrates rostered goalie rows already present in the payload fro… 0.03s  
+  ✓ it hydrates rostered goalie rows already present in the payload fro… 0.04s  
   ✓ it preserves payload games played when overlaying provider league s… 0.02s  
   ✓ it reuses cached ownership maps within the ownership cache window    0.03s  
   ✓ it records ownership sub timings when timing output is requested     0.03s  
   ✓ it keeps non platform league payload rows unchanged when filtering…  0.02s  
-  ✓ it filters fantrax league payload rows to provider and roster playe… 0.02s  
+  ✓ it filters fantrax league payload rows to provider and roster playe… 0.03s  
   ✓ it empties fantrax league payload rows when no provider or roster u… 0.02s  
-  ✓ it builds fantrax synthetic perspective metadata for league pages    0.01s  
+  ✓ it builds fantrax synthetic perspective metadata for league pages    0.02s  
   ✓ it builds yahoo scoring settings only when every scoring category i… 0.02s  
   ✓ it builds league scoring settings for supported formula categories   0.02s  
   ✓ it refuses league scoring settings when a scoring category is unmap… 0.02s  
   ✓ it keeps supported fantrax scoring headers when other categories ar… 0.02s  
   ✓ it computes formula columns from assembled row stats                 0.02s  
-  ✓ it computes formula columns from on-ice dependency stats             0.02s  
+  ✓ it computes formula columns from on-ice dependency stats             0.03s  
   ✓ it applies fantrax goalie settings with goalie filters and goalie c… 0.02s  
   ✓ it adds fantrax goalie column group to payload settings              0.02s  
   ✓ it adds games played to active fantrax goalie payload headings       0.02s  
-  ✓ it returns league stats payload for a connected active league membe… 0.04s  
+  ✓ it returns league stats payload for a connected active league membe… 0.06s  
   ✓ it blocks league stats payload for users without a connected fantas… 0.03s  
-  ✓ it returns not found when connected users request an inactive leagu… 0.03s  
+  ✓ it returns not found when connected users request an inactive leagu… 0.04s  
   ✓ it validates unsupported league stats column group values            0.03s  
   ✓ it passes goalie column group requests through fantrax league paylo… 0.05s  
-  ⨯ it adds community draft perspectives to league player stats payload… 0.04s  
+  ✓ it adds community draft perspectives to league player stats payload… 0.04s  
   ✓ it filters league player stats to current nhl players and last seas… 0.05s  
-  ✓ it includes nhl current or last season in shared draft player persp… 0.01s  
+  ✓ it includes nhl current or last season in shared draft player persp… 0.02s  
   ✓ it serves unrostered nhl current or last season players with league… 0.05s  
   ✓ it forces community draft stats payloads to exclude fantasy rostere… 0.04s  
-  ⨯ it filters the league player stats payload to the current users dra… 0.04s  
-  ✓ it aggregates league team payload rows across pro roster players     0.01s  
+  ✓ it filters the league player stats payload to the current users dra… 0.05s  
+  ✓ it aggregates league team payload rows across pro roster players     0.02s  
 
    PASS  Tests\Feature\SyncFantraxLeagueTest
   ✓ fantrax league sync resolves roster memberships from matched fantra… 0.06s  
 
    PASS  Tests\Feature\TwoFactorAuthenticationSettingsTest
   ✓ two factor authentication can be enabled                             0.05s  
-  ✓ recovery codes can be regenerated                                    0.08s  
-  ✓ two factor authentication can be disabled                            0.05s  
+  ✓ recovery codes can be regenerated                                    0.07s  
+  ✓ two factor authentication can be disabled                            0.04s  
 
    PASS  Tests\Feature\UpdatePasswordTest
   ✓ password can be updated                                              0.03s  
@@ -1009,11 +1009,8 @@ public/build/assets/app-CW8cFllc.js          287.55 kB │ gzip: 78.26 kB
   ✓ it fails validation for missing or disallowed keys                   0.02s  
   ✓ it stores preferences as json and returns ok                         0.02s  
   ✓ it deletes preferences when value is null or empty                   0.02s  
-  ✓ it only mutates preferences for the authenticated user               0.02s  
-  ────────────────────────────────────────────────────────────────────────────  
-   FAILED  Tests\Feature\NhlGameValidationTest > it falls back to TV and TH…    
-  Failed asserting that 0 is identical to 2.
+  ✓ it only mutates preferences for the authenticated user               0.03s  
 
-  at tests/Feature/NhlGameValidationTest.php:1633
+  Tests:    7 skipped, 849 passed (3283 assertions)
+  Duration: 29.31s
 
-Fatal error: Allowed memory size of 134217728 bytes exhausted (tried to allocate 4096 bytes) in /Users/robc/code/dynastyiq/vendor/nunomaduro/collision/src/Highlighter.php on line 193

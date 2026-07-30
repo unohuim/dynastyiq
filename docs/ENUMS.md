@@ -1852,6 +1852,23 @@ Do not introduce new enum values without updating this document.
 - `shots_on_goal`
 - `sat`
 - `toi_seconds`
+- `goalie_starts`
+- `goalie_relief_appearances`
+- `goalie_wins`
+- `goalie_losses`
+- `goalie_ot_losses`
+- `goalie_overtime_wins`
+- `goalie_shootout_wins`
+- `goalie_shootout_losses`
+- `goalie_shots_against`
+- `goalie_saves`
+- `goalie_goals_against`
+- `goalie_save_percentage`
+- `goalie_goals_against_average`
+- `goalie_shutouts`
+- `goalie_quality_starts`
+- `goalie_really_bad_starts`
+- `goalie_quality_start_percentage`
 - `on_ice_toi_seconds`
 - `on_ice_gf`
 - `on_ice_ga`
@@ -1870,11 +1887,17 @@ Do not introduce new enum values without updating this document.
 - `on_ice_xga`
 - `on_ice_xg_pct`
 - `on_ice_xg_diff`
+- `goalie_xga`
+- `goalie_xsoga`
+- `goalie_xsaves`
+- `goalie_gsax`
+- `goalie_xsave_percentage`
 
 **Notes:**
 
 - The payload sends `league_abbrev` instead of a consumer-owned `league_id`.
 - gner8 resolves `league_abbrev`, `season_key`, `nhl_player_id`, and `stat_slug` to its local database ids.
+- Goalie-specific stats use `goalie_`-prefixed slugs and the same `player_stats[]` row shape as skater stats.
 
 ---
 

@@ -31,6 +31,7 @@ rules:
   - NHL season stats endpoints must require the explicit nhl-stats:read scope.
   - NHL season stats endpoints must support stat_group and window_key slicing so consumers can import full seasons through bounded chunked requests.
   - NHL season stats player_stats rows must expose consistent supported windows across basic, on_ice, and expected stat groups: season, last_5, last_10, and last_20 when qualifying data exists.
+  - NHL season stats payloads must include goalie-specific player_stats rows for basic and expected goalie data when qualifying goalie source data exists.
 public_interface:
   - api-client:create
   - api.client middleware

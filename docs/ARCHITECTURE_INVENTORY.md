@@ -71,7 +71,7 @@ Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discor
 - `/api/nhl-players`
 - `/api/nhl-season-stats`
 
-NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports.
+NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports, including goalie-specific rows when qualifying goalie data exists.
 
 **Example Usage:**
 ```bash
