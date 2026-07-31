@@ -467,6 +467,21 @@
                             </tbody>
                         </table>
                     @elseif($activeTab === 'biometrics')
+                        <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-4 py-3">
+                            @foreach(request()->except(['biometric_min_attempts', 'page']) as $key => $value)
+                                @if(is_scalar($value))
+                                    <input type="hidden" name="{{ $key }}" value="{{ $value }}">
+                                @endif
+                            @endforeach
+                            <input type="hidden" name="tab" value="biometrics">
+                            <div class="flex flex-wrap items-end justify-end gap-3">
+                                <label class="block">
+                                    <span class="text-xs font-medium text-gray-600">Min Attempts</span>
+                                    <input type="number" name="biometric_min_attempts" min="1" max="10000" value="{{ $biometricMinAttempts }}" class="mt-1 block min-h-10 w-36 rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </label>
+                                <button type="submit" class="inline-flex min-h-10 items-center rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">Apply</button>
+                            </div>
+                        </form>
                         <table class="min-w-full divide-y divide-gray-200 text-sm">
                             <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                 <tr>

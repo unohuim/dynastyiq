@@ -29,6 +29,7 @@ rules:
   - Biometric impact review must remain read-only and must not add age, height, or weight into model training until separately approved.
   - Biometric impact review must show observed SOG rate, goal rate, average xG per SAT, and goals minus xG when a latest goal model is available.
   - Biometric impact review may present objective height and weight context cuts, including height plus weight, height plus shot context, and weight plus shot context.
+  - Biometric impact review must support a minimum-attempt threshold applied only to biometric aggregate rows.
   - Subjective player-frame labels such as power forward, sniper, dangler, or grinder must not be introduced until their derivation rules are documented and separately approved.
   - The xG tab must expose a queued build button, model history, latest-model bucket probabilities, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
   - Dense xG result sections must render as default-collapsed accordions and remember expanded state in localStorage scoped to the admin shot-attempts xG page.

@@ -482,9 +482,12 @@ it('renders NHL shot attempt biometric shot-context cuts', function () {
     $this->actingAs(($this->makeSuperAdmin)())
         ->get(route('admin.nhl-shot-attempts.index', [
             'tab' => 'biometrics',
+            'biometric_min_attempts' => 1,
             'sort' => 'profile',
         ]))
         ->assertOk()
+        ->assertSee('Min Attempts')
+        ->assertSee('name="biometric_min_attempts"', false)
         ->assertSee('Height + Shot Context')
         ->assertSee('Weight + Shot Context')
         ->assertSee('Shooter Height + Weight')

@@ -41,6 +41,7 @@ class NhlShotAttemptController extends Controller
             'is_off_wing_attempt' => ['nullable', Rule::in(['1', '0'])],
             'predictive_group' => ['nullable', Rule::in(array_keys($this->predictiveGroupDefinitions()))],
             'min_attempts' => ['nullable', 'integer', 'min:1', 'max:10000'],
+            'biometric_min_attempts' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'group_by' => ['nullable', Rule::in([
                 'team_abbrev',
                 'shooter_player_id',
@@ -77,6 +78,7 @@ class NhlShotAttemptController extends Controller
         $xgTableExists = $this->xgTablesExist();
         $predictiveGroup = (string) ($input['predictive_group'] ?? 'distance_shot_type');
         $minAttempts = (int) ($input['min_attempts'] ?? 300);
+        $biometricMinAttempts = (int) ($input['biometric_min_attempts'] ?? 300);
         $sort = $this->sortKey($tab, (string) ($input['sort'] ?? ''));
         $direction = $this->sortDirection((string) ($input['direction'] ?? ''));
         $xgModelSort = (string) ($input['xg_model_sort'] ?? 'trained_at');
@@ -118,7 +120,7 @@ class NhlShotAttemptController extends Controller
                 ? $this->predictiveRows($filters, $predictiveGroup, $minAttempts, $sort, $direction)
                 : collect(),
             'biometricRows' => $tableExists && $tab === 'biometrics'
-                ? $this->biometricRows($filters, $latestXgModel?->id, $sort, $direction)
+                ? $this->biometricRows($filters, $latestXgModel?->id, $biometricMinAttempts, $sort, $direction)
                 : collect(),
             'qaRows' => $tableExists && $tab === 'qa'
                 ? $this->qaRows($filters)
@@ -167,6 +169,7 @@ class NhlShotAttemptController extends Controller
             'predictiveGroups' => $this->predictiveGroupDefinitions(),
             'predictiveGroup' => $predictiveGroup,
             'minAttempts' => $minAttempts,
+            'biometricMinAttempts' => $biometricMinAttempts,
             'options' => $tableExists ? $this->filterOptions() : $this->emptyOptions(),
             'sort' => $sort,
             'direction' => $direction,
@@ -537,7 +540,7 @@ class NhlShotAttemptController extends Controller
     /**
      * @param array<string, mixed> $filters
      */
-    private function biometricRows(array $filters, mixed $goalModelId, string $sort, string $direction)
+    private function biometricRows(array $filters, mixed $goalModelId, int $minAttempts, string $sort, string $direction)
     {
         if (! $this->biometricColumnsExist()) {
             return collect();
@@ -576,7 +579,8 @@ class NhlShotAttemptController extends Controller
                 ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
                 ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
                 ->groupByRaw($definition['label_sql'])
-                ->groupByRaw($definition['sort_sql']);
+                ->groupByRaw($definition['sort_sql'])
+                ->havingRaw('COUNT(*) >= ?', [$minAttempts]);
 
             foreach ($definition['context_group_sql'] as $contextGroupSql) {
                 $query->groupByRaw($contextGroupSql);

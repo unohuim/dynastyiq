@@ -2455,7 +2455,7 @@ SeasonSumJob::dispatch($seasonId, $runId);
 Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric and bio-context impact cuts, QA coverage, and expected-goals model review.
 
 **When to Use:**
-Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts, comparing objective height and weight buckets against shot context, and auditing missing or suspicious shot-fact fields.
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts with minimum-attempt thresholds, comparing objective height and weight buckets against shot context, and auditing missing or suspicious shot-fact fields.
 
 **When Not to Use:**
 Running imports, mutating shot facts, replacing Game Imports, or adding biometric fields into model training without separate approval.
