@@ -1,0 +1,42 @@
+name: NHL Faceoff Facts
+type: Derived Analytics Fact Layer
+location:
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - app/Http/Controllers/Admin/NhlFaceoffController.php
+  - app/Jobs/BuildNhlFaceoffFactsJob.php
+  - app/Services/BuildNhlFaceoffFacts.php
+  - database/migrations/2026_07_31_000001_create_nhl_faceoff_facts_table.php
+  - docs/architecture/stats/NhlFaceoffFacts.yaml
+purpose: Store deterministic, rebuildable NHL faceoff facts derived from imported play-by-play and event-to-unit links.
+when_to_use:
+  - Building faceoff-zone reports by team, unit, or player.
+  - Measuring whether faceoff wins are followed by zone advancement, held territory, or retreat.
+  - Producing aggregate faceoff analytics from already imported games.
+  - Queueing faceoffs-only fact collection from an admin-selected game import run range.
+when_not_to_use:
+  - Replacing raw play-by-play provider faceoff rows.
+  - Changing official player faceoff summary validation.
+  - Inferring possession quality beyond the next meaningful play without a documented model.
+rules:
+  - The facts layer must be deterministic and rebuildable from imported play-by-play plus stored game and unit-link context.
+  - Raw play-by-play remains the event source of truth; faceoff facts are a derived analytical projection.
+  - Each faceoff fact row must link to exactly one source play_by_plays row.
+  - Winning team identity must come from the faceoff event owner team because existing PBP summaries already use event_owner_team_id as faceoff winner ownership.
+  - Zone perspective must store both winning-team and losing-team O/N/D views because provider zone_code is owner-team relative.
+  - Unit and on-ice player context may be nullable when event-to-unit links are unavailable or ambiguous.
+  - Advancement must be based on the next meaningful play after the faceoff from the winning team's zone perspective.
+  - Advancement buckets are descriptive labels and must not imply possession probability without validation.
+  - Faceoffs-only admin processing must upsert faceoff facts from already imported play-by-play and event-to-unit links, dispatching one job per game without fetching providers or running the full NHL import pipeline.
+public_interface:
+  - nhl_faceoff_facts
+  - play_by_plays.id
+  - event_unit_shifts
+  - admin.nhl-game-imports.process-faceoffs
+  - admin.nhl-faceoffs.index
+  - BuildNhlFaceoffFacts
+  - BuildNhlFaceoffFactsJob
+example_usage: |
+  SELECT winning_team_abbrev, winning_team_zone_bucket, COUNT(*) AS faceoffs
+  FROM nhl_faceoff_facts
+  WHERE game_date BETWEEN '2025-10-01' AND '2025-10-31'
+  GROUP BY winning_team_abbrev, winning_team_zone_bucket;

@@ -3116,6 +3116,76 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_faceoff_facts
+
+**Organization-owned:** No
+**Purpose:** Deterministic NHL faceoff facts derived from `play_by_plays` and event-to-unit links for zone, team, player, unit, and advancement analysis.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| play_by_play_id | bigint | No | Source PBP faceoff row |
+| next_play_by_play_id | bigint | Yes | Next meaningful event row used for advancement context |
+| nhl_game_id | bigint | No | NHL game ID |
+| nhl_event_id | string | Yes | Provider event ID snapshot |
+| season_id | string(8) | Yes | NHL season ID |
+| game_date | date | Yes | Game date |
+| fact_version | string(40) | No | Deterministic fact derivation version |
+| period | integer | Yes | Period |
+| period_type | string(12) | Yes | Provider period type |
+| seconds_in_game | integer | Yes | Elapsed game seconds |
+| seconds_since_last_event | integer | Yes | Source PBP event delta |
+| situation_code | string | Yes | Provider situation code |
+| strength | string(12) | Yes | Derived strength |
+| strength_bucket | string(32) | Yes | Deterministic strength bucket |
+| winning_team_id | integer | Yes | Faceoff-winning team from event owner |
+| winning_team_abbrev | string(16) | Yes | Winning team abbreviation snapshot |
+| losing_team_id | integer | Yes | Opposing team |
+| losing_team_abbrev | string(16) | Yes | Losing team abbreviation snapshot |
+| winning_player_id | integer | Yes | Faceoff winner NHL player ID |
+| losing_player_id | integer | Yes | Faceoff loser NHL player ID |
+| zone_code | string(12) | Yes | Provider zone code |
+| winning_team_zone | string(12) | Yes | O/N/D zone from winning team perspective |
+| losing_team_zone | string(12) | Yes | O/N/D zone from losing team perspective |
+| zone_bucket | string(32) | Yes | Winning-team zone bucket |
+| winning_team_zone_bucket | string(32) | Yes | Winning-team zone bucket |
+| losing_team_zone_bucket | string(32) | Yes | Losing-team zone bucket |
+| winning_unit_id | bigint | Yes | Winning team unit ID when linked |
+| losing_unit_id | bigint | Yes | Losing team unit ID when linked |
+| winning_on_ice_player_ids | json | Yes | Winning team on-ice canonical player IDs from linked unit shift |
+| losing_on_ice_player_ids | json | Yes | Losing team on-ice canonical player IDs from linked unit shift |
+| next_event_type | string | Yes | Next meaningful event type |
+| next_event_team_id | integer | Yes | Next meaningful event owner team |
+| next_event_zone | string(12) | Yes | Next meaningful event zone from winning team perspective |
+| next_event_zone_bucket | string(32) | Yes | Next meaningful event zone bucket |
+| next_event_seconds_delta | integer | Yes | Seconds between faceoff and next meaningful event |
+| advancement_bucket | string(32) | Yes | `advanced`, `held`, `retreated`, or `unknown` |
+| advancement_value | integer | Yes | Zone-rank delta from winning team perspective |
+| facts_payload | json | Yes | Derivation/debug payload |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `play_by_play_id` references `play_by_plays.id`
+- FK: `next_play_by_play_id` references `play_by_plays.id`
+- FK: `nhl_game_id` references `nhl_games.nhl_game_id`
+- FK: `winning_unit_id` references `nhl_units.id`
+- FK: `losing_unit_id` references `nhl_units.id`
+- Unique: `play_by_play_id` (`uq_nhl_faceoff_facts_pbp`)
+- Index: `(season_id, game_date)` (`ix_nhl_fof_season_date`)
+- Index: `(nhl_game_id, winning_team_id)` (`ix_nhl_fof_game_winning_team`)
+- Index: `(nhl_game_id, losing_team_id)` (`ix_nhl_fof_game_losing_team`)
+- Index: `(winning_team_id, winning_team_zone_bucket)` (`ix_nhl_fof_team_zone`)
+- Index: `(winning_player_id, winning_team_zone_bucket)` (`ix_nhl_fof_winner_zone`)
+- Index: `(winning_unit_id, winning_team_zone_bucket)` (`ix_nhl_fof_unit_zone`)
+- Index: `(advancement_bucket, winning_team_zone_bucket)` (`ix_nhl_fof_advancement`)
+
+---
+
 ## nhl_shot_attempt_predictions
 
 **Organization-owned:** No

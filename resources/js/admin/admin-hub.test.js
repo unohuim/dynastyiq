@@ -1361,6 +1361,46 @@ describe('admin-hub import listeners', () => {
         expect(instance.gameImports.processingRuns['23:shots']).toBeUndefined();
     });
 
+    it('submits faceoff fact processing using only the selected run id', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Faceoff facts queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 28, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportProcessFaceoffsUrl: '/admin/nhl-game-imports/process-faceoffs',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        const run = {
+            id: 23,
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        await instance.processFaceoffFactsGameImports(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/process-faceoffs', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ run_id: 23 }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.processingRuns['23:faceoffs']).toBeUndefined();
+    });
+
     it('submits game import rerun using the selected run range', async () => {
         const adminHub = await loadAdminHub();
         document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Events\NhlGameImportStatusUpdated;
+use App\Jobs\BuildNhlFaceoffFactsJob;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\ImportYahooPlayersPageJob;
@@ -182,6 +183,16 @@ it('blocks authenticated non-admin users from the NHL shot attempts admin panel'
         ->assertForbidden();
 });
 
+it('blocks guests from the NHL faceoffs admin panel', function () {
+    $this->getJson(route('admin.nhl-faceoffs.index'))->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from the NHL faceoffs admin panel', function () {
+    $this->actingAs(User::factory()->create())
+        ->getJson(route('admin.nhl-faceoffs.index'))
+        ->assertForbidden();
+});
+
 it('allows super admins to view the NHL shot attempts admin panel', function () {
     $this->actingAs(($this->makeSuperAdmin)())
         ->get(route('admin.nhl-shot-attempts.index'))
@@ -193,6 +204,17 @@ it('allows super admins to view the NHL shot attempts admin panel', function () 
         ->assertSee('QA');
 });
 
+it('allows super admins to view the NHL faceoffs admin panel', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-faceoffs.index'))
+        ->assertOk()
+        ->assertSee('NHL Faceoffs')
+        ->assertSee('Teams')
+        ->assertSee('Players')
+        ->assertSee('Units')
+        ->assertSee('Games');
+});
+
 it('shows NHL shot attempts in the account drawer for super admins', function () {
     $this->actingAs(($this->makeSuperAdmin)())
         ->get(route('dashboard'))
@@ -200,6 +222,15 @@ it('shows NHL shot attempts in the account drawer for super admins', function ()
         ->assertSee('Admin Control Panel')
         ->assertSee('Shot Attempts')
         ->assertSee(route('admin.nhl-shot-attempts.index'));
+});
+
+it('shows NHL faceoffs in the account drawer for super admins', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('dashboard'))
+        ->assertOk()
+        ->assertSee('Admin Control Panel')
+        ->assertSee('Admin Faceoffs')
+        ->assertSee(route('admin.nhl-faceoffs.index'));
 });
 
 it('groups NHL shot attempt aggregates by team abbreviation', function () {
@@ -395,6 +426,73 @@ it('displays shooter names in NHL shot attempt aggregate groupings', function ()
         ->assertOk()
         ->assertSee('Test Shooter')
         ->assertDontSee('8470002');
+});
+
+it('renders NHL shot attempt biometric shot-context cuts', function () {
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020004,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-04-10',
+        'game_dow' => 'Fri',
+        'game_month' => 'Apr',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 20,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('play_by_plays')->insert([
+        'id' => 4,
+        'nhl_game_id' => 2025020004,
+        'event_owner_team_id' => 10,
+        'period' => 1,
+        'seconds_in_game' => 120,
+        'type_desc_key' => 'shot-on-goal',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('nhl_shot_attempts_facts')->insert([
+        'play_by_play_id' => 4,
+        'nhl_game_id' => 2025020004,
+        'season_id' => '20252026',
+        'game_date' => '2026-04-10',
+        'attempt_result' => 'shot-on-goal',
+        'is_shot_attempt' => true,
+        'is_unblocked_attempt' => true,
+        'is_shot_on_goal' => true,
+        'is_goal' => false,
+        'team_id' => 10,
+        'shot_distance' => 18.5,
+        'abs_shot_angle' => 22.0,
+        'distance_bucket' => 'slot',
+        'angle_bucket' => 'medium',
+        'shot_type_bucket' => 'wrist',
+        'shooter_age_years' => 24.5,
+        'shooter_height_inches' => 74,
+        'shooter_weight_lbs' => 206,
+        'goalie_age_years' => 27.5,
+        'goalie_height_inches' => 76,
+        'goalie_weight_lbs' => 210,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'biometrics',
+            'sort' => 'profile',
+        ]))
+        ->assertOk()
+        ->assertSee('Height + Shot Context')
+        ->assertSee('Weight + Shot Context')
+        ->assertSee('Shooter Height + Weight')
+        ->assertSee('Shot / Weight')
+        ->assertSee('wrist')
+        ->assertSee('slot')
+        ->assertSee('medium')
+        ->assertSee('195-209');
 });
 
 it('blocks guests from queuing NHL game discovery', function () {
@@ -856,6 +954,97 @@ it('allows super admins to queue shot fact processing for a game import run rang
         ->and($run->payload['processing_started_at'])->not->toBeNull();
     Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
         return $event->reason === 'shot-facts-queued' && $event->runId === $run->id;
+    });
+});
+
+it('queues faceoff fact jobs for games in a discovered run without starting full imports', function (): void {
+    Bus::fake();
+    Event::fake();
+    $now = Carbon::parse('2026-07-31 12:00:00');
+    Carbon::setTestNow($now);
+
+    $sourceRun = NhlGameImportRun::query()->create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 3,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    foreach ([
+        ['game_id' => 2025020001, 'date' => '2026-01-15'],
+        ['game_id' => 2025020002, 'date' => '2026-01-16'],
+    ] as $game) {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $game['game_id'],
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => $game['date'],
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('nhl_import_progress')->insert([
+            'run_id' => $sourceRun->id,
+            'season_id' => '20252026',
+            'game_date' => $game['date'],
+            'game_id' => (string) $game['game_id'],
+            'game_type' => 2,
+            'import_type' => NhlImportStages::PBP,
+            'status' => 'completed',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.process-faceoffs'), [
+            'run_id' => $sourceRun->id,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_PROCESS)
+        ->assertJsonPath('run.status', NhlGameImportRun::STATUS_RUNNING)
+        ->assertJsonPath('run.processing_started', true)
+        ->assertJsonPath('run.payload.process_scope', 'faceoffs')
+        ->assertJsonPath('run.payload.faceoff_fact_source_run_id', $sourceRun->id)
+        ->assertJsonPath('run.payload.faceoff_fact_game_count', 2);
+
+    $run = NhlGameImportRun::query()
+        ->where('id', '!=', $sourceRun->id)
+        ->firstOrFail();
+
+    Bus::assertBatched(function ($batch) use ($run): bool {
+        $jobs = collect($batch->jobs)
+            ->filter(fn ($job): bool => $job instanceof BuildNhlFaceoffFactsJob)
+            ->values();
+
+        return $batch->name === 'NHL:FaceoffFacts:' . $run->id
+            && $jobs->count() === 2
+            && $jobs->pluck('runId')->unique()->values()->all() === [$run->id]
+            && $jobs->pluck('nhlGameId')->sort()->values()->all() === [2025020001, 2025020002];
+    });
+
+    expect(NhlGameImportRun::query()->count())->toBe(2)
+        ->and($sourceRun->refresh()->status)->toBe(NhlGameImportRun::STATUS_COMPLETED)
+        ->and($sourceRun->payload)->toBe(['start' => '2026-01-17', 'end' => '2026-01-15'])
+        ->and($run->status)->toBe(NhlGameImportRun::STATUS_RUNNING)
+        ->and($run->action)->toBe(NhlGameImportRun::ACTION_PROCESS)
+        ->and($run->queued_jobs)->toBe(2)
+        ->and($run->payload['process_scope'])->toBe('faceoffs')
+        ->and($run->payload['faceoff_fact_source_run_id'])->toBe($sourceRun->id)
+        ->and($run->payload['faceoff_fact_game_count'])->toBe(2)
+        ->and($run->payload['faceoff_fact_game_ids'])->toBe([2025020001, 2025020002])
+        ->and($run->payload['processing_started_at'])->not->toBeNull();
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event) use ($run): bool {
+        return $event->reason === 'faceoff-facts-queued' && $event->runId === $run->id;
     });
 });
 

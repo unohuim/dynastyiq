@@ -12,6 +12,7 @@ when_to_use:
   - Comparing goal rates across distance and angle bucket combinations.
   - Reviewing predictive grouped cuts that exclude unknown shot types, empty-net attempts, and shootout attempts by default.
   - Reviewing observed biometric impact cuts for shooter and goalie age, height, and weight after fact snapshots are rebuilt.
+  - Reviewing objective shooter height and weight buckets crossed with shot type, distance bucket, and angle bucket.
   - Building and reviewing bucket-smoothed xG and xSOG predictions for an imported season.
   - Auditing missing or suspicious shot-attempt fact fields.
 when_not_to_use:
@@ -27,6 +28,8 @@ rules:
   - Predictive grouped cuts must show attempts, goals, goal rate, shots on goal, shooting percentage, average distance, and average angle with a minimum-attempt threshold.
   - Biometric impact review must remain read-only and must not add age, height, or weight into model training until separately approved.
   - Biometric impact review must show observed SOG rate, goal rate, average xG per SAT, and goals minus xG when a latest goal model is available.
+  - Biometric impact review may present objective height and weight context cuts, including height plus weight, height plus shot context, and weight plus shot context.
+  - Subjective player-frame labels such as power forward, sniper, dangler, or grinder must not be introduced until their derivation rules are documented and separately approved.
   - The xG tab must expose a queued build button, model history, latest-model bucket probabilities, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
   - Dense xG result sections must render as default-collapsed accordions and remember expanded state in localStorage scoped to the admin shot-attempts xG page.
   - Aggregate columns must sort through whitelisted query-string keys and display the active sort direction.

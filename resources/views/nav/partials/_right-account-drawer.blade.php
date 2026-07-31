@@ -216,6 +216,15 @@
                                 </svg>
                                 <span class="text-sm">Admin Shot Attempts</span>
                             </a>
+                            <a href="{{ route('admin.nhl-faceoffs.index') }}"
+                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M7.5 12h9M12 7.5v9M5.25 5.25l13.5 13.5M18.75 5.25L5.25 18.75" />
+                                </svg>
+                                <span class="text-sm">Admin Faceoffs</span>
+                            </a>
                         </div>
                     </div>
                 @endif

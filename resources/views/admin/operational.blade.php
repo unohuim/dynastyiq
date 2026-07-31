@@ -21,6 +21,7 @@
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportProcessShotsUrl: @js(route('admin.nhl-game-imports.process-shots')),
+            gameImportProcessFaceoffsUrl: @js(route('admin.nhl-game-imports.process-faceoffs')),
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
             gameImportDuplicatePbpScanUrl: @js(route('admin.nhl-game-imports.duplicate-pbp.scan')),
             gameImportDuplicatePbpDedupeUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
@@ -892,6 +893,13 @@
                                                             @click.stop.prevent="processShotFactsGameImports(run)"
                                                         >
                                                             Shots
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                                            @click.stop.prevent="processFaceoffFactsGameImports(run)"
+                                                        >
+                                                            Faceoffs
                                                         </button>
                                                         <button
                                                             type="button"

@@ -1,0 +1,39 @@
+name: Admin NHL Faceoffs
+type: Admin Analytics Review UI
+location:
+  - app/Http/Controllers/Admin/NhlFaceoffController.php
+  - resources/views/admin/nhl-faceoffs/index.blade.php
+  - routes/web.php
+  - resources/views/nav/partials/_right-account-drawer.blade.php
+purpose: Provide a super-admin panel for reviewing NHL faceoff territory-movement aggregates by team, player, unit, and game.
+when_to_use:
+  - Inspecting faceoff volume over a season or date range.
+  - Reviewing offensive, neutral, and defensive zone faceoff distribution.
+  - Comparing the percentage of faceoffs that advanced, held, or retreated territory by team, player, or unit.
+  - Reviewing post-draw advancement, held territory, and retreat counts.
+  - Auditing games with missing next-event context after faceoffs.
+when_not_to_use:
+  - Running NHL game imports or faceoff-fact build jobs.
+  - Mutating nhl_faceoff_facts rows.
+  - Replacing the Game Imports operational run ledger.
+  - Building public stats pages for non-admin users.
+rules:
+  - The panel must remain super-admin protected through admin middleware.
+  - The panel must read from nhl_faceoff_facts and must not mutate faceoff facts.
+  - The first version should use server-rendered tabs and query-string filters without new page-local JavaScript state.
+  - Tabs must separate team, player, unit, and game aggregate views.
+  - Team, player, and unit aggregate totals must count both winning and losing faceoff participants so faceoffs taken represent total draws.
+  - Team, player, and unit tabs must support a minimum faceoff threshold to hide low-sample rows.
+  - The minimum faceoff threshold must not apply to the Games tab.
+  - The primary team, player, and unit metrics must be advanced percentage, held percentage, and retreated percentage.
+  - Wins, losses, and win percentage must not be presented as primary columns in the faceoff movement UI.
+  - Advancement columns must represent winning-team next-play advancement only because nhl_faceoff_facts stores advancement from the winning team's perspective.
+  - All presented table columns must sort through whitelisted query-string keys and display the active sort direction.
+  - Missing-table environments must degrade with an operator-readable empty state instead of failing the page.
+  - The account drawer link must appear only for users who can access super-admin routes.
+public_interface:
+  - admin.nhl-faceoffs.index
+  - NhlFaceoffController::index()
+  - resources/views/admin/nhl-faceoffs/index.blade.php
+example_usage: |
+  GET /admin/nhl-faceoffs?tab=teams&season_id=20252026

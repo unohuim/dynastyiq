@@ -359,6 +359,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.discover');
                 Route::post('/nhl-game-imports/process-shots', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processShots'])
                     ->name('admin.nhl-game-imports.process-shots');
+                Route::post('/nhl-game-imports/process-faceoffs', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processFaceoffs'])
+                    ->name('admin.nhl-game-imports.process-faceoffs');
                 Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])
                     ->name('admin.nhl-game-imports.process');
                 Route::post('/nhl-game-imports/season-sync', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'seasonSync'])
@@ -371,6 +373,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-shot-attempts.index');
                 Route::post('/nhl-shot-attempts/xg', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildXg'])
                     ->name('admin.nhl-shot-attempts.xg.build');
+
+                // NHL faceoff analysis
+                Route::get('/nhl-faceoffs', [\App\Http\Controllers\Admin\NhlFaceoffController::class, 'index'])
+                    ->name('admin.nhl-faceoffs.index');
 
                 // Player Triage
                 Route::get('/player-triage', [\App\Http\Controllers\Admin\PlayerTriageController::class, 'index'])

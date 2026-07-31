@@ -59,7 +59,7 @@ class NhlProcessCommand extends Command
             ->whereNotNull('end_date')
             ->where(function ($query): void {
                 $query->whereNull('payload->process_scope')
-                    ->orWhere('payload->process_scope', '!=', 'shots');
+                    ->orWhereNotIn('payload->process_scope', ['shots', 'faceoffs']);
             })
             ->whereExists(function ($query): void {
                 $query->selectRaw('1')

@@ -473,6 +473,9 @@
                                     @foreach([
                                         'profile' => 'Profile',
                                         'bucket' => 'Bucket',
+                                        'context_1' => 'Shot / Weight',
+                                        'context_2' => 'Distance',
+                                        'context_3' => 'Angle',
                                         'attempts' => 'Attempts',
                                         'shots_on_goal' => 'SOG',
                                         'sog_rate' => 'SOG %',
@@ -499,6 +502,9 @@
                                     <tr>
                                         <td class="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{{ $row->profile }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->bucket }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->context_1 ?? 'N/A' }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->context_2 ?? 'N/A' }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->context_3 ?? 'N/A' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->attempts) }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->shots_on_goal) }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->sog_rate) }}{{ $row->sog_rate === null ? '' : '%' }}</td>
@@ -510,7 +516,7 @@
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->avg_angle, 1) }}</td>
                                     </tr>
                                 @empty
-                                    <tr><td colspan="11" class="px-4 py-8 text-center text-sm text-gray-500">No biometric rows are available. Run the biometric migration and rebuild shot facts for the selected range.</td></tr>
+                                    <tr><td colspan="14" class="px-4 py-8 text-center text-sm text-gray-500">No biometric rows are available. Run the biometric migration and rebuild shot facts for the selected range.</td></tr>
                                 @endforelse
                             </tbody>
                         </table>

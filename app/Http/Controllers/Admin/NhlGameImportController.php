@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Events\NhlGameImportStatusUpdated;
+use App\Jobs\BuildNhlFaceoffFactsJob;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\NhlDiscoveryJob;
@@ -506,6 +507,78 @@ class NhlGameImportController extends Controller
     }
 
     /**
+     * Queue deterministic faceoff fact collection for games in a run range.
+     */
+    public function processFaceoffs(Request $request): JsonResponse
+    {
+        $input = $request->validate([
+            'run_id' => ['required', 'integer'],
+        ]);
+        $sourceRun = $this->rerunSourceRunFromInput($input);
+        $range = $this->rerunRangeFromRun($sourceRun);
+        $gameIds = array_values(array_unique($this->gameIdsForRunRange($sourceRun)));
+
+        if ($gameIds === []) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This game import run has no discovered NHL games for faceoff fact collection.',
+            ]);
+        }
+
+        $payload = [
+            'start' => $range['start']->toDateString(),
+            'end' => $range['end']->toDateString(),
+            'process_scope' => 'faceoffs',
+            'faceoff_fact_game_count' => count($gameIds),
+            'faceoff_fact_game_ids' => $gameIds,
+            'faceoff_fact_requested_at' => now()->toIso8601String(),
+            'faceoff_fact_requested_by' => $request->user()?->id,
+            'faceoff_fact_source_run_id' => $sourceRun->id,
+        ];
+
+        $faceoffRun = NhlGameImportRun::query()->create([
+            'action' => NhlGameImportRun::ACTION_PROCESS,
+            'mode' => $range['mode'],
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'start_date' => $range['start']->toDateString(),
+            'end_date' => $range['end']->toDateString(),
+            'date_count' => count($this->dateStrings($range['start'], $range['end'])),
+            'queued_jobs' => count($gameIds),
+            'payload' => $payload,
+            'created_by' => $request->user()?->id,
+        ]);
+        $runId = (int) $faceoffRun->id;
+        $jobs = array_map(
+            fn (int $gameId): BuildNhlFaceoffFactsJob => new BuildNhlFaceoffFactsJob($gameId, $runId),
+            $gameIds,
+        );
+
+        $batch = Bus::batch($jobs)
+            ->then(function (Batch $batch) use ($runId): void {
+                self::recordFaceoffFactBatchCompleted($runId, $batch->id);
+            })
+            ->catch(function (Batch $batch, Throwable $throwable) use ($runId): void {
+                self::recordFaceoffFactBatchFailure($runId, $batch->id, $throwable);
+            })
+            ->name('NHL:FaceoffFacts:' . $runId)
+            ->dispatch();
+
+        $payload = $faceoffRun->payload ?? [];
+        $payload['faceoff_fact_batch_id'] = $batch->id;
+        $payload['processing_started_at'] = now()->toIso8601String();
+        $payload['processing_requested_by'] = $request->user()?->id;
+
+        $faceoffRun->update([
+            'payload' => $payload,
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('faceoff-facts-queued', $faceoffRun->id));
+
+        return response()->json([
+            'message' => 'Faceoff facts queued.',
+            'run' => $this->serializeRun($faceoffRun->refresh()),
+        ], 202);
+    }
+
+    /**
      * Queue only failed game imports and actionable validation failures from a previous run range.
      */
     public function rerunFailedOnly(
@@ -949,6 +1022,10 @@ class NhlGameImportController extends Controller
             return $this->shotFactProgressForRun($run);
         }
 
+        if ($this->isFaceoffFactRun($run)) {
+            return $this->faceoffFactProgressForRun($run);
+        }
+
         $rows = $this->progressQueryForRun($run)
             ->selectRaw('status, COUNT(*) as aggregate')
             ->groupBy('status')
@@ -1248,6 +1325,11 @@ class NhlGameImportController extends Controller
         return (($run->payload ?? [])['process_scope'] ?? null) === 'shots';
     }
 
+    private function isFaceoffFactRun(NhlGameImportRun $run): bool
+    {
+        return (($run->payload ?? [])['process_scope'] ?? null) === 'faceoffs';
+    }
+
     private function isDuplicatePbpRepairRun(NhlGameImportRun $run): bool
     {
         return $run->action === NhlGameImportRun::ACTION_REPAIR
@@ -1273,6 +1355,7 @@ class NhlGameImportController extends Controller
     {
         return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
             && ! $this->isShotFactRun($run)
+            && ! $this->isFaceoffFactRun($run)
             && ! $this->isDuplicatePbpRepairRun($run);
     }
 
@@ -1673,6 +1756,89 @@ class NhlGameImportController extends Controller
             'error' => $throwable->getMessage(),
         ]);
         broadcast(new NhlGameImportStatusUpdated('shot-facts-failed', $runId));
+    }
+
+    private function faceoffFactProgressForRun(NhlGameImportRun $run): array
+    {
+        $payload = $run->payload ?? [];
+        $gameCount = (int) ($payload['faceoff_fact_game_count'] ?? $run->queued_jobs ?? 0);
+        $processedGameCount = (int) DB::table('nhl_faceoff_facts')
+            ->whereIn('nhl_game_id', array_map('intval', $payload['faceoff_fact_game_ids'] ?? []))
+            ->distinct()
+            ->count('nhl_game_id');
+        $failedCount = count($payload['faceoff_fact_failed_game_ids'] ?? []);
+        $running = $run->status === NhlGameImportRun::STATUS_RUNNING ? max(0, $gameCount - $processedGameCount - $failedCount) : 0;
+        $status = $run->status === NhlGameImportRun::STATUS_COMPLETED
+            ? NhlGameImportRun::STATUS_COMPLETED
+            : ($failedCount > 0 || $run->status === NhlGameImportRun::STATUS_FAILED
+                ? NhlGameImportRun::STATUS_FAILED
+                : $run->status);
+
+        return [
+            'total_stage_rows' => $gameCount,
+            'scheduled_stage_rows' => 0,
+            'running_stage_rows' => $running,
+            'completed_stage_rows' => $processedGameCount,
+            'skipped_stage_rows' => max(0, $gameCount - $processedGameCount - $failedCount),
+            'failed_stage_rows' => $failedCount,
+            'percentage' => $gameCount > 0 ? (int) floor(($processedGameCount / $gameCount) * 100) : 0,
+            'status' => $status,
+            'last_error' => $run->last_error,
+        ];
+    }
+
+    private static function recordFaceoffFactBatchCompleted(int $runId, string $batchId): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $gameIds = array_map('intval', $payload['faceoff_fact_game_ids'] ?? []);
+        $payload['faceoff_fact_batch_id'] = $batchId;
+        $payload['faceoff_fact_completed_at'] = now()->toIso8601String();
+        $payload['faceoff_fact_processed_game_count'] = (int) DB::table('nhl_faceoff_facts')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->count('nhl_game_id');
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_COMPLETED,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        broadcast(new NhlGameImportStatusUpdated('faceoff-facts-completed', $runId));
+    }
+
+    private static function recordFaceoffFactBatchFailure(int $runId, string $batchId, Throwable $throwable): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['faceoff_fact_batch_id'] = $batchId;
+        $payload['faceoff_fact_failed_at'] = now()->toIso8601String();
+        $payload['faceoff_fact_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_FAILED,
+            'payload' => $payload,
+            'last_error' => $payload['faceoff_fact_last_error'],
+            'updated_at' => now(),
+        ])->save();
+
+        Log::error('NHL faceoff facts batch failed.', [
+            'run_id' => $runId,
+            'batch_id' => $batchId,
+            'error' => $throwable->getMessage(),
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('faceoff-facts-failed', $runId));
     }
 
     /**

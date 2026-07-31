@@ -1008,6 +1008,45 @@ GROUP BY distance_bucket, angle_bucket;
 
 ---
 
+### NHL Faceoff Facts
+
+**Name:** NHL Faceoff Facts
+**Type:** Derived Analytics Fact Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlGameImportController.php`
+- `app/Http/Controllers/Admin/NhlFaceoffController.php`
+- `app/Jobs/BuildNhlFaceoffFactsJob.php`
+- `app/Services/BuildNhlFaceoffFacts.php`
+- `database/migrations/2026_07_31_000001_create_nhl_faceoff_facts_table.php`
+- `docs/architecture/stats/NhlFaceoffFacts.yaml`
+
+**Purpose:**
+Store deterministic, rebuildable NHL faceoff facts derived from imported play-by-play and event-to-unit links.
+
+**When to Use:**
+Building faceoff-zone reports by team, unit, or player, measuring whether faceoff wins are followed by zone advancement, held territory, or retreat, or queueing faceoffs-only fact collection from a Game Imports run range.
+
+**When Not to Use:**
+Replacing raw play-by-play provider faceoff rows, changing official faceoff validation, or inferring possession quality beyond the next meaningful play without a documented model.
+
+**Public Interface:**
+- `nhl_faceoff_facts`
+- `play_by_plays.id`
+- `event_unit_shifts`
+- `admin.nhl-game-imports.process-faceoffs`
+- `admin.nhl-faceoffs.index`
+- `BuildNhlFaceoffFacts`
+- `BuildNhlFaceoffFactsJob`
+
+**Example Usage:**
+```sql
+SELECT winning_team_abbrev, winning_team_zone_bucket, COUNT(*) AS faceoffs
+FROM nhl_faceoff_facts
+GROUP BY winning_team_abbrev, winning_team_zone_bucket;
+```
+
+---
+
 ### NHL Expected Goals Model
 
 **Name:** NHL Expected Goals Model
@@ -2413,10 +2452,10 @@ SeasonSumJob::dispatch($seasonId, $runId);
 - `docs/architecture/admin/AdminNhlShotAttempts.yaml`
 
 **Purpose:**
-Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric impact cuts, QA coverage, and expected-goals model review.
+Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric and bio-context impact cuts, QA coverage, and expected-goals model review.
 
 **When to Use:**
-Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts, and auditing missing or suspicious shot-fact fields.
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts, comparing objective height and weight buckets against shot context, and auditing missing or suspicious shot-fact fields.
 
 **When Not to Use:**
 Running imports, mutating shot facts, replacing Game Imports, or adding biometric fields into model training without separate approval.
@@ -2428,6 +2467,35 @@ Running imports, mutating shot facts, replacing Game Imports, or adding biometri
 **Example Usage:**
 ```php
 Route::get('/admin/nhl-shot-attempts', [NhlShotAttemptController::class, 'index']);
+```
+
+---
+
+### Admin NHL Faceoffs
+
+**Name:** Admin NHL Faceoffs
+**Type:** Admin Analytics Review UI
+**Location:**
+- `app/Http/Controllers/Admin/NhlFaceoffController.php`
+- `resources/views/admin/nhl-faceoffs/index.blade.php`
+- `docs/architecture/admin/AdminNhlFaceoffs.yaml`
+
+**Purpose:**
+Provide a super-admin review panel for NHL faceoff territory-movement aggregates by team, player, unit, and game.
+
+**When to Use:**
+Inspecting faceoff volume, zone distribution, advanced percentage, held percentage, retreated percentage, low-sample-filtered aggregate rows, and game-level missing next-event context.
+
+**When Not to Use:**
+Running imports, mutating faceoff facts, replacing Game Imports, or building public stats pages for non-admin users.
+
+**Public Interface:**
+- `admin.nhl-faceoffs.index`
+- `NhlFaceoffController::index()`
+
+**Example Usage:**
+```php
+Route::get('/admin/nhl-faceoffs', [NhlFaceoffController::class, 'index']);
 ```
 
 ---

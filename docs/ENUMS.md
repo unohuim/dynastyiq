@@ -1697,6 +1697,32 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Faceoff Fact Buckets
+
+**Name:** NHL faceoff fact buckets
+**Storage location(s):** `nhl_faceoff_facts.*_bucket`, `nhl_faceoff_facts.winning_team_zone`, `nhl_faceoff_facts.losing_team_zone` (string columns)
+**Allowed values currently emitted:**
+
+- Zone values: `O`, `N`, `D`, `NULL`.
+- Zone buckets: `offensive`, `neutral`, `defensive`, `unknown`.
+- Strength buckets: `ev`, `pp`, `pk`, `so`, `unknown`.
+- Advancement buckets: `advanced`, `held`, `retreated`, `unknown`.
+
+**Semantic meaning:**
+
+- Zone values are stored from the named team's perspective.
+- `advanced` means the next meaningful event after the faceoff occurred in a more advanced zone from the winning team's perspective.
+- `held` means the next meaningful event occurred in the same zone from the winning team's perspective.
+- `retreated` means the next meaningful event occurred in a worse zone from the winning team's perspective.
+- `unknown` means the source zone or next meaningful event zone was unavailable.
+
+**Notes:**
+
+- Faceoff fact buckets are descriptive analytics labels, not possession probability outputs.
+- The columns are string-backed and not database constrained.
+
+---
+
 ### NHL Shot Attempt Predictive Group
 
 **Name:** NHL shot attempt predictive group
@@ -1907,10 +1933,12 @@ Do not introduce new enum values without updating this document.
 **Storage location(s):** `nhl_game_import_runs.payload.process_scope` (JSON string value)
 **Allowed values currently emitted:**
 
+- `faceoffs`
 - `shots`
 
 **Semantic meaning:**
 
+- `faceoffs`: Process run was queued from Game Imports to upsert `nhl_faceoff_facts` from already imported play-by-play and event-to-unit links without running provider fetches or the full NHL import pipeline.
 - `shots`: Process run was queued from Game Imports to upsert `nhl_shot_attempts_facts` from already imported play-by-play without running provider fetches or the full NHL import pipeline.
 
 **Notes:**

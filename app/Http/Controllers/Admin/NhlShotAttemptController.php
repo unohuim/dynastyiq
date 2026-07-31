@@ -546,8 +546,11 @@ class NhlShotAttemptController extends Controller
         $rows = collect();
 
         foreach ($this->biometricGroupDefinitions() as $definition) {
-            $query = $this->predictiveSampleQuery($filters)
-                ->whereNotNull('nhl_shot_attempts_facts.' . $definition['column']);
+            $query = $this->predictiveSampleQuery($filters);
+
+            foreach ($definition['required_columns'] as $column) {
+                $query->whereNotNull('nhl_shot_attempts_facts.' . $column);
+            }
 
             if ($goalModelId !== null) {
                 $query->leftJoin('nhl_shot_attempt_predictions as goal_predictions', function ($join) use ($goalModelId): void {
@@ -562,6 +565,9 @@ class NhlShotAttemptController extends Controller
                 ->selectRaw('? as profile', [$definition['label']])
                 ->selectRaw($definition['label_sql'] . ' as bucket')
                 ->selectRaw($definition['sort_sql'] . ' as bucket_sort')
+                ->selectRaw($definition['context_1_sql'] . ' as context_1')
+                ->selectRaw($definition['context_2_sql'] . ' as context_2')
+                ->selectRaw($definition['context_3_sql'] . ' as context_3')
                 ->selectRaw('COUNT(*) as attempts')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
@@ -571,6 +577,10 @@ class NhlShotAttemptController extends Controller
                 ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
                 ->groupByRaw($definition['label_sql'])
                 ->groupByRaw($definition['sort_sql']);
+
+            foreach ($definition['context_group_sql'] as $contextGroupSql) {
+                $query->groupByRaw($contextGroupSql);
+            }
 
             if ($goalModelId !== null) {
                 $query
@@ -599,14 +609,57 @@ class NhlShotAttemptController extends Controller
     }
 
     /**
-     * @return array<int, array{label:string,column:string,label_sql:string,sort_sql:string}>
+     * @return array<int, array{
+     *     label:string,
+     *     required_columns:array<int, string>,
+     *     label_sql:string,
+     *     sort_sql:string,
+     *     context_1_sql:string,
+     *     context_2_sql:string,
+     *     context_3_sql:string,
+     *     context_group_sql:array<int, string>
+     * }>
      */
     private function biometricGroupDefinitions(): array
     {
+        $heightBucket = "CASE
+            WHEN shooter_height_inches IS NULL THEN 'Unknown'
+            WHEN shooter_height_inches < 70 THEN '<5-10'
+            WHEN shooter_height_inches < 73 THEN '5-10 to 6-0'
+            WHEN shooter_height_inches < 76 THEN '6-1 to 6-3'
+            WHEN shooter_height_inches < 79 THEN '6-4 to 6-6'
+            ELSE '6-7+'
+        END";
+        $heightSort = "CASE
+            WHEN shooter_height_inches IS NULL THEN 99
+            WHEN shooter_height_inches < 70 THEN 1
+            WHEN shooter_height_inches < 73 THEN 2
+            WHEN shooter_height_inches < 76 THEN 3
+            WHEN shooter_height_inches < 79 THEN 4
+            ELSE 5
+        END";
+        $weightBucket = "CASE
+            WHEN shooter_weight_lbs IS NULL THEN 'Unknown'
+            WHEN shooter_weight_lbs < 180 THEN '<180'
+            WHEN shooter_weight_lbs < 195 THEN '180-194'
+            WHEN shooter_weight_lbs < 210 THEN '195-209'
+            WHEN shooter_weight_lbs < 225 THEN '210-224'
+            ELSE '225+'
+        END";
+        $weightSort = "CASE
+            WHEN shooter_weight_lbs IS NULL THEN 99
+            WHEN shooter_weight_lbs < 180 THEN 1
+            WHEN shooter_weight_lbs < 195 THEN 2
+            WHEN shooter_weight_lbs < 210 THEN 3
+            WHEN shooter_weight_lbs < 225 THEN 4
+            ELSE 5
+        END";
+        $emptyContext = "'N/A'";
+
         return [
             [
                 'label' => 'Shooter Age',
-                'column' => 'shooter_age_years',
+                'required_columns' => ['shooter_age_years'],
                 'label_sql' => "CASE
                     WHEN shooter_age_years IS NULL THEN 'Unknown'
                     WHEN shooter_age_years < 22 THEN '<22'
@@ -625,50 +678,64 @@ class NhlShotAttemptController extends Controller
                     WHEN shooter_age_years < 34 THEN 5
                     ELSE 6
                 END",
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
             ],
             [
                 'label' => 'Shooter Height',
-                'column' => 'shooter_height_inches',
-                'label_sql' => "CASE
-                    WHEN shooter_height_inches IS NULL THEN 'Unknown'
-                    WHEN shooter_height_inches < 70 THEN '<5-10'
-                    WHEN shooter_height_inches < 73 THEN '5-10 to 6-0'
-                    WHEN shooter_height_inches < 76 THEN '6-1 to 6-3'
-                    WHEN shooter_height_inches < 79 THEN '6-4 to 6-6'
-                    ELSE '6-7+'
-                END",
-                'sort_sql' => "CASE
-                    WHEN shooter_height_inches IS NULL THEN 99
-                    WHEN shooter_height_inches < 70 THEN 1
-                    WHEN shooter_height_inches < 73 THEN 2
-                    WHEN shooter_height_inches < 76 THEN 3
-                    WHEN shooter_height_inches < 79 THEN 4
-                    ELSE 5
-                END",
+                'required_columns' => ['shooter_height_inches'],
+                'label_sql' => $heightBucket,
+                'sort_sql' => $heightSort,
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
             ],
             [
                 'label' => 'Shooter Weight',
-                'column' => 'shooter_weight_lbs',
-                'label_sql' => "CASE
-                    WHEN shooter_weight_lbs IS NULL THEN 'Unknown'
-                    WHEN shooter_weight_lbs < 180 THEN '<180'
-                    WHEN shooter_weight_lbs < 195 THEN '180-194'
-                    WHEN shooter_weight_lbs < 210 THEN '195-209'
-                    WHEN shooter_weight_lbs < 225 THEN '210-224'
-                    ELSE '225+'
-                END",
-                'sort_sql' => "CASE
-                    WHEN shooter_weight_lbs IS NULL THEN 99
-                    WHEN shooter_weight_lbs < 180 THEN 1
-                    WHEN shooter_weight_lbs < 195 THEN 2
-                    WHEN shooter_weight_lbs < 210 THEN 3
-                    WHEN shooter_weight_lbs < 225 THEN 4
-                    ELSE 5
-                END",
+                'required_columns' => ['shooter_weight_lbs'],
+                'label_sql' => $weightBucket,
+                'sort_sql' => $weightSort,
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
+            ],
+            [
+                'label' => 'Shooter Height + Weight',
+                'required_columns' => ['shooter_height_inches', 'shooter_weight_lbs'],
+                'label_sql' => $heightBucket,
+                'sort_sql' => $heightSort,
+                'context_1_sql' => $weightBucket,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [$weightBucket],
+            ],
+            [
+                'label' => 'Height + Shot Context',
+                'required_columns' => ['shooter_height_inches'],
+                'label_sql' => $heightBucket,
+                'sort_sql' => $heightSort,
+                'context_1_sql' => 'shot_type_bucket',
+                'context_2_sql' => 'distance_bucket',
+                'context_3_sql' => 'angle_bucket',
+                'context_group_sql' => ['shot_type_bucket', 'distance_bucket', 'angle_bucket'],
+            ],
+            [
+                'label' => 'Weight + Shot Context',
+                'required_columns' => ['shooter_weight_lbs'],
+                'label_sql' => $weightBucket,
+                'sort_sql' => $weightSort,
+                'context_1_sql' => 'shot_type_bucket',
+                'context_2_sql' => 'distance_bucket',
+                'context_3_sql' => 'angle_bucket',
+                'context_group_sql' => ['shot_type_bucket', 'distance_bucket', 'angle_bucket'],
             ],
             [
                 'label' => 'Goalie Age',
-                'column' => 'goalie_age_years',
+                'required_columns' => ['goalie_age_years'],
                 'label_sql' => "CASE
                     WHEN goalie_age_years IS NULL THEN 'Unknown'
                     WHEN goalie_age_years < 24 THEN '<24'
@@ -687,10 +754,14 @@ class NhlShotAttemptController extends Controller
                     WHEN goalie_age_years < 36 THEN 5
                     ELSE 6
                 END",
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
             ],
             [
                 'label' => 'Goalie Height',
-                'column' => 'goalie_height_inches',
+                'required_columns' => ['goalie_height_inches'],
                 'label_sql' => "CASE
                     WHEN goalie_height_inches IS NULL THEN 'Unknown'
                     WHEN goalie_height_inches < 73 THEN '<6-1'
@@ -707,10 +778,14 @@ class NhlShotAttemptController extends Controller
                     WHEN goalie_height_inches < 79 THEN 4
                     ELSE 5
                 END",
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
             ],
             [
                 'label' => 'Goalie Weight',
-                'column' => 'goalie_weight_lbs',
+                'required_columns' => ['goalie_weight_lbs'],
                 'label_sql' => "CASE
                     WHEN goalie_weight_lbs IS NULL THEN 'Unknown'
                     WHEN goalie_weight_lbs < 185 THEN '<185'
@@ -727,6 +802,10 @@ class NhlShotAttemptController extends Controller
                     WHEN goalie_weight_lbs < 230 THEN 4
                     ELSE 5
                 END",
+                'context_1_sql' => $emptyContext,
+                'context_2_sql' => $emptyContext,
+                'context_3_sql' => $emptyContext,
+                'context_group_sql' => [],
             ],
         ];
     }
@@ -736,6 +815,9 @@ class NhlShotAttemptController extends Controller
         $sorter = match ($sort) {
             'profile' => fn (object $row): string => (string) $row->profile,
             'bucket' => fn (object $row): string => sprintf('%s:%02d:%s', $row->profile, (int) $row->bucket_sort, $row->bucket),
+            'context_1' => fn (object $row): string => (string) ($row->context_1 ?? ''),
+            'context_2' => fn (object $row): string => (string) ($row->context_2 ?? ''),
+            'context_3' => fn (object $row): string => (string) ($row->context_3 ?? ''),
             'attempts' => fn (object $row): int => (int) $row->attempts,
             'shots_on_goal' => fn (object $row): int => (int) $row->shots_on_goal,
             'sog_rate' => fn (object $row): float => (float) ($row->sog_rate ?? 0),
@@ -838,6 +920,9 @@ class NhlShotAttemptController extends Controller
                 'keys' => [
                     'profile' => true,
                     'bucket' => true,
+                    'context_1' => true,
+                    'context_2' => true,
+                    'context_3' => true,
                     'attempts' => true,
                     'shots_on_goal' => true,
                     'sog_rate' => true,

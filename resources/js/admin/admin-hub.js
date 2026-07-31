@@ -54,6 +54,7 @@ export default function adminHub(options = {}) {
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
+        gameImportProcessFaceoffsUrl: options.gameImportProcessFaceoffsUrl ?? '/admin/nhl-game-imports/process-faceoffs',
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
         gameImportDuplicatePbpScanUrl: options.gameImportDuplicatePbpScanUrl ?? '/admin/nhl-game-imports/duplicate-pbp/scan',
         gameImportDuplicatePbpDedupeUrl: options.gameImportDuplicatePbpDedupeUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
@@ -1085,6 +1086,39 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async processFaceoffFactsGameImports(run) {
+            const runId = run?.id;
+            const processKey = this.gameImportProcessKey(run, 'faceoffs');
+
+            if (!runId || this.gameImports.processingRuns[processKey] === true) {
+                return;
+            }
+
+            this.gameImports.processing = true;
+            this.gameImports.processingRuns = {
+                ...this.gameImports.processingRuns,
+                [processKey]: true,
+            };
+            this.closeGameImportProcessMenu(run);
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(
+                    this.gameImportProcessFaceoffsUrl,
+                    { run_id: runId }
+                );
+
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue faceoff facts';
+            } finally {
+                this.gameImports.processing = false;
+                const next = { ...this.gameImports.processingRuns };
+                delete next[processKey];
+                this.gameImports.processingRuns = next;
+            }
+        },
+
         async submitGameImportSeasonSync() {
             const selected = this.gameImportSelectedSeason();
 
@@ -1416,6 +1450,10 @@ export default function adminHub(options = {}) {
             return run?.payload?.process_scope === 'shots';
         },
 
+        isFaceoffFactRun(run) {
+            return run?.payload?.process_scope === 'faceoffs';
+        },
+
         isDuplicatePbpDedupeRun(run) {
             return run?.action === 'repair' && run?.payload?.repair === 'duplicate_pbp';
         },
@@ -1662,6 +1700,10 @@ export default function adminHub(options = {}) {
                 return this.gameImportShotFactSummaryText(run);
             }
 
+            if (this.isFaceoffFactRun(run)) {
+                return this.gameImportFaceoffFactSummaryText(run);
+            }
+
             if (run.action === 'discover' && !run.processing_started) {
                 return this.discoveryFactsText(run);
             }
@@ -1684,6 +1726,10 @@ export default function adminHub(options = {}) {
         gameImportCompactSummaryText(run) {
             if (this.isShotFactRun(run)) {
                 return this.gameImportShotFactSummaryText(run);
+            }
+
+            if (this.isFaceoffFactRun(run)) {
+                return this.gameImportFaceoffFactSummaryText(run);
             }
 
             const games = Array.isArray(run?.games) ? run.games : [];
@@ -1724,6 +1770,25 @@ export default function adminHub(options = {}) {
             if (noEligible > 0) {
                 parts.push(`${this.formatNumber(noEligible)} no eligible attempts`);
             }
+
+            if (failed > 0) {
+                parts.push(`${this.formatNumber(failed)} failed`);
+            }
+
+            return parts.join(' · ');
+        },
+
+        gameImportFaceoffFactSummaryText(run) {
+            const payload = run?.payload ?? {};
+            const failed = Array.isArray(payload.faceoff_fact_failed_game_ids)
+                ? payload.faceoff_fact_failed_game_ids.length
+                : 0;
+            const queued = Number(payload.faceoff_fact_game_count) || Number(run?.queued_jobs) || 0;
+            const processed = Number(payload.faceoff_fact_processed_game_count)
+                || (run?.status === 'completed' ? Math.max(0, queued - failed) : 0);
+            const parts = [
+                `${this.formatNumber(processed)} / ${this.formatNumber(queued)} games built`,
+            ];
 
             if (failed > 0) {
                 parts.push(`${this.formatNumber(failed)} failed`);
@@ -1922,7 +1987,8 @@ export default function adminHub(options = {}) {
 
         gameImportProcessBusy(run) {
             return this.gameImports.processingRuns[this.gameImportProcessKey(run, 'full')] === true
-                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'shots')] === true;
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'shots')] === true
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'faceoffs')] === true;
         },
 
         isGameImportProcessMenuOpen(run) {
