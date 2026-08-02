@@ -121,9 +121,9 @@ it('emits goalie basic and on ice stats for scoped season stats pulls', function
 
     $basicStats = collect($basicResponse)->where('nhl_player_id', 8470001)->pluck('value', 'stat_slug');
 
-    expect($basicStats->get('goalie_starts'))->toBe(2.0)
-        ->and($basicStats->get('goalie_wins'))->toBe(1.0)
-        ->and($basicStats->get('goalie_shots_against'))->toBe(64.0)
+    expect($basicStats->get('goalie_starts'))->toBe(2)
+        ->and($basicStats->get('goalie_wins'))->toBe(1)
+        ->and($basicStats->get('goalie_shots_against'))->toBe(64)
         ->and($basicStats->get('goalie_save_percentage'))->toBe(0.938);
 
     $windowResponse = $this->withHeader('Authorization', 'Bearer ' . $token)
@@ -133,7 +133,7 @@ it('emits goalie basic and on ice stats for scoped season stats pulls', function
 
     $windowStats = collect($windowResponse)->where('nhl_player_id', 8470001)->pluck('value', 'stat_slug');
 
-    expect($windowStats->get('goalie_goals_against_average'))->toBe(2.0)
+    expect($windowStats->get('goalie_goals_against_average'))->toEqual(2.0)
         ->and($windowStats->get('goalie_quality_start_percentage'))->toBe(0.5);
 
     $onIceResponse = $this->withHeader('Authorization', 'Bearer ' . $token)
@@ -143,8 +143,8 @@ it('emits goalie basic and on ice stats for scoped season stats pulls', function
 
     $onIceStats = collect($onIceResponse)->where('nhl_player_id', 8470001)->pluck('value', 'stat_slug');
 
-    expect($onIceStats->get('on_ice_sa'))->toBe(64.0)
-        ->and($onIceStats->get('on_ice_ga'))->toBe(4.0);
+    expect($onIceStats->get('on_ice_sa'))->toBe(64)
+        ->and($onIceStats->get('on_ice_ga'))->toBe(4);
 });
 
 it('emits goalie expected stats for scoped season stats pulls', function (): void {
