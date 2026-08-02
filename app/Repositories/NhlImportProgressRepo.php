@@ -150,17 +150,30 @@ class NhlImportProgressRepo
     }
 
     /** Mark success (completed) with items_count. */
-    public function markCompleted(int $gameId, string $type, int $itemsCount): void
+    public function markCompleted(
+        int $gameId,
+        string $type,
+        int $itemsCount,
+        ?int $runId = null,
+        bool $scopeRun = false
+    ): void
     {
-        $updated = DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
-            ->where('import_type', $type)
-            ->update([
-                'items_count' => $itemsCount,
-                'status'      => 'completed',
-                'last_error'  => null,
-                'updated_at'  => now(),
-            ]);
+            ->where('import_type', $type);
+
+        if ($scopeRun && $runId === null) {
+            $query->whereNull('run_id');
+        } elseif ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        $updated = $query->update([
+            'items_count' => $itemsCount,
+            'status'      => 'completed',
+            'last_error'  => null,
+            'updated_at'  => now(),
+        ]);
 
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('stage-completed', gameId: $gameId, stage: $type));
@@ -186,10 +199,11 @@ class NhlImportProgressRepo
     }
 
     /**
-     * Reattach existing progress rows in a date range to a run and queue them again.
+     * Queue existing progress rows in a date range for the given run.
      *
-     * This supports intentional replay of already-discovered games without requiring
-     * discovery to create duplicate progress rows.
+     * Historical progress rows must remain attached to their original run. Moving
+     * every row in a date range to this run can violate the run/game/stage unique
+     * index when multiple previous runs contain the same game/stage.
      */
     public function rescheduleExistingRowsForRun(int $runId, string $startDate, string $endDate): int
     {
@@ -198,9 +212,9 @@ class NhlImportProgressRepo
             : [$endDate, $startDate];
 
         $updated = DB::table('nhl_import_progress')
+            ->where('run_id', $runId)
             ->whereBetween('game_date', [$earliestDate, $latestDate])
             ->update([
-                'run_id' => $runId,
                 'items_count' => 0,
                 'status' => 'scheduled',
                 'last_error' => null,
@@ -215,7 +229,7 @@ class NhlImportProgressRepo
     }
 
     /**
-     * Reattach selected game progress rows to a run and queue them again.
+     * Seed selected game progress rows into a new run and queue them.
      *
      * @param array<int,int> $gameIds
      */
@@ -227,35 +241,79 @@ class NhlImportProgressRepo
             return 0;
         }
 
-        $updated = DB::table('nhl_import_progress')
+        $now = now();
+        $rows = DB::table('nhl_import_progress')
             ->whereIn('game_id', $gameIds)
-            ->update([
+            ->select([
+                'season_id',
+                'game_date',
+                'game_id',
+                'game_type',
+                'import_type',
+            ])
+            ->groupBy([
+                'season_id',
+                'game_date',
+                'game_id',
+                'game_type',
+                'import_type',
+            ])
+            ->get()
+            ->map(static fn ($row): array => [
                 'run_id' => $runId,
+                'season_id' => $row->season_id,
+                'game_date' => $row->game_date,
+                'game_id' => $row->game_id,
+                'game_type' => $row->game_type,
+                'import_type' => $row->import_type,
                 'items_count' => 0,
                 'status' => 'scheduled',
                 'last_error' => null,
-                'updated_at' => now(),
-            ]);
+                'discovered_at' => $now,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ])
+            ->all();
 
-        if ($updated > 0) {
+        if ($rows === []) {
+            return 0;
+        }
+
+        $inserted = DB::table('nhl_import_progress')->insertOrIgnore($rows);
+
+        if ($inserted > 0) {
             broadcast(new NhlGameImportStatusUpdated('stage-rescheduled'));
         }
 
-        return $updated;
+        return $inserted;
     }
 
     /** Mark failure (error) with message/code. */
-    public function markError(int $gameId, string $type, string $message, $code = null): void
+    public function markError(
+        int $gameId,
+        string $type,
+        string $message,
+        $code = null,
+        ?int $runId = null,
+        bool $scopeRun = false
+    ): void
     {
         $msg = trim(($code !== null ? '[' . (string)$code . '] ' : '') . $message);
-        $updated = DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
-            ->where('import_type', $type)
-            ->update([
-                'status'     => 'error',
-                'last_error' => mb_substr($msg, 0, 1000),
-                'updated_at' => now(),
-            ]);
+            ->where('import_type', $type);
+
+        if ($scopeRun && $runId === null) {
+            $query->whereNull('run_id');
+        } elseif ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        $updated = $query->update([
+            'status'     => 'error',
+            'last_error' => mb_substr($msg, 0, 1000),
+            'updated_at' => now(),
+        ]);
 
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('stage-error', gameId: $gameId, stage: $type));
@@ -263,17 +321,30 @@ class NhlImportProgressRepo
     }
 
     /** Mark all not-yet-completed rows for a game as failed with the same message. */
-    public function markGameError(int $gameId, string $message, $code = null): void
+    public function markGameError(
+        int $gameId,
+        string $message,
+        $code = null,
+        ?int $runId = null,
+        bool $scopeRun = false
+    ): void
     {
         $msg = trim(($code !== null ? '[' . (string) $code . '] ' : '') . $message);
-        $updated = DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
-            ->whereIn('status', ['scheduled', 'running'])
-            ->update([
-                'status' => 'error',
-                'last_error' => mb_substr($msg, 0, 1000),
-                'updated_at' => now(),
-            ]);
+            ->whereIn('status', ['scheduled', 'running']);
+
+        if ($scopeRun && $runId === null) {
+            $query->whereNull('run_id');
+        } elseif ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        $updated = $query->update([
+            'status' => 'error',
+            'last_error' => mb_substr($msg, 0, 1000),
+            'updated_at' => now(),
+        ]);
 
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('game-error', gameId: $gameId));
@@ -285,21 +356,34 @@ class NhlImportProgressRepo
      *
      * @param array<int,string> $types
      */
-    public function markSkipped(int $gameId, array $types, string $message): void
+    public function markSkipped(
+        int $gameId,
+        array $types,
+        string $message,
+        ?int $runId = null,
+        bool $scopeRun = false
+    ): void
     {
         if ($types === []) {
             return;
         }
 
-        $updated = DB::table('nhl_import_progress')
+        $query = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->whereIn('import_type', $types)
-            ->whereIn('status', ['scheduled', 'running'])
-            ->update([
-                'status' => 'skipped',
-                'last_error' => mb_substr($message, 0, 1000),
-                'updated_at' => now(),
-            ]);
+            ->whereIn('status', ['scheduled', 'running']);
+
+        if ($scopeRun && $runId === null) {
+            $query->whereNull('run_id');
+        } elseif ($runId !== null) {
+            $query->where('run_id', $runId);
+        }
+
+        $updated = $query->update([
+            'status' => 'skipped',
+            'last_error' => mb_substr($message, 0, 1000),
+            'updated_at' => now(),
+        ]);
 
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('stage-skipped', gameId: $gameId));
@@ -376,6 +460,13 @@ class NhlImportProgressRepo
                 ->whereNull('run_id')
                 ->where('game_id', $row['game_id'])
                 ->where('import_type', $row['import_type'])
+                ->whereNotExists(function ($query) use ($runId, $row): void {
+                    $query->selectRaw('1')
+                        ->from('nhl_import_progress as run_progress')
+                        ->where('run_progress.run_id', $runId)
+                        ->where('run_progress.game_id', $row['game_id'])
+                        ->where('run_progress.import_type', $row['import_type']);
+                })
                 ->update([
                     'run_id' => $runId,
                     'updated_at' => now(),

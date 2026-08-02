@@ -85,6 +85,75 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | The Odds API Configuration
+    |--------------------------------------------------------------------------
+    |
+    | The Odds API v4 requires an API key sent as the apiKey query parameter.
+    | DynastyIQ should use NHL as the identity authority and treat these
+    | endpoints as betting-market source payloads.
+    |
+    */
+    'the_odds_api' => [
+        'base' => env('THE_ODDS_API_BASE_URL', 'https://api.the-odds-api.com'),
+        'key' => env('THE_ODDS_API_KEY'),
+        'nhl_sport_key' => env('THE_ODDS_API_NHL_SPORT_KEY', 'icehockey_nhl'),
+        'auth' => [
+            'in' => 'query',
+            'name' => 'apiKey',
+        ],
+        'endpoints' => [
+            'sports' => '/v4/sports',
+            'events' => '/v4/sports/{sportKey}/events',
+            'odds' => '/v4/sports/{sportKey}/odds',
+            'scores' => '/v4/sports/{sportKey}/scores',
+            'event_markets' => '/v4/sports/{sportKey}/events/{eventId}/markets',
+            'event_odds' => '/v4/sports/{sportKey}/events/{eventId}/odds',
+            'historical_odds' => '/v4/historical/sports/{sportKey}/odds',
+            'historical_events' => '/v4/historical/sports/{sportKey}/events',
+            'historical_event_odds' => '/v4/historical/sports/{sportKey}/events/{eventId}/odds',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | odds-api.net Configuration
+    |--------------------------------------------------------------------------
+    |
+    | odds-api.net requires an API key sent in the X-API-Key header. DynastyIQ
+    | should use these endpoints as betting-market source payloads and keep NHL
+    | API data as the hockey identity and statistics authority.
+    |
+    */
+    'odds_api_net' => [
+        'base' => env('ODDS_API_NET_BASE_URL', 'https://api.odds-api.net/v1'),
+        'key' => env('ODDS_API_NET_KEY'),
+        'nhl_sport_key' => env('ODDS_API_NET_NHL_SPORT_KEY', 'icehockey'),
+        'nhl_league_key' => env('ODDS_API_NET_NHL_LEAGUE_KEY', 'nhl'),
+        'auth' => [
+            'in' => 'header',
+            'name' => 'X-API-Key',
+            'type' => null,
+        ],
+        'endpoints' => [
+            'sports' => '/sports',
+            'leagues' => '/leagues',
+            'bookmakers' => '/bookmakers',
+            'coverage' => '/coverage',
+            'events' => '/events',
+            'event_snapshot' => '/events/{eventId}/odds/snapshot',
+            'event_stream' => '/events/{eventId}/odds/stream',
+            'event_websocket' => '/events/{eventId}/odds/ws',
+            'event_history' => '/events/{eventId}/odds/history',
+            'event_history_stream' => '/events/{eventId}/odds/history/stream',
+            'event_history_websocket' => '/events/{eventId}/odds/history/ws',
+            'event_results' => '/events/{eventId}/results',
+            'usage' => '/usage',
+            'status' => '/status',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Fantrax API Configuration
     |--------------------------------------------------------------------------
     |

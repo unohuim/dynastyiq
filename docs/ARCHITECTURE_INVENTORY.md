@@ -1489,7 +1489,7 @@ app()->make(SumNhlGameStrengthUnits::class, ['gameId' => $gameId])->sum();
 - `database/migrations/2026_07_29_000001_make_nhl_import_progress_unique_per_run.php`
 
 **Purpose:**
-Centralize reads and writes to `nhl_import_progress` for import claim, status, dependency, stale-job behavior, and run-aware game/stage uniqueness.
+Centralize reads and writes to `nhl_import_progress` for import claim, status, dependency, stale-job behavior, run-aware game/stage uniqueness, and rerun row seeding without historical run reassignment.
 
 **When to Use:**
 Any code that mutates or checks NHL import progress state.
@@ -1502,6 +1502,8 @@ Generic import runs, admin batch history, or non-NHL queue status.
 - `isRunning()`
 - `markCompleted()`
 - `reschedule()`
+- `rescheduleExistingRowsForRun()`
+- `rescheduleExistingGameRowsForRun()`
 - `markError()`
 - `scheduledExists()`
 - `completedDepsCount()`

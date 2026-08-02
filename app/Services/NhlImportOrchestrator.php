@@ -106,14 +106,19 @@ class NhlImportOrchestrator
     }
 
     /** Determine whether a running stage belongs to an explicit reprocess run. */
-    public function isReprocessStage(int $gameId, string $type): bool
+    public function isReprocessStage(int $gameId, string $type, ?int $runId = null): bool
     {
-        $payload = DB::table('nhl_import_progress as progress')
+        $query = DB::table('nhl_import_progress as progress')
             ->join('nhl_game_import_runs as runs', 'runs.id', '=', 'progress.run_id')
             ->where('progress.game_id', $gameId)
             ->where('progress.import_type', $type)
-            ->where('progress.status', 'running')
-            ->value('runs.payload');
+            ->where('progress.status', 'running');
+
+        if ($runId !== null) {
+            $query->where('progress.run_id', $runId);
+        }
+
+        $payload = $query->value('runs.payload');
 
         if ($payload === null) {
             return false;
@@ -135,7 +140,7 @@ class NhlImportOrchestrator
     {
         $items = (int) ($meta['items_count'] ?? 0);
         $runId = $this->runIdForStage($gameId, $type);
-        $this->repo->markCompleted($gameId, $type, $items);
+        $this->repo->markCompleted($gameId, $type, $items, $runId, true);
         $this->clearTroubleshootingDirectoryAfterSuccessfulStage($gameId, $type);
         $this->seasonSummary($gameId, $type);
         $this->advance($gameId, $type, $runId);
@@ -145,8 +150,8 @@ class NhlImportOrchestrator
     public function onFailure(int $gameId, string $type, string $message, $code = null): void
     {
         $runId = $this->runIdForStage($gameId, $type);
-        $this->repo->markError($gameId, $type, $message, $code);
-        $this->repo->markGameError($gameId, $message, $code);
+        $this->repo->markError($gameId, $type, $message, $code, $runId, true);
+        $this->repo->markGameError($gameId, $message, $code, $runId, true);
         $this->continueRunOrDate($gameId, $type, $runId);
     }
 
@@ -194,7 +199,7 @@ class NhlImportOrchestrator
             return false;
         }
 
-        dispatch(new $jobClass($gameId));
+        dispatch(new $jobClass($gameId, $runId));
 
         return true;
     }
@@ -291,7 +296,9 @@ class NhlImportOrchestrator
             $this->repo->markSkipped(
                 $gameId,
                 NhlImportStages::ordered(),
-                $result['core_message'] ?? 'NHL source preflight skipped import.'
+                $result['core_message'] ?? 'NHL source preflight skipped import.',
+                $runId,
+                true
             );
 
             return false;
@@ -304,7 +311,9 @@ class NhlImportOrchestrator
             $this->repo->markSkipped(
                 $gameId,
                 self::ON_ICE_STAGES,
-                $result['on_ice_message'] ?? 'NHL shiftcharts source missing; on-ice stages skipped.'
+                $result['on_ice_message'] ?? 'NHL shiftcharts source missing; on-ice stages skipped.',
+                $runId,
+                true
             );
 
             if ($this->readyFor($gameId, NhlImportStages::VALIDATE_SUMMARY, $runId)) {
@@ -322,6 +331,7 @@ class NhlImportOrchestrator
         $runId = DB::table('nhl_import_progress')
             ->where('game_id', $gameId)
             ->where('import_type', $type)
+            ->where('status', 'running')
             ->value('run_id');
 
         return $runId !== null ? (int) $runId : null;

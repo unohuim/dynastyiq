@@ -14,6 +14,7 @@ use App\Services\SumNhlSeasonStats;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
 
@@ -811,6 +812,41 @@ it('uses official boxscore goalie decisions before primary goalie fallback', fun
         ->and((int) $starter?->evga)->toBe(1)
         ->and((int) $starter?->ppga)->toBe(1)
         ->and((int) $starter?->pkga)->toBe(0);
+});
+
+it('skips boxscore goalie summary rows whose landing payload returns not found', function (): void {
+    ($this->insertGame)();
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/player/9010805/landing' => Http::response(['message' => 'Not Found'], 404),
+    ]);
+
+    $method = new ReflectionMethod(ImportNhlBoxscore::class, 'processGoalieFantasyStats');
+    $method->setAccessible(true);
+    $method->invoke(app(ImportNhlBoxscore::class), 2026020001, 1, [
+        [
+            'playerId' => 9010805,
+            'toi' => '20:00',
+            'shotsAgainst' => 17,
+            'saves' => 0,
+            'goalsAgainst' => 1,
+            'evenStrengthShotsAgainst' => '0/0',
+            'evenStrengthGoalsAgainst' => 0,
+            'powerPlayShotsAgainst' => '0/0',
+            'powerPlayGoalsAgainst' => 0,
+            'shorthandedShotsAgainst' => '0/0',
+            'shorthandedGoalsAgainst' => 0,
+        ],
+    ], [
+        'homeTeam' => ['id' => 1, 'score' => 0],
+        'awayTeam' => ['id' => 2, 'score' => 5],
+        'periodDescriptor' => ['periodType' => 'REG'],
+    ]);
+
+    $this->assertDatabaseMissing('nhl_game_summaries', [
+        'nhl_game_id' => 2026020001,
+        'nhl_player_id' => 9010805,
+    ]);
 });
 
 it('exposes native advanced skater aliases and perspective position buttons in stats payload', function (): void {

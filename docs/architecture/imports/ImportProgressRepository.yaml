@@ -19,7 +19,7 @@ rules:
   - Claim operations must remain atomic and must transition scheduled rows to running in the same write.
   - Status values must remain aligned with docs/ENUMS.md.
   - Base NHL import jobs must verify running state before performing stage work.
-  - Explicit admin reruns must reschedule progress rows through this repository.
+  - Explicit admin reruns must reschedule or seed progress rows through this repository without reassigning historical run rows to a different run.
   - Run-aware processing may scope claim, scheduled-exists, running, and dependency checks by nhl_import_progress.run_id.
   - Import progress uniqueness must allow one row per run/game/stage when run_id is present and one legacy row per game/stage when run_id is null.
   - Date/run scheduler reads must support game-first orchestration by exposing running-state and scheduled-game checks for one date scope.
@@ -34,6 +34,8 @@ public_interface:
   - NhlImportProgressRepo::hasOpenRowsForRun()
   - NhlImportProgressRepo::markCompleted()
   - NhlImportProgressRepo::reschedule()
+  - NhlImportProgressRepo::rescheduleExistingRowsForRun()
+  - NhlImportProgressRepo::rescheduleExistingGameRowsForRun()
   - NhlImportProgressRepo::markError()
   - NhlImportProgressRepo::scheduledExists()
   - NhlImportProgressRepo::completedDepsCount()

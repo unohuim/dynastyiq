@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\NhlBoxscore;
 use App\Models\NhlGameSummary;
 use App\Traits\HasAPITrait;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Log;
 
 class ImportNhlBoxscore
 {
@@ -247,8 +249,8 @@ class ImportNhlBoxscore
                 continue;
             }
 
-            if (! ImportNHLPlayer::playerExists((string) $goalieId)) {
-                app(ImportNHLPlayer::class)->import((string) $goalieId);
+            if (! $this->ensureGoaliePlayerExistsForBoxscore((int) $gameId, (int) $goalieId)) {
+                continue;
             }
 
             $toi = $this->toiToSeconds($goalie['toi'] ?? '00:00');
@@ -301,6 +303,34 @@ class ImportNhlBoxscore
                 ]
             );
         }
+    }
+
+    /**
+     * Ensure goalie summary rows only reference player records that can be resolved.
+     */
+    private function ensureGoaliePlayerExistsForBoxscore(int $nhlGameId, int $playerId): bool
+    {
+        if (ImportNHLPlayer::playerExists((string) $playerId)) {
+            return true;
+        }
+
+        try {
+            app(ImportNHLPlayer::class)->import((string) $playerId);
+        } catch (RequestException $exception) {
+            if ($exception->response?->status() !== 404) {
+                throw $exception;
+            }
+
+            Log::info('Skipping NHL boxscore goalie summary row for player with unavailable landing payload.', [
+                'nhl_game_id' => $nhlGameId,
+                'nhl_player_id' => $playerId,
+                'status' => 404,
+            ]);
+
+            return ImportNHLPlayer::playerExists((string) $playerId);
+        }
+
+        return ImportNHLPlayer::playerExists((string) $playerId);
     }
 
     private function isQualityStart(bool $started, int $shotsAgainst, float $savePercentage): bool

@@ -27,6 +27,9 @@ abstract class BaseNhlJob implements ShouldQueue
     /** @var int */
     public int $gameId;
 
+    /** @var int|null */
+    public ?int $runId;
+
     /** @var int */
     public int $tries = 5;
 
@@ -36,9 +39,10 @@ abstract class BaseNhlJob implements ShouldQueue
     /** @var int */
     public int $timeout = 600;
 
-    public function __construct(int $gameId)
+    public function __construct(int $gameId, ?int $runId = null)
     {
         $this->gameId = $gameId;
+        $this->runId = $runId;
     }
 
     /**
@@ -59,7 +63,7 @@ abstract class BaseNhlJob implements ShouldQueue
         NhlGameImportEligibility $eligibility
     ): void
     {
-        if (! $orchestrator->isRunning($this->gameId, $this->stageName())) {
+        if (! $orchestrator->isRunning($this->gameId, $this->stageName(), $this->runId)) {
             return;
         }
 
@@ -76,7 +80,7 @@ abstract class BaseNhlJob implements ShouldQueue
                 ));
             }
 
-            if ($orchestrator->isReprocessStage($this->gameId, $this->stageName())) {
+            if ($orchestrator->isReprocessStage($this->gameId, $this->stageName(), $this->runId)) {
                 $this->clearStageDataForReprocess($this->gameId, $this->stageName());
             }
 

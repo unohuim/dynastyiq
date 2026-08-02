@@ -7,6 +7,8 @@ namespace App\Services;
 use App\Models\NhlUnit;
 use App\Models\NhlUnitPlayer;
 use App\Models\Player;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Resolves stable NHL units by unit type, team, and sorted player composition.
@@ -76,7 +78,24 @@ class ResolveNhlUnit
             $player = $players->get($nhlId);
 
             if (! $player && class_exists(ImportNHLPlayer::class)) {
-                app(ImportNHLPlayer::class)->import($nhlId);
+                try {
+                    app(ImportNHLPlayer::class)->import((string) $nhlId);
+                } catch (RequestException $exception) {
+                    if ($exception->response?->status() !== 404) {
+                        throw $exception;
+                    }
+
+                    Log::info('Skipping NHL unit player link for player with unavailable landing payload.', [
+                        'nhl_player_id' => $nhlId,
+                        'unit_id' => $unit->id,
+                        'unit_type' => $unit->unit_type,
+                        'team_abbrev' => $unit->team_abbrev,
+                        'status' => 404,
+                    ]);
+
+                    continue;
+                }
+
                 $player = Player::where('nhl_id', $nhlId)->first();
             }
 
