@@ -1070,6 +1070,42 @@
                                                         x-text="game.last_error"
                                                     ></div>
                                                     <div
+                                                        x-show="game.failure_category || game.sentry_event_id"
+                                                        x-cloak
+                                                        class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500"
+                                                    >
+                                                        <span
+                                                            x-show="game.error_stage"
+                                                            class="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-700"
+                                                            x-text="game.error_stage"
+                                                        ></span>
+                                                        <span
+                                                            x-show="game.failure_category"
+                                                            class="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700"
+                                                            x-text="game.failure_category"
+                                                        ></span>
+                                                        <span
+                                                            x-show="game.retryable !== null && game.retryable !== undefined"
+                                                            class="rounded bg-gray-100 px-1.5 py-0.5 font-medium text-gray-700"
+                                                            x-text="game.retryable ? 'retryable' : 'not retryable'"
+                                                        ></span>
+                                                        <template x-if="game.sentry_url">
+                                                            <a
+                                                                class="font-medium text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900"
+                                                                :href="game.sentry_url"
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                            >
+                                                                Sentry event
+                                                            </a>
+                                                        </template>
+                                                        <span
+                                                            x-show="game.sentry_event_id && !game.sentry_url"
+                                                            class="font-mono text-gray-500"
+                                                            x-text="`Sentry ${game.sentry_event_id}`"
+                                                        ></span>
+                                                    </div>
+                                                    <div
                                                         x-show="gameImportBlockedSources(game).length > 0"
                                                         x-cloak
                                                         class="mt-1.5 space-y-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800"

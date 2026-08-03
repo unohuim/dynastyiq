@@ -1401,6 +1401,9 @@ Migrations remain the **sole source of truth**.
 | status | enum | No | `scheduled`, `running`, `error`, `completed`, `skipped`; defaults to `scheduled` |
 | discovered_at | timestamp | Yes | Discovery timestamp |
 | last_error | text | Yes | Last import error |
+| sentry_event_id | string(64) | Yes | Sentry event id captured for the latest stage failure |
+| failure_category | string(32) | Yes | Failure category such as `infra`, `provider`, `data_integrity`, or `code` |
+| retryable | boolean | Yes | Whether the captured failure category is safe to retry operationally |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
@@ -1413,6 +1416,8 @@ Migrations remain the **sole source of truth**.
 - Index: `(run_id, status)`
 - Index: `(run_id, game_date)`
 - Index: `(season_id, game_date)`
+- Index: `failure_category`
+- Index: `retryable`
 - Index: `status`
 - Index: `game_type`
 - Index: `(season_id, game_type)`

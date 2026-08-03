@@ -5,7 +5,8 @@ location:
   - database/migrations/2025_08_13_155830_nhl_import_progress.php
   - database/migrations/2026_07_02_160000_add_run_id_to_nhl_import_progress_table.php
   - database/migrations/2026_07_29_000001_make_nhl_import_progress_unique_per_run.php
-purpose: Centralize reads and writes to nhl_import_progress for import claim, status, dependency, and stale-job behavior.
+  - database/migrations/2026_08_03_000001_add_sentry_failure_metadata_to_nhl_import_progress.php
+purpose: Centralize reads and writes to nhl_import_progress for import claim, status, dependency, stale-job behavior, and persisted failure diagnostics.
 when_to_use:
   - Mutating NHL import progress state.
   - Checking NHL import progress state.
@@ -24,6 +25,8 @@ rules:
   - Import progress uniqueness must allow one row per run/game/stage when run_id is present and one legacy row per game/stage when run_id is null.
   - Date/run scheduler reads must support game-first orchestration by exposing running-state and scheduled-game checks for one date scope.
   - Run supervisor reads must expose active-game counts, scheduled candidate games, and open-row checks for run-scoped slot filling.
+  - Failed rows may persist Sentry event id, failure category, and retryability so the admin UI can connect import state to exception diagnostics.
+  - Rescheduled or completed rows must clear previous failure diagnostics.
 public_interface:
   - NhlImportProgressRepo::claim()
   - NhlImportProgressRepo::isRunning()

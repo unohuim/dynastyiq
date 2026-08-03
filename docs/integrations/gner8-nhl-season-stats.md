@@ -120,6 +120,12 @@ Top-level payload:
 | `source_fetched_at` | string | Timestamp when DynastyIQ built the payload. |
 | `metadata` | object | Extra row metadata, such as `nhl_team_id` where available. |
 
+`player_stats[].value` is JSON numeric. Consumers must use the matching
+`stat_types[].value_type` row for semantic typing. Whole-number decimal or
+percentage values may decode as integers in PHP JSON clients, so `2` and `2.0`
+must be treated as the same numeric value when the stat type is `decimal` or
+`percentage`.
+
 `player_stat_features[]` object:
 
 | Field | Type | Meaning |
@@ -280,3 +286,4 @@ foreach ($statGroups as $statGroup) {
 - A row is emitted only when the player has qualifying data for that stat/window.
 - Goalie expected stats require shot-attempt facts with `goalie_player_id` and scored xG/xSOG predictions.
 - Feature rows currently compare recent `last_10` expected-rate values against the season baseline.
+- GNER8 should normalize received numeric values according to `stat_types[].value_type`; JSON decoding may not preserve a float type for whole-number decimal values.

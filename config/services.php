@@ -54,6 +54,10 @@ return [
         'log' => env('LOG_STATS_TIMING', false),
     ],
 
+    'sentry' => [
+        'organization_url' => env('SENTRY_ORGANIZATION_URL'),
+    ],
+
     'patreon' => [
         'client_id'     => env('PATREON_CLIENT_ID'),
         'client_secret' => env('PATREON_CLIENT_SECRET'),

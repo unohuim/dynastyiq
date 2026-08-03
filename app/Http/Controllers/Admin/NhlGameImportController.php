@@ -1039,11 +1039,11 @@ class NhlGameImportController extends Controller
         $total = $scheduled + $running + $completed + $skipped + $failed;
         $percentage = $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0;
         $status = $this->computedStatus($run, $total, $scheduled, $running, $completed, $skipped, $failed);
-        $lastError = $this->progressQueryForRun($run)
+        $latestError = $this->progressQueryForRun($run)
             ->where('status', 'error')
             ->whereNotNull('last_error')
             ->latest('updated_at')
-            ->value('last_error');
+            ->first(['last_error', 'sentry_event_id', 'failure_category', 'retryable']);
 
         return [
             'status' => $status,
@@ -1054,7 +1054,11 @@ class NhlGameImportController extends Controller
             'skipped_stage_rows' => $skipped,
             'failed_stage_rows' => $failed,
             'percentage' => $percentage,
-            'last_error' => $lastError,
+            'last_error' => $latestError?->last_error,
+            'sentry_event_id' => $latestError?->sentry_event_id,
+            'sentry_url' => $this->sentryEventUrl($latestError?->sentry_event_id),
+            'failure_category' => $latestError?->failure_category,
+            'retryable' => $latestError?->retryable !== null ? (bool) $latestError->retryable : null,
         ];
     }
 
@@ -1189,6 +1193,21 @@ class NhlGameImportController extends Controller
         ];
     }
 
+    private function sentryEventUrl(?string $eventId): ?string
+    {
+        if (! filled($eventId)) {
+            return null;
+        }
+
+        $organizationUrl = config('services.sentry.organization_url');
+
+        if (! is_string($organizationUrl) || trim($organizationUrl) === '') {
+            return null;
+        }
+
+        return rtrim($organizationUrl, '/') . '/issues/?query=' . rawurlencode('event.id:' . $eventId);
+    }
+
     /**
      * Return per-game import progress inside a run's date window.
      *
@@ -1203,6 +1222,9 @@ class NhlGameImportController extends Controller
                 'progress.import_type',
                 'progress.status',
                 'progress.last_error',
+                'progress.sentry_event_id',
+                'progress.failure_category',
+                'progress.retryable',
                 'progress.updated_at',
             ])
             ->orderBy('progress.game_date')
@@ -1232,6 +1254,11 @@ class NhlGameImportController extends Controller
                 $failed = (int) $gameRows->where('status', 'error')->count();
                 $total = $scheduled + $running + $completed + $skipped + $failed;
                 $first = $gameRows->first();
+                $latestError = $gameRows
+                    ->where('status', 'error')
+                    ->filter(fn ($row): bool => filled($row->last_error))
+                    ->sortByDesc('updated_at')
+                    ->first();
                 $game = $games->get((string) $gameId);
                 $statuses = $sourceStatuses
                     ->get((string) $gameId, collect())
@@ -1269,7 +1296,12 @@ class NhlGameImportController extends Controller
                     'failed_stage_rows' => $failed,
                     'total_stage_rows' => $total,
                     'percentage' => $total > 0 ? (int) floor((($completed + $skipped) / $total) * 100) : 0,
-                    'last_error' => $gameRows->where('status', 'error')->pluck('last_error')->filter()->first(),
+                    'last_error' => $latestError?->last_error,
+                    'error_stage' => $latestError?->import_type,
+                    'sentry_event_id' => $latestError?->sentry_event_id,
+                    'sentry_url' => $this->sentryEventUrl($latestError?->sentry_event_id),
+                    'failure_category' => $latestError?->failure_category,
+                    'retryable' => $latestError?->retryable !== null ? (bool) $latestError->retryable : null,
                     'latest_stage_updated_at' => $gameRows->pluck('updated_at')->filter()->max(),
                     'source_statuses' => $statuses,
                     'blocked_sources' => $blockedSources,

@@ -172,6 +172,9 @@ class NhlImportProgressRepo
             'items_count' => $itemsCount,
             'status'      => 'completed',
             'last_error'  => null,
+            'sentry_event_id' => null,
+            'failure_category' => null,
+            'retryable' => null,
             'updated_at'  => now(),
         ]);
 
@@ -190,6 +193,9 @@ class NhlImportProgressRepo
                 'items_count' => 0,
                 'status' => 'scheduled',
                 'last_error' => null,
+                'sentry_event_id' => null,
+                'failure_category' => null,
+                'retryable' => null,
                 'updated_at' => now(),
             ]);
 
@@ -218,6 +224,9 @@ class NhlImportProgressRepo
                 'items_count' => 0,
                 'status' => 'scheduled',
                 'last_error' => null,
+                'sentry_event_id' => null,
+                'failure_category' => null,
+                'retryable' => null,
                 'updated_at' => now(),
             ]);
 
@@ -269,6 +278,9 @@ class NhlImportProgressRepo
                 'items_count' => 0,
                 'status' => 'scheduled',
                 'last_error' => null,
+                'sentry_event_id' => null,
+                'failure_category' => null,
+                'retryable' => null,
                 'discovered_at' => $now,
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -295,7 +307,10 @@ class NhlImportProgressRepo
         string $message,
         $code = null,
         ?int $runId = null,
-        bool $scopeRun = false
+        bool $scopeRun = false,
+        ?string $sentryEventId = null,
+        ?string $failureCategory = null,
+        ?bool $retryable = null
     ): void
     {
         $msg = trim(($code !== null ? '[' . (string)$code . '] ' : '') . $message);
@@ -312,6 +327,9 @@ class NhlImportProgressRepo
         $updated = $query->update([
             'status'     => 'error',
             'last_error' => mb_substr($msg, 0, 1000),
+            'sentry_event_id' => $sentryEventId,
+            'failure_category' => $failureCategory,
+            'retryable' => $retryable,
             'updated_at' => now(),
         ]);
 
@@ -326,7 +344,10 @@ class NhlImportProgressRepo
         string $message,
         $code = null,
         ?int $runId = null,
-        bool $scopeRun = false
+        bool $scopeRun = false,
+        ?string $sentryEventId = null,
+        ?string $failureCategory = null,
+        ?bool $retryable = null
     ): void
     {
         $msg = trim(($code !== null ? '[' . (string) $code . '] ' : '') . $message);
@@ -343,6 +364,9 @@ class NhlImportProgressRepo
         $updated = $query->update([
             'status' => 'error',
             'last_error' => mb_substr($msg, 0, 1000),
+            'sentry_event_id' => $sentryEventId,
+            'failure_category' => $failureCategory,
+            'retryable' => $retryable,
             'updated_at' => now(),
         ]);
 

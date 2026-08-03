@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\NhlGameImportEligibility;
+use App\Services\NhlImportFailureReporter;
 use App\Services\NhlImportOrchestrator;
 use App\Services\NhlValidationTroubleshootingExporter;
 use App\Support\NhlImportStages;
@@ -93,12 +94,27 @@ abstract class BaseNhlJob implements ShouldQueue
             return;
         } catch (Throwable $e) {
             $this->exportTroubleshootingPayloads($e);
+            $failure = app(NhlImportFailureReporter::class)->capture(
+                $e,
+                $this->gameId,
+                $this->stageName(),
+                $this->runId,
+                [
+                    'job_class' => static::class,
+                    'attempt' => $this->attempts(),
+                    'queue' => $this->queue,
+                ]
+            );
 
             app(NhlImportOrchestrator::class)->onFailure(
                 $this->gameId,
                 $this->stageName(),
                 $e->getMessage(),
-                $e->getCode()
+                $e->getCode(),
+                $this->runId,
+                $failure['sentry_event_id'],
+                $failure['failure_category'],
+                $failure['retryable']
             );
 
             $this->fail($e);
@@ -136,6 +152,7 @@ abstract class BaseNhlJob implements ShouldQueue
         return [
             'nhl-import-' . $this->stageName(),
             "game-id:{$this->gameId}",
+            'run-id:' . ($this->runId !== null ? (string) $this->runId : 'none'),
         ];
     }
 

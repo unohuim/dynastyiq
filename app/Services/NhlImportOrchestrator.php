@@ -147,11 +147,39 @@ class NhlImportOrchestrator
     }
 
     /** Jobs call this on failure. */
-    public function onFailure(int $gameId, string $type, string $message, $code = null): void
+    public function onFailure(
+        int $gameId,
+        string $type,
+        string $message,
+        $code = null,
+        ?int $runId = null,
+        ?string $sentryEventId = null,
+        ?string $failureCategory = null,
+        ?bool $retryable = null
+    ): void
     {
-        $runId = $this->runIdForStage($gameId, $type);
-        $this->repo->markError($gameId, $type, $message, $code, $runId, true);
-        $this->repo->markGameError($gameId, $message, $code, $runId, true);
+        $runId ??= $this->runIdForStage($gameId, $type);
+        $this->repo->markError(
+            $gameId,
+            $type,
+            $message,
+            $code,
+            $runId,
+            true,
+            $sentryEventId,
+            $failureCategory,
+            $retryable
+        );
+        $this->repo->markGameError(
+            $gameId,
+            $message,
+            $code,
+            $runId,
+            true,
+            $sentryEventId,
+            $failureCategory,
+            $retryable
+        );
         $this->continueRunOrDate($gameId, $type, $runId);
     }
 

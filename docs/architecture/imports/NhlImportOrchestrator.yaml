@@ -3,6 +3,7 @@ type: Queue Orchestration Pattern
 location:
   - app/Support/NhlImportStages.php
   - app/Services/NhlImportOrchestrator.php
+  - app/Services/NhlImportFailureReporter.php
   - app/Services/NhlGameSourcePreflight.php
   - app/Repositories/NhlImportProgressRepo.php
   - app/Jobs/NhlOrchestratorJob.php
@@ -28,6 +29,8 @@ rules:
   - Canonical stage order, dependencies, job mappings, and stale-timeout config keys must come from NhlImportStages.
   - Jobs must report success and failure through the orchestrator or repository contract.
   - Jobs must attempt raw provider troubleshooting export before marking a game stage failed.
+  - Failed NHL game stage jobs must capture Sentry context before progress rows are marked failed.
+  - Sentry failure context must include game id, run id, import stage, failure category, retryability, environment, and release when available.
   - Import status values must remain aligned with docs/ENUMS.md.
   - Jobs must only perform work that has already been atomically claimed as running.
   - Scheduled run-aware processing must scope discovery-owned stage rows by nhl_import_progress.run_id when a run id is provided.
@@ -54,5 +57,6 @@ public_interface:
   - NhlImportOrchestrator::onSuccess()
   - NhlImportOrchestrator::onFailure()
   - NhlImportOrchestrator::sweepStale()
+  - NhlImportFailureReporter::capture()
 example_usage: |
   app(NhlImportOrchestrator::class)->processScheduled('2026-01-15');
