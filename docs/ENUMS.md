@@ -417,6 +417,7 @@ Do not introduce new enum values without updating this document.
 - `discover`
 - `process`
 - `repair`
+- `schedule-refresh`
 - `season-sync`
 
 **Semantic meaning:**
@@ -424,6 +425,7 @@ Do not introduce new enum values without updating this document.
 - `discover`: Admin queued NHL game discovery for a date selection.
 - `process`: Admin queued NHL game processing orchestrator jobs for a date selection.
 - `repair`: Admin queued operational repair work that is shown in the Game Imports progress card surface.
+- `schedule-refresh`: Admin queued future NHL schedule metadata refresh work without seeding the game import pipeline.
 - `season-sync`: Admin queued a season-level rollup from game summaries into season stats.
 
 ### NHL Game Import Run Mode
@@ -1668,7 +1670,7 @@ Do not introduce new enum values without updating this document.
 **Allowed values currently emitted:**
 
 - Distance buckets use `d_000_005`, `d_005_010`, continuing in five-foot ranges, plus `d_060_plus` and `unknown`.
-- Angle buckets use `a_000_010`, `a_010_020`, continuing in ten-degree absolute-angle ranges, plus `a_090_plus` and `unknown`.
+- Angle buckets use folded absolute-angle ranges from `a_000_010` through `a_080_090`, plus `unknown`; folded angle treats `0` as goal-line/sharp angle and `90` as straight-on.
 - Strength buckets: `ev`, `pp`, `pk`, `en`, `ps`, `unknown`.
 - Shot type buckets: `wrist`, `snap`, `slap`, `backhand`, `tip`, `deflection`, `wrap`, `poke`, `other`, `unknown`.
 - Rebound buckets: `rebound`, `not_rebound`, `unknown`.
@@ -1827,6 +1829,254 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Player Projection Status
+
+**Name:** NHL player projection status
+**Storage location(s):** `nhl_player_season_projections.status`, `nhl_player_toi_projections.status`, `nhl_goalie_season_projections.status`, `nhl_goalie_workload_projections.status` (string columns)
+**Allowed values:**
+
+- `draft`
+- `published`
+- `archived`
+
+**Semantic meaning:**
+
+- `draft`: Projection output is available for admin review but is not approved for downstream product use.
+- `published`: Projection output is approved for product/API consumption.
+- `archived`: Projection output is retained for audit/history but should not be used as current output.
+
+---
+
+### NHL Player Projection Confidence Bucket
+
+**Name:** NHL player projection confidence bucket
+**Storage location(s):** `nhl_player_season_projections.confidence_bucket`, `nhl_player_toi_projections.confidence_bucket`, `nhl_goalie_season_projections.confidence_bucket`, `nhl_goalie_workload_projections.confidence_bucket` (nullable string columns)
+**Allowed values:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Projection is based on limited or unstable source volume, missing context, or role uncertainty.
+- `medium`: Projection has enough source volume for review but still carries meaningful uncertainty.
+- `high`: Projection has strong source volume and stable inputs for the current first-pass model.
+
+---
+
+### NHL Goalie Workload Role Bucket
+
+**Name:** NHL goalie workload role bucket
+**Storage location(s):** `nhl_goalie_workload_projections.source_role_bucket`, `nhl_goalie_workload_projections.target_role_bucket` (nullable string columns)
+**Allowed values currently emitted:**
+
+- `workhorse_starter`
+- `starter`
+- `tandem_1a`
+- `tandem_1b`
+- `backup`
+- `third_goalie`
+
+**Semantic meaning:**
+
+- `workhorse_starter`: Goalie workload projects at or above 55 starts.
+- `starter`: Goalie workload projects from 45 to 54 starts.
+- `tandem_1a`: Goalie workload projects from 38 to 44 starts.
+- `tandem_1b`: Goalie workload projects from 30 to 37 starts.
+- `backup`: Goalie workload projects from 15 to 29 starts.
+- `third_goalie`: Goalie workload projects below 15 starts.
+
+---
+
+### NHL Goalie Workload Projection Flag
+
+**Name:** NHL goalie workload projection flag
+**Storage location(s):** `nhl_goalie_workload_projections.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `young_goalie_contract_discounted`
+- `veteran_backup_behind_committed_starter`
+- `source_workload_may_be_injury_inflated`
+- `high_commitment_starter_rebound`
+- `missing_source_usage`
+- `missing_target_contract`
+- `team_changed`
+
+**Semantic meaning:**
+
+- `young_goalie_contract_discounted`: Low contract value was discounted as a negative signal because the goalie is young or early in his NHL career.
+- `veteran_backup_behind_committed_starter`: A veteran goalie is suppressed behind a teammate with a materially larger starter-level contract.
+- `source_workload_may_be_injury_inflated`: Source starts were high despite backup-like contract/team context, suggesting prior workload may not be the planned target role.
+- `high_commitment_starter_rebound`: Source starts were suppressed but team-relative cap share, career workload, age, and recent workload ceiling indicate intended starter usage.
+- `missing_source_usage`: Source-season games/starts were unavailable.
+- `missing_target_contract`: Target-season contract context was unavailable.
+- `team_changed`: Source team and current target team differ.
+
+---
+
+### NHL Player Projection Flag
+
+**Name:** NHL player projection flag
+**Storage location(s):** `nhl_player_season_projections.flags`, `nhl_player_projection_profile_buckets.flags`, `nhl_goalie_projection_chance_buckets.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `limited_source_sat`
+- `missing_toi_projection`
+- `missing_source_toi`
+- `projection_profile_tail_other`
+- `missing_goalie_bucket_skill`
+- `goalie_skill_matched_to_resolved_profile_bucket`
+
+**Semantic meaning:**
+
+- `limited_source_sat`: Source shot-attempt volume is below the first-pass confidence threshold.
+- `missing_toi_projection`: No matching TOI projection row was available, so projected shot volume fell back to source opportunity.
+- `missing_source_toi`: Source TOI was unavailable or zero, so projected shot volume fell back to unscaled source volume.
+- `projection_profile_tail_other`: Projection bucket row is an aggregate Other tail for low-contribution profile buckets.
+- `missing_goalie_bucket_skill`: Projection Other tail bucket did not have matching persisted goalie profile skill, so neutral goalie skill was used only for that retained tail.
+- `goalie_skill_matched_to_resolved_profile_bucket`: Projected team defensive bucket used a compatible persisted goalie profile parent or Other bucket instead of an exact bucket-key match.
+
+---
+
+### NHL Goalie Chance Profile Confidence Bucket
+
+**Name:** NHL goalie chance profile confidence bucket
+**Storage location(s):** `nhl_goalie_chance_profile_buckets.confidence_bucket` (nullable string column)
+**Allowed values:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Historical goalie chance bucket required substantial empirical-Bayes shrinkage toward a parent bucket.
+- `medium`: Historical goalie chance bucket required moderate empirical-Bayes shrinkage toward a parent bucket.
+- `high`: Historical goalie chance bucket is mostly driven by its direct bucket sample.
+
+---
+
+### NHL Goalie Chance Profile Flag
+
+**Name:** NHL goalie chance profile flag
+**Storage location(s):** `nhl_goalie_chance_profile_buckets.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `limited_goalie_bucket_sat_against`
+- `goalie_bucket_league_baseline`
+- `goalie_bucket_shrunk_to_parent`
+
+**Semantic meaning:**
+
+- `limited_goalie_bucket_sat_against`: Goalie-facing bucket required substantial parent shrinkage and has low direct-sample confidence.
+- `goalie_bucket_league_baseline`: Goalie-facing chance profile used the final league-baseline bucket as its prior source.
+- `goalie_bucket_shrunk_to_parent`: Stored probability rates were blended with a broader parent bucket prior.
+
+---
+
+### NHL Skater Defensive Chance Profile Flag
+
+**Name:** NHL skater defensive chance profile flag
+**Storage location(s):** `nhl_skater_defensive_chance_profile_buckets.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `limited_skater_defensive_bucket_sat_against`
+- `skater_defensive_bucket_league_baseline`
+- `skater_defensive_bucket_shrunk_to_parent`
+- `missing_skater_defensive_source_toi`
+
+**Semantic meaning:**
+
+- `limited_skater_defensive_bucket_sat_against`: Skater on-ice defensive bucket required substantial parent shrinkage and has low direct-sample confidence.
+- `skater_defensive_bucket_league_baseline`: Skater on-ice defensive chance profile used the final league-baseline bucket as its prior source.
+- `skater_defensive_bucket_shrunk_to_parent`: Stored probability rates were blended with a broader parent bucket prior.
+- `missing_skater_defensive_source_toi`: Source TOI was unavailable or zero, so per-60 defensive profile rates could not be calculated.
+
+---
+
+### NHL Skater Defensive Chance Profile Confidence Bucket
+
+**Name:** NHL skater defensive chance profile confidence bucket
+**Storage location(s):** `nhl_skater_defensive_chance_profile_buckets.confidence_bucket` (nullable string column)
+**Allowed values:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Historical skater on-ice defensive chance bucket required substantial empirical-Bayes shrinkage toward a parent bucket.
+- `medium`: Historical skater on-ice defensive chance bucket required moderate empirical-Bayes shrinkage toward a parent bucket.
+- `high`: Historical skater on-ice defensive chance bucket is mostly driven by its direct bucket sample.
+
+---
+
+### NHL Skater Offensive Chance Profile Flag
+
+**Name:** NHL skater offensive chance profile flag
+**Storage location(s):** `nhl_skater_offensive_chance_profile_buckets.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `limited_skater_offensive_bucket_sat_for`
+- `skater_offensive_bucket_league_baseline`
+- `skater_offensive_bucket_shrunk_to_parent`
+- `missing_skater_offensive_source_toi`
+
+**Semantic meaning:**
+
+- `limited_skater_offensive_bucket_sat_for`: Skater offensive bucket required substantial parent shrinkage and has low direct-sample confidence.
+- `skater_offensive_bucket_league_baseline`: Skater offensive chance profile used the final league-baseline bucket as its prior source.
+- `skater_offensive_bucket_shrunk_to_parent`: Stored probability rates were blended with a broader parent bucket prior.
+- `missing_skater_offensive_source_toi`: Source TOI was unavailable or zero, so per-60 offensive profile rates could not be calculated.
+
+---
+
+### NHL Skater Offensive Chance Profile Confidence Bucket
+
+**Name:** NHL skater offensive chance profile confidence bucket
+**Storage location(s):** `nhl_skater_offensive_chance_profile_buckets.confidence_bucket` (nullable string column)
+**Allowed values:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Historical skater offensive chance bucket required substantial empirical-Bayes shrinkage toward a parent bucket.
+- `medium`: Historical skater offensive chance bucket required moderate empirical-Bayes shrinkage toward a parent bucket.
+- `high`: Historical skater offensive chance bucket is mostly driven by its direct bucket sample.
+
+---
+
+### NHL Player TOI Projection Role Bucket
+
+**Name:** NHL player TOI projection role bucket
+**Storage location(s):** `nhl_player_toi_projections.source_role_bucket`, `nhl_player_toi_projections.target_role_bucket` (nullable string columns)
+**Allowed values currently emitted:**
+
+- `top6_f`
+- `middle6_f`
+- `bottom6_f`
+- `depth_f`
+- `top4_d`
+- `third_pair_d`
+- `depth_d`
+
+**Semantic meaning:**
+
+- `top6_f`: Forward ranked as a top-six current team forward by prior-season production context.
+- `middle6_f`: Forward ranked in the next usage tier by prior-season production context.
+- `bottom6_f`: Forward ranked in a lower regular lineup tier by prior-season production context.
+- `depth_f`: Forward outside the projected regular lineup tier.
+- `top4_d`: Defenseman ranked as a top-four current team defenseman by prior-season production context.
+- `third_pair_d`: Defenseman ranked in a third-pair tier by prior-season production context.
+- `depth_d`: Defenseman outside the projected regular lineup tier.
+
+---
+
 ### NHL Season Stats API Stat Group
 
 **Name:** NHL season stats API stat group
@@ -1913,6 +2163,7 @@ Do not introduce new enum values without updating this document.
 - `on_ice_xga`
 - `on_ice_xg_pct`
 - `on_ice_xg_diff`
+- `goalie_sata`
 - `goalie_xga`
 - `goalie_xsoga`
 - `goalie_xsaves`

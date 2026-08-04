@@ -13,6 +13,7 @@ location:
   - app/Jobs/ClearNhlGameImportJob.php
   - app/Jobs/SeedNhlGameImportProgressJob.php
   - app/Jobs/DispatchNhlGameImportPipelineJob.php
+  - app/Jobs/RefreshNhlScheduleDateJob.php
   - app/Models/NhlGameImportRun.php
   - app/Events/NhlGameImportStatusUpdated.php
   - database/migrations/2026_06_29_030000_create_nhl_game_import_runs_table.php
@@ -24,6 +25,7 @@ when_to_use:
   - Adding admin UI controls for dispatching NHL game processing orchestrator jobs.
   - Adding admin UI controls for duplicate play-by-play repair setup and execution.
   - Adding admin UI controls for dispatching season-level NHL stat rollups.
+  - Adding admin UI controls for refreshing future NHL schedule rows.
   - Adding admin UI controls for queueing NHL game-derived import data resets.
   - Showing recent admin-queued NHL game import runs and their pipeline progress.
 when_not_to_use:
@@ -63,6 +65,9 @@ rules:
   - Scheduled auto-processing must claim an existing queued discovery run, mark it running, and supervise configured active game slots instead of anonymously sweeping all scheduled import progress rows.
   - Direct command processing for an explicit date may remain as an operator escape hatch without creating an admin run.
   - Season sync requests must queue season rollup jobs and must not run season aggregation synchronously during the web request.
+  - Schedule refresh requests must queue schedule metadata refresh work and must not seed game import pipeline stages.
+  - Schedule refresh requests must dispatch one bounded job per schedule date and track aggregate progress on the parent run.
+  - Schedule refresh runs must remain visually separate from recent game import orchestrations.
   - Game-data reset requests must queue nhl:empty --games through the admin import runner and must not run destructive deletion synchronously during the web request.
   - Reverb updates should be lightweight invalidation signals and the browser must reload status from the admin status endpoint.
   - Import broadcast updates must also refresh loaded or active admin validation panels in the background so resolved validation rows disappear without a page refresh.
@@ -78,6 +83,7 @@ public_interface:
   - admin.nhl-game-imports.duplicate-pbp.dedupe
   - admin.nhl-game-imports.duplicate-pbp.rebuild
   - admin.nhl-game-imports.discover
+  - admin.nhl-game-imports.schedule-refresh
   - admin.nhl-game-imports.process
   - admin.nhl-game-imports.process-shots
   - admin.nhl-game-imports.season-sync
@@ -90,6 +96,7 @@ public_interface:
   - ClearNhlGameImportJob
   - SeedNhlGameImportProgressJob
   - DispatchNhlGameImportPipelineJob
+  - RefreshNhlScheduleDateJob
   - ScanDuplicateNhlPlayByPlayRepairJob
   - DedupeNhlPlayByPlayRepairJob
   - QueueDuplicatePbpAffectedRebuildsJob

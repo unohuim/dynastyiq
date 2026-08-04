@@ -357,6 +357,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.duplicate-pbp.rebuild');
                 Route::post('/nhl-game-imports/discover', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'discover'])
                     ->name('admin.nhl-game-imports.discover');
+                Route::post('/nhl-game-imports/schedule-refresh', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'refreshSchedule'])
+                    ->name('admin.nhl-game-imports.schedule-refresh');
                 Route::post('/nhl-game-imports/process-shots', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processShots'])
                     ->name('admin.nhl-game-imports.process-shots');
                 Route::post('/nhl-game-imports/process-faceoffs', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processFaceoffs'])
@@ -373,6 +375,20 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-shot-attempts.index');
                 Route::post('/nhl-shot-attempts/xg', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildXg'])
                     ->name('admin.nhl-shot-attempts.xg.build');
+                Route::post('/nhl-shot-attempts/projections', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildProjections'])
+                    ->name('admin.nhl-shot-attempts.projections.build');
+                Route::post('/nhl-shot-attempts/toi-projections', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildToiProjections'])
+                    ->name('admin.nhl-shot-attempts.toi-projections.build');
+                Route::post('/nhl-shot-attempts/goalie-workload-projections', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildGoalieWorkloadProjections'])
+                    ->name('admin.nhl-shot-attempts.goalie-workload-projections.build');
+                Route::post('/nhl-shot-attempts/goalie-projections', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildGoalieProjections'])
+                    ->name('admin.nhl-shot-attempts.goalie-projections.build');
+                Route::post('/nhl-shot-attempts/goalie-chance-profiles', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildGoalieChanceProfiles'])
+                    ->name('admin.nhl-shot-attempts.goalie-chance-profiles.build');
+                Route::post('/nhl-shot-attempts/skater-offensive-chance-profiles', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildSkaterOProfiles'])
+                    ->name('admin.nhl-shot-attempts.skater-offensive-chance-profiles.build');
+                Route::post('/nhl-shot-attempts/skater-defensive-chance-profiles', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildSkaterDProfiles'])
+                    ->name('admin.nhl-shot-attempts.skater-defensive-chance-profiles.build');
 
                 // NHL faceoff analysis
                 Route::get('/nhl-faceoffs', [\App\Http\Controllers\Admin\NhlFaceoffController::class, 'index'])

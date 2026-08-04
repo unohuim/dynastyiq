@@ -1,0 +1,38 @@
+name: NHL Schedule Refresh
+type: Schedule Metadata Import Pattern
+location:
+  - app/Services/NhlScheduleRefresh.php
+  - app/Console/Commands/ImportNhlScheduleCommand.php
+  - app/Jobs/RefreshNhlScheduleDateJob.php
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - resources/views/admin/operational.blade.php
+  - resources/js/admin/admin-hub.js
+  - database/migrations/2025_03_18_145954_create_nhl_games_table.php
+purpose: Refresh future NHL schedule metadata in nhl_games for scheduled-game prediction workflows without seeding or running the full NHL game import pipeline.
+when_to_use:
+  - Loading future NHL schedules before building game-based predictions.
+  - Refreshing future schedule dates that may have changed due to postponements, venue changes, or league rescheduling.
+  - Updating schedule metadata for existing games without importing play-by-play, boxscore, shifts, or derived facts.
+when_not_to_use:
+  - Discovering completed games for the staged NHL import pipeline.
+  - Reprocessing imported games or rebuilding game-derived tables.
+  - Deleting played, in-progress, or imported game rows.
+rules:
+  - Schedule refresh must write only nhl_games rows.
+  - Schedule refresh must not seed nhl_import_progress rows or dispatch game import jobs.
+  - The default command window starts today and ends on July 1 of the next calendar year.
+  - Admin UI schedule refresh requests must queue one RefreshNhlScheduleDateJob per schedule date and expose progress separately from normal game import orchestrations.
+  - Each schedule refresh queue job must process exactly one date.
+  - Date-level delete/insert refresh is allowed only for future or current dates whose existing nhl_games rows are all pre-game states and have no downstream imported data.
+  - Dates with played, in-progress, non-pregame, or downstream-imported games must not delete nhl_games rows.
+  - Non-replaceable dates may only upsert safe schedule/status metadata by nhl_game_id.
+  - A 404 daily schedule response is treated as an empty schedule for that date, subject to the same replacement guard.
+public_interface:
+  - NhlScheduleRefresh::refreshDate()
+  - NhlScheduleRefresh::refreshRange()
+  - RefreshNhlScheduleDateJob
+  - admin.nhl-game-imports.schedule-refresh
+  - php artisan nhl:schedule-import
+example_usage: |
+  php artisan nhl:schedule-import
+  php artisan nhl:schedule-import --from=2026-10-01 --to=2026-10-07

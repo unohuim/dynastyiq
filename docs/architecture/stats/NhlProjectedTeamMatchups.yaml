@@ -1,0 +1,51 @@
+name: NHL Projected Team Matchups
+type: Read-Only Projected Team Matchup Simulator
+location:
+  - app/Services/NhlProjectedTeamMatchupSimulator.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Http/Controllers/Api/NhlGamePredictionsController.php
+  - app/Services/NhlGamePredictionPayload.php
+  - docs/architecture/stats/NhlProjectedTeamMatchups.yaml
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+purpose: Simulate team-vs-team projected skater offense, composed roster offensive/defensive chance profiles, and selected projected goalie EV/PK bucket adjustments.
+when_to_use:
+  - Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs.
+  - Building partner-facing prediction payloads from an NHL game id.
+  - Explaining high-level xSAT, xSOG, EV xGF, PK xG, and total expected-goals matchup changes through composed roster chance profiles and goalie adjustment buckets.
+  - Testing matchup methodology before persisting team profile buckets.
+when_not_to_use:
+  - Persisting official team projection snapshots.
+  - Applying defensive suppression or broad bonuses for opponent defensive weakness.
+  - Guessing target-season goalie workloads or starter assignments from historical source-team profile rows.
+  - Replacing player-level offensive projections, TOI projections, or historical skater defensive profiles.
+rules:
+  - Projected rosters must come from nhl_player_toi_projections target-team assignments.
+  - Offensive output must start from versioned skater offensive projection bucket rows.
+  - Defensive profiles are descriptive composed roster chance-allowed context in the current simulator and must not subtract from offensive baseline.
+  - The goalie-facing EV environment must blend attacking offense bucket shape with defending roster chance-allowed bucket shape at the approved 70/30 weighting, while preserving the attacking team's projected total xSAT, xSOG, and xGF.
+  - Defensive weakness must not create automatic offensive bonuses in the current simulator version.
+  - Defensive suppression requires a later approved abstraction and must not be inferred from chance-allowed bucket share alone.
+  - Goalie selectors should default to the highest projected-start goalie from valid nhl_goalie_season_projections rows for the selected goalie projection version; manual override remains allowed.
+  - Matchup goalie projection versions must be valid finished goalie performance projections with matching EV bucket rows in nhl_goalie_projection_chance_buckets; workload-only versions must not be selectable as matchup goalie versions.
+  - Goalie option filtering must use the current goalie roster from players.team_abbrev, infer goalie eligibility from players.is_goalie or G position fields, and must not include historical source-team-only matches.
+  - Goalie option labels must expose current team and historical source team context so traded goalies are not mistaken for projected team assignments.
+  - Selected goalies must always influence the matchup when valid goalie season projections exist; sparse exact bucket matches must fall back to season EV/PK goalie GA/xGA ratios rather than silently removing goalie impact.
+  - Goalie EV bucket adjustments must start from the goalie season EV GA/xGA ratio; projected goalie bucket GA/xGA ratios may tilt that season anchor by bucket confidence and must not be hidden by a hard confidence cutoff.
+  - Matchup PK contribution must use projected goalie PK bucket rows and season PK totals; until projected PP offensive bucket storage exists, the PK bucket mix may be tilted by opponent projected offensive bucket shares where bucket keys overlap, with bounded weights and confidence-shrunk bucket effects.
+  - Composed roster offensive, defensive, and adjusted-goalie-environment profile sections must roll granular skater buckets into readable groups that target 90% xSAT/xSOG representation, without changing the underlying projection math.
+  - Goalie matchup reasons must preserve granular bucket calculations internally but roll up the explanation display until PP opportunities fit into the top 3 groups and EV opportunities fit into the top 3-5 groups while targeting 90% coverage for both xSAT and xSOG.
+  - Rolled goalie matchup reasons must sit directly below the adjusted goalie environment, collapse lower-signal dimensions progressively, starting with shot type, expose represented totals and percentages, and then show weighted goalie GA/xGA response, GSAx/G, GA/G, and confidence for each displayed group.
+  - Team matchup profiles are computed on demand and must not be persisted until a separate team-profile storage abstraction is approved.
+  - Results must expose high-level per-game rates and rolled bucket-level data explaining offensive generation, defensive chances allowed, and goalie response.
+  - Partner-facing game prediction payloads must resolve nhl_game_id through nhl_games, derive missing starters from goalie performance projections or workload projections, and fail when a usable projected starter cannot be resolved for both teams.
+  - Partner-facing goalie edge must be expressed in goals saved per game edge, include selected starter objects for both teams, and include the edge scale metadata.
+  - Per-game rates must use projected games from projection rows and fall back to the current 84-game NHL regular-season length only when projected games are unavailable.
+  - Roster comparison rows must sort by projected xGF and show compact per-game player impact context without projected TOI.
+public_interface:
+  - admin.nhl-shot-attempts.index
+  - api.nhl-game-predictions.show
+  - NhlProjectedTeamMatchupSimulator
+  - NhlGamePredictionPayload
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+example_usage: |
+  GET /admin/nhl-shot-attempts?tab=matchup&matchup_team_a=TOR&matchup_team_b=BOS

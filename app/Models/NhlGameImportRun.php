@@ -16,6 +16,7 @@ class NhlGameImportRun extends Model
     public const ACTION_PROCESS = 'process';
     public const ACTION_REPAIR = 'repair';
     public const ACTION_SEASON_SYNC = 'season-sync';
+    public const ACTION_SCHEDULE_REFRESH = 'schedule-refresh';
 
     public const STATUS_QUEUED = 'queued';
     public const STATUS_RUNNING = 'running';

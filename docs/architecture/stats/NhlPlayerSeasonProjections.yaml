@@ -1,0 +1,59 @@
+name: NHL Player Season Projections
+type: Versioned Player Projection Layer
+location:
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Jobs/BuildNhlPlayerProjectionForPlayerJob.php
+  - app/Jobs/BuildNhlPlayerProjectionsJob.php
+  - app/Models/NhlPlayerProjectionProfileBucket.php
+  - app/Models/NhlPlayerSeasonProjection.php
+  - app/Services/NhlPlayerProjectionBuilder.php
+  - database/migrations/2026_08_03_000002_create_nhl_player_projection_tables.php
+  - database/migrations/2026_08_03_000010_create_nhl_skater_offensive_chance_profile_buckets_table.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - docs/architecture/stats/NhlPlayerSeasonProjections.yaml
+purpose: Store explainable first-pass NHL skater projections by player season and resolved shot profile bucket.
+when_to_use:
+  - Persisting upcoming-season skater projection outputs derived from prior-season offensive SATF profile volume.
+  - Explaining projected xSAT, xSOG, and xGF through resolved model bucket contributions.
+  - Rolling bucket-level projections into one player-season projection row for UI, API, or review consumption.
+  - Comparing projection versions without overwriting prior projection outputs.
+when_not_to_use:
+  - Replacing historical NHL stat imports, shot-attempt facts, or expected-goals prediction tables.
+  - Training shot probability models or storing model bucket probabilities.
+  - Publishing betting-grade projections before validation and explicit approval.
+  - Projecting goalie outcomes or team outcomes without a separately approved model.
+rules:
+  - Projection rows must be versioned so reruns can be audited and compared.
+  - Source-season facts and target-season projections must remain distinguishable on every row.
+  - Profile bucket projection rows must consume persisted skater offensive chance profile buckets rather than re-querying raw shot facts.
+  - Player-season projection rows are rollups of profile bucket rows and must not hide the bucket-level explanation layer.
+  - Projection profile bucket rows should retain meaningful named buckets by contribution, then roll the remaining tiny tail into one Other bucket so summaries reconcile without exposing noisy dust rows.
+  - xSOG projections must derive from shot-on-goal target probabilities; xGF projections must derive from goal target probabilities.
+  - Source goals on player-season projection rows must mean official regular-season goals from season stats, not the model-scored xG sample.
+  - Model-scored source goals must be stored separately so xG exclusions such as empty-net or unknown shot-type events do not get confused with official totals.
+  - First-pass skater projection inputs must use regular-season game facts only unless a future projection version explicitly documents another game-type policy.
+  - Projected xGF must remain the pure shot-profile probability output.
+  - Projected goals must apply an explicitly documented finishing adjustment when source goals materially differ from source xGF.
+  - Finishing adjustments must be regressed by source SAT volume so one-season overperformance is not copied directly into the projection.
+  - Season-volume performance projections should consume versioned TOI projections when available instead of blindly repeating source-season shot volume.
+  - When a matching TOI projection is available, projected xSAT, xSOG, xGF, and finishing adjustment volume must be scaled from source per-60 rates by projected TOI hours.
+  - Projection outputs must preserve inputs, flags, and confidence metadata needed to audit limited samples or missing context.
+  - Projection bucket retention settings must be written to metadata so coverage targets and tail behavior remain auditable.
+  - Draft projection output must remain admin-reviewable until a separate publishing workflow is approved.
+  - First-pass projection builds must replace rows only for the requested projection version and target season.
+  - Projection builds must dispatch one worker job per player so multiple queue workers can process projections concurrently.
+public_interface:
+  - nhl_player_season_projections
+  - nhl_player_projection_profile_buckets
+  - NhlPlayerSeasonProjection
+  - NhlPlayerProjectionProfileBucket
+  - NhlPlayerProjectionBuilder
+  - BuildNhlPlayerProjectionForPlayerJob
+  - BuildNhlPlayerProjectionsJob
+  - admin.nhl-shot-attempts.index
+  - admin.nhl-shot-attempts.projections.build
+example_usage: |
+  SELECT player_id, projected_xsat, projected_xsog, projected_xgf
+  FROM nhl_player_season_projections
+  WHERE projection_version = 'first_pass_20262027'
+    AND target_season_id = '20262027';

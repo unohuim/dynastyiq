@@ -1,10 +1,36 @@
-# gner8 NHL Season Stats API
+# gner8 DynastyIQ NHL API Usage Guide
 
-This document describes how gner8 pulls NHL season stats from DynastyIQ.
+This document is the single gner8-facing NHL API guide for DynastyIQ.
+It covers authentication, reference dependencies, NHL season stats, and NHL
+game predictions.
 
-## How To Pull All Stats
+## Authentication And Scopes
 
-Call the season stats endpoint once per stat group and window. A full regular-season import is 12 requests:
+Every request must include the configured DynastyIQ API token.
+
+```http
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
+
+Endpoint scopes:
+
+| Endpoint | Scope |
+| --- | --- |
+| `GET /api/nhl-teams` | `nhl-reference:read` |
+| `GET /api/nhl-players` | `nhl-reference:read` |
+| `GET /api/nhl-season-stats` | `nhl-stats:read` |
+| `GET /api/nhl-game-predictions` | `nhl-stats:read` |
+
+GNER8 usually needs a token with both `nhl-reference:read` and
+`nhl-stats:read` so it can resolve teams, players, stats, and predictions with
+one configured client.
+
+## NHL Season Stats Endpoint
+
+Call the season stats endpoint once per stat group and window.
+
+A full regular-season import is 12 requests:
 
 ```text
 basic   + season
@@ -45,13 +71,7 @@ Required scope:
 nhl-stats:read
 ```
 
-If gner8 also pulls `/api/nhl-teams` or `/api/nhl-players`, the same token also needs:
-
-```text
-nhl-reference:read
-```
-
-## Query Parameters
+### Query Parameters
 
 | Parameter | Required | Example | Meaning |
 | --- | --- | --- | --- |
@@ -62,7 +82,7 @@ nhl-reference:read
 
 The unfiltered endpoint remains available for diagnostics, but gner8 should use chunked pulls for season imports so DynastyIQ does not build one large JSON response.
 
-## Payload Fields
+### Payload Fields
 
 Top-level payload:
 
@@ -176,6 +196,11 @@ must be treated as the same numeric value when the stat type is `decimal` or
 
 DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected` player stat rows when the player has qualifying data for that window. Goalie rows use the same endpoint, same `player_stats[]` shape, and distinct goalie stat slugs.
 
+GNER8 should ingest goalie rows exactly like skater rows. The row identity is
+still `nhl_player_id + stat_slug + window_key` after resolving
+`league_abbrev` and `season_key`; goalie rows are distinguished only by
+`goalie_`-prefixed stat slugs and the referenced player.
+
 | Window | Meaning |
 | --- | --- |
 | `season` | Full requested season and game type. |
@@ -229,6 +254,7 @@ DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected`
 | `on_ice_xga` | `expected` | `goals` | Expected goals against while on ice. |
 | `on_ice_xg_pct` | `expected` | `percent` | On-ice xG share: xGF / (xGF + xGA). |
 | `on_ice_xg_diff` | `expected` | `goals` | On-ice xGF minus xGA. |
+| `goalie_sata` | `expected` | `attempts` | Shot attempts against assigned to the goalie in net. |
 | `goalie_xga` | `expected` | `goals` | Expected goals against assigned to the goalie in net. |
 | `goalie_xsoga` | `expected` | `shots` | Expected shots on goal against assigned to the goalie in net. |
 | `goalie_xsaves` | `expected` | `saves` | Expected saves: `goalie_xsoga - goalie_xga`. |
@@ -242,7 +268,7 @@ DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected`
 3. Upsert `stat_types` by `league_id + slug`.
 4. Resolve each `player_stats[].nhl_player_id` to gner8's local `players.id`.
 5. Resolve each `player_stats[].stat_slug` to gner8's local `nhl_stat_types.id`.
-6. Upsert `player_stats`.
+6. Upsert `player_stats`; goalie rows follow the same path as skater rows and should not use a separate goalie table.
 7. Resolve and upsert `player_stat_features`.
 
 Rows with unknown `nhl_player_id` should be skipped or quarantined until gner8 imports the missing player reference row.
@@ -287,3 +313,67 @@ foreach ($statGroups as $statGroup) {
 - Goalie expected stats require shot-attempt facts with `goalie_player_id` and scored xG/xSOG predictions.
 - Feature rows currently compare recent `last_10` expected-rate values against the season baseline.
 - GNER8 should normalize received numeric values according to `stat_types[].value_type`; JSON decoding may not preserve a float type for whole-number decimal values.
+
+## NHL Game Predictions Endpoint
+
+This endpoint returns a compact projected matchup prediction for one scheduled
+NHL game.
+
+```http
+GET /api/nhl-game-predictions?nhl_game_id=2026020001
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
+
+Required scope:
+
+```text
+nhl-stats:read
+```
+
+### Query Parameters
+
+| Parameter | Required | Meaning |
+| --- | --- | --- |
+| `nhl_game_id` | Yes | NHL game id from DynastyIQ `nhl_games`. |
+| `source_season_id` | No | Override source season for projections. |
+| `target_season_id` | No | Override target projection season. |
+| `projection_version` | No | Override skater projection version. |
+| `toi_projection_version` | No | Override skater TOI projection version. |
+| `goalie_projection_version` | No | Override goalie performance projection version. |
+| `away_goalie_id` | No | Override away starting goalie NHL player id. |
+| `home_goalie_id` | No | Override home starting goalie NHL player id. |
+
+If goalie ids are omitted, DynastyIQ derives starters from projected goalie
+starts. If either starter cannot be resolved to a usable goalie performance
+projection, the endpoint returns a validation error and does not emit a
+prediction.
+
+### Headline Payload
+
+The `prediction` block contains the display headline:
+
+| Field | Meaning |
+| --- | --- |
+| `predicted_score.away` | Away projected goals per game. |
+| `predicted_score.home` | Home projected goals per game. |
+| `winner` | Higher projected-goal side. |
+| `goal_differential` | Home projected goals minus away projected goals. |
+| `confidence_score` | `1` to `100`, combining goal margin and projection confidence. |
+| `goalie_edge` | Selected-starter goalie edge in goals saved per game. |
+
+`goalie_edge.score` scale:
+
+| Range | Meaning |
+| --- | --- |
+| `-0.05` to `+0.05` | Essentially even. |
+| `-0.40` to `+0.40` | Normal practical range. |
+| Positive | Home goalie edge. |
+| Negative | Away goalie edge. |
+
+The response also includes `goalies.away` and `goalies.home` with the selected
+starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
+
+Projected goalie xGA/G is the selected goalie's projected season xGA divided by
+projected games. It is not current-season GAA, historical on-ice xGA, or a
+single-game observed value.

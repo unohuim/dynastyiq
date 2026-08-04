@@ -1,0 +1,46 @@
+name: NHL Goalie Workload Projections
+type: Versioned Goalie Workload Projection Storage Layer
+location:
+  - app/Models/NhlGoalieWorkloadProjection.php
+  - app/Services/NhlGoalieWorkloadProjectionBuilder.php
+  - app/Jobs/BuildNhlGoalieWorkloadProjectionsJob.php
+  - app/Jobs/BuildNhlGoalieWorkloadProjectionForGoalieJob.php
+  - app/Console/Commands/BuildNhlGoalieWorkloadProjectionsCommand.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - database/migrations/2026_08_04_000002_create_nhl_goalie_workload_projections_table.php
+  - docs/architecture/stats/NhlGoalieWorkloadProjections.yaml
+purpose: Store versioned goalie workload projections for starts, games played, relief appearances, TOI, and role.
+when_to_use:
+  - Persisting goalie starts, games played, relief appearances, and TOI workload projections.
+  - Explaining goalie workload role through usage, contract, age, career stage, and current team context.
+  - Reviewing projected goalie workloads in a dedicated admin list filtered by target season, version, team, status, and goalie search.
+  - Defaulting matchup goalie selectors to the highest projected-start current-team goalie.
+when_not_to_use:
+  - Storing full goalie performance/stat projections such as projected saves, GA, xGA, GSAx, or wins.
+  - Replacing historical goalie chance profile buckets.
+  - Creating goalie target-team assignments from historical source-team-only rows.
+rules:
+  - Workload projections must be versioned by projection version and target season.
+  - Workload projections must project starts first, then derive projected games and TOI.
+  - Workload projection builds must dispatch one worker job per goalie and upsert by projection version, target season, and goalie id.
+  - Current goalie team assignment must come from players.team_abbrev; historical source-team-only matches must not create target workload rows.
+  - Workload role assignment must consider source starts/usage, contract AAV and remaining term, team-relative contract rank, age, and career stage.
+  - Goalie age adjustment must use a later aging curve than skater projections, with normal early-30s starter workloads preserved unless other workload signals justify reduction.
+  - Goalie durability adjustment must penalize extreme source workloads or older low-workload uncertainty, not routine elite-starter usage.
+  - High-commitment established starters with injury-suppressed source starts may rebound toward intended-starter usage, but rebound must be capped by recent three-season max workload plus recovery allowance.
+  - High-commitment starter detection should use team-relative goalie AAV share rather than a fixed league-wide contract threshold.
+  - Low-AAV young or early-career goalies must discount contract as a negative signal; veteran backups behind high-commitment starters may have injury-inflated source workloads suppressed.
+  - Team-level projected starts must reconcile to approximately 84 starts.
+  - Admin workload projection lists must read from nhl_goalie_workload_projections and filter current team by target_team_abbrev.
+public_interface:
+  - nhl_goalie_workload_projections
+  - NhlGoalieWorkloadProjection
+  - NhlGoalieWorkloadProjectionBuilder
+  - nhl:goalie-workload-projections
+  - admin.nhl-shot-attempts.goalie-workload-projections.build
+  - admin.nhl-shot-attempts.index?tab=projections
+example_usage: |
+  SELECT goalie_player_id, target_team_abbrev, projected_starts, projected_games, target_role_bucket
+  FROM nhl_goalie_workload_projections
+  WHERE target_season_id = '20262027';

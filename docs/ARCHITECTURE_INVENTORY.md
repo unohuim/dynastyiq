@@ -50,7 +50,9 @@ Each entry includes:
 - `app/Http/Middleware/AuthenticateApiClient.php`
 - `app/Http/Controllers/Api/NhlReferenceController.php`
 - `app/Http/Controllers/Api/NhlSeasonStatsController.php`
+- `app/Http/Controllers/Api/NhlGamePredictionsController.php`
 - `app/Services/NhlSeasonStatsPayload.php`
+- `app/Services/NhlGamePredictionPayload.php`
 - `database/migrations/2026_07_27_000002_create_api_clients_table.php`
 - `routes/api.php`
 
@@ -70,8 +72,9 @@ Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discor
 - `/api/nhl-teams`
 - `/api/nhl-players`
 - `/api/nhl-season-stats`
+- `/api/nhl-game-predictions`
 
-NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports, including goalie-specific rows when qualifying goalie data exists.
+NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports, including goalie-specific rows when qualifying goalie data exists. NHL game predictions resolve `nhl_game_id` to scheduled teams and require resolved starting goalies.
 
 **Example Usage:**
 ```bash
@@ -976,6 +979,7 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 **Location:**
 - `app/Http/Controllers/Admin/NhlGameImportController.php`
 - `app/Jobs/BuildNhlShotAttemptFactsJob.php`
+- `app/Services/NhlShotAttemptAnalysisBuckets.php`
 - `app/Services/BuildNhlShotAttemptFacts.php`
 - `database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php`
 - `database/migrations/2026_07_30_000001_add_biometric_snapshot_fields_to_nhl_shot_attempts_facts_table.php`
@@ -985,7 +989,7 @@ app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
 Store deterministic, rebuildable NHL shot-attempt facts derived from imported play-by-play before any expected-goals probability model is applied.
 
 **When to Use:**
-Building the cleaned shot-attempt facts layer, deriving stable feature buckets from pre-event game context, snapshotting shooter/goalie handedness and biometric context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range with explicit selected/processable/no-eligible game counts.
+Building the cleaned shot-attempt facts layer, deriving stable raw feature buckets from pre-event game context, resolving sparse analysis buckets through approved fallback levels, snapshotting shooter/goalie handedness and biometric context, preparing sanitized aggregate extracts for statistical and AI-assisted shot-quality exploration, or queueing shots-only fact collection from a Game Imports run range with explicit selected/processable/no-eligible game counts.
 
 **When Not to Use:**
 Storing expected-goals probabilities, danger labels, model thresholds, or trained model outputs.
@@ -996,6 +1000,7 @@ Storing expected-goals probabilities, danger labels, model thresholds, or traine
 - `admin.nhl-game-imports.process-shots`
 - `BuildNhlShotAttemptFacts`
 - `BuildNhlShotAttemptFactsJob`
+- `NhlShotAttemptAnalysisBuckets`
 - `ShotGeometryService`
 - `NhlPbpEventNormalizer`
 
@@ -1005,6 +1010,8 @@ SELECT distance_bucket, angle_bucket, COUNT(*) AS attempts
 FROM nhl_shot_attempts_facts
 GROUP BY distance_bucket, angle_bucket;
 ```
+
+Analysis/model bucket views must roll sparse raw combinations into broader buckets through `NhlShotAttemptAnalysisBuckets` and exclude rows below the approved sample floor.
 
 ---
 
@@ -1090,6 +1097,210 @@ Train on classified non-empty-net shot facts, validate on held-out games, calibr
 
 ---
 
+### NHL Player Season Projections
+
+**Name:** NHL Player Season Projections
+**Type:** Versioned Player Projection Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Jobs/BuildNhlPlayerProjectionForPlayerJob.php`
+- `app/Jobs/BuildNhlPlayerProjectionsJob.php`
+- `app/Models/NhlPlayerProjectionProfileBucket.php`
+- `app/Models/NhlPlayerSeasonProjection.php`
+- `app/Services/NhlPlayerProjectionBuilder.php`
+- `database/migrations/2026_08_03_000002_create_nhl_player_projection_tables.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `docs/architecture/stats/NhlPlayerSeasonProjections.yaml`
+
+**Purpose:**
+Store explainable first-pass NHL skater projections by player season and resolved shot profile bucket.
+
+**When to Use:**
+Persisting upcoming-season skater projection outputs, scaling shot-profile volume by projected TOI opportunity, explaining projected xSAT, xSOG, and xGF through resolved model bucket contributions, or comparing projection versions.
+
+**When Not to Use:**
+Replacing historical stat imports, storing shot probability model buckets, projecting goalie/team outcomes, or publishing betting-grade projections before validation and approval.
+
+**Public Interface:**
+- `nhl_player_season_projections`
+- `nhl_player_projection_profile_buckets`
+- `NhlPlayerSeasonProjection`
+- `NhlPlayerProjectionProfileBucket`
+- `NhlPlayerProjectionBuilder`
+- `BuildNhlPlayerProjectionForPlayerJob`
+- `BuildNhlPlayerProjectionsJob`
+- `admin.nhl-shot-attempts.index`
+- `admin.nhl-shot-attempts.projections.build`
+
+**Example Usage:**
+```sql
+SELECT player_id, projected_xsat, projected_xsog, projected_xgf
+FROM nhl_player_season_projections
+WHERE target_season_id = '20262027';
+```
+
+### NHL Goalie Chance Profiles
+
+**Name:** NHL Goalie Chance Profiles
+**Type:** Historical Goalie Chance Profile Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Console/Commands/BuildNhlGoalieChanceProfilesCommand.php`
+- `app/Jobs/BuildNhlGoalieChanceProfileForGoalieJob.php`
+- `app/Jobs/BuildNhlGoalieChanceProfilesJob.php`
+- `app/Models/NhlGoalieChanceProfileBucket.php`
+- `app/Services/NhlGoalieChanceProfileBuilder.php`
+- `database/migrations/2026_08_03_000006_create_nhl_goalie_chance_profile_buckets_table.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
+- `docs/architecture/stats/NhlGoalieChanceProfiles.yaml`
+
+**Purpose:**
+Store historical goalie-facing chance mix and performance-over-expected profile buckets.
+
+**When to Use:**
+Explaining what kinds of shot attempts a goalie faced, comparing source xGA to actual goals against by adaptive resolved chance bucket, or separating chance environment from goalie performance before projection work.
+
+**When Not to Use:**
+Projecting future goalie workload, xGA, saves, wins, goals against, or replacing historical shot-attempt facts and season stats.
+
+**Public Interface:**
+- `nhl:goalie-chance-profiles`
+- `nhl_goalie_chance_profile_buckets`
+- `NhlGoalieChanceProfileBucket`
+- `NhlGoalieChanceProfileBuilder`
+- `BuildNhlGoalieChanceProfilesJob`
+- `BuildNhlGoalieChanceProfileForGoalieJob`
+- `admin.nhl-shot-attempts.goalie-chance-profiles.build`
+- `admin.nhl-shot-attempts.index`
+
+**Example Usage:**
+```text
+php artisan nhl:goalie-chance-profiles --season=20252026 --game-type=2
+```
+
+### NHL Skater Offensive Chance Profiles
+
+**Name:** NHL Skater Offensive Chance Profiles
+**Type:** Historical Skater Offensive Chance Profile Layer
+**Location:**
+- `app/Console/Commands/BuildNhlSkaterOffensiveChanceProfilesCommand.php`
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Jobs/BuildNhlSkaterOffensiveChanceProfileForPlayerJob.php`
+- `app/Jobs/BuildNhlSkaterOffensiveChanceProfilesJob.php`
+- `app/Models/NhlSkaterOffensiveChanceProfileBucket.php`
+- `app/Services/NhlSkaterOffensiveChanceProfileBuilder.php`
+- `database/migrations/2026_08_03_000010_create_nhl_skater_offensive_chance_profile_buckets_table.php`
+- `docs/architecture/stats/NhlSkaterOffensiveChanceProfiles.yaml`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
+
+**Purpose:**
+Store historical skater offensive SATF chance profiles using granular bucket rows with empirical-Bayes shrinkage.
+
+**When to Use:**
+Explaining generated chance types, feeding offensive skater projections from persisted SATF profile inputs, or comparing offensive chance mix without re-querying raw shot-attempt facts.
+
+**When Not to Use:**
+Replacing xG/xSOG model training, treating one-season finishing over expected as durable talent without regression, or projecting future opportunity without TOI projection inputs.
+
+**Public Interface:**
+- `admin.nhl-shot-attempts.index`
+- `admin.nhl-shot-attempts.skater-offensive-chance-profiles.build`
+- `nhl:skater-offensive-chance-profiles`
+- `nhl_skater_offensive_chance_profile_buckets`
+- `NhlSkaterOffensiveChanceProfileBucket`
+- `NhlSkaterOffensiveChanceProfileBuilder`
+- `BuildNhlSkaterOffensiveChanceProfilesJob`
+- `BuildNhlSkaterOffensiveChanceProfileForPlayerJob`
+
+**Example Usage:**
+```text
+php artisan nhl:skater-offensive-chance-profiles --season=20252026 --game-type=2
+```
+
+### NHL Skater Defensive Chance Profiles
+
+**Name:** NHL Skater Defensive Chance Profiles
+**Type:** Historical Skater On-Ice Defensive Chance Profile Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Console/Commands/BuildNhlSkaterDefensiveChanceProfilesCommand.php`
+- `app/Jobs/BuildNhlSkaterDefensiveChanceProfileForPlayerJob.php`
+- `app/Jobs/BuildNhlSkaterDefensiveChanceProfilesJob.php`
+- `app/Models/NhlSkaterDefensiveChanceProfileBucket.php`
+- `app/Services/NhlSkaterDefensiveChanceProfileBuilder.php`
+- `database/migrations/2026_08_03_000007_create_nhl_skater_defensive_chance_profile_buckets_table.php`
+- `docs/architecture/stats/NhlSkaterDefensiveChanceProfiles.yaml`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
+
+**Purpose:**
+Store historical skater on-ice defensive chance profiles showing what SAT chance types happened against a skater's team while he was on ice.
+
+**When to Use:**
+Explaining what chance types a skater was on ice against, building future roster-composed goalie environments from projected skaters, or separating actual allowed chance mix from later suppression modeling.
+
+**When Not to Use:**
+Inferring chances a skater prevented relative to opponent tendencies, projecting goalie environment before roster composition is approved, or replacing historical shot-attempt facts and expected-goals predictions.
+
+**Public Interface:**
+- `admin.nhl-shot-attempts.index`
+- `admin.nhl-shot-attempts.skater-defensive-chance-profiles.build`
+- `nhl:skater-defensive-chance-profiles`
+- `nhl_skater_defensive_chance_profile_buckets`
+- `NhlSkaterDefensiveChanceProfileBucket`
+- `NhlSkaterDefensiveChanceProfileBuilder`
+- `BuildNhlSkaterDefensiveChanceProfilesJob`
+- `BuildNhlSkaterDefensiveChanceProfileForPlayerJob`
+
+**Example Usage:**
+```text
+php artisan nhl:skater-defensive-chance-profiles --season=20252026 --game-type=2
+```
+
+### NHL Player TOI Projections
+
+**Name:** NHL Player TOI Projections
+**Type:** Versioned Player Opportunity Projection Layer
+**Location:**
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Jobs/BuildNhlPlayerToiProjectionForPlayerJob.php`
+- `app/Jobs/BuildNhlPlayerToiProjectionsJob.php`
+- `app/Models/NhlPlayerToiProjection.php`
+- `app/Services/NhlPlayerToiProjectionBuilder.php`
+- `database/migrations/2026_08_03_000005_create_nhl_player_toi_projections_table.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
+- `docs/architecture/stats/NhlPlayerToiProjections.yaml`
+
+**Purpose:**
+Store explainable player time-on-ice projections before converting shot-rate projections into season-volume projections.
+
+**When to Use:**
+ Persisting projected player opportunity, reviewing role/depth/age assumptions, normalizing projected games toward the current 84-game NHL season, or feeding projected TOI into skater performance projections.
+
+**When Not to Use:**
+Replacing historical NHL season stats, storing shot attempt probabilities, projecting goalie/team outcomes, or publishing unreviewed projections.
+
+**Public Interface:**
+- `nhl_player_toi_projections`
+- `NhlPlayerToiProjection`
+- `NhlPlayerToiProjectionBuilder`
+- `BuildNhlPlayerToiProjectionForPlayerJob`
+- `BuildNhlPlayerToiProjectionsJob`
+- `admin.nhl-shot-attempts.toi-projections.build`
+- `admin.nhl-shot-attempts.index`
+
+**Example Usage:**
+```sql
+SELECT player_id, projected_toi_per_game_seconds, confidence_bucket
+FROM nhl_player_toi_projections
+WHERE target_season_id = '20262027';
+```
+
+---
+
 ## NHL Imports
 
 ### NHL Import Orchestrator
@@ -1160,6 +1371,43 @@ Importing play-by-play, shifts, boxscores, or summarizing already discovered gam
 **Example Usage:**
 ```bash
 php artisan nhl:discover --date=2026-01-15
+```
+
+---
+
+### NHL Schedule Refresh
+
+**Name:** NHL Schedule Refresh
+**Type:** Schedule Metadata Import Pattern
+**Location:**
+- `app/Services/NhlScheduleRefresh.php`
+- `app/Console/Commands/ImportNhlScheduleCommand.php`
+- `app/Jobs/RefreshNhlScheduleDateJob.php`
+- `app/Http/Controllers/Admin/NhlGameImportController.php`
+- `resources/views/admin/operational.blade.php`
+- `resources/js/admin/admin-hub.js`
+- `database/migrations/2025_03_18_145954_create_nhl_games_table.php`
+
+**Purpose:**
+Refresh future NHL schedule metadata in `nhl_games` for scheduled-game prediction workflows without seeding or running the full NHL game import pipeline.
+
+**When to Use:**
+Loading or refreshing future NHL schedule rows before generating game-based predictions.
+
+**When Not to Use:**
+Discovering completed games for staged imports, reprocessing imported games, or deleting played/in-progress game rows.
+
+**Public Interface:**
+- `NhlScheduleRefresh::refreshDate()`
+- `NhlScheduleRefresh::refreshRange()`
+- `RefreshNhlScheduleDateJob`
+- `admin.nhl-game-imports.schedule-refresh`
+- `php artisan nhl:schedule-import`
+
+**Example Usage:**
+```bash
+php artisan nhl:schedule-import
+php artisan nhl:schedule-import --from=2026-10-01 --to=2026-10-07
 ```
 
 ---
@@ -2452,19 +2700,27 @@ SeasonSumJob::dispatch($seasonId, $runId);
 **Location:**
 - `app/Http/Controllers/Admin/NhlShotAttemptController.php`
 - `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
 - `docs/architecture/admin/AdminNhlShotAttempts.yaml`
 
 **Purpose:**
-Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric and bio-context impact cuts, QA coverage, and expected-goals model review.
+Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric and bio-context impact cuts, QA coverage, expected-goals model review, offensive projection review, and projected matchup simulation.
 
 **When to Use:**
-Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts with minimum-attempt thresholds, comparing objective height and weight buckets against shot context, and auditing missing or suspicious shot-fact fields.
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts with minimum-attempt thresholds, comparing objective height and weight buckets against shot context, reviewing TOI/offensive skater projection outputs, simulating projected team matchups, and auditing missing or suspicious shot-fact fields.
 
 **When Not to Use:**
 Running imports, mutating shot facts, replacing Game Imports, or adding biometric fields into model training without separate approval.
 
 **Public Interface:**
 - `admin.nhl-shot-attempts.index`
+- `admin.nhl-shot-attempts.projections.build`
+- `admin.nhl-shot-attempts.toi-projections.build`
+- `admin.nhl-shot-attempts.xg.build`
+- `NhlProjectedTeamMatchupSimulator`
+- `NhlShotAttemptController::buildProjections()`
+- `NhlShotAttemptController::buildToiProjections()`
+- `NhlShotAttemptController::buildXg()`
 - `NhlShotAttemptController::index()`
 
 **Example Usage:**
@@ -2952,6 +3208,157 @@ Store user-owned projected cap assumptions for rostered players whose real contr
 - `leagues.cap-projections.update`
 
 ---
+
+### NHL Skater Defensive Chance Projections
+
+**Name:** NHL Skater Defensive Chance Projections
+**Type:** Versioned Skater Defensive Chance Projection Layer
+**Location:**
+- `app/Models/NhlSkaterDefensiveChanceProjection.php`
+- `app/Models/NhlSkaterDefensiveChanceProjectionBucket.php`
+- `app/Services/NhlSkaterDefensiveChanceProjectionBuilder.php`
+- `database/migrations/2026_08_03_000008_create_nhl_skater_defensive_chance_projection_tables.php`
+- `docs/architecture/stats/NhlSkaterDefensiveChanceProjections.yaml`
+
+**Purpose:**
+Project each skater's on-ice defensive chance volume and chance mix from historical defensive profiles scaled by versioned TOI projections.
+
+**When to Use:**
+Producing target-season skater defensive SATA, xGA, and xSOGA projections, explaining those projections through retained bucket rows plus an Other tail, or feeding later team defensive environment projections.
+
+**When Not to Use:**
+Inferring suppression talent versus opponent tendencies, replacing historical skater defensive chance profiles, or projecting full team/goalie outcomes before those abstractions are approved.
+
+**Public Interface:**
+- `nhl_skater_defensive_chance_projections`
+- `nhl_skater_defensive_chance_projection_buckets`
+- `NhlSkaterDefensiveChanceProjection`
+- `NhlSkaterDefensiveChanceProjectionBucket`
+- `NhlSkaterDefensiveChanceProjectionBuilder`
+
+**Example Usage:**
+```text
+SELECT *
+FROM nhl_skater_defensive_chance_projections
+WHERE target_season_id = '20262027';
+```
+
+### NHL Projected Team Matchups
+
+**Name:** NHL Projected Team Matchups
+**Type:** Read-Only Projected Team Matchup Simulator
+**Location:**
+- `app/Services/NhlProjectedTeamMatchupSimulator.php`
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Http/Controllers/Api/NhlGamePredictionsController.php`
+- `app/Services/NhlGamePredictionPayload.php`
+- `docs/architecture/stats/NhlProjectedTeamMatchups.yaml`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+
+**Purpose:**
+Simulate team-vs-team projected skater offense, composed roster offensive/defensive chance profiles, and selected projected goalie EV/PK bucket adjustments.
+
+**When to Use:**
+ Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs, explaining high-level xSAT/xSOG/EV xGF/PK xG/total expected-goals matchup changes through composed roster chance profiles and projected goalie bucket adjustments, blending attacking offense shape with defending chance-allowed shape into a 70/30 adjusted goalie environment while preserving attacking offense totals, anchoring selected goalie impact to projected season EV/PK GA/xGA even when exact bucket evidence is sparse, showing goalie reasons directly below the adjusted environment as rolled-up EV and PP coverage groups with represented xSAT/xSOG/xG totals, percentages, row-level xSOG share, child bucket counts, GSAx/G, GA/G, and goalie response, computing per-game rates from projected games with an 84-game fallback, or testing matchup methodology before persisting team profile buckets.
+
+**When Not to Use:**
+Persisting team projection snapshots, applying defensive suppression or broad bonuses for opponent defensive weakness, or replacing player-level offensive projections and historical defensive profiles.
+
+**Public Interface:**
+- `admin.nhl-shot-attempts.index`
+- `api.nhl-game-predictions.show`
+- `NhlProjectedTeamMatchupSimulator`
+- `NhlGamePredictionPayload`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+
+**Example Usage:**
+```text
+GET /admin/nhl-shot-attempts?tab=matchup&matchup_team_a=TOR&matchup_team_b=BOS
+```
+
+### NHL Goalie Season Projections
+
+**Name:** NHL Goalie Season Projections
+**Type:** Versioned Goalie Projection Storage Layer
+**Location:**
+- `app/Models/NhlGoalieProjectionChanceBucket.php`
+- `app/Models/NhlGoalieSeasonProjection.php`
+- `app/Services/NhlGoalieProjectionBuilder.php`
+- `app/Jobs/BuildNhlGoalieProjectionsJob.php`
+- `app/Jobs/BuildNhlGoalieProjectionForGoalieJob.php`
+- `app/Console/Commands/BuildNhlGoalieProjectionsCommand.php`
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `database/migrations/2026_08_03_000009_create_nhl_goalie_projection_tables.php`
+- `database/migrations/2026_08_04_000003_add_workload_context_to_nhl_goalie_season_projections.php`
+- `database/migrations/2026_08_04_000004_add_strength_splits_to_nhl_goalie_projections.php`
+- `docs/architecture/stats/NhlGoalieSeasonProjections.yaml`
+
+**Purpose:**
+Build and store versioned goalie season performance projections from goalie workload projections, EV top-roster team defensive chance buckets, prior-season team PK chance buckets, goalie workload share, and persisted goalie chance profile bucket skill.
+
+**When to Use:**
+Persisting combined and EV/PK split xGA, GA, GSAx, xSOGA, saves, broad actual-vs-expected goalie adjustments, and other goalie season performance projection outputs after goalie workload, skater TOI, shot-attempt fact, expected-goal prediction, and goalie SAT profile inputs are built.
+
+Goalie projection builds depend on persisted G SAT profile rows for relevant workload goalies and must not recompute goalie bucket skill from shot-attempt facts during projection builds.
+
+**When Not to Use:**
+Replacing historical goalie chance profiles, storing starts-only goalie workload projections, evaluating offensive chance creation, or building projected faced chance buckets directly from historical goalie rows without projected team defensive environment context.
+
+**Public Interface:**
+- `nhl_goalie_season_projections`
+- `nhl_goalie_projection_chance_buckets`
+- `NhlGoalieSeasonProjection`
+- `NhlGoalieProjectionChanceBucket`
+- `NhlGoalieProjectionBuilder`
+- `nhl:goalie-projections`
+- `admin.nhl-shot-attempts.goalie-projections.build`
+
+**Example Usage:**
+```sql
+SELECT goalie_player_id, projected_xga, projected_ga, projected_gsax
+FROM nhl_goalie_season_projections
+WHERE target_season_id = '20262027';
+```
+
+### NHL Goalie Workload Projections
+
+**Name:** NHL Goalie Workload Projections
+**Type:** Versioned Goalie Workload Projection Storage Layer
+**Location:**
+- `app/Models/NhlGoalieWorkloadProjection.php`
+- `app/Services/NhlGoalieWorkloadProjectionBuilder.php`
+- `app/Jobs/BuildNhlGoalieWorkloadProjectionsJob.php`
+- `app/Jobs/BuildNhlGoalieWorkloadProjectionForGoalieJob.php`
+- `app/Console/Commands/BuildNhlGoalieWorkloadProjectionsCommand.php`
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `database/migrations/2026_08_04_000002_create_nhl_goalie_workload_projections_table.php`
+- `docs/architecture/stats/NhlGoalieWorkloadProjections.yaml`
+
+**Purpose:**
+Store versioned goalie workload projections for starts, games played, relief appearances, TOI, and role.
+
+**When to Use:**
+ Persisting goalie starts, games played, relief appearances, and TOI workload projections; reconciling team-level goalie starts to the current 84-game NHL season; explaining goalie workload role through usage, team-relative contract share, recent workload ceilings, goalie-specific age/durability curves, career stage, and current team context; reviewing workload projections in the admin projections tab; or defaulting matchup goalie selectors.
+
+**When Not to Use:**
+Storing full goalie performance/stat projections such as projected saves, GA, xGA, GSAx, or wins.
+
+**Public Interface:**
+- `nhl_goalie_workload_projections`
+- `NhlGoalieWorkloadProjection`
+- `NhlGoalieWorkloadProjectionBuilder`
+- `nhl:goalie-workload-projections`
+- `admin.nhl-shot-attempts.goalie-workload-projections.build`
+- `admin.nhl-shot-attempts.index?tab=projections`
+
+**Example Usage:**
+```sql
+SELECT goalie_player_id, target_team_abbrev, projected_starts, projected_games, target_role_bucket
+FROM nhl_goalie_workload_projections
+WHERE target_season_id = '20262027';
+```
 
 ## Testing
 

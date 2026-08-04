@@ -52,6 +52,7 @@ export default function adminHub(options = {}) {
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
         gameImportDiscoverUrl: options.gameImportDiscoverUrl ?? '/admin/nhl-game-imports/discover',
+        gameImportScheduleRefreshUrl: options.gameImportScheduleRefreshUrl ?? '/admin/nhl-game-imports/schedule-refresh',
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
         gameImportProcessFaceoffsUrl: options.gameImportProcessFaceoffsUrl ?? '/admin/nhl-game-imports/process-faceoffs',
@@ -94,6 +95,7 @@ export default function adminHub(options = {}) {
             drawerOpen: false,
             loading: false,
             discovering: false,
+            refreshingSchedule: false,
             processing: false,
             processingRuns: {},
             syncingSeason: false,
@@ -754,7 +756,41 @@ export default function adminHub(options = {}) {
         },
 
         gameImportVisibleRuns() {
-            return this.gameImports.runs.filter((run) => run.action !== 'season-sync');
+            return this.gameImports.runs.filter((run) => !['season-sync', 'schedule-refresh'].includes(run.action));
+        },
+
+        gameImportLatestScheduleRefreshRun() {
+            return this.gameImports.runs.find((item) => item.action === 'schedule-refresh') ?? null;
+        },
+
+        gameImportScheduleRefreshActive() {
+            const run = this.gameImportLatestScheduleRefreshRun();
+
+            return Boolean(run && ['queued', 'running'].includes(run.status));
+        },
+
+        gameImportScheduleRefreshButtonText() {
+            const run = this.gameImportLatestScheduleRefreshRun();
+
+            if (this.gameImports.refreshingSchedule || run?.status === 'queued') {
+                return 'Queuing...';
+            }
+
+            if (run?.status === 'running') {
+                return 'Refreshing...';
+            }
+
+            return 'Refresh Schedule';
+        },
+
+        gameImportScheduleRefreshRangeText() {
+            const run = this.gameImportLatestScheduleRefreshRun();
+
+            if (run?.start_date && run?.end_date) {
+                return `${this.formatGameImportDate(run.start_date)} through ${this.formatGameImportDate(run.end_date)}`;
+            }
+
+            return 'Default range: today through July 1 next year';
         },
 
         gameImportLatestSeasonSyncRun() {
@@ -931,6 +967,24 @@ export default function adminHub(options = {}) {
                 this.gameImports.error = error.message ?? 'Unable to queue discovery';
             } finally {
                 this.gameImports.discovering = false;
+            }
+        },
+
+        async submitGameImportScheduleRefresh() {
+            if (this.gameImports.refreshingSchedule || this.gameImportScheduleRefreshActive()) {
+                return;
+            }
+
+            this.gameImports.refreshingSchedule = true;
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(this.gameImportScheduleRefreshUrl, {});
+                await this.loadGameImports();
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue schedule refresh';
+            } finally {
+                this.gameImports.refreshingSchedule = false;
             }
         },
 
@@ -1598,6 +1652,10 @@ export default function adminHub(options = {}) {
                 return this.gameImportSeasonSyncProgressText(run);
             }
 
+            if (run.action === 'schedule-refresh') {
+                return this.gameImportScheduleRefreshSummaryText(run);
+            }
+
             if (this.isDuplicatePbpRepairRun(run)) {
                 return this.duplicatePbpRepairProgressText(run);
             }
@@ -1693,6 +1751,30 @@ export default function adminHub(options = {}) {
             }
 
             return 'Season sync queued';
+        },
+
+        gameImportScheduleRefreshSummaryText(run) {
+            const summary = run?.payload?.schedule_refresh ?? {};
+            const total = Number(summary.dates) || Number(run?.date_count) || 0;
+            const processed = Number(summary.dates_processed) || 0;
+            const fetched = Number(summary.fetched) || 0;
+            const inserted = Number(summary.inserted) || 0;
+            const upserted = Number(summary.upserted) || 0;
+            const failures = Array.isArray(summary.failed_dates) ? summary.failed_dates.length : 0;
+
+            if (run?.status === 'completed') {
+                return `${this.formatNumber(processed || total)} dates refreshed · ${this.formatNumber(fetched)} games fetched`;
+            }
+
+            if (run?.status === 'failed') {
+                return `${this.formatNumber(processed)} / ${this.formatNumber(total)} dates checked · ${this.formatNumber(failures)} failed`;
+            }
+
+            if (run?.status === 'running') {
+                return `${this.formatNumber(processed)} / ${this.formatNumber(total)} dates · ${this.formatNumber(inserted)} inserted · ${this.formatNumber(upserted)} upserted`;
+            }
+
+            return `${this.formatNumber(total)} dates queued`;
         },
 
         gameImportSummaryText(run) {

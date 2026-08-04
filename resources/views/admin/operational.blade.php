@@ -19,6 +19,7 @@
             gameImportSourceGapsUrl: @js(route('admin.nhl-game-imports.source-gaps')),
             gameImportGameRerunUrl: @js(url('/admin/nhl-game-imports/games')),
             gameImportDiscoverUrl: @js(route('admin.nhl-game-imports.discover')),
+            gameImportScheduleRefreshUrl: @js(route('admin.nhl-game-imports.schedule-refresh')),
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportProcessShotsUrl: @js(route('admin.nhl-game-imports.process-shots')),
             gameImportProcessFaceoffsUrl: @js(route('admin.nhl-game-imports.process-faceoffs')),
@@ -592,6 +593,56 @@
             </div>
 
             <div x-show="activeTab === 'game-imports'" x-cloak>
+                <div class="mb-4 border-y border-gray-200 bg-white px-4 py-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h3 class="text-sm font-semibold text-gray-900">NHL Schedule Refresh</h3>
+                                <template x-if="gameImportLatestScheduleRefreshRun()">
+                                    <span
+                                        class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"
+                                        :class="gameImportStatusClass(gameImportLatestScheduleRefreshRun().status)"
+                                        x-text="String(gameImportLatestScheduleRefreshRun().status ?? 'queued').toUpperCase()"
+                                    ></span>
+                                </template>
+                            </div>
+                            <p class="mt-1 text-sm text-gray-600">
+                                Refresh future schedule rows in nhl_games without running game imports.
+                            </p>
+                            <p class="mt-1 text-xs text-gray-500" x-text="gameImportScheduleRefreshRangeText()"></p>
+                        </div>
+                        <button
+                            type="button"
+                            class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            @click="submitGameImportScheduleRefresh()"
+                            :disabled="gameImports.refreshingSchedule || gameImportScheduleRefreshActive()"
+                        >
+                            <span x-text="gameImportScheduleRefreshButtonText()">Refresh Schedule</span>
+                        </button>
+                    </div>
+
+                    <template x-if="gameImportLatestScheduleRefreshRun()">
+                        <div class="mt-3">
+                            <div class="flex items-center justify-between gap-3 text-xs text-gray-600">
+                                <span x-text="gameImportScheduleRefreshSummaryText(gameImportLatestScheduleRefreshRun())"></span>
+                                <span x-text="`${gameImportProgressPercentage(gameImportLatestScheduleRefreshRun())}%`"></span>
+                            </div>
+                            <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-gray-200">
+                                <div
+                                    class="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+                                    :class="gameImportLatestScheduleRefreshRun().status === 'failed' ? 'bg-red-500' : 'bg-indigo-600'"
+                                    x-bind:style="`width: ${gameImportProgressPercentage(gameImportLatestScheduleRefreshRun())}%`"
+                                ></div>
+                            </div>
+                            <div
+                                x-show="gameImportLatestScheduleRefreshRun().progress?.last_error"
+                                class="mt-1 truncate text-[11px] text-red-600"
+                                x-text="gameImportLatestScheduleRefreshRun().progress?.last_error"
+                            ></div>
+                        </div>
+                    </template>
+                </div>
+
                 <div class="border-y border-gray-200 bg-gray-50">
                     <div class="flex flex-col gap-4 px-4 py-5 sm:flex-row sm:items-start sm:justify-between">
                         <div>

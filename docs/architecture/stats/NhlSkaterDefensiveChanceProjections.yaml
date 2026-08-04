@@ -1,0 +1,36 @@
+name: NHL Skater Defensive Chance Projections
+type: Versioned Skater Defensive Chance Projection Layer
+location:
+  - app/Models/NhlSkaterDefensiveChanceProjection.php
+  - app/Models/NhlSkaterDefensiveChanceProjectionBucket.php
+  - app/Services/NhlSkaterDefensiveChanceProjectionBuilder.php
+  - database/migrations/2026_08_03_000008_create_nhl_skater_defensive_chance_projection_tables.php
+  - docs/architecture/stats/NhlSkaterDefensiveChanceProjections.yaml
+purpose: Project each skater's on-ice defensive chance volume and chance mix from historical defensive profiles scaled by versioned TOI projections.
+when_to_use:
+  - Producing target-season skater defensive SATA, xGA, and xSOGA projections.
+  - Explaining a skater defensive projection through retained bucket contribution rows plus an Other tail bucket.
+  - Feeding later team defensive environment and goalie workload projections.
+when_not_to_use:
+  - Inferring suppression talent versus opponent tendency baselines.
+  - Replacing historical skater defensive chance profile rows.
+  - Projecting full team or goalie outcomes before team environment composition is approved.
+rules:
+  - Projection rows must be versioned by projection version and target season.
+  - Source-season historical profile rows and target-season projection outputs must remain distinguishable on every row.
+  - Projected defensive opportunity must be driven by versioned player TOI projections.
+  - Bucket-level projected SATA must scale source profile share against by projected total SATA against.
+  - Bucket-level projected xGA and xSOGA must use the historical profile's shrunk goal and shot-on-goal probabilities.
+  - Summary rows must reconcile to the sum of retained bucket rows plus the Other tail row.
+  - Tiny projection bucket rows should be rolled into Other after contribution-based coverage is met.
+  - Projection bucket retention settings must be written to metadata.
+public_interface:
+  - nhl_skater_defensive_chance_projections
+  - nhl_skater_defensive_chance_projection_buckets
+  - NhlSkaterDefensiveChanceProjection
+  - NhlSkaterDefensiveChanceProjectionBucket
+  - NhlSkaterDefensiveChanceProjectionBuilder
+example_usage: |
+  SELECT *
+  FROM nhl_skater_defensive_chance_projections
+  WHERE target_season_id = '20262027';

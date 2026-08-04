@@ -5,6 +5,7 @@ use App\Console\Commands\FantraxDraftsPollCommand;
 use App\Console\Commands\FantraxSyncCommand;
 use App\Console\Commands\GenerateDraftPickCardImageCommand;
 use App\Console\Commands\ImportCapWagesCommand;
+use App\Console\Commands\ImportNhlScheduleCommand;
 use App\Console\Commands\AuditNhleLeagueMappingsCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\BackfillLeagueCommissionersCommand;
@@ -20,6 +21,10 @@ use App\Console\Commands\RepairDuplicateNhlPlayByPlayCommand;
 use App\Console\Commands\RefreshNhlPlayerMetadataCommand;
 use App\Console\Commands\RefreshNhlProspectFlagsCommand;
 use App\Console\Commands\SumNhlSeasonCommand;
+use App\Console\Commands\BuildNhlSkaterOffensiveChanceProfilesCommand;
+use App\Console\Commands\BuildNhlGoalieProjectionsCommand;
+use App\Console\Commands\BuildNhlGoalieWorkloadProjectionsCommand;
+use App\Console\Commands\TruncateNhlChanceProjectionTablesCommand;
 use App\Http\Middleware\AdminLifecycleMiddleware;
 use App\Http\Middleware\AuthenticateApiClient;
 use App\Http\Middleware\HydrateDiscordSession;
@@ -42,10 +47,15 @@ return Application::configure(basePath: dirname(__DIR__))
         EmptyNhlShotAttemptFactsCommand::class,
         FantraxDraftsPollCommand::class,
         GenerateDraftPickCardImageCommand::class,
+        ImportNhlScheduleCommand::class,
         NhlApiCommand::class,
         RepairDuplicateNhlPlayByPlayCommand::class,
         RefreshNhlPlayerMetadataCommand::class,
         RefreshNhlProspectFlagsCommand::class,
+        BuildNhlSkaterOffensiveChanceProfilesCommand::class,
+        BuildNhlGoalieProjectionsCommand::class,
+        BuildNhlGoalieWorkloadProjectionsCommand::class,
+        TruncateNhlChanceProjectionTablesCommand::class,
     ])
     ->withRouting(
         web: __DIR__.'/../routes/web.php',

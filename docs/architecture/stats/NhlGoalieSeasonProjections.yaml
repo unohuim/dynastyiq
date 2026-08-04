@@ -1,0 +1,54 @@
+name: NHL Goalie Season Projections
+type: Versioned Goalie Projection Storage Layer
+location:
+  - app/Models/NhlGoalieProjectionChanceBucket.php
+  - app/Models/NhlGoalieSeasonProjection.php
+  - app/Services/NhlGoalieProjectionBuilder.php
+  - app/Jobs/BuildNhlGoalieProjectionsJob.php
+  - app/Jobs/BuildNhlGoalieProjectionForGoalieJob.php
+  - app/Console/Commands/BuildNhlGoalieProjectionsCommand.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - database/migrations/2026_08_03_000009_create_nhl_goalie_projection_tables.php
+  - database/migrations/2026_08_04_000003_add_workload_context_to_nhl_goalie_season_projections.php
+  - database/migrations/2026_08_04_000004_add_strength_splits_to_nhl_goalie_projections.php
+  - docs/architecture/stats/NhlGoalieSeasonProjections.yaml
+purpose: Store versioned goalie season performance projection summaries and chance-bucket explanation rows from projected team defensive environment and goalie bucket skill.
+when_to_use:
+  - Persisting xGA, GA, GSAx, xSOGA, saves, and other goalie season performance projection outputs after workload and team defensive environment inputs are available.
+  - Explaining goalie performance projections through projected faced chance bucket rows.
+  - Comparing goalie projection versions without overwriting prior outputs.
+when_not_to_use:
+  - Replacing historical goalie chance profile buckets.
+  - Storing starts-only goalie workload projections.
+  - Building projected faced chance buckets directly from historical goalie profile rows without projected team defensive environment context.
+  - Replacing team matchup simulation outputs.
+rules:
+  - Goalie projections must be versioned by projection version and target season.
+  - Bucket rows must preserve source profile context and target projection outputs separately.
+  - Projected goalie outcomes must split EV and PK environments before producing combined totals.
+  - EV projected team defensive chance buckets must use the target team's top 12 forwards and top 7 defensemen by projected TOI.
+  - EV on-ice skater buckets must be built from even-strength shot attempts against while selected skaters were on ice, scaled by projected TOI, and normalized so five skater attributions become one faced team chance environment.
+  - PK projected team defensive chance buckets must use the target team's prior-season team PK environment rather than recomposing PK quality from individual skaters.
+  - PK goalie bucket skill may move projections but must be heavily shrunk toward neutral because PK goalie performance is volatile.
+  - Season-level projected GA must include a broad, sample-shrunk goalie actual-vs-expected adjustment from recent source GA above xGA per 60 so bad and good goalie outcomes are not overly compressed by sparse bucket skill.
+  - Projected team defensive chance buckets must be allocated to each goalie by that goalie's projected TOI share of his target team's projected goalie TOI.
+  - Retained projected chance buckets should cover approximately 95 percent of projected team SATA against, with the remaining tail represented by an Other bucket.
+  - Goalie projection builds must fail before queueing when the source-season goalie SAT profile table or required profile rows are missing for relevant workload goalies.
+  - Goalie bucket skill must come from persisted nhl_goalie_chance_profile_buckets rows rather than recomputing historical goalie skill from shot-attempt facts during projection builds.
+  - Projected team environment buckets must match the most specific compatible persisted goalie profile bucket, including resolved parent and Other buckets when exact leaf skill is not stored.
+  - Goalie bucket skill must be shrunk by goalie bucket confidence, and missing meaningful goalie bucket skill must fail the goalie projection rather than be neutral or invented.
+  - Summary projection totals must reconcile to bucket rows plus any retained Other tail bucket.
+  - Projection builds must dispatch one worker job per goalie and upsert season rows by projection version, target season, and goalie id.
+public_interface:
+  - nhl_goalie_season_projections
+  - nhl_goalie_projection_chance_buckets
+  - NhlGoalieSeasonProjection
+  - NhlGoalieProjectionChanceBucket
+  - NhlGoalieProjectionBuilder
+  - nhl:goalie-projections
+  - admin.nhl-shot-attempts.goalie-projections.build
+example_usage: |
+  SELECT goalie_player_id, projected_xga, projected_ga, projected_gsax
+  FROM nhl_goalie_season_projections
+  WHERE target_season_id = '20262027';

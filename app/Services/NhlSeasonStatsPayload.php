@@ -268,6 +268,7 @@ class NhlSeasonStatsPayload
             $this->statType('on_ice_xga', 'On-Ice xGA', 'expected', 'decimal', 'goals', true, true, false),
             $this->statType('on_ice_xg_pct', 'On-Ice xG%', 'expected', 'percentage', 'percent', false, false, true),
             $this->statType('on_ice_xg_diff', 'On-Ice xG Diff', 'expected', 'decimal', 'goals', false, false, true),
+            $this->statType('goalie_sata', 'Goalie SAT Against', 'expected', 'integer', 'attempts', true, true, false),
             $this->statType('goalie_xga', 'Goalie xGA', 'expected', 'decimal', 'goals', true, true, false),
             $this->statType('goalie_xsoga', 'Goalie xSOG Against', 'expected', 'decimal', 'shots', true, true, false),
             $this->statType('goalie_xsaves', 'Goalie Expected Saves', 'expected', 'decimal', 'saves', true, true, true),
@@ -1073,6 +1074,7 @@ SELECT
     COUNT(DISTINCT facts.nhl_game_id) as window_games,
     MIN(facts.game_date) as start_date,
     MAX(facts.game_date) as end_date,
+    COUNT(*) as goalie_sata,
     SUM(CASE WHEN facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_against,
     SUM(CASE WHEN facts.is_goal THEN 1 ELSE 0 END) as goals_against,
     SUM(goal_predictions.xg) as goalie_xga,
@@ -1531,6 +1533,7 @@ WITH goalie_games AS (
         facts.goalie_player_id as nhl_player_id,
         MAX(facts.opponent_team_id) as nhl_team_id,
         facts.game_date,
+        COUNT(*) as goalie_sata,
         SUM(CASE WHEN facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_against,
         SUM(CASE WHEN facts.is_goal THEN 1 ELSE 0 END) as goals_against,
         SUM(goal_predictions.xg) as goalie_xga,
@@ -1564,6 +1567,7 @@ SELECT
     COUNT(*) FILTER (WHERE recent_rank <= 5) as window_games_5,
     MIN(game_date) FILTER (WHERE recent_rank <= 5) as start_date_5,
     MAX(game_date) FILTER (WHERE recent_rank <= 5) as end_date_5,
+    SUM(goalie_sata) FILTER (WHERE recent_rank <= 5) as goalie_sata_5,
     SUM(shots_against) FILTER (WHERE recent_rank <= 5) as shots_against_5,
     SUM(goals_against) FILTER (WHERE recent_rank <= 5) as goals_against_5,
     SUM(goalie_xga) FILTER (WHERE recent_rank <= 5) as goalie_xga_5,
@@ -1571,6 +1575,7 @@ SELECT
     COUNT(*) FILTER (WHERE recent_rank <= 10) as window_games_10,
     MIN(game_date) FILTER (WHERE recent_rank <= 10) as start_date_10,
     MAX(game_date) FILTER (WHERE recent_rank <= 10) as end_date_10,
+    SUM(goalie_sata) FILTER (WHERE recent_rank <= 10) as goalie_sata_10,
     SUM(shots_against) FILTER (WHERE recent_rank <= 10) as shots_against_10,
     SUM(goals_against) FILTER (WHERE recent_rank <= 10) as goals_against_10,
     SUM(goalie_xga) FILTER (WHERE recent_rank <= 10) as goalie_xga_10,
@@ -1578,6 +1583,7 @@ SELECT
     COUNT(*) FILTER (WHERE recent_rank <= 20) as window_games_20,
     MIN(game_date) FILTER (WHERE recent_rank <= 20) as start_date_20,
     MAX(game_date) FILTER (WHERE recent_rank <= 20) as end_date_20,
+    SUM(goalie_sata) FILTER (WHERE recent_rank <= 20) as goalie_sata_20,
     SUM(shots_against) FILTER (WHERE recent_rank <= 20) as shots_against_20,
     SUM(goals_against) FILTER (WHERE recent_rank <= 20) as goals_against_20,
     SUM(goalie_xga) FILTER (WHERE recent_rank <= 20) as goalie_xga_20,
@@ -1607,6 +1613,7 @@ SQL;
         $xsaves = $xsoga - $xga;
 
         return [
+            'goalie_sata' => (int) ($row->goalie_sata ?? 0),
             'goalie_xga' => $xga,
             'goalie_xsoga' => $xsoga,
             'goalie_xsaves' => $xsaves,
@@ -1626,6 +1633,7 @@ SQL;
         $xsaves = $xsoga - $xga;
 
         return [
+            'goalie_sata' => (int) ($row->{'goalie_sata_' . $windowGames} ?? 0),
             'goalie_xga' => $xga,
             'goalie_xsoga' => $xsoga,
             'goalie_xsaves' => $xsaves,

@@ -58,6 +58,7 @@ Migrations remain the **sole source of truth**.
 - nhl_expected_goals_model_buckets
 - nhl_expected_goals_models
 - nhl_game_import_runs
+- nhl_goalie_chance_profile_buckets
 - nhl_game_source_statuses
 - nhl_game_summaries
 - nhl_games
@@ -69,6 +70,7 @@ Migrations remain the **sole source of truth**.
 - nhl_shifts
 - nhl_shot_attempt_predictions
 - nhl_shot_attempts_facts
+- nhl_skater_defensive_chance_profile_buckets
 - nhl_teams
 - nhl_unit_game_summaries
 - nhl_unit_players
@@ -3024,6 +3026,122 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_goalie_chance_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Historical goalie-facing chance profile buckets with xGA, xSOGA, and performance over expected.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| goalie_player_id | integer | No | NHL goalie id |
+| team_id | integer | Yes | NHL team id for the goalie context |
+| team_abbrev | string(12) | Yes | NHL team abbreviation |
+| position | string(12) | Yes | Position label |
+| matched_bucket_key | string(600) | No | Resolved goalie-facing chance bucket key |
+| fallback_level | unsigned tiny integer | No | Resolved fallback level |
+| bucket_dimensions | json | No | Resolved bucket dimensions |
+| shot_type_group | string(32) | Yes | Resolved shot type group |
+| distance_group | string(32) | Yes | Resolved distance group |
+| angle_group | string(32) | Yes | Resolved angle group |
+| sequence_group | string(32) | Yes | Resolved rush/rebound/settled group |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_toi_seconds | unsigned integer | Yes | Source goalie TOI seconds |
+| source_sat_against | unsigned integer | No | Source SAT faced in resolved bucket |
+| source_sog_against | unsigned integer | No | Source SOG faced in resolved bucket |
+| source_goals_against | unsigned integer | No | Source goals against in resolved bucket |
+| source_xga | decimal(10,4) | Yes | Source expected goals against |
+| source_xsoga | decimal(10,4) | Yes | Source expected shots on goal against |
+| source_gsax | decimal(10,4) | Yes | `source_xga - source_goals_against`; positive is better |
+| source_gsax_per_100_sat_against | decimal(10,4) | Yes | Performance over expected normalized by SAT against |
+| source_profile_share | decimal(9,6) | Yes | Bucket share of total source SAT against |
+| goal_probability_against | decimal(9,6) | Yes | Average goal probability against in bucket |
+| shot_on_goal_probability_against | decimal(9,6) | Yes | Average shot-on-goal probability against in bucket |
+| confidence_score | decimal(5,4) | Yes | Profile confidence score |
+| confidence_bucket | string(24) | Yes | Profile confidence bucket |
+| profile_inputs | json | Yes | Builder input metadata |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, goalie_player_id, matched_bucket_key)` (`uq_nhl_goalie_chance_profile_bucket`)
+- Index: `(source_season_id, goalie_player_id)` (`ix_nhl_gcpb_season_goalie`)
+- Index: `(source_season_id, team_abbrev)` (`ix_nhl_gcpb_season_team`)
+- Index: `(source_season_id, fallback_level)` (`ix_nhl_gcpb_season_fallback`)
+
+---
+
+## nhl_skater_defensive_chance_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Historical skater on-ice defensive chance profile buckets with on-ice SATA, xGA, and xSOGA allowed.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| player_id | integer | No | NHL skater id |
+| team_id | integer | Yes | NHL team id for the skater context |
+| team_abbrev | string(12) | Yes | NHL team abbreviation |
+| position | string(12) | Yes | Position label |
+| matched_bucket_key | string(600) | No | Resolved on-ice defensive chance bucket key |
+| fallback_level | unsigned tiny integer | No | Resolved fallback level |
+| bucket_dimensions | json | No | Resolved bucket dimensions |
+| shot_type_group | string(32) | Yes | Resolved shot type group |
+| distance_group | string(32) | Yes | Resolved distance group |
+| angle_group | string(32) | Yes | Resolved angle group |
+| sequence_group | string(32) | Yes | Resolved rush/rebound/settled group |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_toi_seconds | unsigned integer | Yes | Source skater TOI seconds from player strength summaries |
+| source_sat_against_on_ice | unsigned integer | No | Source SAT against while skater was on ice in resolved bucket |
+| source_sog_against_on_ice | unsigned integer | No | Source SOG against while skater was on ice in resolved bucket |
+| source_goals_against_on_ice | unsigned integer | No | Source goals against while skater was on ice in resolved bucket |
+| source_xga_on_ice | decimal(10,4) | Yes | Source xGA while skater was on ice |
+| source_xsoga_on_ice | decimal(10,4) | Yes | Source xSOGA while skater was on ice |
+| source_xga_per_60 | decimal(10,4) | Yes | Source xGA per 60 skater TOI |
+| source_xsoga_per_60 | decimal(10,4) | Yes | Source xSOGA per 60 skater TOI |
+| source_profile_share_against | decimal(9,6) | Yes | Bucket share of total source on-ice SAT against |
+| goal_probability_against | decimal(9,6) | Yes | Empirical-Bayes shrunk expected goal probability against in bucket |
+| shot_on_goal_probability_against | decimal(9,6) | Yes | Empirical-Bayes shrunk expected shot-on-goal probability against in bucket |
+| confidence_score | decimal(5,4) | Yes | Profile confidence score |
+| confidence_bucket | string(24) | Yes | Profile confidence bucket |
+| profile_inputs | json | Yes | Builder input metadata |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, player_id, matched_bucket_key)` (`uq_nhl_skater_def_chance_profile_bucket`)
+- Index: `(source_season_id, player_id)` (`ix_nhl_sdc_season_player`)
+- Index: `(source_season_id, team_abbrev)` (`ix_nhl_sdc_season_team`)
+- Index: `(source_season_id, fallback_level)` (`ix_nhl_sdc_season_fallback`)
+
+---
+
 ## nhl_shot_attempts_facts
 
 **Organization-owned:** No
@@ -3560,6 +3678,255 @@ Migrations remain the **sole source of truth**.
 
 - PK: `id`
 - Unique: `email`
+
+---
+
+## nhl_skater_offensive_chance_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Historical skater offensive SATF chance profile buckets with empirical-Bayes shrunk goal and SOG probabilities.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Historical source season |
+| game_type | unsigned tiny integer | No | NHL game type |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| player_id | integer | No | NHL skater id |
+| team_id / team_abbrev / position | mixed | Yes | Source context |
+| matched_bucket_key | string(600) | No | Granular offensive chance bucket key |
+| fallback_level | unsigned tiny integer | No | Bucket specificity level |
+| bucket_dimensions | json | No | Bucket dimensions |
+| shot_type_group / distance_group / angle_group / sequence_group | string(32) | Yes | Bucket labels |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_toi_seconds | unsigned integer | Yes | Source player TOI |
+| source_sat_for | unsigned integer | No | Source SAT for in bucket |
+| source_sog_for | unsigned integer | No | Source SOG for in bucket |
+| source_goals_for | unsigned integer | No | Source goals for in bucket |
+| source_xgf | decimal(10,4) | Yes | Source xGF in bucket |
+| source_xsog | decimal(10,4) | Yes | Source xSOG in bucket |
+| source_xgf_per_60 / source_xsog_per_60 | decimal(10,4) | Yes | Per-60 rates using source TOI |
+| source_profile_share | decimal(9,6) | Yes | Bucket share of total source SATF |
+| goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk goal probability |
+| shot_on_goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk shot-on-goal probability |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Shrinkage confidence |
+| profile_inputs | json | Yes | Builder input metadata |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Shrinkage and builder metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, player_id, matched_bucket_key)`
+- FK: `goal_expected_goals_model_id`
+- FK: `shot_on_goal_expected_goals_model_id`
+- Index: `(source_season_id, player_id)`
+- Index: `(source_season_id, team_abbrev)`
+- Index: `(source_season_id, fallback_level)`
+
+---
+
+## nhl_skater_defensive_chance_projections
+
+**Organization-owned:** No
+**Purpose:** Versioned skater defensive projection rollups derived from TOI projections and historical skater defensive chance profiles.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| projection_version | string(80) | No | Projection version |
+| source_season_id | string(8) | No | Historical source season |
+| target_season_id | string(8) | No | Projection target season |
+| player_id | integer | No | NHL skater id |
+| source_team_id / source_team_abbrev | integer / string(12) | Yes | Source team context |
+| target_team_id / target_team_abbrev | integer / string(12) | Yes | Target projected team context |
+| position | string(12) | Yes | Position label |
+| toi_projection_id | bigint | Yes | FK -> `nhl_player_toi_projections.id` |
+| toi_projection_version | string(80) | Yes | TOI projection version consumed |
+| source_* | mixed | Yes | Historical games, TOI, SATA, SOGA, GA, xGA, xSOGA rollup |
+| projected_* | mixed | Yes | Projected games, TOI hours, SATA, SOGA, xGA, xSOGA rollup |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Projection confidence |
+| status | string(32) | No | Projection status; default `draft` |
+| projection_inputs | json | Yes | Builder inputs |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| projected_at | timestamp | Yes | Projection timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(projection_version, target_season_id, player_id)`
+- FK: `toi_projection_id`
+- Index: `(target_season_id, target_team_abbrev, position)`
+- Index: `(source_season_id, target_season_id)`
+
+---
+
+## nhl_skater_defensive_chance_projection_buckets
+
+**Organization-owned:** No
+**Purpose:** Bucket-level skater defensive projection contributions, including retained named buckets and an optional Other tail bucket.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| skater_defensive_chance_projection_id | bigint | No | FK -> `nhl_skater_defensive_chance_projections.id` |
+| source_profile_bucket_id | bigint | Yes | FK -> `nhl_skater_defensive_chance_profile_buckets.id` |
+| projection_version / source_season_id / target_season_id | string | No | Version and season identifiers |
+| player_id | integer | No | NHL skater id |
+| source_team_* / target_team_* / position | mixed | Yes | Team and position context |
+| matched_bucket_key | string(600) | No | Bucket key or Other tail key |
+| fallback_level | unsigned small integer | No | Bucket specificity level; `100` is projection Other tail |
+| bucket_dimensions | json | No | Bucket dimensions |
+| shot_type_group / distance_group / angle_group / sequence_group | string(32) | Yes | Bucket labels |
+| source_* | mixed | Yes | Historical bucket SATA, SOGA, GA, xGA, xSOGA, share |
+| projected_* | mixed | Yes | Projected bucket SATA, SOGA, xGA, xSOGA, share |
+| goal_probability_against | decimal(9,6) | Yes | Shrunk goal probability used for projection |
+| shot_on_goal_probability_against | decimal(9,6) | Yes | Shrunk shot-on-goal probability used for projection |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Source profile confidence |
+| projection_inputs | json | Yes | Builder inputs |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Retention and builder metadata |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(projection_version, target_season_id, player_id, matched_bucket_key)`
+- FK: `skater_defensive_chance_projection_id`
+- FK: `source_profile_bucket_id`
+- Index: `(target_season_id, player_id, fallback_level)`
+- Index: `(target_season_id, shot_type_group, distance_group, angle_group)`
+
+---
+
+## nhl_goalie_season_projections
+
+**Organization-owned:** No
+**Purpose:** Versioned goalie season performance projection rollups for future xGA, GA, GSAx, and xSOGA.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| projection_version / source_season_id / target_season_id | string | No | Version and season identifiers |
+| goalie_workload_projection_version / toi_projection_version | string(80) | Yes | Input projection versions used to build goalie output |
+| goalie_player_id | integer | No | NHL goalie id |
+| source_team_* / target_team_* / position | mixed | Yes | Team and position context |
+| source_* | mixed | Yes | Historical games, TOI, SATA, SOGA, GA, xGA, xSOGA, GSAx |
+| projected_games / projected_starts / projected_relief_games | decimal(8,2) | Yes | Workload inputs carried into goalie performance projection |
+| projected_toi_seconds / projected_toi_hours | unsigned integer / decimal(10,4) | Yes | Projected goalie TOI |
+| projected_sata / projected_soga / projected_xga / projected_ga / projected_gsax / projected_xsoga | mixed | Yes | Projected chance/performance outputs from team defensive buckets and goalie skill |
+| projected_ev_sata / projected_ev_soga / projected_ev_xga / projected_ev_ga / projected_ev_gsax / projected_ev_xsoga | mixed | Yes | EV split of projected chance/performance outputs |
+| projected_pk_sata / projected_pk_soga / projected_pk_xga / projected_pk_ga / projected_pk_gsax / projected_pk_xsoga | mixed | Yes | PK split of projected chance/performance outputs |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Projection confidence |
+| status | string(32) | No | Projection status; default `draft` |
+| projection_inputs | json | Yes | Builder inputs |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| projected_at | timestamp | Yes | Projection timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(projection_version, target_season_id, goalie_player_id)`
+- Index: `(target_season_id, target_team_abbrev)`
+- Index: `(source_season_id, target_season_id)`
+
+---
+
+## nhl_goalie_workload_projections
+
+**Organization-owned:** No
+**Purpose:** Versioned goalie workload projection rows for starts, games played, relief appearances, TOI, and role.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| projection_version / source_season_id / target_season_id | string | No | Version and season identifiers |
+| goalie_player_id | integer | No | NHL goalie id |
+| source_team_* / target_team_* / position | mixed | Yes | Team and position context |
+| source_role_bucket / target_role_bucket | string(32) | Yes | Workload role buckets |
+| source_games / source_starts / source_relief_games | decimal(8,2) | Yes | Historical goalie workload split |
+| source_toi_seconds | unsigned integer | Yes | Historical goalie TOI in seconds |
+| source_sat_against / source_sog_against / source_goals_against | unsigned integer | No | Historical workload/performance context |
+| source_xga / source_xsoga / source_gsax | decimal(10,4) | Yes | Historical expected-goalie context |
+| projected_games / projected_starts / projected_relief_games | decimal(8,2) | Yes | Starts-first workload projection |
+| projected_toi_seconds / projected_toi_hours | unsigned integer / decimal(10,4) | Yes | Projected goalie TOI |
+| projected_sata / projected_soga / projected_xga / projected_ga / projected_gsax / projected_xsoga | mixed | Yes | Workload-scaled context retained for review, not full performance projection authority |
+| age_adjustment_starts / role_adjustment_starts / contract_adjustment_starts / durability_adjustment_starts | decimal(8,2) | Yes | Workload adjustments in starts |
+| contract_cap_hit / contract_aav | unsigned integer | Yes | Target-season contract commitment inputs |
+| contract_years_remaining / team_contract_rank | unsigned small integer | Yes | Contract term and team-relative goalie rank |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Projection confidence |
+| status | string(32) | No | Projection status; default `draft` |
+| projection_inputs | json | Yes | Builder inputs |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| projected_at | timestamp | Yes | Projection timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(projection_version, target_season_id, goalie_player_id)`
+- Index: `(target_season_id, target_team_abbrev)`
+- Index: `(source_season_id, target_season_id)`
+
+---
+
+## nhl_goalie_projection_chance_buckets
+
+**Organization-owned:** No
+**Purpose:** Bucket-level goalie projection contributions and explanations.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| goalie_season_projection_id | bigint | No | FK -> `nhl_goalie_season_projections.id` |
+| source_profile_bucket_id | bigint | Yes | FK -> `nhl_goalie_chance_profile_buckets.id` |
+| projection_version / source_season_id / target_season_id | string | No | Version and season identifiers |
+| goalie_player_id | integer | No | NHL goalie id |
+| source_team_* / target_team_* / position | mixed | Yes | Team and position context |
+| projection_strength | string(8) | No | Projection split, currently `ev` or `pk` |
+| matched_bucket_key | string(600) | No | Bucket key or Other tail key |
+| fallback_level | unsigned small integer | No | Bucket specificity level |
+| bucket_dimensions | json | No | Bucket dimensions |
+| shot_type_group / distance_group / angle_group / sequence_group | string(32) | Yes | Bucket labels |
+| source_* | mixed | Yes | Historical bucket SATA, SOGA, GA, xGA, xSOGA, GSAx, share |
+| projected_* | mixed | Yes | Projected bucket SATA, SOGA, xGA, GA, GSAx, xSOGA, share |
+| goal_probability_against | decimal(9,6) | Yes | Shrunk goal probability used for projection |
+| shot_on_goal_probability_against | decimal(9,6) | Yes | Shrunk shot-on-goal probability used for projection |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Source profile confidence |
+| projection_inputs | json | Yes | Builder inputs |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Builder metadata |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(projection_version, target_season_id, goalie_player_id, projection_strength, matched_bucket_key)`
+- FK: `goalie_season_projection_id`
+- FK: `source_profile_bucket_id`
+- Index: `(target_season_id, goalie_player_id, fallback_level)`
+- Index: `(target_season_id, projection_strength, goalie_player_id)`
+- Index: `(target_season_id, shot_type_group, distance_group, angle_group)`
 
 ---
 

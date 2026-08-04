@@ -1,0 +1,45 @@
+name: NHL Skater Defensive Chance Profiles
+type: Historical Skater On-Ice Defensive Chance Profile Layer
+location:
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Console/Commands/BuildNhlSkaterDefensiveChanceProfilesCommand.php
+  - app/Jobs/BuildNhlSkaterDefensiveChanceProfileForPlayerJob.php
+  - app/Jobs/BuildNhlSkaterDefensiveChanceProfilesJob.php
+  - app/Models/NhlSkaterDefensiveChanceProfileBucket.php
+  - app/Services/NhlSkaterDefensiveChanceProfileBuilder.php
+  - database/migrations/2026_08_03_000007_create_nhl_skater_defensive_chance_profile_buckets_table.php
+  - docs/architecture/stats/NhlSkaterDefensiveChanceProfiles.yaml
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+purpose: Store historical skater on-ice defensive chance profiles showing what SAT chance types happened against a skater's team while he was on ice.
+when_to_use:
+  - Explaining what types of shot attempts a skater was on ice against in a source season.
+  - Building future roster-composed goalie environment profiles from the defensive profiles of projected skaters.
+  - Separating actual allowed chance mix from later suppression modeling.
+when_not_to_use:
+  - Inferring chances a skater prevented relative to opponent tendencies.
+  - Projecting future goalie environment before roster composition and suppression models are approved.
+  - Replacing historical NHL player game strength summaries, shot-attempt facts, or expected-goals predictions.
+rules:
+  - Skater defensive chance profiles are historical source-season outputs, not target-season projections.
+  - Profile rows must be built from versioned expected-goals and expected-shots-on-goal predictions joined to on-ice defensive shot-attempt facts.
+  - A skater is on the defensive side of a shot attempt when a linked unit shift team matches the shot fact opponent team.
+  - Skaters must have at least 300 total source SAT against on ice to be eligible for a defensive profile build.
+  - Granular skater defensive bucket rows should be persisted at the most specific chance shape.
+  - Sparse skater defensive bucket probabilities must be shrunk toward broader parent buckets using empirical-Bayes weighting instead of being hidden by a fixed bucket cutoff.
+  - The stored goal and shot-on-goal probability fields represent shrunk expected rates; raw expected and actual rates must remain auditable in metadata.
+  - League baseline fallback may be used only as the final prior source when no narrower parent bucket provides additional sample.
+  - Season-level skater defensive chance profile builds must dispatch one worker job per eligible skater.
+  - Builds must upsert by source season, game type, expected model ids, skater, and matched bucket key so reruns do not create duplicates.
+  - Suppression against opponent tendency baselines must be modeled separately from this allowed-chance profile layer.
+public_interface:
+  - admin.nhl-shot-attempts.index
+  - admin.nhl-shot-attempts.skater-defensive-chance-profiles.build
+  - nhl:skater-defensive-chance-profiles
+  - nhl_skater_defensive_chance_profile_buckets
+  - NhlSkaterDefensiveChanceProfileBucket
+  - NhlSkaterDefensiveChanceProfileBuilder
+  - BuildNhlSkaterDefensiveChanceProfilesJob
+  - BuildNhlSkaterDefensiveChanceProfileForPlayerJob
+example_usage: |
+  php artisan nhl:skater-defensive-chance-profiles --season=20252026 --game-type=2

@@ -13,6 +13,7 @@ use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\QueueDuplicatePbpAffectedRebuildsJob;
 use App\Jobs\RebuildNhlGameImportJob;
+use App\Jobs\RefreshNhlScheduleDateJob;
 use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
@@ -323,6 +324,83 @@ class NhlGameImportController extends Controller
 
         return response()->json([
             'message' => 'Discovery queued.',
+            'run' => $this->serializeRun($run->refresh()),
+        ], 202);
+    }
+
+    /**
+     * Queue a future schedule metadata refresh without seeding game import stages.
+     */
+    public function refreshSchedule(Request $request): JsonResponse
+    {
+        $today = Carbon::today();
+        $from = $today->copy();
+        $to = $today->copy()->addYear()->setDate($today->year + 1, 7, 1);
+        $dateCount = (int) $from->diffInDays($to) + 1;
+        $jobs = [];
+        $activeRun = NhlGameImportRun::query()
+            ->where('action', NhlGameImportRun::ACTION_SCHEDULE_REFRESH)
+            ->whereIn('status', [
+                NhlGameImportRun::STATUS_QUEUED,
+                NhlGameImportRun::STATUS_RUNNING,
+            ])
+            ->latest()
+            ->first();
+
+        if ($activeRun) {
+            return response()->json([
+                'message' => 'An NHL schedule refresh is already active.',
+                'run' => $this->serializeRun($activeRun),
+            ], 202);
+        }
+
+        $run = NhlGameImportRun::query()->create([
+            'action' => NhlGameImportRun::ACTION_SCHEDULE_REFRESH,
+            'mode' => NhlGameImportRun::MODE_RANGE,
+            'status' => NhlGameImportRun::STATUS_QUEUED,
+            'start_date' => $from->toDateString(),
+            'end_date' => $to->toDateString(),
+            'date_count' => $dateCount,
+            'queued_jobs' => $dateCount,
+            'payload' => [
+                'schedule_refresh' => [
+                    'from' => $from->toDateString(),
+                    'to' => $to->toDateString(),
+                    'dates' => $dateCount,
+                    'dates_processed' => 0,
+                    'fetched' => 0,
+                    'deleted' => 0,
+                    'inserted' => 0,
+                    'upserted' => 0,
+                    'replaced_dates' => 0,
+                    'upserted_dates' => 0,
+                    'failed_dates' => [],
+                    'requested_at' => now()->toIso8601String(),
+                    'requested_by' => $request->user()?->id,
+                ],
+            ],
+            'created_by' => $request->user()?->id,
+        ]);
+
+        for ($date = $from->copy(); $date->lte($to); $date->addDay()) {
+            $jobs[] = new RefreshNhlScheduleDateJob($date->copy(), (int) $run->id);
+        }
+
+        $batch = Bus::batch($jobs)
+            ->name('NHL:ScheduleRefresh:' . $run->id)
+            ->dispatch();
+
+        $payload = $run->payload ?? [];
+        $payload['schedule_refresh']['batch_id'] = $batch->id;
+
+        $run->update([
+            'payload' => $payload,
+        ]);
+
+        broadcast(new NhlGameImportStatusUpdated('schedule-refresh-queued', $run->id));
+
+        return response()->json([
+            'message' => 'Schedule refresh queued.',
             'run' => $this->serializeRun($run->refresh()),
         ], 202);
     }
@@ -1014,6 +1092,10 @@ class NhlGameImportController extends Controller
             return $this->seasonSyncProgressForRun($run);
         }
 
+        if ($run->action === NhlGameImportRun::ACTION_SCHEDULE_REFRESH) {
+            return $this->scheduleRefreshProgressForRun($run);
+        }
+
         if ($this->isDuplicatePbpRepairRun($run)) {
             return $this->duplicatePbpRepairProgressForRun($run);
         }
@@ -1084,6 +1166,37 @@ class NhlGameImportController extends Controller
             'completed_stage_rows' => $status === NhlGameImportRun::STATUS_COMPLETED ? 1 : 0,
             'skipped_stage_rows' => 0,
             'failed_stage_rows' => $status === NhlGameImportRun::STATUS_FAILED ? 1 : 0,
+            'percentage' => $percentage,
+            'last_error' => $run->last_error,
+        ];
+    }
+
+    /**
+     * Serialize progress for a future schedule refresh run.
+     *
+     * @return array<string, mixed>
+     */
+    private function scheduleRefreshProgressForRun(NhlGameImportRun $run): array
+    {
+        $payload = $run->payload ?? [];
+        $summary = is_array($payload['schedule_refresh'] ?? null) ? $payload['schedule_refresh'] : [];
+        $total = max(1, (int) ($summary['dates'] ?? $run->date_count));
+        $processed = max(0, (int) ($summary['dates_processed'] ?? 0));
+        $status = $run->status;
+        $failed = count(is_array($summary['failed_dates'] ?? null) ? $summary['failed_dates'] : []);
+        $percentage = match ($status) {
+            NhlGameImportRun::STATUS_COMPLETED, NhlGameImportRun::STATUS_FAILED => 100,
+            default => (int) floor((min($processed, $total) / $total) * 100),
+        };
+
+        return [
+            'status' => $status,
+            'total_stage_rows' => $total,
+            'scheduled_stage_rows' => $status === NhlGameImportRun::STATUS_QUEUED ? $total : 0,
+            'running_stage_rows' => $status === NhlGameImportRun::STATUS_RUNNING ? max(0, $total - $processed) : 0,
+            'completed_stage_rows' => min($processed, $total),
+            'skipped_stage_rows' => 0,
+            'failed_stage_rows' => $failed,
             'percentage' => $percentage,
             'last_error' => $run->last_error,
         ];
@@ -1386,6 +1499,7 @@ class NhlGameImportController extends Controller
     private function shouldShowPipelineFacts(NhlGameImportRun $run): bool
     {
         return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
+            && $run->action !== NhlGameImportRun::ACTION_SCHEDULE_REFRESH
             && ! $this->isShotFactRun($run)
             && ! $this->isFaceoffFactRun($run)
             && ! $this->isDuplicatePbpRepairRun($run);
@@ -1462,6 +1576,7 @@ class NhlGameImportController extends Controller
         if (
             $run->action === NhlGameImportRun::ACTION_SEASON_SYNC
             || $run->action === NhlGameImportRun::ACTION_REPAIR
+            || $run->action === NhlGameImportRun::ACTION_SCHEDULE_REFRESH
             || $run->start_date === null
             || $run->end_date === null
         ) {
@@ -1552,6 +1667,7 @@ class NhlGameImportController extends Controller
     {
         return $run->action !== NhlGameImportRun::ACTION_SEASON_SYNC
             && $run->action !== NhlGameImportRun::ACTION_REPAIR
+            && $run->action !== NhlGameImportRun::ACTION_SCHEDULE_REFRESH
             && in_array($run->status, [NhlGameImportRun::STATUS_QUEUED, NhlGameImportRun::STATUS_RUNNING], true)
             && $run->start_date !== null
             && $run->end_date !== null;

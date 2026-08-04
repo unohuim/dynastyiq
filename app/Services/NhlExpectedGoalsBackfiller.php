@@ -400,45 +400,7 @@ SQL, [$modelId, $predictionTarget, $modelId, $seasonId]);
      */
     private function aggregateDefinitions(): array
     {
-        $offWingBucket = "CASE
-            WHEN is_off_wing_attempt THEN 'off_wing'
-            WHEN is_off_wing_attempt = false THEN 'strong_side'
-            ELSE 'center_or_unknown'
-        END";
-
-        return [
-            1 => [
-                'distance_bucket' => "COALESCE(NULLIF(distance_bucket, ''), 'unknown')",
-                'shot_type_bucket' => "COALESCE(NULLIF(shot_type_bucket, ''), 'unknown')",
-                'rebound_bucket' => "COALESCE(NULLIF(rebound_bucket, ''), 'unknown')",
-                'rush_bucket' => "COALESCE(NULLIF(rush_bucket, ''), 'unknown')",
-                'strength_bucket' => "COALESCE(NULLIF(strength_bucket, ''), 'unknown')",
-                'shot_side' => "COALESCE(NULLIF(shot_side, ''), 'unknown')",
-                'off_wing' => $offWingBucket,
-            ],
-            2 => [
-                'distance_bucket' => "COALESCE(NULLIF(distance_bucket, ''), 'unknown')",
-                'shot_type_bucket' => "COALESCE(NULLIF(shot_type_bucket, ''), 'unknown')",
-                'rebound_bucket' => "COALESCE(NULLIF(rebound_bucket, ''), 'unknown')",
-                'strength_bucket' => "COALESCE(NULLIF(strength_bucket, ''), 'unknown')",
-                'shot_side' => "COALESCE(NULLIF(shot_side, ''), 'unknown')",
-            ],
-            3 => [
-                'distance_bucket' => "COALESCE(NULLIF(distance_bucket, ''), 'unknown')",
-                'shot_type_bucket' => "COALESCE(NULLIF(shot_type_bucket, ''), 'unknown')",
-                'strength_bucket' => "COALESCE(NULLIF(strength_bucket, ''), 'unknown')",
-            ],
-            4 => [
-                'distance_bucket' => "COALESCE(NULLIF(distance_bucket, ''), 'unknown')",
-                'shot_type_bucket' => "COALESCE(NULLIF(shot_type_bucket, ''), 'unknown')",
-            ],
-            5 => [
-                'distance_bucket' => "COALESCE(NULLIF(distance_bucket, ''), 'unknown')",
-            ],
-            99 => [
-                'baseline' => "'league'",
-            ],
-        ];
+        return $this->analysisBuckets()->aggregateDefinitions('nhl_shot_attempts_facts');
     }
 
     /**
@@ -446,31 +408,7 @@ SQL, [$modelId, $predictionTarget, $modelId, $seasonId]);
      */
     private function candidateBucketKeySql(): array
     {
-        $distance = $this->factValueSql('distance_bucket');
-        $shotType = $this->factValueSql('shot_type_bucket');
-        $rebound = $this->factValueSql('rebound_bucket');
-        $rush = $this->factValueSql('rush_bucket');
-        $strength = $this->factValueSql('strength_bucket');
-        $shotSide = $this->factValueSql('shot_side');
-        $offWing = "CASE
-            WHEN facts.is_off_wing_attempt THEN 'off_wing'
-            WHEN facts.is_off_wing_attempt = false THEN 'strong_side'
-            ELSE 'center_or_unknown'
-        END";
-
-        return [
-            "(1, 'L01|distance_bucket=' || {$distance} || '|shot_type_bucket=' || {$shotType} || '|rebound_bucket=' || {$rebound} || '|rush_bucket=' || {$rush} || '|strength_bucket=' || {$strength} || '|shot_side=' || {$shotSide} || '|off_wing=' || {$offWing})",
-            "(2, 'L02|distance_bucket=' || {$distance} || '|shot_type_bucket=' || {$shotType} || '|rebound_bucket=' || {$rebound} || '|strength_bucket=' || {$strength} || '|shot_side=' || {$shotSide})",
-            "(3, 'L03|distance_bucket=' || {$distance} || '|shot_type_bucket=' || {$shotType} || '|strength_bucket=' || {$strength})",
-            "(4, 'L04|distance_bucket=' || {$distance} || '|shot_type_bucket=' || {$shotType})",
-            "(5, 'L05|distance_bucket=' || {$distance})",
-            "(99, 'L99|baseline=league')",
-        ];
-    }
-
-    private function factValueSql(string $column): string
-    {
-        return "COALESCE(NULLIF(facts.{$column}, ''), 'unknown')";
+        return $this->analysisBuckets()->candidateBucketKeySql('facts');
     }
 
     private function normalizePredictionTarget(string $predictionTarget): string
@@ -492,14 +430,7 @@ SQL, [$modelId, $predictionTarget, $modelId, $seasonId]);
      */
     private function fallbackDefinitions(): array
     {
-        return [
-            1 => ['distance_bucket', 'shot_type_bucket', 'rebound_bucket', 'rush_bucket', 'strength_bucket', 'shot_side', 'off_wing'],
-            2 => ['distance_bucket', 'shot_type_bucket', 'rebound_bucket', 'strength_bucket', 'shot_side'],
-            3 => ['distance_bucket', 'shot_type_bucket', 'strength_bucket'],
-            4 => ['distance_bucket', 'shot_type_bucket'],
-            5 => ['distance_bucket'],
-            99 => ['baseline'],
-        ];
+        return $this->analysisBuckets()->fallbackDefinitions();
     }
 
     /**
@@ -530,5 +461,10 @@ SQL, [$modelId, $predictionTarget, $modelId, $seasonId]);
         $normalized = trim((string) $value);
 
         return $normalized === '' ? 'unknown' : $normalized;
+    }
+
+    private function analysisBuckets(): NhlShotAttemptAnalysisBuckets
+    {
+        return app(NhlShotAttemptAnalysisBuckets::class);
     }
 }

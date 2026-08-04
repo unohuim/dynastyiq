@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
  */
 class BuildNhlShotAttemptFacts
 {
-    private const FACT_VERSION = 'shot_attempt_facts_v1';
+    private const FACT_VERSION = 'shot_attempt_facts_v2';
     private const REBOUND_WINDOW_SECONDS = 3;
 
     /**
@@ -129,7 +129,7 @@ class BuildNhlShotAttemptFacts
         $secondsDelta = $this->secondsDelta($play, $previousPlay);
         $previousShotDelta = $this->secondsDelta($play, $previousTeamShot);
         $isRebound = $previousShotDelta !== null && $previousShotDelta <= self::REBOUND_WINDOW_SECONDS;
-        $absAngle = $play->shot_angle !== null ? abs((float) $play->shot_angle) : null;
+        $absAngle = $this->foldedAbsoluteShotAngle($play->shot_angle);
         $shotSide = $this->shotSide($play, $game, $teamId);
         $isOffWingAttempt = $this->isOffWingAttempt($shooterShoots, $shotSide, $play->shot_type);
         $scoreDifferential = $this->scoreDifferential(
@@ -623,12 +623,23 @@ class BuildNhlShotAttemptFacts
         $angle = max(0.0, $angle);
 
         if ($angle >= 90.0) {
-            return 'a_090_plus';
+            return 'a_080_090';
         }
 
         $lower = (int) (floor($angle / 10) * 10);
 
         return sprintf('a_%03d_%03d', $lower, $lower + 10);
+    }
+
+    private function foldedAbsoluteShotAngle(mixed $angle): ?float
+    {
+        if ($angle === null) {
+            return null;
+        }
+
+        $absoluteAngle = abs((float) $angle);
+
+        return min($absoluteAngle, abs(180.0 - $absoluteAngle));
     }
 
     private function zoneBucket(?string $zoneCode): string

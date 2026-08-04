@@ -9,6 +9,7 @@ import './transactions.js';
 import './analytics-tracker.js';
 import './pages/stats-units.js';
 import './admin/player-triage.js';
+import './admin/nhl-shot-attempts.js';
 import './components/community-members-store';
 import './components/draft-round-scrollbar';
 import './pages/discord-bot-installed';

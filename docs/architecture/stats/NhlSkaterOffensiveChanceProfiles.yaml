@@ -1,0 +1,42 @@
+name: NHL Skater Offensive Chance Profiles
+type: Historical Skater Offensive Chance Profile Layer
+location:
+  - app/Console/Commands/BuildNhlSkaterOffensiveChanceProfilesCommand.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Jobs/BuildNhlSkaterOffensiveChanceProfileForPlayerJob.php
+  - app/Jobs/BuildNhlSkaterOffensiveChanceProfilesJob.php
+  - app/Models/NhlSkaterOffensiveChanceProfileBucket.php
+  - app/Services/NhlSkaterOffensiveChanceProfileBuilder.php
+  - database/migrations/2026_08_03_000010_create_nhl_skater_offensive_chance_profile_buckets_table.php
+  - docs/architecture/stats/NhlSkaterOffensiveChanceProfiles.yaml
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+purpose: Store historical skater offensive SATF chance profiles using granular bucket rows with empirical-Bayes shrinkage.
+when_to_use:
+  - Explaining what chance types a skater generated in a source season.
+  - Feeding offensive skater projections from persisted SATF profile inputs.
+  - Comparing offensive chance mix without re-querying raw shot-attempt facts.
+when_not_to_use:
+  - Replacing xG/xSOG model training or shot-attempt facts.
+  - Treating one-season finishing over expected as durable talent without separate regression.
+  - Projecting future opportunity without TOI projection inputs.
+rules:
+  - Offensive chance profiles are historical source-season outputs, not target-season projections.
+  - Profile rows must be built from versioned expected-goals and expected-shots-on-goal predictions joined to shooter-side shot-attempt facts.
+  - A small total player SATF sanity floor may be used only to avoid one-off junk profiles; it must not be used as a bucket reliability cutoff.
+  - Granular offensive profile bucket rows should be persisted at the most specific chance shape.
+  - Sparse offensive bucket probabilities must be shrunk toward broader parent buckets using empirical-Bayes weighting.
+  - Stored goal and shot-on-goal probability fields represent shrunk expected rates; raw expected and actual rates must remain auditable in metadata.
+  - Builds must upsert by source season, game type, expected model ids, skater, and matched bucket key so reruns do not create duplicates.
+  - Season-level skater offensive chance profile builds must dispatch one worker job per eligible skater.
+public_interface:
+  - admin.nhl-shot-attempts.index
+  - admin.nhl-shot-attempts.skater-offensive-chance-profiles.build
+  - nhl:skater-offensive-chance-profiles
+  - nhl_skater_offensive_chance_profile_buckets
+  - NhlSkaterOffensiveChanceProfileBucket
+  - NhlSkaterOffensiveChanceProfileBuilder
+  - BuildNhlSkaterOffensiveChanceProfilesJob
+  - BuildNhlSkaterOffensiveChanceProfileForPlayerJob
+example_usage: |
+  php artisan nhl:skater-offensive-chance-profiles --season=20252026 --game-type=2

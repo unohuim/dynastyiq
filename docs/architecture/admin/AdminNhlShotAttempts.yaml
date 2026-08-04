@@ -14,6 +14,7 @@ when_to_use:
   - Reviewing observed biometric impact cuts for shooter and goalie age, height, and weight after fact snapshots are rebuilt.
   - Reviewing objective shooter height and weight buckets crossed with shot type, distance bucket, and angle bucket.
   - Building and reviewing bucket-smoothed xG and xSOG predictions for an imported season.
+  - Reviewing player-season projection rollups, TOI projections, and projected team matchup simulations.
   - Auditing missing or suspicious shot-attempt fact fields.
 when_not_to_use:
   - Running NHL game imports or shot-fact build jobs.
@@ -24,7 +25,7 @@ rules:
   - The panel reads from nhl_shot_attempts_facts and must not mutate shot facts.
   - The shot model build action may write only to versioned expected-goals model, bucket, and prediction tables.
   - The first version should use server-rendered tabs and query-string filters without new page-local JavaScript state.
-  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, predictive cuts, biometric impact review, xG review, and QA checks.
+  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, predictive cuts, biometric impact review, xG review, projection review, matchup simulation, and QA checks.
   - Predictive grouped cuts must show attempts, goals, goal rate, shots on goal, shooting percentage, average distance, and average angle with a minimum-attempt threshold.
   - Biometric impact review must remain read-only and must not add age, height, or weight into model training until separately approved.
   - Biometric impact review must show observed SOG rate, goal rate, average xG per SAT, and goals minus xG when a latest goal model is available.
@@ -32,6 +33,9 @@ rules:
   - Biometric impact review must support a minimum-attempt threshold applied only to biometric aggregate rows.
   - Subjective player-frame labels such as power forward, sniper, dangler, or grinder must not be introduced until their derivation rules are documented and separately approved.
   - The xG tab must expose a queued build button, model history, latest-model bucket probabilities, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
+  - The projections tab must read from versioned projection tables and expose stored profile bucket breakdowns where the projection layer persists them.
+  - The projections build actions may write only to versioned TOI and skater offensive projection tables.
+  - The matchup tab must remain read-only and compute projected team-vs-team results on demand without persisting team profile buckets.
   - Dense xG result sections must render as default-collapsed accordions and remember expanded state in localStorage scoped to the admin shot-attempts xG page.
   - Aggregate columns must sort through whitelisted query-string keys and display the active sort direction.
   - Presented xG tables must sort through whitelisted query-string keys and display the active sort direction.
@@ -42,8 +46,13 @@ rules:
 public_interface:
   - admin.nhl-shot-attempts.index
   - admin.nhl-shot-attempts.xg.build
+  - admin.nhl-shot-attempts.projections.build
+  - admin.nhl-shot-attempts.toi-projections.build
+  - NhlProjectedTeamMatchupSimulator
   - NhlShotAttemptController::index()
   - NhlShotAttemptController::buildXg()
+  - NhlShotAttemptController::buildProjections()
+  - NhlShotAttemptController::buildToiProjections()
   - resources/views/admin/nhl-shot-attempts/index.blade.php
 example_usage: |
-  GET /admin/nhl-shot-attempts?tab=buckets&season_id=20252026
+  GET /admin/nhl-shot-attempts?tab=projections&projection_target_season_id=20262027

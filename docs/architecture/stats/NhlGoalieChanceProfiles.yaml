@@ -1,0 +1,48 @@
+name: NHL Goalie Chance Profiles
+type: Historical Goalie Chance Profile Layer
+location:
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Console/Commands/BuildNhlGoalieChanceProfilesCommand.php
+  - app/Jobs/BuildNhlGoalieChanceProfileForGoalieJob.php
+  - app/Jobs/BuildNhlGoalieChanceProfilesJob.php
+  - app/Models/NhlGoalieChanceProfileBucket.php
+  - app/Services/NhlGoalieChanceProfileBuilder.php
+  - database/migrations/2026_08_03_000006_create_nhl_goalie_chance_profile_buckets_table.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+  - docs/architecture/stats/NhlGoalieChanceProfiles.yaml
+purpose: Store historical goalie-facing chance mix and performance-over-expected profile buckets.
+when_to_use:
+  - Explaining what kinds of shot attempts a goalie faced in a source season.
+  - Comparing goalie performance over expected within resolved faced chance buckets.
+  - Separating historical chance environment and goalie performance before goalie projection models consume them.
+when_not_to_use:
+  - Projecting future goalie workload, xGA, saves, wins, or goals against.
+  - Replacing historical NHL season stats or shot-attempt facts.
+  - Publishing goalie projections before a separate projection abstraction is approved.
+rules:
+  - Goalie chance profiles are historical source-season outputs, not target-season projections.
+  - Profile rows must be built from versioned expected-goals and expected-shots-on-goal predictions joined to goalie-faced shot-attempt facts.
+  - Performance over expected must use source_gsax, calculated as source_xga minus source_goals_against, where positive values mean the goalie saved goals above expected.
+  - Goalies must have at least 300 total source SAT against to be eligible for a historical chance profile build.
+  - Goalie chance profile rows must be persisted as adaptive non-overlapping buckets that start from broad distance groups and split only where child rows improve useful detail without exposing sparse leaf-bucket noise.
+  - When an accepted split has low-confidence or row-budget-excess child rows, those rows must be aggregated into a single resolved Other bucket at the selected split level.
+  - Resolved goalie profile rows must target broad xSOG-against coverage and a controlled row budget instead of relying on a fixed per-bucket SAT cutoff.
+  - Sparse goalie chance probabilities may be shrunk toward broader non-league parent buckets using empirical-Bayes weighting, but league baseline fallback must not flatten resolved displayed bucket rates.
+  - The stored goal and shot-on-goal probability fields represent shrunk expected rates; raw expected and actual rates must remain auditable in metadata.
+  - League baseline fallback may be used only as the final prior source when no narrower parent bucket provides additional sample.
+  - Builds must upsert by source season, game type, expected model ids, goalie, and matched bucket key so reruns do not create duplicates.
+  - A successful goalie rebuild must remove superseded profile rows for the same source season, game type, and goalie so stale leaf buckets from older model versions are not shown.
+  - Season-level goalie chance profile builds must dispatch one worker job per eligible goalie.
+  - Profile outputs must preserve bucket dimensions, profile inputs, flags, and metadata for review.
+public_interface:
+  - nhl:goalie-chance-profiles
+  - nhl_goalie_chance_profile_buckets
+  - NhlGoalieChanceProfileBucket
+  - NhlGoalieChanceProfileBuilder
+  - BuildNhlGoalieChanceProfilesJob
+  - BuildNhlGoalieChanceProfileForGoalieJob
+  - admin.nhl-shot-attempts.goalie-chance-profiles.build
+  - admin.nhl-shot-attempts.index
+example_usage: |
+  php artisan nhl:goalie-chance-profiles --season=20252026 --game-type=2

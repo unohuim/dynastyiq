@@ -8,6 +8,7 @@ Do not run import, sync, migration, queue, scheduler, or destructive commands fr
 
 | Command | Runs | Purpose | Notes |
 | --- | --- | --- | --- |
+| `php artisan nhl:schedule-import` | Runs directly | Refresh future NHL schedule rows in `nhl_games` without running game imports. | Defaults from today through July 1 next year; supports `--from` and `--to`. Future/pre-game dates may delete/insert; played/imported dates are upsert-only. |
 | `php artisan nhl:discover` | Dispatches jobs | Discover NHL games for a date window and queue per-day discovery jobs. | Options include `--date`, `--season`, `--start`, `--end`, `--days`, and `--newdays`. |
 | `php artisan nhl:process` | Dispatches/claims jobs | Supervise run-aware NHL import orchestration for queued discovery runs. | Processes scheduled game stages through the orchestrator. |
 | `php artisan nhl:import --players` | Dispatches batch/jobs | Import NHL team player pools, then draft picks. | Supports `--import-run-id` for admin tracking. |

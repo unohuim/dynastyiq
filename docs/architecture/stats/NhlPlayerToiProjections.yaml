@@ -1,0 +1,48 @@
+name: NHL Player TOI Projections
+type: Versioned Player Opportunity Projection Layer
+location:
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Jobs/BuildNhlPlayerToiProjectionForPlayerJob.php
+  - app/Jobs/BuildNhlPlayerToiProjectionsJob.php
+  - app/Models/NhlPlayerToiProjection.php
+  - app/Services/NhlPlayerToiProjectionBuilder.php
+  - database/migrations/2026_08_03_000005_create_nhl_player_toi_projections_table.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+  - docs/architecture/stats/NhlPlayerToiProjections.yaml
+purpose: Store explainable player time-on-ice projections before converting shot-rate projections into season-volume projections.
+when_to_use:
+  - Persisting projected player opportunity for a target NHL season.
+  - Separating role and deployment assumptions from shot-quality or finishing assumptions.
+  - Reviewing source TOI, team rank, age, role bucket, and adjustment inputs before performance projections consume them.
+  - Comparing versioned TOI assumptions without overwriting prior projection outputs.
+when_not_to_use:
+  - Replacing historical NHL season stats or game summary imports.
+  - Storing shot attempt, expected-goals, goalie, or team projection outputs.
+  - Treating automated TOI assumptions as published product projections before admin review.
+  - Encoding detailed per-factor audit rows before a separate factor table is approved.
+rules:
+  - TOI projection rows must be versioned so reruns can be audited and compared.
+  - Source-season TOI and target-season projected TOI must remain distinguishable on every row.
+  - Source TOI must come from validated season stats or game summaries, not from shot attempt facts.
+  - Target TOI must be stored before skater performance projections use projected per-60 rates for season-volume projections.
+  - Projected games must cap and normalize toward the current 84-game NHL regular-season length.
+  - Age, role bucket, team rank, and team-change adjustments must be preserved as explicit fields or metadata.
+  - Players aged 25 through 30 may use source TOI per game as the first-pass baseline unless role or team context changes materially.
+  - Players older than 30 should be eligible for downward TOI regression when target-team competition or rank worsens.
+  - Players younger than 25 should be eligible for TOI growth when their projected role is top-six forward or top-four defense.
+  - Draft TOI output must remain admin-reviewable until a separate publishing workflow is approved.
+  - TOI projection builds must dispatch one worker job per player so multiple queue workers can process projections concurrently.
+public_interface:
+  - nhl_player_toi_projections
+  - NhlPlayerToiProjection
+  - NhlPlayerToiProjectionBuilder
+  - BuildNhlPlayerToiProjectionForPlayerJob
+  - BuildNhlPlayerToiProjectionsJob
+  - admin.nhl-shot-attempts.toi-projections.build
+  - admin.nhl-shot-attempts.index
+example_usage: |
+  SELECT player_id, projected_toi_per_game_seconds, confidence_bucket
+  FROM nhl_player_toi_projections
+  WHERE projection_version = 'first_pass_20262027_toi_v1'
+    AND target_season_id = '20262027';

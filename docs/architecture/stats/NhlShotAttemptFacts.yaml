@@ -3,6 +3,7 @@ type: Derived Analytics Fact Layer
 location:
   - app/Http/Controllers/Admin/NhlGameImportController.php
   - app/Jobs/BuildNhlShotAttemptFactsJob.php
+  - app/Services/NhlShotAttemptAnalysisBuckets.php
   - app/Services/BuildNhlShotAttemptFacts.php
   - database/migrations/2026_07_27_000000_create_nhl_shot_attempts_facts_table.php
   - database/migrations/2026_07_29_000002_add_handedness_fields_to_nhl_shot_attempts_facts_table.php
@@ -27,6 +28,7 @@ rules:
   - Shootout attempts must be excluded or isolated from normal game shot-attempt analysis.
   - Penalty-shot attempts may be tracked as shot facts but must remain distinguishable from normal in-play attempts.
   - Shot geometry facts must reuse the canonical ShotGeometryService-derived distance and angle semantics.
+  - Stored `abs_shot_angle` must be folded into a 0-90 goalie-facing angle where 0 is goal-line/sharp angle and 90 is straight-on.
   - Score snapshots and score-state buckets must represent the pre-event game state before the shot outcome changes the score, derived from the ordered goal timeline rather than trusting per-row provider score snapshots.
   - Rush context must distinguish direct rush attempts from same-team rebounds that inherit rush sequence context inside the rebound window.
   - Shooter handedness, goalie catches hand, goalie-perspective shot side, and goalie hand matchup may be snapshotted as analysis context from canonical player records.
@@ -34,6 +36,9 @@ rules:
   - Off-wing shot-attempt classification must use goalie-perspective side plus shooter handedness and remain nullable when side, handedness, or classified shot type is unavailable.
   - Bucket labels must remain deterministic feature labels and must not imply goal probability by themselves.
   - Predictive bucket analysis must exclude unknown shot type buckets by default while preserving unknown shot type rows in raw fact storage.
+  - Analysis and expected-goals model buckets must use NhlShotAttemptAnalysisBuckets fallback levels instead of raw one-to-one fact bucket combinations.
+  - Analysis and expected-goals model buckets must not expose or score sparse combinations below the approved sample floor; sparse attempts must resolve to broader parent buckets, then to league baseline when needed.
+  - Strength state, shot side, and off-wing context may remain raw facts and filters, but must not fragment primary expected-goals fallback buckets until validated with enough sample size.
   - Expected-goals probabilities, danger labels, and model outputs belong in versioned expected-goals prediction tables.
   - Aggregate AI review must use sanitized exports or grouped facts and must remain advisory until validated against holdout data.
   - Sparse bucket combinations must fall back to broader groupings before they are used for probability estimates.
@@ -47,6 +52,7 @@ public_interface:
   - admin.nhl-game-imports.process-shots
   - BuildNhlShotAttemptFacts
   - BuildNhlShotAttemptFactsJob
+  - NhlShotAttemptAnalysisBuckets
   - ShotGeometryService
   - NhlPbpEventNormalizer
 example_usage: |

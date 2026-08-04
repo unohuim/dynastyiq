@@ -172,6 +172,15 @@ Reusable abstractions and patterns are tracked centrally.
 - Performance optimizations require measurable justification
 - Do not introduce caching, queues, or background jobs without approval
 
+### Queue Job Granularity
+
+- Long-running operational work must be decomposed into bounded queue jobs.
+- Target individual job runtime is approximately 10 seconds.
+- Prefer one job per natural unit of work, such as one date, player, goalie, game, team, or similarly isolated record.
+- Controllers, commands, or parent jobs may coordinate batches, but must not perform broad multi-unit work inside one long-running job.
+- Progress for broad work should be tracked by the parent run/batch while child jobs complete independently.
+- Avoid one job per broad task when the task can be split into natural units.
+
 ---
 
 ## Versioning & Compatibility
