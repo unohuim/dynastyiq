@@ -3300,7 +3300,7 @@ Build and store versioned goalie season performance projections from goalie work
 **When to Use:**
 Persisting combined and EV/PK split xGA, GA, GSAx, xSOGA, saves, broad actual-vs-expected goalie adjustments, and other goalie season performance projection outputs after goalie workload, skater TOI, shot-attempt fact, expected-goal prediction, and goalie SAT profile inputs are built.
 
-Goalie projection builds depend on persisted G SAT profile rows for relevant workload goalies and must not recompute goalie bucket skill from shot-attempt facts during projection builds.
+Goalie projection builds depend on persisted G SAT profile rows for every workload goalie with projected games above zero and must not recompute goalie bucket skill from shot-attempt facts during projection builds. Active current goalies without enough source-season sample receive explicit neutral low/no-sample fallback G SAT profile rows.
 
 **When Not to Use:**
 Replacing historical goalie chance profiles, storing starts-only goalie workload projections, evaluating offensive chance creation, or building projected faced chance buckets directly from historical goalie rows without projected team defensive environment context.

@@ -23,8 +23,11 @@ when_not_to_use:
 rules:
   - Goalie chance profiles are historical source-season outputs, not target-season projections.
   - Profile rows must be built from versioned expected-goals and expected-shots-on-goal predictions joined to goalie-faced shot-attempt facts.
-  - Performance over expected must use source_gsax, calculated as source_xga minus source_goals_against, where positive values mean the goalie saved goals above expected.
-  - Goalies must have at least 300 total source SAT against to be eligible for a historical chance profile build.
+  - Historical performance over expected rows must use source_gsax, calculated as source_xga minus source_goals_against, where positive values mean the goalie saved goals above expected.
+  - Neutral low/no-sample fallback rows must carry zero goalie skill and must be identifiable from profile_inputs, flags, and metadata.
+  - Active current goalies in players must receive a persisted profile row even when they do not have enough source-season shot-attempt sample.
+  - Goalies with at least 300 total source SAT against receive a historical chance profile from their faced shot-attempt facts.
+  - Goalies below 300 total source SAT against must receive an explicit neutral league-baseline fallback profile row, flagged as low/no source sample, so later goalie projections do not invent skill on the fly.
   - Goalie chance profile rows must be persisted as adaptive non-overlapping buckets that start from broad distance groups and split only where child rows improve useful detail without exposing sparse leaf-bucket noise.
   - When an accepted split has low-confidence or row-budget-excess child rows, those rows must be aggregated into a single resolved Other bucket at the selected split level.
   - Resolved goalie profile rows must target broad xSOG-against coverage and a controlled row budget instead of relying on a fixed per-bucket SAT cutoff.
@@ -33,7 +36,7 @@ rules:
   - League baseline fallback may be used only as the final prior source when no narrower parent bucket provides additional sample.
   - Builds must upsert by source season, game type, expected model ids, goalie, and matched bucket key so reruns do not create duplicates.
   - A successful goalie rebuild must remove superseded profile rows for the same source season, game type, and goalie so stale leaf buckets from older model versions are not shown.
-  - Season-level goalie chance profile builds must dispatch one worker job per eligible goalie.
+  - Season-level goalie chance profile builds must dispatch one worker job per active current goalie plus any fact-eligible historical goalie.
   - Profile outputs must preserve bucket dimensions, profile inputs, flags, and metadata for review.
 public_interface:
   - nhl:goalie-chance-profiles

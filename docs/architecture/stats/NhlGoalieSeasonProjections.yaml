@@ -34,10 +34,10 @@ rules:
   - Season-level projected GA must include a broad, sample-shrunk goalie actual-vs-expected adjustment from recent source GA above xGA per 60 so bad and good goalie outcomes are not overly compressed by sparse bucket skill.
   - Projected team defensive chance buckets must be allocated to each goalie by that goalie's projected TOI share of his target team's projected goalie TOI.
   - Retained projected chance buckets should cover approximately 95 percent of projected team SATA against, with the remaining tail represented by an Other bucket.
-  - Goalie projection builds must fail before queueing when the source-season goalie SAT profile table or required profile rows are missing for relevant workload goalies.
+  - Goalie projection builds must fail before queueing when the source-season goalie SAT profile table or required profile rows are missing for any workload goalie with projected games above zero.
   - Goalie bucket skill must come from persisted nhl_goalie_chance_profile_buckets rows rather than recomputing historical goalie skill from shot-attempt facts during projection builds.
   - Projected team environment buckets must match the most specific compatible persisted goalie profile bucket, including resolved parent and Other buckets when exact leaf skill is not stored.
-  - Goalie bucket skill must be shrunk by goalie bucket confidence, and missing meaningful goalie bucket skill must fail the goalie projection rather than be neutral or invented.
+  - Goalie bucket skill must be shrunk by goalie bucket confidence, and missing meaningful goalie bucket skill must fail the goalie projection unless the G SAT profile build persisted an explicit neutral low/no-sample fallback row for that goalie.
   - Summary projection totals must reconcile to bucket rows plus any retained Other tail bucket.
   - Projection builds must dispatch one worker job per goalie and upsert season rows by projection version, target season, and goalie id.
 public_interface:

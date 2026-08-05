@@ -27,7 +27,7 @@ class NhlGoalieProjectionBuilder
     private const PK_GOALIE_SKILL_SHRINK = 0.25;
     private const BROAD_GA_ADJUSTMENT_PRIOR_SOGA = 1200.0;
     private const BROAD_GA_ADJUSTMENT_CAP_PER_60 = 0.45;
-    private const RELEVANT_GOALIE_MIN_PROJECTED_GAMES = 5.0;
+    private const RELEVANT_GOALIE_MIN_PROJECTED_GAMES = 0.0;
 
     public function __construct(private readonly NhlShotAttemptAnalysisBuckets $buckets)
     {
@@ -234,7 +234,7 @@ class NhlGoalieProjectionBuilder
         $relevantGoalieIds = DB::table('nhl_goalie_workload_projections')
             ->where('target_season_id', $targetSeasonId)
             ->where('projection_version', $goalieWorkloadProjectionVersion)
-            ->where('projected_games', '>=', self::RELEVANT_GOALIE_MIN_PROJECTED_GAMES)
+            ->where('projected_games', '>', self::RELEVANT_GOALIE_MIN_PROJECTED_GAMES)
             ->whereNotNull('target_team_abbrev')
             ->pluck('goalie_player_id')
             ->map(fn (mixed $goaliePlayerId): int => (int) $goaliePlayerId)

@@ -22,6 +22,8 @@ class NhlGoalieChanceProfileBuilder
     private const MIN_SPLIT_CHILD_CONFIDENCE = 0.50;
     private const MAX_RESOLVED_PROFILE_BUCKETS = 18;
     private const BASE_PROFILE_FALLBACK_LEVEL = 6;
+    private const LEAGUE_BASELINE_FALLBACK_LEVEL = 99;
+    private const LEAGUE_BASELINE_BUCKET_KEY = 'L99|baseline=league';
     private const MIN_SPLIT_CHILD_ROWS = 2;
     private const OTHER_BUCKET_VALUE = 'Other';
 
@@ -78,14 +80,17 @@ class NhlGoalieChanceProfileBuilder
         ): array {
             $summary = $this->goalieSummary($sourceSeasonId, $gameType, $goalModelId, $sogModelId, $goaliePlayerId);
 
-            if ($summary === null || (int) $summary->source_sat_against < self::MIN_GOALIE_SAT_AGAINST) {
-                $this->deleteExistingProfiles($sourceSeasonId, $gameType, $goaliePlayerId);
-
-                return ['goalie_player_id' => $goaliePlayerId, 'bucket_rows' => 0];
+            if ($summary === null) {
+                $summary = $this->playerFallbackSummary($goaliePlayerId);
             }
 
-            $rows = $this->goalieBucketRows($sourceSeasonId, $gameType, $goalModelId, $sogModelId, $goaliePlayerId);
-            $payloads = $this->payloads($summary, $rows, $sourceSeasonId, $gameType, $goalModelId, $sogModelId);
+            $lowSample = (int) ($summary->source_sat_against ?? 0) < self::MIN_GOALIE_SAT_AGAINST;
+            $rows = $lowSample
+                ? collect()
+                : $this->goalieBucketRows($sourceSeasonId, $gameType, $goalModelId, $sogModelId, $goaliePlayerId);
+            $payloads = $lowSample
+                ? $this->fallbackPayloads($summary, $sourceSeasonId, $gameType, $goalModelId, $sogModelId)
+                : $this->payloads($summary, $rows, $sourceSeasonId, $gameType, $goalModelId, $sogModelId);
 
             if ($payloads === []) {
                 return ['goalie_player_id' => $goaliePlayerId, 'bucket_rows' => 0];
@@ -163,7 +168,7 @@ class NhlGoalieChanceProfileBuilder
      */
     private function eligibleGoalieIds(string $sourceSeasonId, int $gameType, int $goalModelId, int $sogModelId): Collection
     {
-        return DB::table('nhl_shot_attempts_facts as facts')
+        $factGoalieIds = DB::table('nhl_shot_attempts_facts as facts')
             ->join('nhl_games as games', 'games.nhl_game_id', '=', 'facts.nhl_game_id')
             ->join('nhl_shot_attempt_predictions as goal_predictions', function ($join) use ($goalModelId): void {
                 $join->on('goal_predictions.shot_attempt_fact_id', '=', 'facts.id')
@@ -185,6 +190,24 @@ class NhlGoalieChanceProfileBuilder
             ->orderBy('facts.goalie_player_id')
             ->pluck('facts.goalie_player_id')
             ->map(fn (mixed $goaliePlayerId): int => (int) $goaliePlayerId);
+
+        $activeGoalieIds = DB::table('players')
+            ->whereNotNull('nhl_id')
+            ->where('status', 'active')
+            ->where(function ($query): void {
+                $query->where('is_goalie', true)
+                    ->orWhere('position', 'G')
+                    ->orWhere('pos_type', 'G');
+            })
+            ->orderBy('nhl_id')
+            ->pluck('nhl_id')
+            ->map(fn (mixed $goaliePlayerId): int => (int) $goaliePlayerId);
+
+        return $factGoalieIds
+            ->merge($activeGoalieIds)
+            ->unique()
+            ->sort()
+            ->values();
     }
 
     private function goalieSummary(
@@ -231,6 +254,34 @@ class NhlGoalieChanceProfileBuilder
             ->selectRaw('ROUND(SUM(sog_predictions.xg)::numeric, 4) as source_xsoga')
             ->groupBy('facts.goalie_player_id')
             ->first();
+    }
+
+    private function playerFallbackSummary(int $goaliePlayerId): object
+    {
+        $row = DB::table('players')
+            ->where('nhl_id', $goaliePlayerId)
+            ->select([
+                'nhl_id',
+                'nhl_team_id',
+                'team_abbrev',
+                'position',
+                'pos_type',
+            ])
+            ->first();
+
+        return (object) [
+            'goalie_player_id' => $goaliePlayerId,
+            'team_id' => $row?->nhl_team_id,
+            'team_abbrev' => $row?->team_abbrev,
+            'position' => $row?->position ?: ($row?->pos_type ?: 'G'),
+            'source_games' => 0,
+            'source_toi_seconds' => null,
+            'source_sat_against' => 0,
+            'source_sog_against' => 0,
+            'source_goals_against' => 0,
+            'source_xga' => null,
+            'source_xsoga' => null,
+        ];
     }
 
     /**
@@ -399,6 +450,80 @@ SQL;
                     'updated_at' => $now,
                 ];
             })->values()->all();
+    }
+
+    /**
+     * Persist a neutral, auditable profile for active goalies whose source
+     * season sample is too small to support bucket-level skill.
+     *
+     * @return array<int, array<string,mixed>>
+     */
+    private function fallbackPayloads(
+        object $summary,
+        string $sourceSeasonId,
+        int $gameType,
+        int $goalModelId,
+        int $sogModelId
+    ): array {
+        $now = now();
+        $sourceSatAgainst = (int) ($summary->source_sat_against ?? 0);
+        $sourceSogAgainst = (int) ($summary->source_sog_against ?? 0);
+        $sourceGoalsAgainst = (int) ($summary->source_goals_against ?? 0);
+        $dimensions = ['baseline' => 'league'];
+        $flags = ['goalie_profile_low_sample_neutral_fallback'];
+
+        if ($sourceSatAgainst <= 0) {
+            $flags[] = 'goalie_profile_no_source_sample';
+        }
+
+        return [[
+            'source_season_id' => $sourceSeasonId,
+            'game_type' => $gameType,
+            'goal_expected_goals_model_id' => $goalModelId,
+            'shot_on_goal_expected_goals_model_id' => $sogModelId,
+            'goalie_player_id' => (int) $summary->goalie_player_id,
+            'team_id' => $summary->team_id === null ? null : (int) $summary->team_id,
+            'team_abbrev' => $summary->team_abbrev,
+            'position' => $summary->position ?: 'G',
+            'matched_bucket_key' => self::LEAGUE_BASELINE_BUCKET_KEY,
+            'fallback_level' => self::LEAGUE_BASELINE_FALLBACK_LEVEL,
+            'bucket_dimensions' => json_encode($dimensions, JSON_THROW_ON_ERROR),
+            'shot_type_group' => null,
+            'distance_group' => null,
+            'angle_group' => null,
+            'sequence_group' => null,
+            'source_games' => $summary->source_games,
+            'source_toi_seconds' => $summary->source_toi_seconds === null ? null : (int) $summary->source_toi_seconds,
+            'source_sat_against' => $sourceSatAgainst,
+            'source_sog_against' => $sourceSogAgainst,
+            'source_goals_against' => $sourceGoalsAgainst,
+            'source_xga' => null,
+            'source_xsoga' => null,
+            'source_gsax' => 0,
+            'source_gsax_per_100_sat_against' => 0,
+            'source_profile_share' => 1,
+            'goal_probability_against' => null,
+            'shot_on_goal_probability_against' => null,
+            'confidence_score' => 0,
+            'confidence_bucket' => 'low',
+            'profile_inputs' => json_encode([
+                'method' => 'active_goalie_low_sample_neutral_profile_fallback',
+                'minimum_goalie_sat_against' => self::MIN_GOALIE_SAT_AGAINST,
+                'source_total_sat_against' => $sourceSatAgainst,
+                'source_total_sog_against' => $sourceSogAgainst,
+                'source_total_goals_against' => $sourceGoalsAgainst,
+                'fallback_bucket_key' => self::LEAGUE_BASELINE_BUCKET_KEY,
+            ], JSON_THROW_ON_ERROR),
+            'flags' => json_encode($flags, JSON_THROW_ON_ERROR),
+            'metadata' => json_encode([
+                'builder' => 'NhlGoalieChanceProfileBuilder',
+                'fallback_reason' => $sourceSatAgainst <= 0 ? 'no_source_sample' : 'low_source_sample',
+                'neutral_goalie_skill' => true,
+            ], JSON_THROW_ON_ERROR),
+            'profiled_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]];
     }
 
     /**

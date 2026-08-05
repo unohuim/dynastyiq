@@ -1966,12 +1966,16 @@ Do not introduce new enum values without updating this document.
 - `limited_goalie_bucket_sat_against`
 - `goalie_bucket_league_baseline`
 - `goalie_bucket_shrunk_to_parent`
+- `goalie_profile_low_sample_neutral_fallback`
+- `goalie_profile_no_source_sample`
 
 **Semantic meaning:**
 
 - `limited_goalie_bucket_sat_against`: Goalie-facing bucket required substantial parent shrinkage and has low direct-sample confidence.
 - `goalie_bucket_league_baseline`: Goalie-facing chance profile used the final league-baseline bucket as its prior source.
 - `goalie_bucket_shrunk_to_parent`: Stored probability rates were blended with a broader parent bucket prior.
+- `goalie_profile_low_sample_neutral_fallback`: Active goalie did not meet the source-season sample threshold, so a persisted neutral fallback profile row was written.
+- `goalie_profile_no_source_sample`: Active goalie had no usable source-season goalie shot-attempt sample for the selected model/game type.
 
 ---
 
