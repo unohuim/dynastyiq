@@ -136,11 +136,62 @@ class ConnectEventsToUnitShifts
             $eventsCount++;
         }
 
-        foreach (array_chunk(array_values($pivotRowsByKey), 1000) as $rows) {
-            DB::table('event_unit_shifts')->insert($rows);
-        }
+        $this->insertExistingPivotRows(array_values($pivotRowsByKey));
 
         return $eventsCount;
+    }
+
+    /**
+     * Insert event/unit-shift links only after the referenced game rows are revalidated and locked.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     */
+    private function insertExistingPivotRows(array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+
+        DB::transaction(function () use ($rows): void {
+            $eventIds = array_values(array_unique(array_map('intval', array_column($rows, 'event_id'))));
+            $unitShiftIds = array_values(array_unique(array_map('intval', array_column($rows, 'unit_shift_id'))));
+
+            $existingEventIds = DB::table('play_by_plays')
+                ->where('nhl_game_id', $this->gameId)
+                ->whereIn('id', $eventIds)
+                ->lockForUpdate()
+                ->pluck('id')
+                ->map(static fn ($id): int => (int) $id)
+                ->flip();
+
+            $existingUnitShiftIds = DB::table('nhl_unit_shifts')
+                ->where('nhl_game_id', $this->gameId)
+                ->whereIn('id', $unitShiftIds)
+                ->lockForUpdate()
+                ->pluck('id')
+                ->map(static fn ($id): int => (int) $id)
+                ->flip();
+
+            $filteredRows = array_values(array_filter(
+                $rows,
+                static fn (array $row): bool => $existingEventIds->has((int) $row['event_id'])
+                    && $existingUnitShiftIds->has((int) $row['unit_shift_id'])
+            ));
+
+            $droppedRowCount = count($rows) - count($filteredRows);
+
+            if ($droppedRowCount > 0) {
+                Log::warning('Skipped stale NHL event/unit-shift links during connect-events import.', [
+                    'game_id' => $this->gameId,
+                    'dropped_row_count' => $droppedRowCount,
+                    'requested_row_count' => count($rows),
+                ]);
+            }
+
+            foreach (array_chunk($filteredRows, 1000) as $chunk) {
+                DB::table('event_unit_shifts')->insert($chunk);
+            }
+        }, 3);
     }
 
     /**

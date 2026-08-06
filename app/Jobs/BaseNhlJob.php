@@ -13,6 +13,7 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -55,6 +56,21 @@ abstract class BaseNhlJob implements ShouldQueue
      * Execute work for this stage and return processed item count.
      */
     abstract protected function perform(int $gameId): int;
+
+    /**
+     * Prevent same-game import stages from mutating the game graph concurrently.
+     *
+     * @return array<int,object>
+     */
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping("nhl-game-import:{$this->gameId}"))
+                ->shared()
+                ->releaseAfter(30)
+                ->expireAfter($this->timeout + 120),
+        ];
+    }
 
     /**
      * Template handle: verify claimed work, perform it, then report.

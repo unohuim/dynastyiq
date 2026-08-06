@@ -377,3 +377,60 @@ starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
 Projected goalie xGA/G is the selected goalie's projected season xGA divided by
 projected games. It is not current-season GAA, historical on-ice xGA, or a
 single-game observed value.
+
+### Market Probabilities
+
+The `market_probabilities[]` block contains model-owned betting market
+probabilities. Each row is one market selection. The first supported market is
+full-game moneyline.
+
+GNER8 should read moneyline probabilities from:
+
+```text
+market_probabilities[]
+  where market_key = moneyline
+  and period_key = full_game
+  and selection_key in [away, home]
+```
+
+Moneyline row shape:
+
+| Field | Meaning |
+| --- | --- |
+| `market_key` | `moneyline`. |
+| `period_key` | `full_game`. |
+| `selection_key` | `away` or `home`. |
+| `team_abbrev` | Team represented by the selection. |
+| `probability` | DynastyIQ fair win probability from `0` to `1`. |
+| `fair_odds_american` | American fair odds derived from probability. |
+| `fair_odds_decimal` | Decimal fair odds derived from probability. |
+| `confidence_score` | Prediction confidence from `1` to `100`. |
+| `model.method` | Probability method, currently `poisson_projected_score_moneyline`. |
+| `model.source` | Source input path, currently `prediction.predicted_score`. |
+| `model.includes_overtime` | Whether the probability resolves tied regulation states into a final moneyline winner. |
+
+Example:
+
+```json
+{
+  "market_probabilities": [
+    {
+      "market_key": "moneyline",
+      "period_key": "full_game",
+      "selection_key": "away",
+      "team_abbrev": "FLA",
+      "probability": 0.4218,
+      "fair_odds_american": 137,
+      "fair_odds_decimal": 2.371,
+      "confidence_score": 62,
+      "model": {
+        "method": "poisson_projected_score_moneyline",
+        "source": "prediction.predicted_score",
+        "includes_overtime": true,
+        "tie_resolution": "projected_goal_share",
+        "max_score": 15
+      }
+    }
+  ]
+}
+```

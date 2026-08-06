@@ -33,6 +33,7 @@ rules:
   - Sentry failure context must include game id, run id, import stage, failure category, retryability, environment, and release when available.
   - Import status values must remain aligned with docs/ENUMS.md.
   - Jobs must only perform work that has already been atomically claimed as running.
+  - Game-stage jobs must use a shared per-game overlap lock so different stages or runs cannot mutate the same game import graph concurrently.
   - Scheduled run-aware processing must scope discovery-owned stage rows by nhl_import_progress.run_id when a run id is provided.
   - nhl:process is a lightweight supervisor that claims or resumes a discovery run and fills configured active game slots; it must not batch-dispatch fixed date counts.
   - Run-aware scheduled processing must be game-first: each active game advances through one stage at a time, and active game concurrency is capped by config/apiImportNhl.php active_game_import_slots.

@@ -15,6 +15,7 @@ class NhlGamePredictionPayload
 {
     private const GOALIE_GSAX_WEIGHT = 0.70;
     private const GOALIE_MATCHUP_WEIGHT = 0.30;
+    private const MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS = 15;
 
     public function __construct(
         private readonly NhlProjectedTeamMatchupSimulator $simulator
@@ -86,6 +87,8 @@ class NhlGamePredictionPayload
         $awayGoalie = $this->withMatchupGoalieValues($awayGoalie, $awayGoalieAdjustment);
         $homeGoalie = $this->withMatchupGoalieValues($homeGoalie, $homeGoalieAdjustment);
 
+        $prediction = $this->predictionPayload($awayTeam, $homeTeam, $awayGoals, $homeGoals, $awayGoalie, $homeGoalie);
+
         return [
             'game' => $this->gamePayload($game),
             'inputs' => [
@@ -97,7 +100,8 @@ class NhlGamePredictionPayload
                 'away_goalie_id' => $awayGoalie['nhl_player_id'],
                 'home_goalie_id' => $homeGoalie['nhl_player_id'],
             ],
-            'prediction' => $this->predictionPayload($awayTeam, $homeTeam, $awayGoals, $homeGoals, $awayGoalie, $homeGoalie),
+            'prediction' => $prediction,
+            'market_probabilities' => $this->marketProbabilities($awayTeam, $homeTeam, $awayGoals, $homeGoals, $prediction),
             'goalies' => [
                 'away' => $awayGoalie,
                 'home' => $homeGoalie,
@@ -433,6 +437,119 @@ class NhlGamePredictionPayload
             $absoluteScore < 0.50 => 'strong',
             default => 'extreme',
         };
+    }
+
+    /**
+     * @param array<string, mixed> $prediction
+     * @return array<int, array<string, mixed>>
+     */
+    private function marketProbabilities(
+        string $awayTeam,
+        string $homeTeam,
+        float $awayGoals,
+        float $homeGoals,
+        array $prediction
+    ): array {
+        $probabilities = $this->moneylineProbabilities($awayGoals, $homeGoals);
+
+        return [
+            $this->moneylineMarketProbability('away', $awayTeam, $probabilities['away'], (int) $prediction['confidence_score']),
+            $this->moneylineMarketProbability('home', $homeTeam, $probabilities['home'], (int) $prediction['confidence_score']),
+        ];
+    }
+
+    /**
+     * @return array{away:float,home:float}
+     */
+    private function moneylineProbabilities(float $awayGoals, float $homeGoals): array
+    {
+        $awayLambda = max(0.01, $awayGoals);
+        $homeLambda = max(0.01, $homeGoals);
+        $awayWinProbability = 0.0;
+        $homeWinProbability = 0.0;
+        $tieProbability = 0.0;
+        $coveredProbability = 0.0;
+
+        for ($awayScore = 0; $awayScore <= self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS; $awayScore++) {
+            $awayScoreProbability = $this->poissonProbability($awayScore, $awayLambda);
+
+            for ($homeScore = 0; $homeScore <= self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS; $homeScore++) {
+                $scoreProbability = $awayScoreProbability * $this->poissonProbability($homeScore, $homeLambda);
+                $coveredProbability += $scoreProbability;
+
+                if ($awayScore > $homeScore) {
+                    $awayWinProbability += $scoreProbability;
+                } elseif ($homeScore > $awayScore) {
+                    $homeWinProbability += $scoreProbability;
+                } else {
+                    $tieProbability += $scoreProbability;
+                }
+            }
+        }
+
+        $awayStrength = $awayLambda / max(0.01, $awayLambda + $homeLambda);
+        $homeStrength = $homeLambda / max(0.01, $awayLambda + $homeLambda);
+        $awayWinProbability += $tieProbability * $awayStrength;
+        $homeWinProbability += $tieProbability * $homeStrength;
+        $awayWinProbability = $awayWinProbability / max(0.01, $coveredProbability);
+        $homeWinProbability = $homeWinProbability / max(0.01, $coveredProbability);
+        $total = max(0.01, $awayWinProbability + $homeWinProbability);
+
+        return [
+            'away' => round($awayWinProbability / $total, 6),
+            'home' => round($homeWinProbability / $total, 6),
+        ];
+    }
+
+    private function poissonProbability(int $goals, float $lambda): float
+    {
+        return exp(-1 * $lambda) * ($lambda ** $goals) / $this->factorial($goals);
+    }
+
+    private function factorial(int $value): int
+    {
+        $factorial = 1;
+
+        for ($i = 2; $i <= $value; $i++) {
+            $factorial *= $i;
+        }
+
+        return $factorial;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function moneylineMarketProbability(string $selectionKey, string $teamAbbrev, float $probability, int $confidenceScore): array
+    {
+        return [
+            'market_key' => 'moneyline',
+            'period_key' => 'full_game',
+            'selection_key' => $selectionKey,
+            'team_abbrev' => $teamAbbrev,
+            'probability' => round($probability, 6),
+            'fair_odds_american' => $this->americanOdds($probability),
+            'fair_odds_decimal' => round(1 / max(0.000001, $probability), 3),
+            'confidence_score' => $confidenceScore,
+            'model' => [
+                'method' => 'poisson_projected_score_moneyline',
+                'source' => 'prediction.predicted_score',
+                'includes_overtime' => true,
+                'tie_resolution' => 'projected_goal_share',
+                'max_score' => self::MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS,
+            ],
+        ];
+    }
+
+    private function americanOdds(float $probability): int
+    {
+        $probability = max(0.000001, min(0.999999, $probability));
+
+        if ($probability >= 0.5) {
+            return (int) round(-100 * $probability / (1 - $probability));
+        }
+
+        return (int) round(100 * (1 - $probability) / $probability);
     }
 
     /**
