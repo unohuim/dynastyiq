@@ -49,8 +49,12 @@ rules:
   - Exact same game import date ranges must reuse one visible run row instead of creating duplicate single-date or range rows.
   - Shots-only fact collection launched from a run card must record batch metadata and candidate, processable, unprocessable, and processed game counts on the selected run, mark that run as processing/completed for the UI lifecycle, and must not create a separate visible game import run row for the same date range.
   - Faceoffs-only fact collection launched from a run card must dispatch one faceoff fact job per discovered game, record batch metadata on the selected run, mark that run as processing/completed for the UI lifecycle, and must not run provider fetches or the full NHL import pipeline.
+  - Refs-and-staff collection launched from a run card must dispatch one right-rail context job per discovered game, record batch metadata on the selected run, mark that run as processing/completed for the UI lifecycle, and must not run the full NHL import pipeline.
   - Completed shots-only run summaries must use shot-fact coverage wording instead of generic game-import active/skipped/failed row counts.
   - Completed faceoffs-only run summaries must use faceoff-fact coverage wording instead of generic game-import active/skipped/failed row counts.
+  - Completed refs-and-staff run summaries must use right-rail context coverage wording instead of generic game-import active/skipped/failed row counts.
+  - Full Process runs must remain active after core game stages close while queued post-process enrichment upserts shot-attempt facts, faceoff facts, and right-rail refs/staff assignments for every discovered game in the run.
+  - Full Process run summaries must show post-process enrichment coverage while the enrichment batch is running.
   - Duplicate play-by-play repair must run through queued jobs, first scanning into a visible ready state and then repairing duplicate rows only after the operator presses the ready card action.
   - Rebuilding games affected by duplicate play-by-play repair must be a separate visible repair run and operator action from duplicate-row removal.
   - Duplicate play-by-play repair run rows must not be collapsed into or block normal date-range discovery and process runs.
@@ -86,6 +90,8 @@ public_interface:
   - admin.nhl-game-imports.schedule-refresh
   - admin.nhl-game-imports.process
   - admin.nhl-game-imports.process-shots
+  - admin.nhl-game-imports.process-faceoffs
+  - admin.nhl-game-imports.process-refs-staff
   - admin.nhl-game-imports.season-sync
   - admin.nhl-game-imports.empty-games
   - NhlGameImportController

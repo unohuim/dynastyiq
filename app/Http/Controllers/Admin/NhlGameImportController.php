@@ -13,6 +13,7 @@ use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\NhlOrchestratorJob;
 use App\Jobs\QueueDuplicatePbpAffectedRebuildsJob;
 use App\Jobs\RebuildNhlGameImportJob;
+use App\Jobs\RefreshNhlGameContextJob;
 use App\Jobs\RefreshNhlScheduleDateJob;
 use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
@@ -657,6 +658,78 @@ class NhlGameImportController extends Controller
     }
 
     /**
+     * Queue NHL right-rail refs and staff context collection for games in a run range.
+     */
+    public function processRefsStaff(Request $request): JsonResponse
+    {
+        $input = $request->validate([
+            'run_id' => ['required', 'integer'],
+        ]);
+        $sourceRun = $this->rerunSourceRunFromInput($input);
+        $range = $this->rerunRangeFromRun($sourceRun);
+        $gameIds = array_values(array_unique($this->gameIdsForRunRange($sourceRun)));
+
+        if ($gameIds === []) {
+            throw ValidationException::withMessages([
+                'run_id' => 'This game import run has no discovered NHL games for refs and staff collection.',
+            ]);
+        }
+
+        $payload = [
+            'start' => $range['start']->toDateString(),
+            'end' => $range['end']->toDateString(),
+            'process_scope' => 'refs_staff',
+            'refs_staff_game_count' => count($gameIds),
+            'refs_staff_game_ids' => $gameIds,
+            'refs_staff_requested_at' => now()->toIso8601String(),
+            'refs_staff_requested_by' => $request->user()?->id,
+            'refs_staff_source_run_id' => $sourceRun->id,
+        ];
+
+        $refsStaffRun = NhlGameImportRun::query()->create([
+            'action' => NhlGameImportRun::ACTION_PROCESS,
+            'mode' => $range['mode'],
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'start_date' => $range['start']->toDateString(),
+            'end_date' => $range['end']->toDateString(),
+            'date_count' => count($this->dateStrings($range['start'], $range['end'])),
+            'queued_jobs' => count($gameIds),
+            'payload' => $payload,
+            'created_by' => $request->user()?->id,
+        ]);
+        $runId = (int) $refsStaffRun->id;
+        $jobs = array_map(
+            fn (int $gameId): RefreshNhlGameContextJob => new RefreshNhlGameContextJob($gameId, $runId),
+            $gameIds,
+        );
+
+        $batch = Bus::batch($jobs)
+            ->then(function (Batch $batch) use ($runId): void {
+                self::recordRefsStaffBatchCompleted($runId, $batch->id);
+            })
+            ->catch(function (Batch $batch, Throwable $throwable) use ($runId): void {
+                self::recordRefsStaffBatchFailure($runId, $batch->id, $throwable);
+            })
+            ->name('NHL:RefsStaff:' . $runId)
+            ->dispatch();
+
+        $payload = $refsStaffRun->payload ?? [];
+        $payload['refs_staff_batch_id'] = $batch->id;
+        $payload['processing_started_at'] = now()->toIso8601String();
+        $payload['processing_requested_by'] = $request->user()?->id;
+
+        $refsStaffRun->update([
+            'payload' => $payload,
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('refs-staff-queued', $refsStaffRun->id));
+
+        return response()->json([
+            'message' => 'Refs and staff queued.',
+            'run' => $this->serializeRun($refsStaffRun->refresh()),
+        ], 202);
+    }
+
+    /**
      * Queue only failed game imports and actionable validation failures from a previous run range.
      */
     public function rerunFailedOnly(
@@ -1108,6 +1181,10 @@ class NhlGameImportController extends Controller
             return $this->faceoffFactProgressForRun($run);
         }
 
+        if ($this->isRefsStaffRun($run)) {
+            return $this->refsStaffProgressForRun($run);
+        }
+
         $rows = $this->progressQueryForRun($run)
             ->selectRaw('status, COUNT(*) as aggregate')
             ->groupBy('status')
@@ -1126,6 +1203,17 @@ class NhlGameImportController extends Controller
             ->whereNotNull('last_error')
             ->latest('updated_at')
             ->first(['last_error', 'sentry_event_id', 'failure_category', 'retryable']);
+        $payload = $run->payload ?? [];
+        $postProcessStarted = (bool) ($payload['post_process_enrichment_started_at'] ?? false);
+        $postProcessCompleted = (bool) ($payload['post_process_enrichment_completed_at'] ?? false);
+        $postProcessFailed = (bool) ($payload['post_process_enrichment_failed_at'] ?? false);
+
+        if ($postProcessStarted && ! $postProcessCompleted) {
+            $status = $postProcessFailed || $run->status === NhlGameImportRun::STATUS_FAILED
+                ? NhlGameImportRun::STATUS_FAILED
+                : NhlGameImportRun::STATUS_RUNNING;
+            $percentage = $postProcessFailed ? 100 : max($percentage, 95);
+        }
 
         return [
             'status' => $status,
@@ -1473,6 +1561,11 @@ class NhlGameImportController extends Controller
     private function isFaceoffFactRun(NhlGameImportRun $run): bool
     {
         return (($run->payload ?? [])['process_scope'] ?? null) === 'faceoffs';
+    }
+
+    private function isRefsStaffRun(NhlGameImportRun $run): bool
+    {
+        return (($run->payload ?? [])['process_scope'] ?? null) === 'refs_staff';
     }
 
     private function isDuplicatePbpRepairRun(NhlGameImportRun $run): bool
@@ -1935,6 +2028,37 @@ class NhlGameImportController extends Controller
         ];
     }
 
+    private function refsStaffProgressForRun(NhlGameImportRun $run): array
+    {
+        $payload = $run->payload ?? [];
+        $gameIds = array_values(array_unique(array_map('intval', $payload['refs_staff_game_ids'] ?? [])));
+        $gameCount = (int) ($payload['refs_staff_game_count'] ?? $run->queued_jobs ?? count($gameIds));
+        $processedGameCount = (int) DB::table('nhl_game_source_statuses')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->where('source', NhlGameSourceStatus::SOURCE_RIGHT_RAIL)
+            ->distinct()
+            ->count('nhl_game_id');
+        $failedCount = count($payload['refs_staff_failed_game_ids'] ?? []);
+        $running = $run->status === NhlGameImportRun::STATUS_RUNNING ? max(0, $gameCount - $processedGameCount - $failedCount) : 0;
+        $status = $run->status === NhlGameImportRun::STATUS_COMPLETED
+            ? NhlGameImportRun::STATUS_COMPLETED
+            : ($failedCount > 0 || $run->status === NhlGameImportRun::STATUS_FAILED
+                ? NhlGameImportRun::STATUS_FAILED
+                : $run->status);
+
+        return [
+            'status' => $status,
+            'total_stage_rows' => $gameCount,
+            'scheduled_stage_rows' => 0,
+            'running_stage_rows' => $running,
+            'completed_stage_rows' => $processedGameCount,
+            'skipped_stage_rows' => max(0, $gameCount - $processedGameCount - $failedCount),
+            'failed_stage_rows' => $failedCount,
+            'percentage' => $gameCount > 0 ? (int) floor(($processedGameCount / $gameCount) * 100) : 0,
+            'last_error' => $run->last_error,
+        ];
+    }
+
     private static function recordFaceoffFactBatchCompleted(int $runId, string $batchId): void
     {
         $run = NhlGameImportRun::query()->find($runId);
@@ -1987,6 +2111,84 @@ class NhlGameImportController extends Controller
             'error' => $throwable->getMessage(),
         ]);
         broadcast(new NhlGameImportStatusUpdated('faceoff-facts-failed', $runId));
+    }
+
+    private static function recordRefsStaffBatchCompleted(int $runId, string $batchId): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $gameIds = array_map('intval', $payload['refs_staff_game_ids'] ?? []);
+        $payload['refs_staff_batch_id'] = $batchId;
+        $payload['refs_staff_completed_at'] = now()->toIso8601String();
+        $payload['refs_staff_processed_game_count'] = (int) DB::table('nhl_game_source_statuses')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->where('source', NhlGameSourceStatus::SOURCE_RIGHT_RAIL)
+            ->distinct()
+            ->count('nhl_game_id');
+        $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_COMPLETED,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        broadcast(new NhlGameImportStatusUpdated('refs-staff-completed', $runId));
+    }
+
+    private static function recordRefsStaffBatchFailure(int $runId, string $batchId, Throwable $throwable): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['refs_staff_batch_id'] = $batchId;
+        $payload['refs_staff_failed_at'] = now()->toIso8601String();
+        $payload['refs_staff_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_FAILED,
+            'payload' => $payload,
+            'last_error' => $payload['refs_staff_last_error'],
+            'updated_at' => now(),
+        ])->save();
+
+        Log::error('NHL refs and staff batch failed.', [
+            'run_id' => $runId,
+            'batch_id' => $batchId,
+            'error' => $throwable->getMessage(),
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('refs-staff-failed', $runId));
+    }
+
+    /**
+     * @param array<int,int> $gameIds
+     */
+    private static function refsStaffAssignmentGameCount(array $gameIds): int
+    {
+        $officialGameIds = DB::table('nhl_game_officials')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->pluck('nhl_game_id')
+            ->all();
+        $staffGameIds = DB::table('nhl_game_team_staff')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->pluck('nhl_game_id')
+            ->all();
+
+        return count(array_unique([
+            ...array_map('intval', $officialGameIds),
+            ...array_map('intval', $staffGameIds),
+        ]));
     }
 
     /**

@@ -4,15 +4,23 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Jobs\NhlOrchestratorJob;
-use App\Jobs\SeasonSumJob;
 use App\Events\NhlGameImportStatusUpdated;
+use App\Jobs\BuildNhlFaceoffFactsJob;
+use App\Jobs\BuildNhlShotAttemptFactsJob;
+use App\Jobs\NhlOrchestratorJob;
+use App\Jobs\RefreshNhlGameContextJob;
+use App\Jobs\SeasonSumJob;
 use App\Models\NhlGameImportRun;
+use App\Models\NhlGameSourceStatus;
 use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
 use App\Support\NhlImportStages;
+use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class NhlImportOrchestrator
 {
@@ -28,8 +36,7 @@ class NhlImportOrchestrator
         private readonly NhlImportProgressRepo $repo,
         private readonly NhlGameSourcePreflight $sourcePreflight,
         private readonly NhlValidationTroubleshootingExporter $troubleshootingExporter
-    )
-    {
+    ) {
     }
 
     /** Daily entry point: scan tracker and dispatch eligible jobs. */
@@ -402,6 +409,17 @@ class NhlImportOrchestrator
         }
 
         $payload = $run->payload ?? [];
+
+        if ($this->shouldQueueFullPostProcess($run, $payload) && ! $this->hasFullPostProcessCompleted($payload)) {
+            if ($this->hasFullPostProcessStarted($payload)) {
+                return;
+            }
+
+            $this->queueFullPostProcess($run);
+
+            return;
+        }
+
         $payload['completed_at'] = now()->toIso8601String();
 
         $run->forceFill([
@@ -411,5 +429,224 @@ class NhlImportOrchestrator
         ])->save();
 
         broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function shouldQueueFullPostProcess(NhlGameImportRun $run, array $payload): bool
+    {
+        if (($payload['process_scope'] ?? null) !== null) {
+            return false;
+        }
+
+        if ($run->action === NhlGameImportRun::ACTION_PROCESS) {
+            return true;
+        }
+
+        return $run->action === NhlGameImportRun::ACTION_DISCOVER
+            && (bool) ($payload['processing_started_at'] ?? false);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function hasFullPostProcessStarted(array $payload): bool
+    {
+        return (bool) ($payload['post_process_enrichment_started_at'] ?? false);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     */
+    private function hasFullPostProcessCompleted(array $payload): bool
+    {
+        return (bool) ($payload['post_process_enrichment_completed_at'] ?? false);
+    }
+
+    private function queueFullPostProcess(NhlGameImportRun $run): void
+    {
+        $gameIds = $this->gameIdsForRun((int) $run->id);
+        $payload = $run->payload ?? [];
+
+        if ($gameIds === []) {
+            $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
+            $payload['completed_at'] = now()->toIso8601String();
+
+            $run->forceFill([
+                'status' => NhlGameImportRun::STATUS_COMPLETED,
+                'payload' => $payload,
+                'updated_at' => now(),
+            ])->save();
+
+            broadcast(new NhlGameImportStatusUpdated('processing-completed', (int) $run->id));
+
+            return;
+        }
+
+        $runId = (int) $run->id;
+        $jobs = [];
+
+        foreach ($gameIds as $gameId) {
+            $jobs[] = new BuildNhlShotAttemptFactsJob($gameId, $runId);
+            $jobs[] = new BuildNhlFaceoffFactsJob($gameId, $runId);
+            $jobs[] = new RefreshNhlGameContextJob($gameId, $runId);
+        }
+
+        $payload['post_process_enrichment_started_at'] = now()->toIso8601String();
+        $payload['post_process_enrichment_game_count'] = count($gameIds);
+        $payload['post_process_enrichment_job_count'] = count($jobs);
+        $payload['post_process_enrichment_scopes'] = ['shots', 'faceoffs', 'refs_staff'];
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_RUNNING,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        $batch = Bus::batch($jobs)
+            ->then(function (Batch $batch) use ($runId): void {
+                self::recordFullPostProcessCompleted($runId, $batch->id);
+            })
+            ->catch(function (Batch $batch, Throwable $throwable) use ($runId): void {
+                self::recordFullPostProcessFailure($runId, $batch->id, $throwable);
+            })
+            ->name('NHL:FullPostProcess:' . $runId)
+            ->dispatch();
+
+        $run->refresh();
+        $payload = $run->payload ?? [];
+        $payload['post_process_enrichment_batch_id'] = $batch->id;
+
+        $run->forceFill([
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        broadcast(new NhlGameImportStatusUpdated('post-process-enrichment-queued', $runId));
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function gameIdsForRun(int $runId): array
+    {
+        return DB::table('nhl_import_progress')
+            ->where('run_id', $runId)
+            ->distinct()
+            ->orderBy('game_id')
+            ->pluck('game_id')
+            ->map(fn (mixed $gameId): int => (int) $gameId)
+            ->all();
+    }
+
+    private static function recordFullPostProcessCompleted(int $runId, string $batchId): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $gameIds = DB::table('nhl_import_progress')
+            ->where('run_id', $runId)
+            ->distinct()
+            ->pluck('game_id')
+            ->map(fn (mixed $gameId): int => (int) $gameId)
+            ->all();
+
+        $payload['post_process_enrichment_batch_id'] = $batchId;
+        $payload['post_process_enrichment_completed_at'] = now()->toIso8601String();
+        $payload['post_process_enrichment_processed_game_count'] = count($gameIds);
+        $payload['shot_fact_game_count'] = count($gameIds);
+        $payload['shot_fact_processed_game_count'] = self::processedGameCount('nhl_shot_attempts_facts', $gameIds);
+        $payload['faceoff_fact_game_count'] = count($gameIds);
+        $payload['faceoff_fact_processed_game_count'] = self::processedGameCount('nhl_faceoff_facts', $gameIds);
+        $payload['refs_staff_game_count'] = count($gameIds);
+        $payload['refs_staff_processed_game_count'] = self::processedRightRailGameCount($gameIds);
+        $payload['refs_staff_assignment_game_count'] = self::refsStaffAssignmentGameCount($gameIds);
+        $payload['completed_at'] = now()->toIso8601String();
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_COMPLETED,
+            'payload' => $payload,
+            'updated_at' => now(),
+        ])->save();
+
+        broadcast(new NhlGameImportStatusUpdated('processing-completed', $runId));
+    }
+
+    private static function recordFullPostProcessFailure(int $runId, string $batchId, Throwable $throwable): void
+    {
+        $run = NhlGameImportRun::query()->find($runId);
+
+        if (! $run) {
+            return;
+        }
+
+        $payload = $run->payload ?? [];
+        $payload['post_process_enrichment_batch_id'] = $batchId;
+        $payload['post_process_enrichment_failed_at'] = now()->toIso8601String();
+        $payload['post_process_enrichment_last_error'] = mb_substr($throwable->getMessage(), 0, 1000);
+
+        $run->forceFill([
+            'status' => NhlGameImportRun::STATUS_FAILED,
+            'payload' => $payload,
+            'last_error' => $payload['post_process_enrichment_last_error'],
+            'updated_at' => now(),
+        ])->save();
+
+        Log::error('NHL full post-process enrichment batch failed.', [
+            'run_id' => $runId,
+            'batch_id' => $batchId,
+            'error' => $throwable->getMessage(),
+        ]);
+        broadcast(new NhlGameImportStatusUpdated('post-process-enrichment-failed', $runId));
+    }
+
+    /**
+     * @param array<int,int> $gameIds
+     */
+    private static function processedGameCount(string $table, array $gameIds): int
+    {
+        return (int) DB::table($table)
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->count('nhl_game_id');
+    }
+
+    /**
+     * @param array<int,int> $gameIds
+     */
+    private static function processedRightRailGameCount(array $gameIds): int
+    {
+        return (int) DB::table('nhl_game_source_statuses')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->where('source', NhlGameSourceStatus::SOURCE_RIGHT_RAIL)
+            ->distinct()
+            ->count('nhl_game_id');
+    }
+
+    /**
+     * @param array<int,int> $gameIds
+     */
+    private static function refsStaffAssignmentGameCount(array $gameIds): int
+    {
+        $officialGameIds = DB::table('nhl_game_officials')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->pluck('nhl_game_id')
+            ->all();
+        $staffGameIds = DB::table('nhl_game_team_staff')
+            ->whereIn('nhl_game_id', $gameIds)
+            ->distinct()
+            ->pluck('nhl_game_id')
+            ->all();
+
+        return count(array_unique([
+            ...array_map('intval', $officialGameIds),
+            ...array_map('intval', $staffGameIds),
+        ]));
     }
 }

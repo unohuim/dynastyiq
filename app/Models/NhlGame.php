@@ -88,6 +88,21 @@ class NhlGame extends Model
         return $this->hasMany(NhlGameSummary::class, 'nhl_game_id', 'nhl_game_id');
     }
 
+    /**
+     * Get the officials assigned to this game.
+     */
+    public function officialAssignments(): HasMany
+    {
+        return $this->hasMany(NhlGameOfficial::class, 'nhl_game_id', 'nhl_game_id');
+    }
+
+    /**
+     * Get the team staff assigned to this game.
+     */
+    public function teamStaffAssignments(): HasMany
+    {
+        return $this->hasMany(NhlGameTeamStaff::class, 'nhl_game_id', 'nhl_game_id');
+    }
 
     public function getTeamIdByAbbrev(string $abbr): ?int
     {

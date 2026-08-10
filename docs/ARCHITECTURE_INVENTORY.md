@@ -270,7 +270,7 @@ Cross-list dragging, rich board interactions, or server-ranked lists where manua
 - `app/Jobs/VerifyHtmlPbpNhlJob.php`
 
 **Purpose:**
-Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions. Penalty-shot attempts are skipped for normal on-ice mismatch reporting because the HTML report exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters.
+Compare imported API play-by-play against the official NHL HTML play-by-play report, persist reviewable source mismatches, and enrich linked unit shifts with contextual player positions. Penalty-shot attempts are skipped for normal on-ice mismatch reporting because the HTML report exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters. Right-rail payload availability and HTML play-by-play report availability are stored as separate source status rows.
 
 **When to Use:**
 After API PBP rows are imported and linked to unit shifts, when source verification or shift-level position enrichment is needed.
@@ -1322,6 +1322,7 @@ WHERE target_season_id = '20262027';
 **Purpose:**
 Move NHL game imports through explicit progress stages while tracking status, dependencies, failures, and stale running jobs.
 Discovery runs may explicitly reprocess existing game/stage rows by reattaching matching progress rows to the selected run and resetting them to scheduled before normal slot-based processing resumes. Explicit reprocess runs true-sync game-scoped source and derived stage rows by clearing stage-owned rows before current provider data is read or recalculated.
+Full run-scoped processing remains active after canonical import stages close until per-game post-process enrichment has upserted shot-attempt facts, faceoff facts, and right-rail refs/staff context.
 
 **When to Use:**
 Scheduling or executing game-level NHL imports that must run in dependency order.
@@ -1626,6 +1627,39 @@ For boxscore stat validation after imports complete.
 **Example Usage:**
 ```php
 $result = app(NhlGameSourcePreflight::class)->check($gameId);
+```
+
+---
+
+### NHL Game Context Import
+
+**Name:** NHL Game Context Import
+**Type:** Game Context Enrichment
+**Location:**
+- `app/Console/Commands/RefreshNhlGameContextCommand.php`
+- `app/Jobs/RefreshNhlGameContextJob.php`
+- `app/Services/NhlRightRailService.php`
+- `app/Services/NhlGameContextImporter.php`
+- `docs/architecture/imports/NhlGameContextImport.yaml`
+
+**Purpose:**
+Persist NHL right-rail referees, linesmen, and head coaches as non-blocking game context assignments.
+
+**When to Use:**
+Capturing or backfilling NHL game officials and team head coaches.
+
+**When Not to Use:**
+Replacing PBP, boxscore, shiftchart, schedule, roster, or player identity imports.
+
+**Public Interface:**
+- `RefreshNhlGameContextCommand`
+- `RefreshNhlGameContextJob`
+- `NhlRightRailService::payload()`
+- `NhlGameContextImporter::import()`
+
+**Example Usage:**
+```php
+app(NhlGameContextImporter::class)->import($gameId);
 ```
 
 ---

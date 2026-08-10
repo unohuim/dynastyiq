@@ -407,6 +407,59 @@ Do not introduce new enum values without updating this document.
 - Empty or unavailable shifts source statuses remain visible as source gaps, but shift-derived on-ice stages may continue and use `html-toi` fallback coverage when official TV/TH reports are parseable.
 - Empty or unavailable right-rail or HTML PBP statuses create non-fatal validation review context and do not skip the core game import pipeline.
 - Empty or unavailable `html-toi` statuses mean no TV/TH fallback shift windows were available; shift-dependent validation may remain incomplete when shiftcharts are also unavailable.
+- Right-rail payload availability and HTML play-by-play report availability are distinct source rows. `right_rail_missing_context` belongs to `right-rail`; `missing_play_by_play_report` belongs to `html-pbp`.
+
+### NHL Game Official Role
+
+**Name:** NHL game official role
+**Storage location(s):** `nhl_game_officials.role`
+**Allowed values:**
+
+- `referee`
+- `linesman`
+
+**Semantic meaning:**
+
+- `referee`: Referee assigned to the game by the NHL right-rail payload.
+- `linesman`: Linesman assigned to the game by the NHL right-rail payload.
+
+### NHL Game Staff Role
+
+**Name:** NHL game staff role
+**Storage location(s):** `nhl_game_team_staff.role`
+**Allowed values:**
+
+- `head_coach`
+
+**Semantic meaning:**
+
+- `head_coach`: Team head coach listed in the NHL right-rail payload for that game.
+
+### NHL Game Team Staff Side
+
+**Name:** NHL game team staff side
+**Storage location(s):** `nhl_game_team_staff.team_side`
+**Allowed values:**
+
+- `away`
+- `home`
+
+**Semantic meaning:**
+
+- `away`: Staff assignment belongs to the away team for that game.
+- `home`: Staff assignment belongs to the home team for that game.
+
+### NHL Game Context Source
+
+**Name:** NHL game context source
+**Storage location(s):** `nhl_game_officials.source`, `nhl_game_team_staff.source`
+**Allowed values:**
+
+- `right-rail`
+
+**Semantic meaning:**
+
+- `right-rail`: Assignment was captured from the NHL `/v1/gamecenter/{gameId}/right-rail` response.
 
 ### NHL Game Import Run Action
 
@@ -2189,11 +2242,13 @@ Do not introduce new enum values without updating this document.
 **Allowed values currently emitted:**
 
 - `faceoffs`
+- `refs_staff`
 - `shots`
 
 **Semantic meaning:**
 
 - `faceoffs`: Process run was queued from Game Imports to upsert `nhl_faceoff_facts` from already imported play-by-play and event-to-unit links without running provider fetches or the full NHL import pipeline.
+- `refs_staff`: Process run was queued from Game Imports to refresh right-rail referees, linesmen, and head coaches for already discovered games without running the full NHL import pipeline.
 - `shots`: Process run was queued from Game Imports to upsert `nhl_shot_attempts_facts` from already imported play-by-play without running provider fetches or the full NHL import pipeline.
 
 **Notes:**

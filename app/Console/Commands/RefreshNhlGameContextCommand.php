@@ -1,0 +1,112 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Console\Commands;
+
+use App\Jobs\RefreshNhlGameContextJob;
+use App\Services\NhlGameContextImporter;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Refreshes NHL right-rail officials and staff context for existing games.
+ */
+class RefreshNhlGameContextCommand extends Command
+{
+    /**
+     * @var string
+     */
+    protected $signature = 'nhl:refresh-game-context
+        {--season= : NHL season id like 20252026}
+        {--game-id= : Single NHL game id}
+        {--date-from= : Inclusive game date lower bound, YYYY-MM-DD}
+        {--date-to= : Inclusive game date upper bound, YYYY-MM-DD}
+        {--queue : Dispatch one queue job per game instead of refreshing inline}';
+
+    /**
+     * @var string
+     */
+    protected $description = 'Refresh NHL game officials and head coaches from right-rail payloads.';
+
+    /**
+     * Execute the console command.
+     */
+    public function handle(NhlGameContextImporter $importer): int
+    {
+        $gameIds = $this->gameIds();
+
+        if ($gameIds === []) {
+            $this->error('No NHL games matched the provided options.');
+
+            return self::FAILURE;
+        }
+
+        if ((bool) $this->option('queue')) {
+            foreach ($gameIds as $gameId) {
+                RefreshNhlGameContextJob::dispatch($gameId);
+            }
+
+            $this->info('Dispatched ' . count($gameIds) . ' NHL game context refresh job(s).');
+
+            return self::SUCCESS;
+        }
+
+        $storedRows = 0;
+        $processedGames = 0;
+
+        foreach ($gameIds as $gameId) {
+            $storedRows += $importer->import($gameId);
+            $processedGames++;
+
+            if ($processedGames % 25 === 0 || $processedGames === count($gameIds)) {
+                $this->line("Processed {$processedGames} / " . count($gameIds) . ' games.');
+            }
+        }
+
+        $this->info("Refreshed right-rail context for {$processedGames} games; stored {$storedRows} assignment rows.");
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function gameIds(): array
+    {
+        $gameId = trim((string) ($this->option('game-id') ?? ''));
+
+        if ($gameId !== '') {
+            return [(int) $gameId];
+        }
+
+        $season = trim((string) ($this->option('season') ?? ''));
+        $dateFrom = trim((string) ($this->option('date-from') ?? ''));
+        $dateTo = trim((string) ($this->option('date-to') ?? ''));
+
+        if ($season === '' && $dateFrom === '' && $dateTo === '') {
+            $this->error('Provide --game-id, --season, or a --date-from/--date-to window.');
+
+            return [];
+        }
+
+        $query = DB::table('nhl_games')->orderBy('game_date')->orderBy('nhl_game_id');
+
+        if ($season !== '') {
+            $query->where('season_id', $season);
+        }
+
+        if ($dateFrom !== '') {
+            $query->whereDate('game_date', '>=', $dateFrom);
+        }
+
+        if ($dateTo !== '') {
+            $query->whereDate('game_date', '<=', $dateTo);
+        }
+
+        return $query
+            ->pluck('nhl_game_id')
+            ->map(static fn (mixed $gameId): int => (int) $gameId)
+            ->all();
+    }
+}

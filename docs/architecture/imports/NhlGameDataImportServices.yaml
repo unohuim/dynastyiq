@@ -26,6 +26,8 @@ location:
   - app/Services/NhlValidationTroubleshootingExporter.php
   - app/Services/MakeNhlGameShiftUnits.php
   - app/Services/ConnectEventsToUnitShifts.php
+  - app/Services/NhlRightRailService.php
+  - app/Services/NhlGameContextImporter.php
   - app/Services/NhlHtmlPbpReportLocator.php
   - app/Services/NhlHtmlPbpReportParser.php
   - app/Services/VerifyNhlHtmlPlayByPlay.php
@@ -90,6 +92,7 @@ rules:
   - Goalie decision summaries must preserve regulation, overtime, and shootout win/loss splits at the game-summary level before season aggregation.
   - Goalie decision backfills may refresh game-summary decisions from official boxscore goalie rows without rerunning play-by-play, shift, or unit stages, and may dispatch one queue job per game for large windows.
   - Special-teams split backfills may rebuild PBP-derived game summaries from already imported play-by-play rows without refetching provider data or rerunning shift and unit stages, and may dispatch one queue job per game for large windows.
+  - Right-rail game context imports may enrich already imported games with officials and head coaches without rerunning PBP, shifts, summaries, or units.
   - PBP summary imports, boxscore goalie summary imports, and unit player linking may skip a missing player row or unit-player link when the NHL player landing endpoint returns 404 while trying to create that player record; non-404 landing failures remain fatal.
   - Goalie season games played must count only game-summary rows with time on ice greater than zero so dressed-backup summary rows do not inflate goalie GP.
   - Shift imports may drop skater rows that create impossible team skater counts under play-by-play situation codes only when the same row also exactly reconciles that player's official boxscore shift count and time on ice.
@@ -109,6 +112,7 @@ rules:
   - HTML play-by-play verification and source-only review must not report on-ice player mismatches for penalty-shot attempts because HTML correctly exposes shooter-goalie participants while shiftcharts expose normal shift-window skaters.
   - HTML play-by-play verification must treat shootout `MISS` failed-attempt rows as equivalent to API `failed-shot-attempt` rows.
   - Missing right-rail or HTML play-by-play reports must create non-fatal review context rather than failing the core game import.
+  - Right-rail availability and HTML play-by-play report availability must be stored as separate source status rows; right-rail payloads without context use `right_rail_missing_context`, while missing `playByPlay` report URLs use `html-pbp` with `missing_play_by_play_report`.
   - HTML/API play-by-play disagreements must be persisted for admin review without blocking downstream summaries.
   - HTML TV/TH time-on-ice reports may be captured for troubleshooting source disagreements, compared against official boxscore, raw shiftcharts, and derived summaries, and used as fallback shift windows when shiftcharts are missing, but must not replace API play-by-play as the event source.
   - Unit-shift player positions are naturally identified by unit_shift_id plus player_id.
@@ -144,6 +148,8 @@ public_interface:
   - NhlValidationTroubleshootingExporter
   - MakeNhlGameShiftUnits
   - ConnectEventsToUnitShifts
+  - NhlRightRailService
+  - NhlGameContextImporter
   - NhlHtmlPbpReportLocator
   - NhlHtmlPbpReportParser
   - VerifyNhlHtmlPlayByPlay

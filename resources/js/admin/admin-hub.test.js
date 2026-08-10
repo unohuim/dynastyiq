@@ -914,6 +914,30 @@ describe('admin-hub import listeners', () => {
         })).toBe('1 source missing');
     });
 
+    it('formats full process post-enrichment progress', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        const run = {
+            id: 42,
+            action: 'process',
+            status: 'running',
+            payload: {
+                post_process_enrichment_started_at: '2026-08-10T12:00:00Z',
+                post_process_enrichment_game_count: 14,
+                shot_fact_processed_game_count: 12,
+                faceoff_fact_processed_game_count: 11,
+                refs_staff_processed_game_count: 10,
+            },
+        };
+
+        expect(instance.gameImportSummaryText(run)).toBe(
+            'Post-processing 14 games · shots 12 · faceoffs 11 · refs/staff 10'
+        );
+        expect(instance.gameImportProgressText(run)).toBe(
+            'Post-processing 14 games · shots 12 · faceoffs 11 · refs/staff 10'
+        );
+    });
+
     it('selects NHL game import season sync options from the dropdown state', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();
@@ -1399,6 +1423,46 @@ describe('admin-hub import listeners', () => {
             headers: { Accept: 'application/json' },
         });
         expect(instance.gameImports.processingRuns['23:faceoffs']).toBeUndefined();
+    });
+
+    it('submits refs and staff processing using only the selected run id', async () => {
+        const adminHub = await loadAdminHub();
+        document.body.innerHTML = '<meta name="csrf-token" content="csrf-token-value">';
+        global.fetch = vi.fn()
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ message: 'Refs and staff queued.' }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ runs: [{ id: 29, action: 'process' }] }),
+            });
+
+        const instance = adminHub({
+            gameImportProcessRefsStaffUrl: '/admin/nhl-game-imports/process-refs-staff',
+            gameImportStatusUrl: '/admin/nhl-game-imports/status',
+        });
+        const run = {
+            id: 23,
+            start_date: '2026-01-17',
+            end_date: '2026-01-15',
+        };
+
+        await instance.processRefsStaffGameImports(run);
+
+        expect(fetch).toHaveBeenNthCalledWith(1, '/admin/nhl-game-imports/process-refs-staff', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': 'csrf-token-value',
+            },
+            body: JSON.stringify({ run_id: 23 }),
+        });
+        expect(fetch).toHaveBeenNthCalledWith(2, '/admin/nhl-game-imports/status', {
+            headers: { Accept: 'application/json' },
+        });
+        expect(instance.gameImports.processingRuns['23:refs_staff']).toBeUndefined();
     });
 
     it('submits game import rerun using the selected run range', async () => {

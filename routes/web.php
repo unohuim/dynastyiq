@@ -363,6 +363,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-game-imports.process-shots');
                 Route::post('/nhl-game-imports/process-faceoffs', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processFaceoffs'])
                     ->name('admin.nhl-game-imports.process-faceoffs');
+                Route::post('/nhl-game-imports/process-refs-staff', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'processRefsStaff'])
+                    ->name('admin.nhl-game-imports.process-refs-staff');
                 Route::post('/nhl-game-imports/process', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'process'])
                     ->name('admin.nhl-game-imports.process');
                 Route::post('/nhl-game-imports/season-sync', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'seasonSync'])

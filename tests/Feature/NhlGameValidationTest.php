@@ -4796,6 +4796,12 @@ it('records unavailable HTML PBP as incomplete non-fatal review context', functi
         'nhl_game_id' => 2026020001,
         'source' => NhlGameSourceStatus::SOURCE_RIGHT_RAIL,
         'status' => NhlGameSourceStatus::STATUS_EMPTY,
+        'reason' => 'right_rail_missing_context',
+    ]);
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026020001,
+        'source' => NhlGameSourceStatus::SOURCE_HTML_PBP,
+        'status' => NhlGameSourceStatus::STATUS_EMPTY,
         'reason' => 'missing_play_by_play_report',
     ]);
 });

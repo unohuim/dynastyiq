@@ -32,6 +32,13 @@ class VerifyNhlHtmlPlayByPlay
         $sourceUrl = $reportUrls['playByPlay'] ?? null;
 
         if ($sourceUrl === null) {
+            $this->storeHtmlSourceStatus(
+                $gameId,
+                NhlGameSourceStatus::STATUS_EMPTY,
+                '',
+                'missing_play_by_play_report',
+                ['report_urls' => $reportUrls]
+            );
             $this->clearValidation($gameId);
 
             return 0;

@@ -59,6 +59,7 @@ return [
             'standings_now'  => '/standings/now',
             'pbp'            => '/gamecenter/{gameId}/play-by-play',
             'boxscore'       => '/gamecenter/{gameId}/boxscore',
+            'right_rail'     => '/gamecenter/{gameId}/right-rail',
             'dailyscores'    => '/score/{date}',
         ],
     ],

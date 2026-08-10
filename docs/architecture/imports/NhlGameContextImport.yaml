@@ -1,0 +1,41 @@
+name: NHL Game Context Import
+type: Game Context Enrichment
+location:
+  - app/Console/Commands/RefreshNhlGameContextCommand.php
+  - app/Http/Controllers/Admin/NhlGameImportController.php
+  - app/Jobs/RefreshNhlGameContextJob.php
+  - app/Services/NhlRightRailService.php
+  - app/Services/NhlGameContextImporter.php
+  - app/Services/NhlHtmlPbpReportLocator.php
+  - app/Models/NhlOfficial.php
+  - app/Models/NhlStaff.php
+  - app/Models/NhlGameOfficial.php
+  - app/Models/NhlGameTeamStaff.php
+purpose: Persist NHL right-rail game context facts such as assigned officials and head coaches without blocking the core game import pipeline.
+when_to_use:
+  - Capturing referees, linesmen, or team head coaches for an NHL game.
+  - Backfilling official or staff assignments for already-imported NHL games.
+  - Launching refs-and-staff context collection from a Game Imports run card.
+  - Reusing right-rail payloads for HTML report URLs and game context enrichment.
+when_not_to_use:
+  - Deriving player stats, team stats, standings, roster identity, or schedule identity.
+  - Replacing PBP, boxscore, shiftchart, or HTML TOI import sources.
+  - Blocking the core game import pipeline because right-rail context is unavailable.
+rules:
+  - Right-rail game context is non-blocking enrichment and must not fail or skip the core PBP, boxscore, shift, summary, or unit pipeline.
+  - Official and staff identity rows are normalized by provider display name because the right-rail payload does not expose durable person ids for these records.
+  - Game assignment rows are game-scoped facts and may be true-synced per game and source before reinserting the latest right-rail assignments.
+  - Large game context backfills must dispatch one queue job per game rather than one season-sized job.
+  - Admin-triggered refs-and-staff backfills must be represented as Game Imports progress cards with scoped run payload metadata.
+  - Right-rail source status rows must preserve provider availability details for operator review.
+  - Head coach assignments must be stored as team-scoped game staff rows, not as player records.
+public_interface:
+  - RefreshNhlGameContextCommand
+  - NhlGameImportController::processRefsStaff()
+  - RefreshNhlGameContextJob
+  - NhlRightRailService::payload()
+  - NhlRightRailService::reportUrlsFromPayload()
+  - NhlGameContextImporter::import()
+  - NhlGameContextImporter::importFromPayload()
+example_usage: |
+  app(NhlGameContextImporter::class)->import($gameId);

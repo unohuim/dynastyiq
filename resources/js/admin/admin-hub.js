@@ -56,6 +56,7 @@ export default function adminHub(options = {}) {
         gameImportProcessUrl: options.gameImportProcessUrl ?? '/admin/nhl-game-imports/process',
         gameImportProcessShotsUrl: options.gameImportProcessShotsUrl ?? '/admin/nhl-game-imports/process-shots',
         gameImportProcessFaceoffsUrl: options.gameImportProcessFaceoffsUrl ?? '/admin/nhl-game-imports/process-faceoffs',
+        gameImportProcessRefsStaffUrl: options.gameImportProcessRefsStaffUrl ?? '/admin/nhl-game-imports/process-refs-staff',
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
         gameImportDuplicatePbpScanUrl: options.gameImportDuplicatePbpScanUrl ?? '/admin/nhl-game-imports/duplicate-pbp/scan',
         gameImportDuplicatePbpDedupeUrl: options.gameImportDuplicatePbpDedupeUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
@@ -1173,6 +1174,39 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async processRefsStaffGameImports(run) {
+            const runId = run?.id;
+            const processKey = this.gameImportProcessKey(run, 'refs_staff');
+
+            if (!runId || this.gameImports.processingRuns[processKey] === true) {
+                return;
+            }
+
+            this.gameImports.processing = true;
+            this.gameImports.processingRuns = {
+                ...this.gameImports.processingRuns,
+                [processKey]: true,
+            };
+            this.closeGameImportProcessMenu(run);
+            this.gameImports.error = '';
+
+            try {
+                await this.sendGameImportRequest(
+                    this.gameImportProcessRefsStaffUrl,
+                    { run_id: runId }
+                );
+
+                await this.loadGameImports({ background: true });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to queue refs and staff';
+            } finally {
+                this.gameImports.processing = false;
+                const next = { ...this.gameImports.processingRuns };
+                delete next[processKey];
+                this.gameImports.processingRuns = next;
+            }
+        },
+
         async submitGameImportSeasonSync() {
             const selected = this.gameImportSelectedSeason();
 
@@ -1508,6 +1542,16 @@ export default function adminHub(options = {}) {
             return run?.payload?.process_scope === 'faceoffs';
         },
 
+        isRefsStaffRun(run) {
+            return run?.payload?.process_scope === 'refs_staff';
+        },
+
+        isFullPostProcessRun(run) {
+            const payload = run?.payload ?? {};
+
+            return Boolean(payload.post_process_enrichment_started_at);
+        },
+
         isDuplicatePbpDedupeRun(run) {
             return run?.action === 'repair' && run?.payload?.repair === 'duplicate_pbp';
         },
@@ -1660,6 +1704,10 @@ export default function adminHub(options = {}) {
                 return this.duplicatePbpRepairProgressText(run);
             }
 
+            if (this.isFullPostProcessRun(run)) {
+                return this.gameImportFullPostProcessSummaryText(run);
+            }
+
             const progress = run.progress ?? {};
             const total = Number(progress.total_stage_rows) || 0;
             const completed = Number(progress.completed_stage_rows) || 0;
@@ -1786,6 +1834,14 @@ export default function adminHub(options = {}) {
                 return this.gameImportFaceoffFactSummaryText(run);
             }
 
+            if (this.isRefsStaffRun(run)) {
+                return this.gameImportRefsStaffSummaryText(run);
+            }
+
+            if (this.isFullPostProcessRun(run)) {
+                return this.gameImportFullPostProcessSummaryText(run);
+            }
+
             if (run.action === 'discover' && !run.processing_started) {
                 return this.discoveryFactsText(run);
             }
@@ -1812,6 +1868,14 @@ export default function adminHub(options = {}) {
 
             if (this.isFaceoffFactRun(run)) {
                 return this.gameImportFaceoffFactSummaryText(run);
+            }
+
+            if (this.isRefsStaffRun(run)) {
+                return this.gameImportRefsStaffSummaryText(run);
+            }
+
+            if (this.isFullPostProcessRun(run)) {
+                return this.gameImportFullPostProcessSummaryText(run);
             }
 
             const games = Array.isArray(run?.games) ? run.games : [];
@@ -1874,6 +1938,60 @@ export default function adminHub(options = {}) {
 
             if (failed > 0) {
                 parts.push(`${this.formatNumber(failed)} failed`);
+            }
+
+            return parts.join(' · ');
+        },
+
+        gameImportRefsStaffSummaryText(run) {
+            const payload = run?.payload ?? {};
+            const failed = Array.isArray(payload.refs_staff_failed_game_ids)
+                ? payload.refs_staff_failed_game_ids.length
+                : 0;
+            const queued = Number(payload.refs_staff_game_count) || Number(run?.queued_jobs) || 0;
+            const processed = Number(payload.refs_staff_processed_game_count)
+                || Number(run?.progress?.completed_stage_rows)
+                || (run?.status === 'completed' ? Math.max(0, queued - failed) : 0);
+            const assignmentGames = Number(payload.refs_staff_assignment_game_count) || 0;
+            const parts = [
+                `${this.formatNumber(processed)} / ${this.formatNumber(queued)} games checked`,
+            ];
+
+            if (assignmentGames > 0) {
+                parts.push(`${this.formatNumber(assignmentGames)} with assignments`);
+            }
+
+            if (failed > 0) {
+                parts.push(`${this.formatNumber(failed)} failed`);
+            }
+
+            return parts.join(' · ');
+        },
+
+        gameImportFullPostProcessSummaryText(run) {
+            const payload = run?.payload ?? {};
+            const failed = Array.isArray(payload.post_process_enrichment_failed_game_ids)
+                ? payload.post_process_enrichment_failed_game_ids.length
+                : 0;
+            const queued = Number(payload.post_process_enrichment_game_count)
+                || Number(payload.shot_fact_game_count)
+                || Number(payload.faceoff_fact_game_count)
+                || Number(payload.refs_staff_game_count)
+                || 0;
+            const shots = Number(payload.shot_fact_processed_game_count) || 0;
+            const faceoffs = Number(payload.faceoff_fact_processed_game_count) || 0;
+            const refsStaff = Number(payload.refs_staff_processed_game_count) || 0;
+            const parts = [
+                `Post-processing ${this.formatNumber(queued)} games`,
+                `shots ${this.formatNumber(shots)}`,
+                `faceoffs ${this.formatNumber(faceoffs)}`,
+                `refs/staff ${this.formatNumber(refsStaff)}`,
+            ];
+
+            if (failed > 0) {
+                parts.push(`${this.formatNumber(failed)} failed`);
+            } else if (run?.status === 'failed') {
+                parts.push('failed');
             }
 
             return parts.join(' · ');
@@ -2070,7 +2188,8 @@ export default function adminHub(options = {}) {
         gameImportProcessBusy(run) {
             return this.gameImports.processingRuns[this.gameImportProcessKey(run, 'full')] === true
                 || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'shots')] === true
-                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'faceoffs')] === true;
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'faceoffs')] === true
+                || this.gameImports.processingRuns[this.gameImportProcessKey(run, 'refs_staff')] === true;
         },
 
         isGameImportProcessMenuOpen(run) {

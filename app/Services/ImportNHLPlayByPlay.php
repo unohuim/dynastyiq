@@ -205,6 +205,15 @@ class ImportNHLPlayByPlay
                 ]
             );
 
+            try {
+                app(NhlGameContextImporter::class)->import((int) $gameId);
+            } catch (\Throwable $throwable) {
+                \Log::warning('NHL right-rail game context import failed without blocking PBP import.', [
+                    'game_id' => $gameId,
+                    'message' => $throwable->getMessage(),
+                ]);
+            }
+
             $playCount = 0;
             $penaltyShotSituationCodes = $this->penaltyShotSituationCodesByKey($response['plays']);
 

@@ -58,11 +58,14 @@ Migrations remain the **sole source of truth**.
 - nhl_expected_goals_model_buckets
 - nhl_expected_goals_models
 - nhl_game_import_runs
+- nhl_game_officials
 - nhl_goalie_chance_profile_buckets
 - nhl_game_source_statuses
 - nhl_game_summaries
+- nhl_game_team_staff
 - nhl_games
 - nhl_import_progress
+- nhl_officials
 - nhle_league_factors
 - nhl_play_by_play_dedupe_repairs
 - nhl_player_transactions
@@ -71,6 +74,7 @@ Migrations remain the **sole source of truth**.
 - nhl_shot_attempt_predictions
 - nhl_shot_attempts_facts
 - nhl_skater_defensive_chance_profile_buckets
+- nhl_staff
 - nhl_teams
 - nhl_unit_game_summaries
 - nhl_unit_players
@@ -1383,6 +1387,115 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_officials
+
+**Organization-owned:** No
+**Purpose:** Normalized NHL official identities observed from game context payloads.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| display_name | string(120) | No | Provider display name |
+| normalized_name | string(120) | No | ASCII/lowercase normalized identity key |
+| metadata | json | Yes | Optional provider metadata |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `normalized_name`
+
+---
+
+## nhl_staff
+
+**Organization-owned:** No
+**Purpose:** Normalized NHL team staff identities observed from game context payloads.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| display_name | string(120) | No | Provider display name |
+| normalized_name | string(120) | No | ASCII/lowercase normalized identity key |
+| metadata | json | Yes | Optional provider metadata |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `normalized_name`
+
+---
+
+## nhl_game_officials
+
+**Organization-owned:** No
+**Purpose:** Game-scoped NHL referee and linesman assignments.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | unsignedBigInteger | No | FK -> `nhl_games.nhl_game_id` |
+| nhl_official_id | foreignId | No | FK -> `nhl_officials.id` |
+| role | string(32) | No | `referee` or `linesman` |
+| sequence | unsignedSmallInteger | No | Role-local provider order; defaults to `1` |
+| provider_name | string(120) | No | Provider display name snapshot |
+| source | string(32) | No | `right-rail` |
+| raw_payload | json | Yes | Raw provider row for audit |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `nhl_game_id` -> `nhl_games.nhl_game_id` (`cascadeOnDelete`)
+- FK: `nhl_official_id` -> `nhl_officials.id` (`cascadeOnDelete`)
+- Unique: `(nhl_game_id, role, sequence)`
+- Index: `(nhl_game_id, role)`
+- Index: `(nhl_official_id, role)`
+
+---
+
+## nhl_game_team_staff
+
+**Organization-owned:** No
+**Purpose:** Game-scoped NHL team staff assignments such as head coaches.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| nhl_game_id | unsignedBigInteger | No | FK -> `nhl_games.nhl_game_id` |
+| nhl_staff_id | foreignId | No | FK -> `nhl_staff.id` |
+| nhl_team_id | unsignedBigInteger | Yes | NHL team ID snapshot from `nhl_games` |
+| team_side | string(16) | No | `away` or `home` |
+| role | string(32) | No | `head_coach` |
+| provider_name | string(120) | No | Provider display name snapshot |
+| source | string(32) | No | `right-rail` |
+| raw_payload | json | Yes | Raw provider row for audit |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `nhl_game_id` -> `nhl_games.nhl_game_id` (`cascadeOnDelete`)
+- FK: `nhl_staff_id` -> `nhl_staff.id` (`cascadeOnDelete`)
+- Unique: `(nhl_game_id, team_side, role)`
+- Index: `(nhl_game_id, team_side)`
+- Index: `(nhl_staff_id, role)`
+
+---
+
 ## nhl_import_progress
 
 **Organization-owned:** No
@@ -1474,7 +1587,7 @@ Migrations remain the **sole source of truth**.
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
 | nhl_game_id | unsignedBigInteger | No | NHL game ID |
-| source | string(32) | No | `pbp`, `boxscore`, `shifts`, `right-rail`, or `html-pbp` |
+| source | string(32) | No | `pbp`, `boxscore`, `shifts`, `right-rail`, `html-pbp`, or `html-toi` |
 | status | string(32) | No | `available`, `empty`, or `unavailable` |
 | reason | string(120) | Yes | Source-specific block reason |
 | url | text | No | Exact provider URL checked |
@@ -1493,6 +1606,7 @@ Migrations remain the **sole source of truth**.
 ### Behavioral Notes
 
 - PBP, boxscore, and shiftchart source rows are refreshed before the PBP stage is claimed.
+- Right-rail payload availability and HTML play-by-play report availability are separate source rows. A right-rail payload with no context uses `right-rail` plus `right_rail_missing_context`; a missing play-by-play report URL uses `html-pbp` plus `missing_play_by_play_report`.
 - PBP or boxscore rows that are not `available` skip all scheduled/running pipeline stages for that game.
 - Shiftchart rows that are not `available` skip only shift-derived on-ice stages.
 - Rows intentionally do not foreign-key to `nhl_games` because PBP may not have imported the game row yet.

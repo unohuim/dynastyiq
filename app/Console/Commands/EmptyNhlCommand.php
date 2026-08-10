@@ -79,6 +79,8 @@ class EmptyNhlCommand extends Command
             'nhl_game_summaries',
             'play_by_plays',
             'nhl_season_stats',
+            'nhl_game_team_staff',
+            'nhl_game_officials',
             'nhl_game_source_statuses',
             'nhl_games',
         ];

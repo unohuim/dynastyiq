@@ -23,6 +23,7 @@
             gameImportProcessUrl: @js(route('admin.nhl-game-imports.process')),
             gameImportProcessShotsUrl: @js(route('admin.nhl-game-imports.process-shots')),
             gameImportProcessFaceoffsUrl: @js(route('admin.nhl-game-imports.process-faceoffs')),
+            gameImportProcessRefsStaffUrl: @js(route('admin.nhl-game-imports.process-refs-staff')),
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
             gameImportDuplicatePbpScanUrl: @js(route('admin.nhl-game-imports.duplicate-pbp.scan')),
             gameImportDuplicatePbpDedupeUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
@@ -938,6 +939,13 @@
                                                         x-cloak
                                                         class="absolute right-0 z-20 mt-1 w-32 overflow-hidden rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg"
                                                     >
+                                                        <button
+                                                            type="button"
+                                                            class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
+                                                            @click.stop.prevent="processRefsStaffGameImports(run)"
+                                                        >
+                                                            Refs and Staff
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             class="block w-full px-3 py-1.5 text-left text-[11px] font-semibold text-gray-700 hover:bg-gray-50"
