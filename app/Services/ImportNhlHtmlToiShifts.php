@@ -261,7 +261,32 @@ class ImportNhlHtmlToiShifts
      */
     private function updateSummaryToi(NhlGame $game, array $rows): void
     {
+        $playerIds = collect($rows)
+            ->pluck('nhl_player_id')
+            ->map(fn (mixed $playerId): int => (int) $playerId)
+            ->unique()
+            ->values();
+        $knownPlayerIds = DB::table('players')
+            ->whereIn('nhl_id', $playerIds)
+            ->pluck('nhl_id')
+            ->mapWithKeys(fn (mixed $playerId): array => [(int) $playerId => true]);
+        $isPreseason = (int) $game->game_type === 1;
+
         foreach (collect($rows)->groupBy('nhl_player_id') as $playerId => $playerRows) {
+            $playerId = (int) $playerId;
+
+            if (! $knownPlayerIds->has($playerId)) {
+                if ($isPreseason) {
+                    continue;
+                }
+
+                throw new \RuntimeException(sprintf(
+                    'Unable to update NHL HTML TOI summary for game %d because player %d is missing from players.nhl_id.',
+                    (int) $game->nhl_game_id,
+                    $playerId
+                ));
+            }
+
             $teamAbbrev = (string) ($playerRows->first()['team_abbrev'] ?? '');
             $teamId = $game->getTeamIdByAbbrev($teamAbbrev);
 
@@ -272,7 +297,7 @@ class ImportNhlHtmlToiShifts
             DB::table('nhl_game_summaries')->updateOrInsert(
                 [
                     'nhl_game_id' => $game->nhl_game_id,
-                    'nhl_player_id' => (string) $playerId,
+                    'nhl_player_id' => $playerId,
                 ],
                 [
                     'nhl_team_id' => $teamId,

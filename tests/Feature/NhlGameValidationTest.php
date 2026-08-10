@@ -1648,6 +1648,99 @@ it('falls back to TV and TH time-on-ice reports when shiftcharts are empty', fun
     ]);
 });
 
+it('skips missing players from HTML time-on-ice summaries for preseason games', function (): void {
+    ($this->insertGame)(2026010001, [
+        'game_type' => 1,
+        'home_team_id' => 15,
+        'home_team_abbrev' => 'WSH',
+        'away_team_id' => 7,
+        'away_team_abbrev' => 'BUF',
+    ]);
+    ($this->insertBoxscore)(2026010001, 8480261, [
+        'nhl_team_id' => 7,
+        'sweater_number' => 65,
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026010001/right-rail' => Http::response([
+            'gameReports' => [
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV010001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH010001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/TV010001.HTM' => Http::response(
+            '<table><tr><td>65 WEISSBACH, LINUS</td></tr><tr><td>1</td><td>1</td><td>0:00 / 20:00</td><td>1:00 / 19:00</td><td>01:00</td></tr></table>',
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TH010001.HTM' => Http::response('', 200),
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        /**
+         * @return array<string,mixed>
+         */
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return ['data' => []];
+        }
+    };
+
+    expect($importer->import('2026010001'))->toBe(1)
+        ->and(DB::table('nhl_shifts')->where('nhl_game_id', 2026010001)->count())->toBe(1)
+        ->and(DB::table('nhl_game_summaries')
+            ->where('nhl_game_id', 2026010001)
+            ->where('nhl_player_id', 8480261)
+            ->exists())->toBeFalse();
+
+    $this->assertDatabaseHas('nhl_game_source_statuses', [
+        'nhl_game_id' => 2026010001,
+        'source' => NhlGameSourceStatus::SOURCE_HTML_TOI,
+        'status' => NhlGameSourceStatus::STATUS_AVAILABLE,
+        'reason' => 'tv_th_fallback',
+    ]);
+});
+
+it('fails HTML time-on-ice summaries for missing players outside preseason games', function (): void {
+    ($this->insertGame)(2026020001, [
+        'game_type' => 2,
+        'home_team_id' => 15,
+        'home_team_abbrev' => 'WSH',
+        'away_team_id' => 7,
+        'away_team_abbrev' => 'BUF',
+    ]);
+    ($this->insertBoxscore)(2026020001, 8480261, [
+        'nhl_team_id' => 7,
+        'sweater_number' => 65,
+    ]);
+
+    Http::fake([
+        'https://api-web.nhle.com/v1/gamecenter/2026020001/right-rail' => Http::response([
+            'gameReports' => [
+                'toiAway' => 'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM',
+                'toiHome' => 'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM',
+            ],
+        ]),
+        'https://www.nhl.com/scores/htmlreports/20262027/TV020001.HTM' => Http::response(
+            '<table><tr><td>65 WEISSBACH, LINUS</td></tr><tr><td>1</td><td>1</td><td>0:00 / 20:00</td><td>1:00 / 19:00</td><td>01:00</td></tr></table>',
+            200
+        ),
+        'https://www.nhl.com/scores/htmlreports/20262027/TH020001.HTM' => Http::response('', 200),
+    ]);
+
+    $importer = new class extends ImportNhlShifts {
+        /**
+         * @return array<string,mixed>
+         */
+        public function getAPIDataFullUrl(string $url): array
+        {
+            return ['data' => []];
+        }
+    };
+
+    expect(fn () => $importer->import('2026020001'))
+        ->toThrow(RuntimeException::class, 'player 8480261 is missing from players.nhl_id');
+});
+
 it('reconciles tiny zero appearance goalie toi artifacts when pbp does not show the goalie in net', function (): void {
     ($this->insertGame)();
     ($this->makePlayer)(8476914, [
