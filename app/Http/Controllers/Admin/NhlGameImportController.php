@@ -41,6 +41,8 @@ use Throwable;
  */
 class NhlGameImportController extends Controller
 {
+    private const STATUS_RUNS_PER_PAGE = 15;
+
     private const SHIFT_RERUN_STAGES = [
         NhlImportStages::SHIFTS,
         NhlImportStages::SHIFT_UNITS,
@@ -52,18 +54,58 @@ class NhlGameImportController extends Controller
     /**
      * Return recent admin game import runs with current pipeline progress.
      */
-    public function status(): JsonResponse
+    public function status(Request $request): JsonResponse
     {
         $runs = NhlGameImportRun::query()
             ->latest()
-            ->limit(15)
             ->get();
 
-        $runs = $this->collapseDuplicateRangeRuns($runs)
-            ->map(fn (NhlGameImportRun $run): array => $this->serializeRun($run));
+        $runs = $this->collapseDuplicateRangeRuns($runs);
+        $orchestrationRuns = $runs
+            ->reject(fn (NhlGameImportRun $run): bool => in_array($run->action, [
+                NhlGameImportRun::ACTION_SEASON_SYNC,
+                NhlGameImportRun::ACTION_SCHEDULE_REFRESH,
+            ], true))
+            ->values();
+        $hasActiveRuns = $runs->contains(
+            fn (NhlGameImportRun $run): bool => in_array($run->status, [
+                NhlGameImportRun::STATUS_QUEUED,
+                NhlGameImportRun::STATUS_RUNNING,
+            ], true)
+        );
+        $total = $orchestrationRuns->count();
+        $lastPage = max(1, (int) ceil($total / self::STATUS_RUNS_PER_PAGE));
+        $page = min(
+            max(1, $request->integer('page', 1)),
+            $lastPage
+        );
+        $pagedRuns = $orchestrationRuns
+            ->forPage($page, self::STATUS_RUNS_PER_PAGE)
+            ->values();
+        $auxiliaryRuns = $runs
+            ->filter(fn (NhlGameImportRun $run): bool => in_array($run->action, [
+                NhlGameImportRun::ACTION_SEASON_SYNC,
+                NhlGameImportRun::ACTION_SCHEDULE_REFRESH,
+            ], true))
+            ->groupBy(fn (NhlGameImportRun $run): string => $run->action)
+            ->map(fn ($group): NhlGameImportRun => $group->first())
+            ->values();
+        $serializedRuns = $pagedRuns
+            ->merge($auxiliaryRuns)
+            ->map(fn (NhlGameImportRun $run): array => $this->serializeRun($run))
+            ->values();
 
         return response()->json([
-            'runs' => $runs,
+            'runs' => $serializedRuns,
+            'pagination' => [
+                'current_page' => $page,
+                'last_page' => $lastPage,
+                'per_page' => self::STATUS_RUNS_PER_PAGE,
+                'total' => $total,
+                'from' => $total === 0 ? 0 : (($page - 1) * self::STATUS_RUNS_PER_PAGE) + 1,
+                'to' => min($total, $page * self::STATUS_RUNS_PER_PAGE),
+            ],
+            'has_active_runs' => $hasActiveRuns,
             'processable' => [
                 'date_count' => $this->processableDateCount(),
             ],

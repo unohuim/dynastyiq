@@ -112,10 +112,19 @@ export default function adminHub(options = {}) {
             rerunMenuRunId: null,
             rerunningRuns: {},
             rerunningGames: {},
+            hasActiveRuns: false,
             completedGameFadeSteps: {},
             completedGameFadeTimers: {},
             sourceGapsExpanded: false,
             processableDateCount: 0,
+            pagination: {
+                currentPage: 1,
+                lastPage: 1,
+                perPage: 15,
+                total: 0,
+                from: 0,
+                to: 0,
+            },
             seasonDropdownOpen: false,
             selectedSeason: '',
             seasonSyncDismissedRunIds: readDismissedSeasonSyncRunIds(),
@@ -493,7 +502,7 @@ export default function adminHub(options = {}) {
                 await this.sendGameImportRequest(url, {});
                 await this.loadValidations({ force: true, background: true });
                 await this.loadShiftMismatches({ force: true, background: true });
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.validationsError = error.message ?? 'Unable to queue game rebuild';
             } finally {
@@ -838,8 +847,27 @@ export default function adminHub(options = {}) {
             }, {});
         },
 
+        gameImportStatusPageUrl(page) {
+            const normalizedPage = Number(page) || 1;
+
+            if (normalizedPage <= 1) {
+                return this.gameImportStatusUrl;
+            }
+
+            const base = typeof window !== 'undefined' && window.location?.origin
+                ? window.location.origin
+                : 'http://localhost';
+            const url = new URL(this.gameImportStatusUrl, base);
+            url.searchParams.set('page', String(normalizedPage));
+
+            return url.origin === base
+                ? `${url.pathname}${url.search}`
+                : url.toString();
+        },
+
         async loadGameImports(options = {}) {
             const background = Boolean(options.background);
+            const page = Number(options.page ?? this.gameImports.pagination.currentPage) || 1;
 
             if (!background) {
                 this.gameImports.loading = true;
@@ -848,7 +876,7 @@ export default function adminHub(options = {}) {
             this.gameImports.error = '';
 
             try {
-                const response = await fetch(this.gameImportStatusUrl, {
+                const response = await fetch(this.gameImportStatusPageUrl(page), {
                     headers: { Accept: 'application/json' },
                 });
                 const payload = await response.json().catch(() => ({}));
@@ -861,6 +889,17 @@ export default function adminHub(options = {}) {
                 this.syncCompletedGameFadeState();
                 this.gameImports.seasons = payload.seasons ?? [];
                 this.gameImports.processableDateCount = Number(payload.processable?.date_count) || 0;
+                this.gameImports.hasActiveRuns = payload.has_active_runs === undefined
+                    ? this.gameImports.runs.some((run) => ['queued', 'running'].includes(run.status))
+                    : Boolean(payload.has_active_runs);
+                this.gameImports.pagination = {
+                    currentPage: Number(payload.pagination?.current_page) || 1,
+                    lastPage: Number(payload.pagination?.last_page) || 1,
+                    perPage: Number(payload.pagination?.per_page) || 15,
+                    total: Number(payload.pagination?.total) || 0,
+                    from: Number(payload.pagination?.from) || 0,
+                    to: Number(payload.pagination?.to) || 0,
+                };
                 this.scheduleGameImportPollIfNeeded();
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to load game imports';
@@ -869,6 +908,44 @@ export default function adminHub(options = {}) {
                     this.gameImports.loading = false;
                 }
             }
+        },
+
+        gameImportPaginationText() {
+            const pagination = this.gameImports.pagination;
+
+            if (!pagination.total) {
+                return 'No runs';
+            }
+
+            return `${this.formatNumber(pagination.from)}-${this.formatNumber(pagination.to)} of ${this.formatNumber(pagination.total)}`;
+        },
+
+        canLoadPreviousGameImportPage() {
+            return this.gameImports.pagination.currentPage > 1;
+        },
+
+        canLoadNextGameImportPage() {
+            return this.gameImports.pagination.currentPage < this.gameImports.pagination.lastPage;
+        },
+
+        async loadPreviousGameImportPage() {
+            if (!this.canLoadPreviousGameImportPage()) {
+                return;
+            }
+
+            await this.loadGameImports({
+                page: this.gameImports.pagination.currentPage - 1,
+            });
+        },
+
+        async loadNextGameImportPage() {
+            if (!this.canLoadNextGameImportPage()) {
+                return;
+            }
+
+            await this.loadGameImports({
+                page: this.gameImports.pagination.currentPage + 1,
+            });
         },
 
         async loadGameImportSourceGaps(options = {}) {
@@ -914,7 +991,7 @@ export default function adminHub(options = {}) {
             try {
                 await this.sendGameImportRequest(`${this.gameImportSourceGapsUrl}/${gameId}/rerun`, {});
                 await this.loadGameImportSourceGaps({ background: true });
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to rerun source check';
             } finally {
@@ -942,7 +1019,7 @@ export default function adminHub(options = {}) {
                     run_id: run?.id ?? null,
                 });
                 await this.loadGameImportSourceGaps({ background: true });
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to rerun game import';
             } finally {
@@ -963,7 +1040,7 @@ export default function adminHub(options = {}) {
                 );
 
                 this.gameImports.drawerOpen = false;
-                await this.loadGameImports();
+                await this.loadGameImports({ page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue discovery';
             } finally {
@@ -981,7 +1058,7 @@ export default function adminHub(options = {}) {
 
             try {
                 await this.sendGameImportRequest(this.gameImportScheduleRefreshUrl, {});
-                await this.loadGameImports();
+                await this.loadGameImports({ page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue schedule refresh';
             } finally {
@@ -1025,7 +1102,7 @@ export default function adminHub(options = {}) {
                     payload
                 ).then((response) => this.mergeGameImportRun(response?.run));
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
                 await this.refreshValidationContainers();
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue rerun';
@@ -1061,7 +1138,7 @@ export default function adminHub(options = {}) {
                     { run_id: runId }
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
                 await this.refreshValidationContainers();
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue failed-only rerun';
@@ -1097,7 +1174,7 @@ export default function adminHub(options = {}) {
                     payload
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue processing';
             } finally {
@@ -1130,7 +1207,7 @@ export default function adminHub(options = {}) {
                     { run_id: runId }
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue shot facts';
             } finally {
@@ -1163,7 +1240,7 @@ export default function adminHub(options = {}) {
                     { run_id: runId }
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue faceoff facts';
             } finally {
@@ -1196,7 +1273,7 @@ export default function adminHub(options = {}) {
                     { run_id: runId }
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue refs and staff';
             } finally {
@@ -1223,7 +1300,7 @@ export default function adminHub(options = {}) {
                     season: selected.season,
                 });
 
-                await this.loadGameImports();
+                await this.loadGameImports({ page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue season sync';
             } finally {
@@ -1245,7 +1322,7 @@ export default function adminHub(options = {}) {
 
             try {
                 await this.sendGameImportRequest(this.gameImportEmptyGamesUrl, {});
-                await this.loadGameImports();
+                await this.loadGameImports({ page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue NHL game reset';
             } finally {
@@ -1259,7 +1336,7 @@ export default function adminHub(options = {}) {
 
             try {
                 await this.sendGameImportRequest(this.gameImportDuplicatePbpScanUrl, {});
-                await this.loadGameImports();
+                await this.loadGameImports({ page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue duplicate PBP scan';
             } finally {
@@ -1286,7 +1363,7 @@ export default function adminHub(options = {}) {
                     {}
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue duplicate PBP repair';
             } finally {
@@ -1315,7 +1392,7 @@ export default function adminHub(options = {}) {
                     {}
                 );
 
-                await this.loadGameImports({ background: true });
+                await this.loadGameImports({ background: true, page: 1 });
             } catch (error) {
                 this.gameImports.error = error.message ?? 'Unable to queue affected-game rebuilds';
             } finally {
@@ -2316,11 +2393,7 @@ export default function adminHub(options = {}) {
         scheduleGameImportPollIfNeeded() {
             this.stopGameImportPoll();
 
-            const hasActiveRun = this.gameImports.runs.some((run) =>
-                ['queued', 'running'].includes(run.status)
-            );
-
-            if (!hasActiveRun || this.activeTab !== 'game-imports') {
+            if (!this.gameImports.hasActiveRuns || this.activeTab !== 'game-imports') {
                 return;
             }
 
