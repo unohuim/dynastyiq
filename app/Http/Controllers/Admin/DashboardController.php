@@ -182,7 +182,26 @@ class DashboardController extends Controller
                 'created_at',
                 'updated_at',
             ]);
-        $lastActivityByUserId = DB::table('sessions')
+        $sessionActivityByUserId = $this->sessionActivityByUserId();
+        $analyticsActivityByUserId = $this->analyticsActivityByUserId();
+
+        return $users
+            ->map(fn (User $user): array => $this->userPayload(
+                $user,
+                $sessionActivityByUserId,
+                $analyticsActivityByUserId,
+            ))
+            ->sortByDesc(static fn (array $user): int => (int) ($user['last_seen_timestamp'] ?? 0))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int,int>
+     */
+    private function sessionActivityByUserId(): array
+    {
+        return DB::table('sessions')
             ->select('user_id', DB::raw('MAX(last_activity) as last_activity'))
             ->whereNotNull('user_id')
             ->groupBy('user_id')
@@ -191,11 +210,26 @@ class DashboardController extends Controller
                 (int) $userId => (int) $lastActivity,
             ])
             ->all();
+    }
 
-        return $users
-            ->map(fn (User $user): array => $this->userPayload($user, $lastActivityByUserId))
-            ->sortByDesc(static fn (array $user): int => (int) ($user['last_seen_timestamp'] ?? 0))
-            ->values()
+    /**
+     * @return array<int,int>
+     */
+    private function analyticsActivityByUserId(): array
+    {
+        if (! Schema::hasTable('analytics_sessions')) {
+            return [];
+        }
+
+        return DB::table('analytics_sessions')
+            ->select('user_id', DB::raw('MAX(last_seen_at) as last_seen_at'))
+            ->whereNotNull('user_id')
+            ->whereNotNull('last_seen_at')
+            ->groupBy('user_id')
+            ->pluck('last_seen_at', 'user_id')
+            ->mapWithKeys(static fn (mixed $lastSeenAt, mixed $userId): array => [
+                (int) $userId => Carbon::parse((string) $lastSeenAt)->timestamp,
+            ])
             ->all();
     }
 
@@ -322,12 +356,21 @@ class DashboardController extends Controller
     }
 
     /**
-     * @param array<int,int> $lastActivityByUserId
+     * @param array<int,int> $sessionActivityByUserId
+     * @param array<int,int> $analyticsActivityByUserId
      * @return array<string,mixed>
      */
-    private function userPayload(User $user, array $lastActivityByUserId): array
+    private function userPayload(
+        User $user,
+        array $sessionActivityByUserId,
+        array $analyticsActivityByUserId,
+    ): array
     {
-        $lastActivity = $lastActivityByUserId[(int) $user->id] ?? null;
+        $activityTimestamps = array_filter([
+            $sessionActivityByUserId[(int) $user->id] ?? null,
+            $analyticsActivityByUserId[(int) $user->id] ?? null,
+        ], static fn (?int $timestamp): bool => $timestamp !== null);
+        $lastActivity = $activityTimestamps === [] ? null : max($activityTimestamps);
         $lastSeenAt = $lastActivity !== null ? Carbon::createFromTimestamp($lastActivity) : null;
         $presence = $this->presencePayload($lastActivity);
         $discordAccount = $user->socialAccounts instanceof EloquentCollection

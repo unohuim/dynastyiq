@@ -233,6 +233,92 @@ it('shows NHL faceoffs in the account drawer for super admins', function () {
         ->assertSee(route('admin.nhl-faceoffs.index'));
 });
 
+it('uses analytics sessions as durable user last seen activity', function () {
+    Carbon::setTestNow('2026-08-11 12:00:00');
+    $admin = ($this->makeSuperAdmin)();
+    $user = User::factory()->create([
+        'name' => 'Analytics User',
+        'email' => 'analytics-user@example.com',
+    ]);
+
+    $visitorId = DB::table('analytics_visitors')->insertGetId([
+        'anonymous_id' => 'f77bf004-9224-4ec9-baf4-9bfec313a7aa',
+        'user_id' => $user->id,
+        'first_seen_at' => '2026-08-09 10:00:00',
+        'last_seen_at' => '2026-08-10 18:30:00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('analytics_sessions')->insert([
+        'analytics_visitor_id' => $visitorId,
+        'user_id' => $user->id,
+        'session_uuid' => '62dd390d-e396-4943-a6f7-e660c74aaeb3',
+        'started_at' => '2026-08-10 18:00:00',
+        'last_seen_at' => '2026-08-10 18:30:00',
+        'engaged_seconds' => 300,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.dashboard'))
+        ->assertOk()
+        ->assertSee('analytics-user@example.com')
+        ->assertSee('2026-08-10T18:30:00');
+
+    Carbon::setTestNow();
+});
+
+it('orders admin users by the freshest session or analytics activity timestamp', function () {
+    Carbon::setTestNow('2026-08-11 12:00:00');
+    $admin = ($this->makeSuperAdmin)();
+    $analyticsUser = User::factory()->create([
+        'name' => 'Analytics Recent',
+        'email' => 'analytics-recent@example.com',
+    ]);
+    $sessionUser = User::factory()->create([
+        'name' => 'Session Older',
+        'email' => 'session-older@example.com',
+    ]);
+
+    $visitorId = DB::table('analytics_visitors')->insertGetId([
+        'anonymous_id' => 'ca422f9d-2167-48d3-88d6-3a144151046a',
+        'user_id' => $analyticsUser->id,
+        'first_seen_at' => '2026-08-10 20:00:00',
+        'last_seen_at' => '2026-08-10 20:00:00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('analytics_sessions')->insert([
+        'analytics_visitor_id' => $visitorId,
+        'user_id' => $analyticsUser->id,
+        'session_uuid' => '0996fd1f-fb76-47b2-b203-9d4e3874b5fd',
+        'started_at' => '2026-08-10 20:00:00',
+        'last_seen_at' => '2026-08-10 20:00:00',
+        'engaged_seconds' => 120,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('sessions')->insert([
+        'id' => 'session-older',
+        'user_id' => $sessionUser->id,
+        'ip_address' => '127.0.0.1',
+        'user_agent' => 'Pest',
+        'payload' => '',
+        'last_activity' => Carbon::parse('2026-08-10 19:00:00')->timestamp,
+    ]);
+
+    $response = $this->actingAs($admin)
+        ->get(route('admin.dashboard'))
+        ->assertOk();
+
+    expect($response->getContent())->toContain('analytics-recent@example.com')
+        ->and(strpos($response->getContent(), 'analytics-recent@example.com'))
+        ->toBeLessThan(strpos($response->getContent(), 'session-older@example.com'));
+
+    Carbon::setTestNow();
+});
+
 it('groups NHL shot attempt aggregates by team abbreviation', function () {
     DB::table('nhl_teams')->insert([
         'nhl_id' => 10,
