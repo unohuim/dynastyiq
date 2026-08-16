@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\ApiClient;
 use App\Services\NhlExpectedGoalsBackfiller;
+use App\Services\NhlProjectedTeamMatchupSimulator;
 use Illuminate\Support\Facades\DB;
 
 function createNhlStatsApiToken(): string
@@ -232,4 +233,113 @@ it('emits goalie expected stats for scoped season stats pulls', function (): voi
         ->and($stats->get('goalie_xsaves'))->toBe(0.55)
         ->and($stats->get('goalie_gsax'))->toBe(0.25)
         ->and(round((float) $stats->get('goalie_xsave_percentage'), 4))->toBe(0.6875);
+});
+
+it('uses weighted skater and starting goalie input quality for game prediction confidence', function (): void {
+    $token = createNhlStatsApiToken();
+
+    app()->bind(NhlProjectedTeamMatchupSimulator::class, fn (): NhlProjectedTeamMatchupSimulator => new class extends NhlProjectedTeamMatchupSimulator {
+        /**
+         * @return array<string,mixed>
+         */
+        public function simulate(
+            string $sourceSeasonId,
+            string $targetSeasonId,
+            string $projectionVersion,
+            string $toiProjectionVersion,
+            string $goalieProjectionVersion,
+            string $teamA,
+            string $teamB,
+            ?int $teamAGoalieId = null,
+            ?int $teamBGoalieId = null
+        ): array {
+            return [
+                'is_available' => true,
+                'sides' => [
+                    [
+                        'offense_team' => $teamA,
+                        'defense_team' => $teamB,
+                        'summary' => [
+                            'total_goalie_adjusted_xgf_per_game' => 1.0,
+                            'total_goalie_adjustment_per_game' => 0.0,
+                        ],
+                        'roster' => [
+                            ['adjusted_xgf_per_game' => 0.90, 'confidence_score' => 0.80],
+                            ['adjusted_xgf_per_game' => 0.10, 'confidence_score' => 0.60],
+                        ],
+                    ],
+                    [
+                        'offense_team' => $teamB,
+                        'defense_team' => $teamA,
+                        'summary' => [
+                            'total_goalie_adjusted_xgf_per_game' => 4.5,
+                            'total_goalie_adjustment_per_game' => 0.0,
+                        ],
+                        'roster' => [
+                            ['adjusted_xgf_per_game' => 0.99, 'confidence_score' => 0.40],
+                            ['adjusted_xgf_per_game' => 0.01, 'confidence_score' => 1.00],
+                        ],
+                    ],
+                ],
+            ];
+        }
+    });
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026020001,
+        'season_id' => '20262027',
+        'game_type' => 2,
+        'game_date' => '2026-10-10',
+        'game_dow' => 'Sat',
+        'game_month' => 'Oct',
+        'away_team_abbrev' => 'AWY',
+        'home_team_abbrev' => 'HOM',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    foreach ([['AWY', 9001, 0.80], ['HOM', 9002, 0.60]] as [$team, $goalieId, $confidence]) {
+        DB::table('nhl_goalie_season_projections')->insert([
+            'projection_version' => 'goalie-quality',
+            'source_season_id' => '20252026',
+            'target_season_id' => '20262027',
+            'goalie_player_id' => $goalieId,
+            'target_team_abbrev' => $team,
+            'position' => 'G',
+            'projected_games' => 50,
+            'projected_starts' => 50,
+            'projected_toi_hours' => 50,
+            'projected_toi_seconds' => 180000,
+            'projected_xga' => 140,
+            'projected_ga' => 135,
+            'projected_gsax' => 5,
+            'projected_ev_xga' => 100,
+            'projected_ev_ga' => 96,
+            'projected_pk_xga' => 40,
+            'projected_pk_ga' => 39,
+            'confidence_score' => $confidence,
+            'confidence_bucket' => $confidence >= 0.8 ? 'high' : 'medium',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026',
+            'target_season_id' => '20262027',
+            'projection_version' => 'skater-quality',
+            'toi_projection_version' => 'toi-quality',
+            'goalie_projection_version' => 'goalie-quality',
+            'away_goalie_id' => 9001,
+            'home_goalie_id' => 9002,
+        ]))
+        ->assertOk();
+
+    $response->assertJsonPath('prediction.predicted_score.away', 1.0)
+        ->assertJsonPath('prediction.predicted_score.home', 4.5)
+        ->assertJsonPath('prediction.confidence_score', 62)
+        ->assertJsonPath('market_probabilities.0.confidence_score', 62)
+        ->assertJsonPath('market_probabilities.1.confidence_score', 62);
 });

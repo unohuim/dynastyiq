@@ -2627,6 +2627,9 @@ it('announces a fantrax draft pick only once when duplicate listener jobs run', 
 it('saves a draft notification channel and creates it on discord when needed', function (): void {
     [$user, $organization, $league] = ($this->createCommunityLeague)();
     config(['apiurls.discord-bot.key' => 'bot-token']);
+    $platformLeague = $league->activePlatformLeague();
+    expect($platformLeague)->toBeInstanceOf(PlatformLeague::class);
+    $draft = ($this->createDraft)($platformLeague);
     $discordServer = DiscordServer::create([
         'organization_id' => $organization->id,
         'discord_guild_id' => 'guild-1',
@@ -2663,6 +2666,15 @@ it('saves a draft notification channel and creates it on discord when needed', f
     );
 
     expect(data_get($pivotMeta, 'draft_notifications.discord_channel.id'))->toBe('created-channel');
+    $draftNotificationSettings = DraftNotificationSetting::query()
+        ->where('draft_id', $draft->id)
+        ->firstOrFail();
+
+    expect($draftNotificationSettings->discord_channel_id)->toBe('created-channel')
+        ->and($draftNotificationSettings->discord_channel_name)->toBe('draft-room')
+        ->and($draftNotificationSettings->enabled)->toBeTrue()
+        ->and(data_get($draftNotificationSettings->settings, 'announce_otc'))->toBeTrue()
+        ->and(data_get($draftNotificationSettings->settings, 'announce_on_deck'))->toBeFalse();
 
     Http::assertSent(static function ($request): bool {
         $data = $request->data();
@@ -2671,6 +2683,27 @@ it('saves a draft notification channel and creates it on discord when needed', f
             && str_contains($request->url(), 'discord.com/api/v10/guilds/guild-1/channels')
             && ($data['parent_id'] ?? null) === 'text-category';
     });
+});
+
+it('blocks guests from saving community draft notification settings', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)();
+
+    $this->putJson("/communities/{$organization->id}/leagues/{$league->id}/draft-settings", [
+        'draft_channel_id' => 'draft-channel',
+        'draft_channel_name' => 'draft-room',
+    ])->assertUnauthorized();
+});
+
+it('blocks users outside the community from saving community draft notification settings', function (): void {
+    [, $organization, $league] = ($this->createCommunityLeague)();
+    $outsideUser = User::factory()->create();
+
+    $this->actingAs($outsideUser)
+        ->putJson("/communities/{$organization->id}/leagues/{$league->id}/draft-settings", [
+            'draft_channel_id' => 'draft-channel',
+            'draft_channel_name' => 'draft-room',
+        ])
+        ->assertNotFound();
 });
 
 it('saves community draft sync opt-in settings', function (): void {

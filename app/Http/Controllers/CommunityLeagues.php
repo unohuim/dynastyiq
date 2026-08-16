@@ -2893,9 +2893,24 @@ class CommunityLeagues extends Controller
      */
     private function syncDraftNotificationSettings(mixed $community, mixed $league, array $meta): void
     {
+        $platformLeagueIds = DB::table('league_platform_league')
+            ->where('league_id', (int) $league->id)
+            ->where('status', 'active')
+            ->orderByDesc('linked_at')
+            ->orderByDesc('id')
+            ->pluck('platform_league_id');
+
+        if ($platformLeagueIds->isEmpty()) {
+            return;
+        }
+
         $draft = Draft::query()
-            ->where('organization_id', (int) $community->id)
-            ->where('platform_league_id', (int) $league->id)
+            ->whereIn('platform_league_id', $platformLeagueIds)
+            ->where(function ($query) use ($community): void {
+                $query->where('organization_id', (int) $community->id)
+                    ->orWhereNull('organization_id');
+            })
+            ->orderByRaw('organization_id = ? desc', [(int) $community->id])
             ->orderByDesc('id')
             ->first();
 

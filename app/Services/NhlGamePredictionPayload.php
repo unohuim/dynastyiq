@@ -16,6 +16,9 @@ class NhlGamePredictionPayload
     private const GOALIE_GSAX_WEIGHT = 0.70;
     private const GOALIE_MATCHUP_WEIGHT = 0.30;
     private const MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS = 15;
+    private const INPUT_CONFIDENCE_SKATER_WEIGHT = 0.70;
+    private const INPUT_CONFIDENCE_GOALIE_WEIGHT = 0.30;
+    private const SKATER_CONFIDENCE_COVERAGE_TARGET = 0.99;
 
     public function __construct(
         private readonly NhlProjectedTeamMatchupSimulator $simulator
@@ -87,7 +90,16 @@ class NhlGamePredictionPayload
         $awayGoalie = $this->withMatchupGoalieValues($awayGoalie, $awayGoalieAdjustment);
         $homeGoalie = $this->withMatchupGoalieValues($homeGoalie, $homeGoalieAdjustment);
 
-        $prediction = $this->predictionPayload($awayTeam, $homeTeam, $awayGoals, $homeGoals, $awayGoalie, $homeGoalie);
+        $prediction = $this->predictionPayload(
+            $awayTeam,
+            $homeTeam,
+            $awayGoals,
+            $homeGoals,
+            $awayGoalie,
+            $homeGoalie,
+            $awaySide,
+            $homeSide
+        );
 
         return [
             'game' => $this->gamePayload($game),
@@ -353,8 +365,16 @@ class NhlGamePredictionPayload
      * @param array<string, mixed> $homeGoalie
      * @return array<string, mixed>
      */
-    private function predictionPayload(string $awayTeam, string $homeTeam, float $awayGoals, float $homeGoals, array $awayGoalie, array $homeGoalie): array
-    {
+    private function predictionPayload(
+        string $awayTeam,
+        string $homeTeam,
+        float $awayGoals,
+        float $homeGoals,
+        array $awayGoalie,
+        array $homeGoalie,
+        array $awaySide,
+        array $homeSide
+    ): array {
         $goalDifferential = round($homeGoals - $awayGoals, 4);
         $winnerSide = $goalDifferential > 0 ? 'home' : ($goalDifferential < 0 ? 'away' : 'pickem');
         $winnerTeam = $winnerSide === 'home' ? $homeTeam : ($winnerSide === 'away' ? $awayTeam : null);
@@ -369,23 +389,83 @@ class NhlGamePredictionPayload
                 'home' => round($homeGoals, 2),
             ],
             'goal_differential' => $goalDifferential,
-            'confidence_score' => $this->confidenceScore(abs($goalDifferential), $awayGoalie, $homeGoalie),
+            'confidence_score' => $this->confidenceScore($awaySide, $homeSide, $awayGoalie, $homeGoalie),
             'goalie_edge' => $this->goalieEdge($awayTeam, $homeTeam, $awayGoalie, $homeGoalie),
         ];
     }
 
     /**
+     * @param array<string, mixed> $awaySide
+     * @param array<string, mixed> $homeSide
      * @param array<string, mixed> $awayGoalie
      * @param array<string, mixed> $homeGoalie
      */
-    private function confidenceScore(float $goalMargin, array $awayGoalie, array $homeGoalie): int
+    private function confidenceScore(array $awaySide, array $homeSide, array $awayGoalie, array $homeGoalie): int
     {
-        $awayConfidence = ((float) ($awayGoalie['confidence_score'] ?? 50)) / 100;
-        $homeConfidence = ((float) ($homeGoalie['confidence_score'] ?? 50)) / 100;
-        $dataConfidence = max(0.1, min(1.0, ($awayConfidence + $homeConfidence) / 2));
-        $score = 50 + min(30, $goalMargin * 18) + (($dataConfidence - 0.5) * 20);
+        $awayConfidence = $this->teamInputConfidence($awaySide, $awayGoalie);
+        $homeConfidence = $this->teamInputConfidence($homeSide, $homeGoalie);
+        $score = (($awayConfidence + $homeConfidence) / 2) * 100;
 
         return max(1, min(100, (int) round($score)));
+    }
+
+    /**
+     * @param array<string, mixed> $side
+     * @param array<string, mixed> $goalie
+     */
+    private function teamInputConfidence(array $side, array $goalie): float
+    {
+        $skaterConfidence = $this->weightedSkaterConfidence($side);
+        $goalieConfidence = max(0.0, min(1.0, ((float) ($goalie['confidence_score'] ?? 50)) / 100));
+
+        return (self::INPUT_CONFIDENCE_SKATER_WEIGHT * $skaterConfidence)
+            + (self::INPUT_CONFIDENCE_GOALIE_WEIGHT * $goalieConfidence);
+    }
+
+    /**
+     * @param array<string, mixed> $side
+     */
+    private function weightedSkaterConfidence(array $side): float
+    {
+        $roster = collect($side['roster'] ?? [])
+            ->map(static function (mixed $row): array {
+                $row = (array) $row;
+
+                return [
+                    'xgf_per_game' => (float) ($row['adjusted_xgf_per_game'] ?? $row['baseline_xgf_per_game'] ?? 0),
+                    'confidence_score' => $row['confidence_score'] ?? null,
+                ];
+            })
+            ->filter(static fn (array $row): bool => $row['xgf_per_game'] > 0)
+            ->sortByDesc('xgf_per_game')
+            ->values();
+
+        $teamXgfPerGame = (float) $roster->sum('xgf_per_game');
+
+        if ($teamXgfPerGame <= 0) {
+            return 0.5;
+        }
+
+        $includedXgfPerGame = 0.0;
+        $weightedConfidence = 0.0;
+
+        foreach ($roster as $row) {
+            $xgfPerGame = (float) $row['xgf_per_game'];
+            $confidence = max(0.0, min(1.0, (float) ($row['confidence_score'] ?? 0.5)));
+
+            $includedXgfPerGame += $xgfPerGame;
+            $weightedConfidence += $confidence * $xgfPerGame;
+
+            if (($includedXgfPerGame / $teamXgfPerGame) >= self::SKATER_CONFIDENCE_COVERAGE_TARGET) {
+                break;
+            }
+        }
+
+        if ($includedXgfPerGame <= 0) {
+            return 0.5;
+        }
+
+        return max(0.0, min(1.0, $weightedConfidence / $includedXgfPerGame));
     }
 
     /**
