@@ -375,6 +375,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // NHL shot attempt analysis
                 Route::get('/nhl-shot-attempts', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'index'])
                     ->name('admin.nhl-shot-attempts.index');
+                Route::get('/nhl-shot-attempts/context-sat-profiles/aggregate', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatAggregateProfiles'])
+                    ->name('admin.nhl-shot-attempts.context-sat-profiles.aggregate');
+                Route::get('/nhl-shot-attempts/context-sat-profiles/exact', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatExactProfiles'])
+                    ->name('admin.nhl-shot-attempts.context-sat-profiles.exact');
+                Route::get('/nhl-shot-attempts/context-sat-profiles/bucket-comparisons', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatBucketComparisons'])
+                    ->name('admin.nhl-shot-attempts.context-sat-profiles.bucket-comparisons');
+                Route::get('/nhl-shot-attempts/context-sat-profiles/bucket-comparison-rows', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatBucketComparisonRows'])
+                    ->name('admin.nhl-shot-attempts.context-sat-profiles.bucket-comparison-rows');
                 Route::post('/nhl-shot-attempts/xg', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildXg'])
                     ->name('admin.nhl-shot-attempts.xg.build');
                 Route::post('/nhl-shot-attempts/projections', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildProjections'])
@@ -391,6 +399,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.nhl-shot-attempts.skater-offensive-chance-profiles.build');
                 Route::post('/nhl-shot-attempts/skater-defensive-chance-profiles', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildSkaterDProfiles'])
                     ->name('admin.nhl-shot-attempts.skater-defensive-chance-profiles.build');
+                Route::post('/nhl-shot-attempts/game-context-sat-profiles', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'buildGameContextSatProfiles'])
+                    ->name('admin.nhl-shot-attempts.game-context-sat-profiles.build');
 
                 // NHL faceoff analysis
                 Route::get('/nhl-faceoffs', [\App\Http\Controllers\Admin\NhlFaceoffController::class, 'index'])

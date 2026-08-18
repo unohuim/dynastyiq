@@ -1259,6 +1259,74 @@ Inferring chances a skater prevented relative to opponent tendencies, projecting
 php artisan nhl:skater-defensive-chance-profiles --season=20252026 --game-type=2
 ```
 
+### NHL Game Context SAT Profiles
+
+**Name:** NHL Game Context SAT Profiles
+**Type:** Historical Game Context SAT Profile Layer
+**Location:**
+- `app/Console/Commands/BuildNhlGameContextSatProfilesCommand.php`
+- `app/Http/Controllers/Admin/NhlShotAttemptController.php`
+- `app/Jobs/BuildNhlOfficialSatProfileForOfficialJob.php`
+- `app/Jobs/BuildNhlOfficialSatProfilesJob.php`
+- `app/Jobs/BuildNhlStaffSatProfileForStaffJob.php`
+- `app/Jobs/BuildNhlStaffSatProfilesJob.php`
+- `app/Models/NhlOfficialSatProfileBucket.php`
+- `app/Models/NhlOfficialSatAggregateProfileBucket.php`
+- `app/Models/NhlStaffSatProfileBucket.php`
+- `app/Models/NhlStaffSatAggregateProfileBucket.php`
+- `app/Services/NhlGameContextSatProfileBuilder.php`
+- `database/migrations/2026_08_17_000001_create_nhl_game_context_sat_profile_tables.php`
+- `database/migrations/2026_08_17_000002_add_fallback_provenance_to_nhl_game_context_sat_profiles.php`
+- `database/migrations/2026_08_17_000003_create_nhl_game_context_sat_aggregate_profile_tables.php`
+- `docs/architecture/stats/NhlGameContextSatProfiles.yaml`
+- `resources/views/admin/nhl-shot-attempts/_context-sat-profiles.blade.php`
+- `resources/views/admin/nhl-shot-attempts/index.blade.php`
+- `routes/web.php`
+
+**Purpose:**
+Store historical official and head-coach SAT chance profiles using granular bucket rows with empirical-Bayes shrinkage.
+Readable aggregate profile rows are also persisted separately from the exact buckets, merging exact SAT buckets into the narrowest grouping that produces a small useful profile set.
+
+**When to Use:**
+Exploring whether referees, linesmen, or head coaches have interesting historical SAT chance-shape context; comparing official-assigned games; or comparing coach offense-side and defense-side SAT environments from right-rail game context.
+
+**When Not to Use:**
+Replacing shot-attempt facts, expected-goals model training, game-context imports, causal official/coach modeling, or unapproved future projection outputs.
+
+**Required Fallback Transparency:**
+Sparse bucket probabilities must expose exact bucket SAT, selected parent/prior bucket key, parent/prior SAT, prior weight SAT, shrinkage weight, confidence score, and confidence bucket as first-class row fields. Admin and API surfaces that display profile probabilities must make clear when a displayed rate is mostly borrowed from broader parent-bucket evidence.
+Admin inspection should include rankable context helpers such as SAT per game, same-bucket peer average share, share delta, persisted aggregate bucket labels, and included exact bucket counts so raw bucket probabilities are not mistaken for coach/ref rankings.
+Profile row inspection sections are lazy-loaded behind collapsed accordions; exact bucket detail is audit/debug content and must not run during the initial tab render. Bucket comparison inspection groups persisted aggregate bucket rows by aggregate bucket key, renders each group as a collapsed nested lazy accordion, shows SAT-weighted average shot distance and average absolute shot angle when aggregate metadata is available, and loads matching officials and staff contexts only when that bucket is expanded. Expanded bucket peer tables support AJAX header sorting with a visible active-direction arrow and default to SAT per game descending.
+Admin useful-row filters may combine direct SAT, shrinkage weight, and confidence thresholds for inspection, but those filters are presentation aids and must not replace persisted fallback provenance.
+
+**Public Interface:**
+- `admin.nhl-shot-attempts.game-context-sat-profiles.build`
+- `admin.nhl-shot-attempts.context-sat-profiles.aggregate`
+- `admin.nhl-shot-attempts.context-sat-profiles.bucket-comparisons`
+- `admin.nhl-shot-attempts.context-sat-profiles.bucket-comparison-rows`
+- `admin.nhl-shot-attempts.context-sat-profiles.exact`
+- `admin.nhl-shot-attempts.index`
+- `nhl:game-context-sat-profiles`
+- `nhl_official_sat_profile_buckets`
+- `nhl_staff_sat_profile_buckets`
+- `nhl_official_sat_aggregate_profile_buckets`
+- `nhl_staff_sat_aggregate_profile_buckets`
+- `NhlOfficialSatProfileBucket`
+- `NhlOfficialSatAggregateProfileBucket`
+- `NhlStaffSatProfileBucket`
+- `NhlStaffSatAggregateProfileBucket`
+- `NhlGameContextSatProfileBuilder`
+- `BuildNhlOfficialSatProfilesJob`
+- `BuildNhlOfficialSatProfileForOfficialJob`
+- `BuildNhlStaffSatProfilesJob`
+- `BuildNhlStaffSatProfileForStaffJob`
+
+**Example Usage:**
+```text
+php artisan nhl:game-context-sat-profiles --season=20252026 --game-type=2
+php artisan nhl:game-context-sat-profiles --season=20252026 --game-type=2 --only=officials
+```
+
 ### NHL Player TOI Projections
 
 **Name:** NHL Player TOI Projections

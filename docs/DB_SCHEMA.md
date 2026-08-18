@@ -65,6 +65,8 @@ Migrations remain the **sole source of truth**.
 - nhl_game_team_staff
 - nhl_games
 - nhl_import_progress
+- nhl_official_sat_aggregate_profile_buckets
+- nhl_official_sat_profile_buckets
 - nhl_officials
 - nhle_league_factors
 - nhl_play_by_play_dedupe_repairs
@@ -74,6 +76,8 @@ Migrations remain the **sole source of truth**.
 - nhl_shot_attempt_predictions
 - nhl_shot_attempts_facts
 - nhl_skater_defensive_chance_profile_buckets
+- nhl_staff_sat_aggregate_profile_buckets
+- nhl_staff_sat_profile_buckets
 - nhl_staff
 - nhl_teams
 - nhl_unit_game_summaries
@@ -3195,6 +3199,210 @@ Migrations remain the **sole source of truth**.
 - Index: `(source_season_id, goalie_player_id)` (`ix_nhl_gcpb_season_goalie`)
 - Index: `(source_season_id, team_abbrev)` (`ix_nhl_gcpb_season_team`)
 - Index: `(source_season_id, fallback_level)` (`ix_nhl_gcpb_season_fallback`)
+
+---
+
+## nhl_official_sat_aggregate_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Readable aggregate official-assigned SAT profile buckets merged from granular exact buckets.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| nhl_official_id | foreignId | No | FK -> `nhl_officials.id` |
+| role | string(32) | No | Official assignment role |
+| aggregate_bucket_key | string(600) | No | Readable aggregate bucket key |
+| aggregate_level | unsigned tiny integer | No | Aggregate specificity level |
+| aggregate_label | string(160) | No | Human-readable bucket label |
+| aggregate_dimensions | json | No | Aggregate dimensions |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_sat / source_unblocked_sat / source_sog / source_goals | unsigned integer | No | Aggregate event counts |
+| source_xg / source_xsog | decimal(10,4) | Yes | Aggregate expected goal and SOG totals |
+| source_profile_share | decimal(9,6) | Yes | Aggregate share of total source SAT |
+| goal_probability / shot_on_goal_probability | decimal(9,6) | Yes | SAT-weighted shrunk probabilities from included exact buckets |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | SAT-weighted confidence |
+| shrinkage_weight | decimal(5,4) | No | SAT-weighted borrowed probability share |
+| included_bucket_count | unsigned small integer | No | Count of exact buckets merged into this aggregate |
+| included_bucket_keys | json | No | Exact bucket keys included in the aggregate |
+| profile_inputs / flags / metadata | json | Yes | Builder and audit metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, nhl_official_id, role, aggregate_bucket_key)` (`uq_nhl_official_sat_aggregate_profile_bucket`)
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `nhl_official_id` references `nhl_officials.id` with cascade delete
+- Index: `(source_season_id, role)` (`ix_nhl_off_sat_agg_role`)
+- Index: `(source_season_id, aggregate_level)` (`ix_nhl_off_sat_agg_level`)
+- Index: `(source_season_id, source_sat)` (`ix_nhl_off_sat_agg_source_sat`)
+
+---
+
+## nhl_official_sat_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Historical official-assigned SAT chance profile buckets with empirical-Bayes shrunk goal and SOG probabilities.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| nhl_official_id | foreignId | No | FK -> `nhl_officials.id` |
+| role | string(32) | No | Official assignment role |
+| matched_bucket_key | string(600) | No | Granular SAT chance bucket key |
+| fallback_level | unsigned tiny integer | No | Bucket specificity level |
+| bucket_dimensions | json | No | Bucket dimensions |
+| shot_type_group / distance_group / angle_group / sequence_group | string(32) | Yes | Bucket labels |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_sat | unsigned integer | No | Source SAT in bucket |
+| source_unblocked_sat | unsigned integer | No | Source unblocked SAT in bucket |
+| source_sog | unsigned integer | No | Source SOG in bucket |
+| source_goals | unsigned integer | No | Source goals in bucket |
+| source_xg | decimal(10,4) | Yes | Source xG in bucket |
+| source_xsog | decimal(10,4) | Yes | Source xSOG in bucket |
+| source_profile_share | decimal(9,6) | Yes | Bucket share of total source SAT |
+| goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk goal probability |
+| shot_on_goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk shot-on-goal probability |
+| prior_bucket_key | string(600) | Yes | Selected broader parent/prior bucket key used for shrinkage |
+| prior_fallback_level | unsigned tiny integer | Yes | Parent/prior bucket fallback level |
+| prior_sat | unsigned integer | No | Parent/prior bucket SAT sample |
+| prior_weight_sat | unsigned integer | No | Parent/prior SAT weight blended into stored probabilities |
+| shrinkage_weight | decimal(5,4) | No | Share of stored probability borrowed from parent/prior evidence |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Shrinkage confidence |
+| profile_inputs | json | Yes | Builder input metadata |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Shrinkage and builder metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, nhl_official_id, role, matched_bucket_key)` (`uq_nhl_official_sat_profile_bucket`)
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `nhl_official_id` references `nhl_officials.id` with cascade delete
+- Index: `(source_season_id, role)` (`ix_nhl_official_sat_profile_role`)
+- Index: `(source_season_id, fallback_level)` (`ix_nhl_official_sat_profile_level`)
+- Index: `(source_season_id, shrinkage_weight)` (`ix_nhl_official_sat_profile_shrinkage`)
+
+---
+
+## nhl_staff_sat_aggregate_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Readable aggregate head-coach offense-side and defense-side SAT profile buckets merged from granular exact buckets.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| nhl_staff_id | foreignId | No | FK -> `nhl_staff.id` |
+| role | string(32) | No | Staff assignment role |
+| team_context | string(16) | No | `offense` or `defense` context |
+| aggregate_bucket_key | string(600) | No | Readable aggregate bucket key |
+| aggregate_level | unsigned tiny integer | No | Aggregate specificity level |
+| aggregate_label | string(160) | No | Human-readable bucket label |
+| aggregate_dimensions | json | No | Aggregate dimensions |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_sat / source_unblocked_sat / source_sog / source_goals | unsigned integer | No | Aggregate event counts |
+| source_xg / source_xsog | decimal(10,4) | Yes | Aggregate expected goal and SOG totals |
+| source_profile_share | decimal(9,6) | Yes | Aggregate share of total source SAT |
+| goal_probability / shot_on_goal_probability | decimal(9,6) | Yes | SAT-weighted shrunk probabilities from included exact buckets |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | SAT-weighted confidence |
+| shrinkage_weight | decimal(5,4) | No | SAT-weighted borrowed probability share |
+| included_bucket_count | unsigned small integer | No | Count of exact buckets merged into this aggregate |
+| included_bucket_keys | json | No | Exact bucket keys included in the aggregate |
+| profile_inputs / flags / metadata | json | Yes | Builder and audit metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, nhl_staff_id, role, team_context, aggregate_bucket_key)` (`uq_nhl_staff_sat_aggregate_profile_bucket`)
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `nhl_staff_id` references `nhl_staff.id` with cascade delete
+- Index: `(source_season_id, role, team_context)` (`ix_nhl_staff_sat_agg_role_context`)
+- Index: `(source_season_id, aggregate_level)` (`ix_nhl_staff_sat_agg_level`)
+- Index: `(source_season_id, source_sat)` (`ix_nhl_staff_sat_agg_source_sat`)
+
+---
+
+## nhl_staff_sat_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Historical head-coach offense-side and defense-side SAT chance profile buckets with empirical-Bayes shrunk goal and SOG probabilities.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| source_season_id | string(8) | No | Source NHL season key |
+| game_type | unsigned tiny integer | No | NHL game type; defaults to regular season |
+| goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| shot_on_goal_expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| nhl_staff_id | foreignId | No | FK -> `nhl_staff.id` |
+| role | string(32) | No | Staff assignment role |
+| team_context | string(16) | No | `offense` or `defense` context |
+| matched_bucket_key | string(600) | No | Granular SAT chance bucket key |
+| fallback_level | unsigned tiny integer | No | Bucket specificity level |
+| bucket_dimensions | json | No | Bucket dimensions |
+| shot_type_group / distance_group / angle_group / sequence_group | string(32) | Yes | Bucket labels |
+| source_games | decimal(8,2) | Yes | Source games represented |
+| source_sat | unsigned integer | No | Source SAT in bucket |
+| source_unblocked_sat | unsigned integer | No | Source unblocked SAT in bucket |
+| source_sog | unsigned integer | No | Source SOG in bucket |
+| source_goals | unsigned integer | No | Source goals in bucket |
+| source_xg | decimal(10,4) | Yes | Source xG in bucket |
+| source_xsog | decimal(10,4) | Yes | Source xSOG in bucket |
+| source_profile_share | decimal(9,6) | Yes | Bucket share of total source SAT |
+| goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk goal probability |
+| shot_on_goal_probability | decimal(9,6) | Yes | Empirical-Bayes shrunk shot-on-goal probability |
+| prior_bucket_key | string(600) | Yes | Selected broader parent/prior bucket key used for shrinkage |
+| prior_fallback_level | unsigned tiny integer | Yes | Parent/prior bucket fallback level |
+| prior_sat | unsigned integer | No | Parent/prior bucket SAT sample |
+| prior_weight_sat | unsigned integer | No | Parent/prior SAT weight blended into stored probabilities |
+| shrinkage_weight | decimal(5,4) | No | Share of stored probability borrowed from parent/prior evidence |
+| confidence_score / confidence_bucket | decimal(5,4) / string(24) | Yes | Shrinkage confidence |
+| profile_inputs | json | Yes | Builder input metadata |
+| flags | json | Yes | Review flags |
+| metadata | json | Yes | Shrinkage and builder metadata |
+| profiled_at | timestamp | Yes | Profile build timestamp |
+| created_at / updated_at | timestamp | Yes | Laravel timestamps |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `(source_season_id, game_type, goal_expected_goals_model_id, shot_on_goal_expected_goals_model_id, nhl_staff_id, role, team_context, matched_bucket_key)` (`uq_nhl_staff_sat_profile_bucket`)
+- FK: `goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_on_goal_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `nhl_staff_id` references `nhl_staff.id` with cascade delete
+- Index: `(source_season_id, role, team_context)` (`ix_nhl_staff_sat_profile_role_context`)
+- Index: `(source_season_id, fallback_level)` (`ix_nhl_staff_sat_profile_level`)
+- Index: `(source_season_id, shrinkage_weight)` (`ix_nhl_staff_sat_profile_shrinkage`)
 
 ---
 

@@ -2108,6 +2108,60 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Game Context SAT Profile Confidence Bucket
+
+**Name:** NHL game context SAT profile confidence bucket
+**Storage location(s):** `nhl_official_sat_profile_buckets.confidence_bucket`, `nhl_staff_sat_profile_buckets.confidence_bucket`, `nhl_official_sat_aggregate_profile_buckets.confidence_bucket`, `nhl_staff_sat_aggregate_profile_buckets.confidence_bucket` (nullable string columns)
+**Allowed values:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Historical game-context SAT bucket required substantial empirical-Bayes shrinkage toward a parent bucket.
+- `medium`: Historical game-context SAT bucket required moderate empirical-Bayes shrinkage toward a parent bucket.
+- `high`: Historical game-context SAT bucket is mostly driven by its direct bucket sample.
+
+---
+
+### NHL Game Context SAT Profile Flag
+
+**Name:** NHL game context SAT profile flag
+**Storage location(s):** `nhl_official_sat_profile_buckets.flags`, `nhl_staff_sat_profile_buckets.flags`, `nhl_official_sat_aggregate_profile_buckets.flags`, `nhl_staff_sat_aggregate_profile_buckets.flags` (JSON arrays)
+**Allowed values currently emitted:**
+
+- `limited_context_bucket_sat`
+- `high_context_bucket_shrinkage`
+- `merged_context_sat_buckets`
+- `aggregate_contains_shrunk_bucket_rates`
+
+**Semantic meaning:**
+
+- `limited_context_bucket_sat`: Official or staff SAT bucket required substantial parent shrinkage and has low direct-sample confidence.
+- `high_context_bucket_shrinkage`: Stored probability rates were heavily blended with a broader parent bucket prior.
+- `merged_context_sat_buckets`: Readable aggregate profile bucket combines more than one exact SAT profile bucket.
+- `aggregate_contains_shrunk_bucket_rates`: Aggregate profile probability rate contains exact buckets whose rates still include material shrinkage.
+
+---
+
+### NHL Staff SAT Profile Team Context
+
+**Name:** NHL staff SAT profile team context
+**Storage location(s):** `nhl_staff_sat_profile_buckets.team_context` (string column)
+**Allowed values:**
+
+- `offense`
+- `defense`
+
+**Semantic meaning:**
+
+- `offense`: Shot attempts were taken by the staff member's assigned team.
+- `defense`: Shot attempts were taken by the opponent against the staff member's assigned team.
+
+---
+
 ### NHL Player TOI Projection Role Bucket
 
 **Name:** NHL player TOI projection role bucket

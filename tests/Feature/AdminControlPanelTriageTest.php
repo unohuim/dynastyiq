@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\BuildNhlFaceoffFactsJob;
+use App\Jobs\BuildNhlOfficialSatProfilesJob;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
+use App\Jobs\BuildNhlStaffSatProfilesJob;
 use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\ImportYahooPlayersPageJob;
 use App\Jobs\NhlDiscoveryJob;
@@ -202,6 +204,266 @@ it('allows super admins to view the NHL shot attempts admin panel', function () 
         ->assertSee('Aggregates')
         ->assertSee('Buckets')
         ->assertSee('QA');
+});
+
+it('allows super admins to view NHL game-context SAT profiles', function () {
+    $goalModelId = DB::table('nhl_expected_goals_models')->insertGetId([
+        'name' => 'test-context-goal',
+        'version' => 'v1',
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'goal',
+        'training_season_id' => '20252026',
+        'status' => 'draft',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $sogModelId = DB::table('nhl_expected_goals_models')->insertGetId([
+        'name' => 'test-context-sog',
+        'version' => 'v1',
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20252026',
+        'status' => 'draft',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $officialId = DB::table('nhl_officials')->insertGetId([
+        'display_name' => 'Referee Example',
+        'normalized_name' => 'referee example',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $staffId = DB::table('nhl_staff')->insertGetId([
+        'display_name' => 'Coach Example',
+        'normalized_name' => 'coach example',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $baseProfile = [
+        'source_season_id' => '20252026',
+        'game_type' => 2,
+        'goal_expected_goals_model_id' => $goalModelId,
+        'shot_on_goal_expected_goals_model_id' => $sogModelId,
+        'role' => 'referee',
+        'matched_bucket_key' => 'L01|shot_type_group=wrist|distance_group=mid|angle_group=center|sequence_group=settled',
+        'fallback_level' => 1,
+        'bucket_dimensions' => json_encode(['shot_type_group' => 'wrist']),
+        'shot_type_group' => 'wrist',
+        'distance_group' => 'mid',
+        'angle_group' => 'center',
+        'sequence_group' => 'settled',
+        'source_games' => 10,
+        'source_sat' => 100,
+        'source_unblocked_sat' => 80,
+        'source_sog' => 50,
+        'source_goals' => 6,
+        'source_xg' => 5.55,
+        'source_xsog' => 48.25,
+        'source_profile_share' => 0.4,
+        'goal_probability' => 0.0555,
+        'shot_on_goal_probability' => 0.4825,
+        'prior_bucket_key' => 'L99|baseline=league',
+        'prior_fallback_level' => 99,
+        'prior_sat' => 2500,
+        'prior_weight_sat' => 2200,
+        'shrinkage_weight' => 0.18,
+        'confidence_score' => 0.82,
+        'confidence_bucket' => 'high',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ];
+
+    DB::table('nhl_official_sat_profile_buckets')->insert(array_merge($baseProfile, [
+        'nhl_official_id' => $officialId,
+    ]));
+    DB::table('nhl_staff_sat_profile_buckets')->insert(array_merge($baseProfile, [
+        'nhl_staff_id' => $staffId,
+        'role' => 'head_coach',
+        'team_context' => 'offense',
+    ]));
+    DB::table('nhl_staff_sat_profile_buckets')->insert(array_merge($baseProfile, [
+        'nhl_staff_id' => $staffId,
+        'role' => 'head_coach',
+        'team_context' => 'defense',
+        'matched_bucket_key' => 'L01|shot_type_group=slap|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+        'shot_type_group' => 'slap',
+        'source_sat' => 24,
+        'prior_bucket_key' => 'L03|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+        'prior_fallback_level' => 3,
+        'prior_sat' => 76,
+        'prior_weight_sat' => 52,
+        'shrinkage_weight' => 0.68,
+        'confidence_score' => 0.32,
+        'confidence_bucket' => 'low',
+    ]));
+
+    $baseAggregateProfile = [
+        'source_season_id' => '20252026',
+        'game_type' => 2,
+        'goal_expected_goals_model_id' => $goalModelId,
+        'shot_on_goal_expected_goals_model_id' => $sogModelId,
+        'role' => 'referee',
+        'aggregate_bucket_key' => 'A03|shot_type_group=wrist|distance_zone=outside_slot',
+        'aggregate_level' => 3,
+        'aggregate_label' => 'Wrist shots outside the slot',
+        'aggregate_dimensions' => json_encode(['aggregate_level' => 3, 'shot_type_group' => 'wrist', 'distance_zone' => 'outside_slot']),
+        'source_games' => 10,
+        'source_sat' => 100,
+        'source_unblocked_sat' => 80,
+        'source_sog' => 50,
+        'source_goals' => 6,
+        'source_xg' => 5.55,
+        'source_xsog' => 48.25,
+        'source_profile_share' => 0.4,
+        'goal_probability' => 0.0555,
+        'shot_on_goal_probability' => 0.4825,
+        'confidence_score' => 0.82,
+        'confidence_bucket' => 'high',
+        'shrinkage_weight' => 0.18,
+        'included_bucket_count' => 2,
+        'included_bucket_keys' => json_encode([
+            'L01|shot_type_group=wrist|distance_group=mid|angle_group=center|sequence_group=settled',
+            'L01|shot_type_group=wrist|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+        ]),
+        'metadata' => json_encode([
+            'avg_distance' => 41.5,
+            'avg_angle' => 18.25,
+        ]),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ];
+
+    DB::table('nhl_official_sat_aggregate_profile_buckets')->insert(array_merge($baseAggregateProfile, [
+        'nhl_official_id' => $officialId,
+    ]));
+    DB::table('nhl_staff_sat_aggregate_profile_buckets')->insert(array_merge($baseAggregateProfile, [
+        'nhl_staff_id' => $staffId,
+        'role' => 'head_coach',
+        'team_context' => 'offense',
+        'source_sat' => 120,
+        'goal_probability' => 0.0755,
+    ]));
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', ['tab' => 'context-sat-profiles']))
+        ->assertOk()
+        ->assertSee('Refs &amp; Coaches SAT Profiles', false)
+        ->assertSee('Aggregate Profiles')
+        ->assertSee('Bucket Comparisons')
+        ->assertSee('Exact Bucket Detail')
+        ->assertSee('Open this section to load aggregate profiles.')
+        ->assertSee('Open this section to load bucket comparisons.')
+        ->assertSee('Open this section to load exact bucket detail.')
+        ->assertDontSee('Wrist shots outside the slot')
+        ->assertDontSee('L99|baseline=league');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.aggregate', [
+            'tab' => 'context-sat-profiles',
+        ]))
+        ->assertOk()
+        ->assertSee('Profile Bucket')
+        ->assertSee('Exact Buckets')
+        ->assertSee('Wrist shots outside the slot')
+        ->assertSee('Referee Example')
+        ->assertSee('Coach Example')
+        ->assertSee('offense');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.bucket-comparisons', [
+            'tab' => 'context-sat-profiles',
+        ]))
+        ->assertOk()
+        ->assertSee('Wrist shots outside the slot')
+        ->assertSee('2 entities')
+        ->assertSee('avg dist 41.50 ft')
+        ->assertSee('avg angle 18.25 deg')
+        ->assertSee('Open this bucket to load matching coaches and refs.')
+        ->assertDontSee('Referee Example')
+        ->assertDontSee('Coach Example')
+        ->assertDontSee('SAT/G');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.bucket-comparison-rows', [
+            'tab' => 'context-sat-profiles',
+            'aggregate_bucket_key' => 'A03|shot_type_group=wrist|distance_zone=outside_slot',
+        ]))
+        ->assertOk()
+        ->assertSeeInOrder(['Coach Example', 'Referee Example'])
+        ->assertSee('context_profile_bucket_sort=goal_probability')
+        ->assertSee('&darr;', false)
+        ->assertSee('Referee Example')
+        ->assertSee('Coach Example')
+        ->assertSee('SAT/G');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.bucket-comparison-rows', [
+            'tab' => 'context-sat-profiles',
+            'aggregate_bucket_key' => 'A03|shot_type_group=wrist|distance_zone=outside_slot',
+            'context_profile_bucket_sort' => 'goal_probability',
+            'context_profile_bucket_direction' => 'asc',
+        ]))
+        ->assertOk()
+        ->assertSeeInOrder(['Referee Example', 'Coach Example'])
+        ->assertSee('&uarr;', false);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.exact', [
+            'tab' => 'context-sat-profiles',
+        ]))
+        ->assertOk()
+        ->assertSee('SAT/G')
+        ->assertSee('Lg Share')
+        ->assertSee('+/- Lg')
+        ->assertSee('L99|baseline=league')
+        ->assertSee('2,500')
+        ->assertSee('18%');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.context-sat-profiles.exact', [
+            'tab' => 'context-sat-profiles',
+            'context_profile_useful_only' => '1',
+        ]))
+        ->assertOk()
+        ->assertSee('Referee Example')
+        ->assertSee('Coach Example')
+        ->assertDontSee('L03|distance_group=point_or_high|angle_group=sharp|sequence_group=settled');
+});
+
+it('allows super admins to queue NHL game-context SAT profiles from admin', function () {
+    Bus::fake([
+        BuildNhlOfficialSatProfilesJob::class,
+        BuildNhlStaffSatProfilesJob::class,
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->post(route('admin.nhl-shot-attempts.game-context-sat-profiles.build'), [
+            'source_season_id' => '20252026',
+            'game_type' => 2,
+            'only' => 'staff',
+        ])
+        ->assertRedirect(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'context-sat-profiles',
+            'context_profile_season_id' => '20252026',
+            'context_profile_game_type' => 2,
+        ]));
+
+    Bus::assertDispatched(BuildNhlStaffSatProfilesJob::class, function (BuildNhlStaffSatProfilesJob $job): bool {
+        return $job->sourceSeasonId === '20252026' && $job->gameType === 2;
+    });
+    Bus::assertNotDispatched(BuildNhlOfficialSatProfilesJob::class);
+});
+
+it('validates NHL game-context SAT profile build scope', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->from(route('admin.nhl-shot-attempts.index', ['tab' => 'context-sat-profiles']))
+        ->post(route('admin.nhl-shot-attempts.game-context-sat-profiles.build'), [
+            'source_season_id' => '20252026',
+            'game_type' => 2,
+            'only' => 'players',
+        ])
+        ->assertSessionHasErrors('only');
 });
 
 it('allows super admins to view the NHL faceoffs admin panel', function () {

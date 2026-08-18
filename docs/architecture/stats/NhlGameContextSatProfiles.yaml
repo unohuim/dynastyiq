@@ -1,0 +1,84 @@
+name: NHL Game Context SAT Profiles
+type: Historical Game Context SAT Profile Layer
+location:
+  - app/Console/Commands/BuildNhlGameContextSatProfilesCommand.php
+  - app/Http/Controllers/Admin/NhlShotAttemptController.php
+  - app/Jobs/BuildNhlOfficialSatProfileForOfficialJob.php
+  - app/Jobs/BuildNhlOfficialSatProfilesJob.php
+  - app/Jobs/BuildNhlStaffSatProfileForStaffJob.php
+  - app/Jobs/BuildNhlStaffSatProfilesJob.php
+  - app/Models/NhlOfficialSatProfileBucket.php
+  - app/Models/NhlOfficialSatAggregateProfileBucket.php
+  - app/Models/NhlStaffSatProfileBucket.php
+  - app/Models/NhlStaffSatAggregateProfileBucket.php
+  - app/Services/NhlGameContextSatProfileBuilder.php
+  - database/migrations/2026_08_17_000001_create_nhl_game_context_sat_profile_tables.php
+  - database/migrations/2026_08_17_000002_add_fallback_provenance_to_nhl_game_context_sat_profiles.php
+  - database/migrations/2026_08_17_000003_create_nhl_game_context_sat_aggregate_profile_tables.php
+  - docs/architecture/stats/NhlGameContextSatProfiles.yaml
+  - resources/views/admin/nhl-shot-attempts/_context-sat-profiles.blade.php
+  - resources/views/admin/nhl-shot-attempts/index.blade.php
+  - routes/web.php
+purpose: Store historical official and head-coach SAT chance profiles using granular bucket rows with empirical-Bayes shrinkage plus readable aggregate profile buckets.
+when_to_use:
+  - Exploring whether referees, linesmen, or head coaches have interesting historical SAT chance-shape context.
+  - Comparing official-assigned games without re-querying raw shot-attempt facts.
+  - Comparing head-coach offense-side and defense-side SAT environments from right-rail game context.
+when_not_to_use:
+  - Replacing shot-attempt facts, expected-goals model training, or game-context imports.
+  - Treating observed official or coach context as causal talent without separate modeling.
+  - Projecting future team, coach, or official outcomes before a projection abstraction is approved.
+rules:
+  - Game-context SAT profiles are historical source-season outputs, not target-season projections.
+  - Profile rows must be built from `nhl_shot_attempts_facts` joined to versioned goal and shot-on-goal expected-goals predictions.
+  - Official profiles must join shot attempts through `nhl_game_officials` and preserve the official role.
+  - Staff profiles must join shot attempts through `nhl_game_team_staff` and preserve the staff role plus team context.
+  - Staff offense context represents shot attempts by the staff member's assigned team.
+  - Staff defense context represents shot attempts by the opponent against the staff member's assigned team.
+  - A small total entity SAT floor may be used only to avoid one-off junk profiles; it must not be used as a bucket reliability cutoff.
+  - Granular profile bucket rows should be persisted at the most specific chance shape.
+  - Sparse bucket probabilities must be shrunk toward broader parent buckets using empirical-Bayes weighting.
+  - Readable aggregate profile buckets must be persisted separately from granular profile buckets so user-facing summaries do not overwrite auditable exact bucket rows.
+  - Aggregate profile buckets must merge exact buckets into the narrowest available grouping that produces a small usable profile set, targeting two to five buckets per entity/context.
+  - Aggregate profile buckets may use broader semantic dimensions, such as outside-slot shot zones, when exact shot distance, angle, or sequence dimensions create too many small buckets.
+  - Aggregate profile bucket rows must persist their aggregate key, aggregate level, label, dimensions, included exact bucket keys, included exact bucket count, SAT totals, share, shrunk goal/SOG probabilities, shrinkage weight, and confidence.
+  - Stored goal and shot-on-goal probability fields represent shrunk expected rates; raw expected and actual rates must remain auditable in metadata.
+  - Sparse-bucket fallback must be transparent wherever profile rows are inspected.
+  - Profile outputs must expose the exact bucket SAT, selected parent or prior bucket key, parent or prior SAT, prior weight SAT, shrinkage weight, confidence score, and confidence bucket as first-class row fields for this abstraction.
+  - Admin and API surfaces that display profile probabilities must show enough fallback metadata to distinguish direct bucket evidence from parent-bucket borrowing.
+  - Admin inspection surfaces should prefer persisted aggregate profile rows and rankable detail views over raw probability sorting alone, including SAT per game, same-bucket peer average share, share delta, aggregate bucket labels, and included exact bucket counts.
+  - Admin inspection sections that query profile rows must be lazy-loaded behind collapsed accordions so the initial tab render does not execute heavy aggregate or exact bucket queries.
+  - Bucket comparison inspection must group persisted aggregate bucket rows by aggregate bucket key and expose the matching officials and staff contexts for direct peer comparison.
+  - Bucket comparison groups must render as collapsed nested lazy-load accordions; peer row tables must load only when the specific bucket accordion is expanded.
+  - Bucket comparison peer row tables must support AJAX header sorting with a visible active-direction arrow and default to SAT per game descending.
+  - Bucket comparison group metadata must include SAT-weighted average shot distance and average absolute shot angle when aggregate metadata is available.
+  - Exact bucket detail is an audit/debug surface and must not load during the initial refs and coaches SAT tab render.
+  - Admin inspection filters may provide a useful-row view using direct SAT, shrinkage weight, and confidence thresholds, but those filters are presentation aids and must not replace persisted fallback provenance.
+  - Future profile builders must not stop at a numeric confidence score when fallback/shrinkage logic is involved; they must persist or derive inspectable fallback provenance.
+  - Builds must upsert by source season, game type, expected model ids, entity id, role, team context where applicable, and matched bucket key so reruns do not create duplicates.
+  - Aggregate builds must upsert by source season, game type, expected model ids, entity id, role, team context where applicable, and aggregate bucket key so reruns do not create duplicates.
+  - Season-level game-context SAT profile builds must dispatch one worker job per eligible official role or staff role/context assignment.
+public_interface:
+  - admin.nhl-shot-attempts.game-context-sat-profiles.build
+  - admin.nhl-shot-attempts.context-sat-profiles.aggregate
+  - admin.nhl-shot-attempts.context-sat-profiles.bucket-comparisons
+  - admin.nhl-shot-attempts.context-sat-profiles.bucket-comparison-rows
+  - admin.nhl-shot-attempts.context-sat-profiles.exact
+  - admin.nhl-shot-attempts.index
+  - nhl:game-context-sat-profiles
+  - nhl_official_sat_profile_buckets
+  - nhl_staff_sat_profile_buckets
+  - nhl_official_sat_aggregate_profile_buckets
+  - nhl_staff_sat_aggregate_profile_buckets
+  - NhlOfficialSatProfileBucket
+  - NhlOfficialSatAggregateProfileBucket
+  - NhlStaffSatProfileBucket
+  - NhlStaffSatAggregateProfileBucket
+  - NhlGameContextSatProfileBuilder
+  - BuildNhlOfficialSatProfilesJob
+  - BuildNhlOfficialSatProfileForOfficialJob
+  - BuildNhlStaffSatProfilesJob
+  - BuildNhlStaffSatProfileForStaffJob
+example_usage: |
+  php artisan nhl:game-context-sat-profiles --season=20252026 --game-type=2
+  php artisan nhl:game-context-sat-profiles --season=20252026 --game-type=2 --only=officials

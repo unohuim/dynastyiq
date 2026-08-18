@@ -21,6 +21,7 @@ use App\Console\Commands\RepairDuplicateNhlPlayByPlayCommand;
 use App\Console\Commands\RefreshNhlPlayerMetadataCommand;
 use App\Console\Commands\RefreshNhlProspectFlagsCommand;
 use App\Console\Commands\SumNhlSeasonCommand;
+use App\Console\Commands\BuildNhlGameContextSatProfilesCommand;
 use App\Console\Commands\BuildNhlSkaterOffensiveChanceProfilesCommand;
 use App\Console\Commands\BuildNhlGoalieProjectionsCommand;
 use App\Console\Commands\BuildNhlGoalieWorkloadProjectionsCommand;
@@ -52,6 +53,7 @@ return Application::configure(basePath: dirname(__DIR__))
         RepairDuplicateNhlPlayByPlayCommand::class,
         RefreshNhlPlayerMetadataCommand::class,
         RefreshNhlProspectFlagsCommand::class,
+        BuildNhlGameContextSatProfilesCommand::class,
         BuildNhlSkaterOffensiveChanceProfilesCommand::class,
         BuildNhlGoalieProjectionsCommand::class,
         BuildNhlGoalieWorkloadProjectionsCommand::class,

@@ -9,6 +9,7 @@
         'skater-o-profiles' => 'Skater O Profiles',
         'g-sat-profiles' => 'G SAT Profiles',
         'skater-d-profiles' => 'Skater D Profiles',
+        'context-sat-profiles' => 'Refs & Coaches SAT',
         'xg' => 'xG',
         'projections' => 'Projections',
         'matchup' => 'Matchup',
@@ -152,6 +153,23 @@
         }
 
         return $skaterOProfileDirection === 'desc' ? '↓' : '↑';
+    };
+    $contextProfileSortUrl = function ($key) use ($contextProfileSort, $contextProfileDirection) {
+        return route('admin.nhl-shot-attempts.index', array_merge(
+            request()->except(['page', 'context_profile_sort', 'context_profile_direction']),
+            [
+                'tab' => 'context-sat-profiles',
+                'context_profile_sort' => $key,
+                'context_profile_direction' => $contextProfileSort === $key && $contextProfileDirection === 'desc' ? 'asc' : 'desc',
+            ]
+        ));
+    };
+    $contextProfileSortArrow = function ($key) use ($contextProfileSort, $contextProfileDirection) {
+        if ($contextProfileSort !== $key) {
+            return '';
+        }
+
+        return $contextProfileDirection === 'desc' ? '↓' : '↑';
     };
     $xgAccordionState = fn ($key) => "{ key: 'dynastyiq:admin:nhl-shot-attempts:xg:accordion:{$key}', open: false, init() { try { this.open = JSON.parse(window.localStorage?.getItem(this.key) || 'false') === true } catch (e) { this.open = false } }, toggle() { this.open = !this.open; try { window.localStorage?.setItem(this.key, JSON.stringify(this.open)) } catch (e) {} } }";
     $projectionAccordionState = fn ($key) => "{ key: 'dynastyiq:admin:nhl-shot-attempts:projections:accordion:{$key}', open: false, init() { try { this.open = JSON.parse(window.localStorage?.getItem(this.key) || 'false') === true } catch (e) { this.open = false } }, toggle() { this.open = !this.open; try { window.localStorage?.setItem(this.key, JSON.stringify(this.open)) } catch (e) {} } }";
@@ -1547,6 +1565,8 @@
                                 </div>
                             @endunless
                         </div>
+                    @elseif($activeTab === 'context-sat-profiles')
+                        @include('admin.nhl-shot-attempts._context-sat-profiles')
                     @elseif($activeTab === 'xg')
                         <div class="space-y-5 p-4">
                             @if(session('status'))

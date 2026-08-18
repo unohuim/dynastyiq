@@ -9,10 +9,12 @@ use App\Jobs\BackfillNhlExpectedGoalsJob;
 use App\Jobs\BuildNhlGoalieChanceProfilesJob;
 use App\Jobs\BuildNhlGoalieProjectionsJob;
 use App\Jobs\BuildNhlGoalieWorkloadProjectionsJob;
+use App\Jobs\BuildNhlOfficialSatProfilesJob;
 use App\Jobs\BuildNhlPlayerProjectionsJob;
 use App\Jobs\BuildNhlPlayerToiProjectionsJob;
 use App\Jobs\BuildNhlSkaterDefensiveChanceProfilesJob;
 use App\Jobs\BuildNhlSkaterOffensiveChanceProfilesJob;
+use App\Jobs\BuildNhlStaffSatProfilesJob;
 use App\Models\NhlExpectedGoalsModel;
 use App\Services\NhlExpectedGoalsBackfiller;
 use App\Services\NhlGoalieProjectionBuilder;
@@ -43,7 +45,7 @@ class NhlShotAttemptController extends Controller
     public function index(Request $request): View
     {
         $input = $request->validate([
-            'tab' => ['nullable', Rule::in(['explorer', 'aggregates', 'buckets', 'predictive', 'biometrics', 'player-profiles', 'skater-o-profiles', 'g-sat-profiles', 'skater-d-profiles', 'xg', 'projections', 'matchup', 'qa'])],
+            'tab' => ['nullable', Rule::in(['explorer', 'aggregates', 'buckets', 'predictive', 'biometrics', 'player-profiles', 'skater-o-profiles', 'g-sat-profiles', 'skater-d-profiles', 'context-sat-profiles', 'xg', 'projections', 'matchup', 'qa'])],
             'season_id' => ['nullable', 'digits:8'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date'],
@@ -129,6 +131,20 @@ class NhlShotAttemptController extends Controller
             'skater_d_profile_min_sat_against' => ['nullable', 'integer', 'min:1', 'max:10000'],
             'skater_d_profile_sort' => ['nullable', Rule::in(array_keys($this->skaterDProfileSortColumns()))],
             'skater_d_profile_direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'context_profile_season_id' => ['nullable', 'digits:8'],
+            'context_profile_game_type' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'context_profile_entity_type' => ['nullable', Rule::in(['official', 'staff'])],
+            'context_profile_role' => ['nullable', 'string', 'max:32'],
+            'context_profile_team_context' => ['nullable', Rule::in(['offense', 'defense'])],
+            'context_profile_entity_search' => ['nullable', 'string', 'max:120'],
+            'context_profile_shot_type_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_distance_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_angle_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_sequence_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_min_sat' => ['nullable', 'integer', 'min:1', 'max:10000'],
+            'context_profile_useful_only' => ['nullable', Rule::in(['1', '0'])],
+            'context_profile_sort' => ['nullable', Rule::in(array_keys($this->contextProfileSortColumns()))],
+            'context_profile_direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'projection_source_season_id' => ['nullable', 'digits:8'],
             'projection_target_season_id' => ['nullable', 'digits:8'],
             'projection_version' => ['nullable', 'string', 'max:80'],
@@ -182,6 +198,7 @@ class NhlShotAttemptController extends Controller
         $goalieProfileTableExists = $this->goalieProfileTableExists();
         $skaterOProfileTableExists = $this->skaterOProfileTableExists();
         $skaterDProfileTableExists = $this->skaterDProfileTableExists();
+        $contextProfileTablesExist = $this->contextProfileTablesExist();
         $projectionFilters = $this->projectionFilters($input);
         $goalieWorkloadFilters = $this->goalieWorkloadFilters($input);
         $goalieProjectionFilters = $this->goalieProjectionFilters($input);
@@ -190,6 +207,7 @@ class NhlShotAttemptController extends Controller
         $goalieProfileFilters = $this->goalieProfileFilters($input);
         $skaterOProfileFilters = $this->skaterOProfileFilters($input);
         $skaterDProfileFilters = $this->skaterDProfileFilters($input);
+        $contextProfileFilters = $this->contextProfileFilters($input);
         $predictiveGroup = (string) ($input['predictive_group'] ?? 'distance_shot_type');
         $minAttempts = (int) ($input['min_attempts'] ?? 300);
         $biometricMinAttempts = (int) ($input['biometric_min_attempts'] ?? 300);
@@ -228,6 +246,8 @@ class NhlShotAttemptController extends Controller
         $skaterOProfileDirection = $this->sortDirection((string) ($input['skater_o_profile_direction'] ?? ''));
         $skaterDProfileSort = (string) ($input['skater_d_profile_sort'] ?? 'source_xga_on_ice');
         $skaterDProfileDirection = $this->sortDirection((string) ($input['skater_d_profile_direction'] ?? ''));
+        $contextProfileSort = (string) ($input['context_profile_sort'] ?? 'source_xg');
+        $contextProfileDirection = $this->sortDirection((string) ($input['context_profile_direction'] ?? ''));
         $latestXgModel = $xgTableExists ? $this->latestXgModel($filters['season_id'], NhlExpectedGoalsBackfiller::TARGET_GOAL) : null;
         $latestXsogModel = $xgTableExists ? $this->latestXgModel($filters['season_id'], NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL) : null;
         $projectionRows = $projectionTablesExist && $tab === 'projections'
@@ -251,6 +271,8 @@ class NhlShotAttemptController extends Controller
         $skaterDProfileRows = $skaterDProfileTableExists && $tab === 'skater-d-profiles'
             ? $this->skaterDProfileRows($skaterDProfileFilters, $skaterDProfileSort, $skaterDProfileDirection)
             : collect();
+        $contextProfileRows = collect();
+        $contextProfileAggregateRows = collect();
         $matchupResult = $tab === 'matchup' && $this->matchupReady($matchupFilters)
             ? app(NhlProjectedTeamMatchupSimulator::class)->simulate(
                 (string) $matchupFilters['source_season_id'],
@@ -282,6 +304,7 @@ class NhlShotAttemptController extends Controller
             'goalieProfileTableExists' => $goalieProfileTableExists,
             'skaterOProfileTableExists' => $skaterOProfileTableExists,
             'skaterDProfileTableExists' => $skaterDProfileTableExists,
+            'contextProfileTablesExist' => $contextProfileTablesExist,
             'summary' => $tableExists ? $this->summary($filters) : $this->emptySummary(),
             'explorerRows' => $tableExists && $tab === 'explorer'
                 ? $this->explorerRows($filters, $sort, $direction)
@@ -372,6 +395,12 @@ class NhlShotAttemptController extends Controller
             'skaterDProfileOptions' => $skaterDProfileTableExists ? $this->skaterDProfileOptions() : $this->emptySkaterDProfileOptions(),
             'skaterDProfileSort' => $skaterDProfileSort,
             'skaterDProfileDirection' => $skaterDProfileDirection,
+            'contextProfileRows' => $contextProfileRows,
+            'contextProfileAggregateRows' => $contextProfileAggregateRows,
+            'contextProfileFilters' => $contextProfileFilters,
+            'contextProfileOptions' => $contextProfileTablesExist ? $this->contextProfileOptions() : $this->emptyContextProfileOptions(),
+            'contextProfileSort' => $contextProfileSort,
+            'contextProfileDirection' => $contextProfileDirection,
             'xgSorts' => [
                 'model' => $xgModelSort,
                 'bucket' => $xgBucketSort,
@@ -784,6 +813,132 @@ class NhlShotAttemptController extends Controller
     }
 
     /**
+     * Queue historical official and staff SAT profile builds.
+     */
+    public function buildGameContextSatProfiles(Request $request): RedirectResponse
+    {
+        $input = $request->validate([
+            'source_season_id' => ['required', 'digits:8'],
+            'game_type' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'only' => ['nullable', Rule::in(['all', 'officials', 'staff'])],
+        ]);
+
+        if (!$this->contextProfileTablesExist()) {
+            return redirect()
+                ->route('admin.nhl-shot-attempts.index', ['tab' => 'context-sat-profiles'])
+                ->with('error', 'Run the refs and coaches SAT profile migration before building profiles.');
+        }
+
+        if (!$this->xgTablesExist()) {
+            return redirect()
+                ->route('admin.nhl-shot-attempts.index', ['tab' => 'context-sat-profiles'])
+                ->with('error', 'Build xG and xSOG models before building refs and coaches SAT profiles.');
+        }
+
+        $sourceSeasonId = (string) $input['source_season_id'];
+        $gameType = (int) ($input['game_type'] ?? 2);
+        $only = (string) ($input['only'] ?? 'all');
+
+        if ($only === 'all' || $only === 'officials') {
+            BuildNhlOfficialSatProfilesJob::dispatch($sourceSeasonId, $gameType);
+        }
+
+        if ($only === 'all' || $only === 'staff') {
+            BuildNhlStaffSatProfilesJob::dispatch($sourceSeasonId, $gameType);
+        }
+
+        return redirect()
+            ->route('admin.nhl-shot-attempts.index', [
+                'tab' => 'context-sat-profiles',
+                'context_profile_season_id' => $sourceSeasonId,
+                'context_profile_game_type' => $gameType,
+            ])
+            ->with('status', sprintf(
+                'Queued %s refs and coaches SAT profiles for %s game type %d.',
+                $only,
+                $sourceSeasonId,
+                $gameType
+            ));
+    }
+
+    /**
+     * Render the lazy-loaded aggregate refs and coaches SAT profile section.
+     */
+    public function contextSatAggregateProfiles(Request $request): View
+    {
+        $input = $this->validateContextProfileSectionRequest($request);
+        $filters = $this->contextProfileFilters($input);
+
+        return view('admin.nhl-shot-attempts._context-sat-aggregate-table', [
+            'contextProfileAggregateRows' => $this->contextProfileTablesExist()
+                ? $this->contextProfileAggregateRows($filters)
+                : collect(),
+        ]);
+    }
+
+    /**
+     * Render the lazy-loaded exact refs and coaches SAT profile section.
+     */
+    public function contextSatExactProfiles(Request $request): View
+    {
+        $input = $this->validateContextProfileSectionRequest($request);
+        $filters = $this->contextProfileFilters($input);
+        $sort = (string) ($input['context_profile_sort'] ?? 'source_xg');
+        $direction = $this->sortDirection((string) ($input['context_profile_direction'] ?? ''));
+
+        return view('admin.nhl-shot-attempts._context-sat-exact-table', [
+            'contextProfileRows' => $this->contextProfileTablesExist()
+                ? $this->contextProfileRows($filters, $sort, $direction)
+                : collect(),
+            'contextProfileSort' => $sort,
+            'contextProfileDirection' => $direction,
+        ]);
+    }
+
+    /**
+     * Render the lazy-loaded aggregate bucket comparison section.
+     */
+    public function contextSatBucketComparisons(Request $request): View
+    {
+        $input = $this->validateContextProfileSectionRequest($request);
+        $filters = $this->contextProfileFilters($input);
+        $rows = $this->contextProfileTablesExist()
+            ? $this->contextProfileAggregateRows($filters, 1000)
+            : collect();
+
+        return view('admin.nhl-shot-attempts._context-sat-bucket-comparisons', [
+            'contextProfileBucketComparisonGroups' => $this->contextProfileBucketComparisonGroups($rows),
+        ]);
+    }
+
+    /**
+     * Render one lazy-loaded aggregate bucket comparison table.
+     */
+    public function contextSatBucketComparisonRows(Request $request): View
+    {
+        $input = $this->validateContextProfileBucketComparisonRowsRequest($request);
+        $filters = $this->contextProfileFilters($input);
+        $filters['aggregate_bucket_key'] = $input['aggregate_bucket_key'];
+        $sort = (string) ($input['context_profile_bucket_sort'] ?? 'source_sat_per_game');
+        $direction = $this->sortDirection((string) ($input['context_profile_bucket_direction'] ?? 'desc'));
+        $rows = $this->contextProfileTablesExist()
+            ? $this->contextProfileAggregateRows($filters, 1000)
+                ->sortBy([
+                    [$this->contextProfileBucketComparisonSortColumns()[$sort], $direction],
+                    ['source_sat', 'desc'],
+                    ['entity_name', 'asc'],
+                ])
+                ->values()
+            : collect();
+
+        return view('admin.nhl-shot-attempts._context-sat-bucket-comparison-rows', [
+            'contextProfileBucketComparisonRows' => $rows,
+            'contextProfileBucketSort' => $sort,
+            'contextProfileBucketDirection' => $direction,
+        ]);
+    }
+
+    /**
      * @param array<string, mixed> $input
      * @return array<string, mixed>
      */
@@ -985,6 +1140,73 @@ class NhlShotAttemptController extends Controller
             'angle_group' => $input['skater_o_profile_angle_group'] ?? null,
             'sequence_group' => $input['skater_o_profile_sequence_group'] ?? null,
             'min_sat_for' => $input['skater_o_profile_min_sat_for'] ?? null,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    private function contextProfileFilters(array $input): array
+    {
+        return [
+            'season_id' => $input['context_profile_season_id'] ?? null,
+            'game_type' => $input['context_profile_game_type'] ?? null,
+            'entity_type' => $input['context_profile_entity_type'] ?? null,
+            'role' => $input['context_profile_role'] ?? null,
+            'team_context' => $input['context_profile_team_context'] ?? null,
+            'entity_search' => $input['context_profile_entity_search'] ?? null,
+            'shot_type_group' => $input['context_profile_shot_type_group'] ?? null,
+            'distance_group' => $input['context_profile_distance_group'] ?? null,
+            'angle_group' => $input['context_profile_angle_group'] ?? null,
+            'sequence_group' => $input['context_profile_sequence_group'] ?? null,
+            'min_sat' => $input['context_profile_min_sat'] ?? null,
+            'useful_only' => ($input['context_profile_useful_only'] ?? null) === '1',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validateContextProfileSectionRequest(Request $request): array
+    {
+        return $request->validate($this->contextProfileSectionValidationRules());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validateContextProfileBucketComparisonRowsRequest(Request $request): array
+    {
+        return $request->validate([
+            ...$this->contextProfileSectionValidationRules(),
+            'aggregate_bucket_key' => ['required', 'string', 'max:600'],
+            'context_profile_bucket_sort' => ['nullable', Rule::in(array_keys($this->contextProfileBucketComparisonSortColumns()))],
+            'context_profile_bucket_direction' => ['nullable', Rule::in(['asc', 'desc'])],
+        ]);
+    }
+
+    /**
+     * @return array<string, array<int, mixed>>
+     */
+    private function contextProfileSectionValidationRules(): array
+    {
+        return [
+            'tab' => ['nullable', Rule::in(['context-sat-profiles'])],
+            'context_profile_season_id' => ['nullable', 'digits:8'],
+            'context_profile_game_type' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'context_profile_entity_type' => ['nullable', Rule::in(['official', 'staff'])],
+            'context_profile_role' => ['nullable', 'string', 'max:32'],
+            'context_profile_team_context' => ['nullable', Rule::in(['offense', 'defense'])],
+            'context_profile_entity_search' => ['nullable', 'string', 'max:120'],
+            'context_profile_shot_type_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_distance_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_angle_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_sequence_group' => ['nullable', 'string', 'max:32'],
+            'context_profile_min_sat' => ['nullable', 'integer', 'min:1', 'max:10000'],
+            'context_profile_useful_only' => ['nullable', Rule::in(['1', '0'])],
+            'context_profile_sort' => ['nullable', Rule::in(array_keys($this->contextProfileSortColumns()))],
+            'context_profile_direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ];
     }
 
@@ -2613,6 +2835,64 @@ class NhlShotAttemptController extends Controller
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
+    private function contextProfileOptions(): array
+    {
+        return [
+            'seasons' => $this->contextProfileDistinctValues('source_season_id', true),
+            'gameTypes' => $this->contextProfileDistinctValues('game_type'),
+            'roles' => $this->contextProfileDistinctValues('role'),
+            'teamContexts' => DB::table('nhl_staff_sat_profile_buckets')
+                ->whereNotNull('team_context')
+                ->distinct()
+                ->orderBy('team_context')
+                ->pluck('team_context'),
+            'shotTypes' => $this->contextProfileDistinctValues('shot_type_group'),
+            'distances' => $this->contextProfileDistinctValues('distance_group'),
+            'angles' => $this->contextProfileDistinctValues('angle_group'),
+            'sequences' => $this->contextProfileDistinctValues('sequence_group'),
+        ];
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    private function emptyContextProfileOptions(): array
+    {
+        return [
+            'seasons' => [],
+            'gameTypes' => [],
+            'roles' => [],
+            'teamContexts' => [],
+            'shotTypes' => [],
+            'distances' => [],
+            'angles' => [],
+            'sequences' => [],
+        ];
+    }
+
+    /**
+     * @return Collection<int, mixed>
+     */
+    private function contextProfileDistinctValues(string $column, bool $descending = false): Collection
+    {
+        $official = DB::table('nhl_official_sat_profile_buckets')
+            ->select($column)
+            ->whereNotNull($column);
+        $staff = DB::table('nhl_staff_sat_profile_buckets')
+            ->select($column)
+            ->whereNotNull($column);
+
+        $query = DB::query()
+            ->fromSub($official->union($staff), 'values')
+            ->distinct()
+            ->orderBy($column, $descending ? 'desc' : 'asc');
+
+        return $query->pluck($column);
+    }
+
     private function projectionTablesExist(): bool
     {
         return Schema::hasTable('nhl_player_season_projections')
@@ -2664,6 +2944,14 @@ class NhlShotAttemptController extends Controller
     private function skaterOProfileTableExists(): bool
     {
         return Schema::hasTable('nhl_skater_offensive_chance_profile_buckets');
+    }
+
+    private function contextProfileTablesExist(): bool
+    {
+        return Schema::hasTable('nhl_official_sat_profile_buckets')
+            && Schema::hasTable('nhl_staff_sat_profile_buckets')
+            && Schema::hasTable('nhl_official_sat_aggregate_profile_buckets')
+            && Schema::hasTable('nhl_staff_sat_aggregate_profile_buckets');
     }
 
     private function matchupTablesExist(): bool
@@ -3369,6 +3657,434 @@ class NhlShotAttemptController extends Controller
             ->orderBy('profiles.fallback_level')
             ->limit(500)
             ->get();
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return Collection<int, object>
+     */
+    private function contextProfileRows(array $filters, string $sort, string $direction): Collection
+    {
+        $entityType = (string) ($filters['entity_type'] ?? '');
+        $teamContext = (string) ($filters['team_context'] ?? '');
+        $queries = [];
+
+        if ($entityType !== 'staff' && $teamContext === '') {
+            $officialQuery = DB::table('nhl_official_sat_profile_buckets as profiles')
+                ->leftJoin('nhl_officials as identities', 'identities.id', '=', 'profiles.nhl_official_id')
+                ->selectRaw("
+                    profiles.id,
+                    profiles.source_season_id,
+                    profiles.game_type,
+                    profiles.role,
+                    NULL::text as team_context,
+                    profiles.matched_bucket_key,
+                    profiles.fallback_level,
+                    profiles.shot_type_group,
+                    profiles.distance_group,
+                    profiles.angle_group,
+                    profiles.sequence_group,
+                    profiles.source_games,
+                    profiles.source_sat,
+                    CASE WHEN profiles.source_games > 0 THEN profiles.source_sat / profiles.source_games ELSE NULL END as source_sat_per_game,
+                    profiles.source_unblocked_sat,
+                    profiles.source_sog,
+                    profiles.source_goals,
+                    profiles.source_xg,
+                    profiles.source_xsog,
+                    profiles.source_profile_share,
+                    (
+                        SELECT AVG(peer.source_profile_share)
+                        FROM nhl_official_sat_profile_buckets peer
+                        WHERE peer.source_season_id = profiles.source_season_id
+                            AND peer.game_type = profiles.game_type
+                            AND peer.role = profiles.role
+                            AND peer.matched_bucket_key = profiles.matched_bucket_key
+                    ) as league_avg_profile_share,
+                    profiles.source_profile_share - (
+                        SELECT AVG(peer.source_profile_share)
+                        FROM nhl_official_sat_profile_buckets peer
+                        WHERE peer.source_season_id = profiles.source_season_id
+                            AND peer.game_type = profiles.game_type
+                            AND peer.role = profiles.role
+                            AND peer.matched_bucket_key = profiles.matched_bucket_key
+                    ) as profile_share_delta,
+                    profiles.goal_probability,
+                    profiles.shot_on_goal_probability,
+                    profiles.prior_bucket_key,
+                    profiles.prior_fallback_level,
+                    profiles.prior_sat,
+                    profiles.prior_weight_sat,
+                    profiles.shrinkage_weight,
+                    profiles.confidence_score,
+                    profiles.confidence_bucket,
+                    profiles.profiled_at,
+                    'official' as entity_type,
+                    profiles.nhl_official_id as entity_id,
+                    COALESCE(identities.display_name, profiles.nhl_official_id::text) as entity_name
+                ");
+
+            $this->applyContextProfileFilters($officialQuery, $filters);
+            $queries[] = $officialQuery;
+        }
+
+        if ($entityType !== 'official') {
+            $staffQuery = DB::table('nhl_staff_sat_profile_buckets as profiles')
+                ->leftJoin('nhl_staff as identities', 'identities.id', '=', 'profiles.nhl_staff_id')
+                ->selectRaw("
+                    profiles.id,
+                    profiles.source_season_id,
+                    profiles.game_type,
+                    profiles.role,
+                    profiles.team_context,
+                    profiles.matched_bucket_key,
+                    profiles.fallback_level,
+                    profiles.shot_type_group,
+                    profiles.distance_group,
+                    profiles.angle_group,
+                    profiles.sequence_group,
+                    profiles.source_games,
+                    profiles.source_sat,
+                    CASE WHEN profiles.source_games > 0 THEN profiles.source_sat / profiles.source_games ELSE NULL END as source_sat_per_game,
+                    profiles.source_unblocked_sat,
+                    profiles.source_sog,
+                    profiles.source_goals,
+                    profiles.source_xg,
+                    profiles.source_xsog,
+                    profiles.source_profile_share,
+                    (
+                        SELECT AVG(peer.source_profile_share)
+                        FROM nhl_staff_sat_profile_buckets peer
+                        WHERE peer.source_season_id = profiles.source_season_id
+                            AND peer.game_type = profiles.game_type
+                            AND peer.role = profiles.role
+                            AND peer.team_context = profiles.team_context
+                            AND peer.matched_bucket_key = profiles.matched_bucket_key
+                    ) as league_avg_profile_share,
+                    profiles.source_profile_share - (
+                        SELECT AVG(peer.source_profile_share)
+                        FROM nhl_staff_sat_profile_buckets peer
+                        WHERE peer.source_season_id = profiles.source_season_id
+                            AND peer.game_type = profiles.game_type
+                            AND peer.role = profiles.role
+                            AND peer.team_context = profiles.team_context
+                            AND peer.matched_bucket_key = profiles.matched_bucket_key
+                    ) as profile_share_delta,
+                    profiles.goal_probability,
+                    profiles.shot_on_goal_probability,
+                    profiles.prior_bucket_key,
+                    profiles.prior_fallback_level,
+                    profiles.prior_sat,
+                    profiles.prior_weight_sat,
+                    profiles.shrinkage_weight,
+                    profiles.confidence_score,
+                    profiles.confidence_bucket,
+                    profiles.profiled_at,
+                    'staff' as entity_type,
+                    profiles.nhl_staff_id as entity_id,
+                    COALESCE(identities.display_name, profiles.nhl_staff_id::text) as entity_name
+                ");
+
+            $this->applyContextProfileFilters($staffQuery, $filters);
+            $queries[] = $staffQuery;
+        }
+
+        if ($queries === []) {
+            return collect();
+        }
+
+        $union = array_shift($queries);
+        foreach ($queries as $query) {
+            $union->unionAll($query);
+        }
+
+        return DB::query()
+            ->fromSub($union, 'profiles')
+            ->select('profiles.*')
+            ->orderBy($this->contextProfileSortColumns()[$sort] ?? 'source_xg', $direction)
+            ->orderBy('entity_name')
+            ->orderBy('fallback_level')
+            ->limit(500)
+            ->get();
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     */
+    private function applyContextProfileFilters($query, array $filters): void
+    {
+        if (($filters['season_id'] ?? null) !== null && $filters['season_id'] !== '') {
+            $query->where('profiles.source_season_id', $filters['season_id']);
+        }
+
+        if (($filters['game_type'] ?? null) !== null && $filters['game_type'] !== '') {
+            $query->where('profiles.game_type', (int) $filters['game_type']);
+        }
+
+        if (($filters['role'] ?? null) !== null && $filters['role'] !== '') {
+            $query->where('profiles.role', $filters['role']);
+        }
+
+        if (($filters['team_context'] ?? null) !== null && $filters['team_context'] !== '') {
+            $query->where('profiles.team_context', $filters['team_context']);
+        }
+
+        foreach (['shot_type_group', 'distance_group', 'angle_group', 'sequence_group'] as $column) {
+            if (($filters[$column] ?? null) !== null && $filters[$column] !== '') {
+                $query->where('profiles.' . $column, $filters[$column]);
+            }
+        }
+
+        if (($filters['min_sat'] ?? null) !== null && $filters['min_sat'] !== '') {
+            $query->where('profiles.source_sat', '>=', (int) $filters['min_sat']);
+        }
+
+        if (($filters['useful_only'] ?? false) === true) {
+            $query->where('profiles.source_sat', '>=', 25)
+                ->where('profiles.shrinkage_weight', '<=', 0.25)
+                ->where('profiles.confidence_score', '>=', 0.5);
+        }
+
+        $entitySearch = trim((string) ($filters['entity_search'] ?? ''));
+        if ($entitySearch !== '') {
+            $like = '%' . mb_strtolower($entitySearch) . '%';
+            $query->where(function ($query) use ($like): void {
+                $query->whereRaw("LOWER(COALESCE(identities.display_name, '')) LIKE ?", [$like])
+                    ->orWhereRaw('identities.id::text LIKE ?', [$like]);
+            });
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return Collection<int, object>
+     */
+    private function contextProfileAggregateRows(array $filters, int $limit = 300): Collection
+    {
+        $entityType = (string) ($filters['entity_type'] ?? '');
+        $teamContext = (string) ($filters['team_context'] ?? '');
+        $queries = [];
+
+        if ($entityType !== 'staff' && $teamContext === '') {
+            $officialQuery = DB::table('nhl_official_sat_aggregate_profile_buckets as profiles')
+                ->leftJoin('nhl_officials as identities', 'identities.id', '=', 'profiles.nhl_official_id')
+                ->selectRaw("
+                    profiles.id,
+                    profiles.source_season_id,
+                    profiles.game_type,
+                    profiles.role,
+                    NULL::text as team_context,
+                    profiles.aggregate_bucket_key,
+                    profiles.aggregate_level,
+                    profiles.aggregate_label,
+                    profiles.source_games,
+                    profiles.source_sat,
+                    CASE WHEN profiles.source_games > 0 THEN profiles.source_sat / profiles.source_games ELSE NULL END as source_sat_per_game,
+                    profiles.source_unblocked_sat,
+                    profiles.source_sog,
+                    profiles.source_goals,
+                    profiles.source_xg,
+                    profiles.source_xsog,
+                    profiles.source_profile_share,
+                    profiles.goal_probability,
+                    profiles.shot_on_goal_probability,
+                    profiles.confidence_score,
+                    profiles.confidence_bucket,
+                    profiles.shrinkage_weight,
+                    profiles.included_bucket_count,
+                    profiles.included_bucket_keys,
+                    (profiles.metadata->>'avg_distance')::numeric as avg_distance,
+                    (profiles.metadata->>'avg_angle')::numeric as avg_angle,
+                    profiles.profiled_at,
+                    'official' as entity_type,
+                    profiles.nhl_official_id as entity_id,
+                    COALESCE(identities.display_name, profiles.nhl_official_id::text) as entity_name
+                ");
+
+            $this->applyContextAggregateProfileFilters($officialQuery, $filters);
+            $queries[] = $officialQuery;
+        }
+
+        if ($entityType !== 'official') {
+            $staffQuery = DB::table('nhl_staff_sat_aggregate_profile_buckets as profiles')
+                ->leftJoin('nhl_staff as identities', 'identities.id', '=', 'profiles.nhl_staff_id')
+                ->selectRaw("
+                    profiles.id,
+                    profiles.source_season_id,
+                    profiles.game_type,
+                    profiles.role,
+                    profiles.team_context,
+                    profiles.aggregate_bucket_key,
+                    profiles.aggregate_level,
+                    profiles.aggregate_label,
+                    profiles.source_games,
+                    profiles.source_sat,
+                    CASE WHEN profiles.source_games > 0 THEN profiles.source_sat / profiles.source_games ELSE NULL END as source_sat_per_game,
+                    profiles.source_unblocked_sat,
+                    profiles.source_sog,
+                    profiles.source_goals,
+                    profiles.source_xg,
+                    profiles.source_xsog,
+                    profiles.source_profile_share,
+                    profiles.goal_probability,
+                    profiles.shot_on_goal_probability,
+                    profiles.confidence_score,
+                    profiles.confidence_bucket,
+                    profiles.shrinkage_weight,
+                    profiles.included_bucket_count,
+                    profiles.included_bucket_keys,
+                    (profiles.metadata->>'avg_distance')::numeric as avg_distance,
+                    (profiles.metadata->>'avg_angle')::numeric as avg_angle,
+                    profiles.profiled_at,
+                    'staff' as entity_type,
+                    profiles.nhl_staff_id as entity_id,
+                    COALESCE(identities.display_name, profiles.nhl_staff_id::text) as entity_name
+                ");
+
+            $this->applyContextAggregateProfileFilters($staffQuery, $filters);
+            $queries[] = $staffQuery;
+        }
+
+        if ($queries === []) {
+            return collect();
+        }
+
+        $union = array_shift($queries);
+        foreach ($queries as $query) {
+            $union->unionAll($query);
+        }
+
+        return DB::query()
+            ->fromSub($union, 'profiles')
+            ->select('profiles.*')
+            ->orderBy('entity_name')
+            ->orderBy('team_context')
+            ->orderByDesc('source_profile_share')
+            ->orderByDesc('source_sat')
+            ->limit($limit)
+            ->get();
+    }
+
+    /**
+     * @param Collection<int, object> $rows
+     * @return Collection<int, array{bucket_key:string,bucket_label:string,aggregate_level:int,total_sat:int,avg_share:float,avg_distance:float|null,avg_angle:float|null,entity_count:int}>
+     */
+    private function contextProfileBucketComparisonGroups(Collection $rows): Collection
+    {
+        return $rows
+            ->groupBy(fn (object $row): string => (string) $row->aggregate_bucket_key)
+            ->map(function (Collection $bucketRows): array {
+                $first = $bucketRows->first();
+
+                return [
+                    'bucket_key' => (string) $first->aggregate_bucket_key,
+                    'bucket_label' => (string) $first->aggregate_label,
+                    'aggregate_level' => (int) $first->aggregate_level,
+                    'total_sat' => (int) $bucketRows->sum('source_sat'),
+                    'avg_share' => (float) $bucketRows->avg('source_profile_share'),
+                    'avg_distance' => $this->weightedNullableRowAverage($bucketRows, 'avg_distance', 'source_sat'),
+                    'avg_angle' => $this->weightedNullableRowAverage($bucketRows, 'avg_angle', 'source_sat'),
+                    'entity_count' => $bucketRows->count(),
+                ];
+            })
+            ->sortBy([
+                ['total_sat', 'desc'],
+                ['avg_share', 'desc'],
+                ['bucket_label', 'asc'],
+            ])
+            ->values();
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function contextProfileBucketComparisonSortColumns(): array
+    {
+        return [
+            'entity_name' => 'entity_name',
+            'entity_type' => 'entity_type',
+            'role' => 'role',
+            'team_context' => 'team_context',
+            'source_games' => 'source_games',
+            'source_sat' => 'source_sat',
+            'source_sat_per_game' => 'source_sat_per_game',
+            'source_profile_share' => 'source_profile_share',
+            'goal_probability' => 'goal_probability',
+            'shot_on_goal_probability' => 'shot_on_goal_probability',
+            'confidence_score' => 'confidence_score',
+            'shrinkage_weight' => 'shrinkage_weight',
+        ];
+    }
+
+    /**
+     * @param Collection<int, object> $rows
+     */
+    private function weightedNullableRowAverage(Collection $rows, string $valueColumn, string $weightColumn): ?float
+    {
+        $weightedSum = 0.0;
+        $weightTotal = 0;
+
+        foreach ($rows as $row) {
+            $value = $row->{$valueColumn} ?? null;
+
+            if ($value === null) {
+                continue;
+            }
+
+            $weight = (int) ($row->{$weightColumn} ?? 0);
+            $weightedSum += (float) $value * $weight;
+            $weightTotal += $weight;
+        }
+
+        if ($weightTotal === 0) {
+            return null;
+        }
+
+        return round($weightedSum / $weightTotal, 2);
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     */
+    private function applyContextAggregateProfileFilters($query, array $filters): void
+    {
+        if (($filters['season_id'] ?? null) !== null && $filters['season_id'] !== '') {
+            $query->where('profiles.source_season_id', $filters['season_id']);
+        }
+
+        if (($filters['game_type'] ?? null) !== null && $filters['game_type'] !== '') {
+            $query->where('profiles.game_type', (int) $filters['game_type']);
+        }
+
+        if (($filters['role'] ?? null) !== null && $filters['role'] !== '') {
+            $query->where('profiles.role', $filters['role']);
+        }
+
+        if (($filters['team_context'] ?? null) !== null && $filters['team_context'] !== '') {
+            $query->where('profiles.team_context', $filters['team_context']);
+        }
+
+        if (($filters['min_sat'] ?? null) !== null && $filters['min_sat'] !== '') {
+            $query->where('profiles.source_sat', '>=', (int) $filters['min_sat']);
+        }
+
+        if (($filters['aggregate_bucket_key'] ?? null) !== null && $filters['aggregate_bucket_key'] !== '') {
+            $query->where('profiles.aggregate_bucket_key', $filters['aggregate_bucket_key']);
+        }
+
+        if (($filters['useful_only'] ?? false) === true) {
+            $query->where('profiles.source_sat', '>=', 50)
+                ->where('profiles.confidence_score', '>=', 0.5);
+        }
+
+        $entitySearch = trim((string) ($filters['entity_search'] ?? ''));
+        if ($entitySearch !== '') {
+            $like = '%' . mb_strtolower($entitySearch) . '%';
+            $query->where(function ($query) use ($like): void {
+                $query->whereRaw("LOWER(COALESCE(identities.display_name, '')) LIKE ?", [$like])
+                    ->orWhereRaw('identities.id::text LIKE ?', [$like]);
+            });
+        }
     }
 
     /**
@@ -4169,6 +4885,45 @@ SQL;
             'goal_probability' => 'profiles.goal_probability',
             'shot_on_goal_probability' => 'profiles.shot_on_goal_probability',
             'confidence_score' => 'profiles.confidence_score',
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function contextProfileSortColumns(): array
+    {
+        return [
+            'entity_type' => 'entity_type',
+            'entity_name' => 'entity_name',
+            'source_season_id' => 'source_season_id',
+            'game_type' => 'game_type',
+            'role' => 'role',
+            'team_context' => 'team_context',
+            'fallback_level' => 'fallback_level',
+            'shot_type_group' => 'shot_type_group',
+            'distance_group' => 'distance_group',
+            'angle_group' => 'angle_group',
+            'sequence_group' => 'sequence_group',
+            'source_games' => 'source_games',
+            'source_sat' => 'source_sat',
+            'source_sat_per_game' => 'source_sat_per_game',
+            'source_unblocked_sat' => 'source_unblocked_sat',
+            'source_sog' => 'source_sog',
+            'source_goals' => 'source_goals',
+            'source_xg' => 'source_xg',
+            'source_xsog' => 'source_xsog',
+            'source_profile_share' => 'source_profile_share',
+            'league_avg_profile_share' => 'league_avg_profile_share',
+            'profile_share_delta' => 'profile_share_delta',
+            'goal_probability' => 'goal_probability',
+            'shot_on_goal_probability' => 'shot_on_goal_probability',
+            'prior_bucket_key' => 'prior_bucket_key',
+            'prior_fallback_level' => 'prior_fallback_level',
+            'prior_sat' => 'prior_sat',
+            'prior_weight_sat' => 'prior_weight_sat',
+            'shrinkage_weight' => 'shrinkage_weight',
+            'confidence_score' => 'confidence_score',
         ];
     }
 
