@@ -1,9 +1,8 @@
 @php
     $tabs = [
-        'explorer' => 'Explorer',
+        'explorer' => 'Facts',
+        'factors' => 'Factors',
         'aggregates' => 'Aggregates',
-        'buckets' => 'Buckets',
-        'predictive' => 'Predictive',
         'biometrics' => 'Biometrics',
         'player-profiles' => 'Player Profiles',
         'skater-o-profiles' => 'Skater O Profiles',
@@ -31,6 +30,25 @@
     ];
     $formatNumber = fn ($value) => number_format((int) $value);
     $formatDecimal = fn ($value, $places = 2) => $value === null ? 'N/A' : number_format((float) $value, $places);
+    $hiddenRequestInputs = function (array $except = []) {
+        $except = array_flip($except);
+
+        foreach (request()->except(array_keys($except)) as $key => $value) {
+            if (is_array($value)) {
+                foreach ($value as $item) {
+                    if (is_scalar($item)) {
+                        echo '<input type="hidden" name="' . e($key) . '[]" value="' . e((string) $item) . '">';
+                    }
+                }
+
+                continue;
+            }
+
+            if (is_scalar($value)) {
+                echo '<input type="hidden" name="' . e($key) . '" value="' . e((string) $value) . '">';
+            }
+        }
+    };
     $formatOffWing = function ($value) {
         if ($value === null) {
             return 'unknown';
@@ -276,7 +294,7 @@
     <x-slot name="header">
         <div class="flex flex-col gap-1">
             <h2 class="text-xl font-semibold leading-tight text-gray-900">NHL Shot Attempts</h2>
-            <p class="text-sm text-gray-600">Review shot-attempt facts, grouped rates, bucket behavior, and QA coverage.</p>
+            <p class="text-sm text-gray-600">Review shot-attempt facts, factor rates, grouped rates, and QA coverage.</p>
         </div>
     </x-slot>
 
@@ -293,7 +311,7 @@
                     <div class="flex flex-wrap items-center justify-between gap-3">
                         <div>
                             <h3 class="text-sm font-semibold text-gray-900">Shot Attempt Facts</h3>
-                            <p class="mt-1 text-sm text-gray-600">Use this panel to validate the derived facts before modeling shot quality.</p>
+                            <p class="mt-1 text-sm text-gray-600">Use this panel to validate derived facts and single-factor outcome rates before modeling shot quality.</p>
                         </div>
                         <a href="{{ route('admin.dashboard', ['tab' => 'game-imports']) }}" class="inline-flex min-h-9 items-center rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50">
                             Game Imports
@@ -307,8 +325,8 @@
                         <div class="mt-1 text-lg font-semibold text-gray-900">{{ $formatNumber($summary['attempts']) }}</div>
                     </div>
                     <div>
-                        <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500">Unblocked</div>
-                        <div class="mt-1 text-lg font-semibold text-gray-900">{{ $formatNumber($summary['unblocked_attempts']) }}</div>
+                        <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500">Blocked</div>
+                        <div class="mt-1 text-lg font-semibold text-gray-900">{{ $formatNumber($summary['blocked_attempts']) }}</div>
                     </div>
                     <div>
                         <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500">SOG</div>
@@ -335,15 +353,63 @@
                 <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-5 py-4">
                     <input type="hidden" name="tab" value="{{ $activeTab }}">
                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-                        <label class="block">
+                        <div
+                            class="relative"
+                            x-data="{ open: false, selected: @js($filters['season_ids'] ?? []), label() { if (this.selected.length === 0) return 'All seasons'; if (this.selected.length === 1) return this.selected[0]; return `${this.selected.length} seasons`; } }"
+                            @click.outside="open = false"
+                        >
                             <span class="text-xs font-medium text-gray-600">Season</span>
-                            <select name="season_id" class="mt-1 block min-h-10 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
-                                <option value="">All</option>
-                                @foreach($options['seasons'] as $season)
-                                    <option value="{{ $season }}" @selected((string) $filters['season_id'] === (string) $season)>{{ $season }}</option>
-                                @endforeach
-                            </select>
-                        </label>
+                            <button
+                                type="button"
+                                class="mt-1 flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-3 text-left text-sm shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                :aria-expanded="open ? 'true' : 'false'"
+                                @click="open = !open"
+                            >
+                                <span class="truncate font-medium text-gray-800" x-text="label()"></span>
+                                <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200" :class="open ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                </svg>
+                            </button>
+                            <div
+                                x-show="open"
+                                x-cloak
+                                x-transition.opacity.duration.150ms
+                                class="absolute left-0 z-30 mt-2 w-64 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg"
+                            >
+                                <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2">
+                                    <span class="text-[11px] font-semibold uppercase text-gray-500">Seasons</span>
+                                    <button
+                                        type="button"
+                                        class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                        @click="selected = []"
+                                    >
+                                        All
+                                    </button>
+                                </div>
+                                <div class="max-h-64 overflow-y-auto py-1">
+                                    @foreach($options['seasons'] as $season)
+                                        <label
+                                            class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                                            x-data="{ season: @js((string) $season) }"
+                                        >
+                                            <span class="font-medium">{{ $season }}</span>
+                                            <span class="relative flex h-5 w-5 items-center justify-center rounded border text-white transition-colors" :class="selected.includes(season) ? 'border-indigo-600 bg-indigo-600 shadow-sm' : 'border-gray-300 bg-white'">
+                                                <input
+                                                    type="checkbox"
+                                                    name="season_ids[]"
+                                                    value="{{ $season }}"
+                                                    x-model="selected"
+                                                    class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                >
+                                                <svg class="h-3.5 w-3.5" x-show="selected.includes(season)" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                                </svg>
+                                            </span>
+                                        </label>
+                                    @endforeach
+                                </div>
+                            </div>
+                        </div>
                         <label class="block">
                             <span class="text-xs font-medium text-gray-600">Start</span>
                             <input type="date" name="start_date" value="{{ $filters['start_date'] }}" class="mt-1 block min-h-10 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
@@ -494,11 +560,370 @@
                         <div class="border-t border-gray-200 px-4 py-3">
                             {{ $explorerRows->links() }}
                         </div>
+                    @elseif($activeTab === 'factors')
+                        <form
+                            method="GET"
+                            action="{{ route('admin.nhl-shot-attempts.index') }}"
+                            class="border-b border-gray-200 px-4 py-3"
+                            x-ref="factorForm"
+                            x-data="{
+                                factorOpen: false,
+                                valueOpen: false,
+                                sampleMode: @js($factorSampleMode),
+                                includeUnknowns: @js($includeUnknowns),
+                                selectedFactors: @js($displayedFactorKeys),
+                                allFactorKeys: @js(array_keys($factorDefinitions)),
+                                factorLabels: @js(collect($factorDefinitions)->mapWithKeys(fn ($definition, $key) => [$key => $definition['label']])->all()),
+                                values: @js($factorValueOptions->values()->all()),
+                                valuesVersion: 0,
+                                excludedValues: @js($selectedFactorValueExclusions),
+                                loadingValues: false,
+                                valuesUrl: @js(route('admin.nhl-shot-attempts.factor-values')),
+                                factorLabel() {
+                                    if (this.selectedFactors.length === this.allFactorKeys.length) return 'All factors';
+                                    if (this.selectedFactors.length === 0) return 'No factors';
+                                    if (this.selectedFactors.length === 1) return this.factorLabels[this.selectedFactors[0]] ?? this.selectedFactors[0].replaceAll('_', ' ');
+                                    return `${this.selectedFactors.length} factors`;
+                                },
+                                factorToggleLabel() {
+                                    return this.selectedFactors.length === this.allFactorKeys.length ? 'None' : 'All';
+                                },
+                                toggleAllFactors() {
+                                    this.selectedFactors = this.selectedFactors.length === this.allFactorKeys.length
+                                        ? []
+                                        : [...this.allFactorKeys];
+                                    this.factorsChanged();
+                                },
+                                valueKeys() {
+                                    return this.values.map((value) => value.key);
+                                },
+                                valueLabel() {
+                                    const keys = this.valueKeys();
+                                    const selectedCount = keys.length - this.excludedValues.length;
+
+                                    if (keys.length === 0) return 'No values';
+                                    if (this.excludedValues.length === 0) return 'All values';
+                                    if (selectedCount === 0) return 'No values';
+
+                                    return `${selectedCount} values`;
+                                },
+                                valueIsChecked(valueKey) {
+                                    return !this.excludedValues.includes(valueKey);
+                                },
+                                toggleValue(valueKey) {
+                                    if (this.excludedValues.includes(valueKey)) {
+                                        this.excludedValues = this.excludedValues.filter((key) => key !== valueKey);
+                                        return;
+                                    }
+
+                                    this.excludedValues = [...this.excludedValues, valueKey];
+                                },
+                                selectAllValues() {
+                                    this.excludedValues = [];
+                                },
+                                selectNoValues() {
+                                    this.excludedValues = this.valueKeys();
+                                },
+                                async refreshValues() {
+                                    this.loadingValues = true;
+
+                                    try {
+                                        const params = new URLSearchParams(new FormData(this.$refs.factorForm));
+                                        params.delete('factor_value_exclusions[]');
+                                        params.delete('page');
+                                        params.set('tab', 'factors');
+
+                                        const response = await fetch(`${this.valuesUrl}?${params.toString()}`, {
+                                            headers: {
+                                                Accept: 'application/json',
+                                                'X-Requested-With': 'XMLHttpRequest',
+                                            },
+                                        });
+
+                                        if (! response.ok) return;
+
+                                        const payload = await response.json();
+                                        this.values = Array.isArray(payload.values)
+                                            ? payload.values
+                                            : Object.values(payload.values ?? {});
+                                        this.valuesVersion += 1;
+                                        this.excludedValues = [];
+                                    } finally {
+                                        this.loadingValues = false;
+                                    }
+                                },
+                                factorsChanged() {
+                                    this.$nextTick(() => this.refreshValues());
+                                },
+                                formattedAttempts(attempts) {
+                                    return `${Number(attempts ?? 0).toLocaleString()} SAT`;
+                                },
+                            }"
+                        >
+                            {!! $hiddenRequestInputs(['factor', 'factor_keys', 'factor_selection_state', 'factor_value_exclusions', 'factor_sample', 'include_unknowns', 'page']) !!}
+                            <input type="hidden" name="tab" value="factors">
+                            <input type="hidden" name="factor_selection_state" value="explicit">
+                            <div class="mb-3 flex flex-wrap items-center gap-2">
+                                <span class="mr-1 text-xs font-medium text-gray-600">Sample</span>
+                                <label class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-sm font-semibold shadow-sm transition-colors" :class="sampleMode === 'sat' ? 'border-indigo-600 text-indigo-700' : 'border-gray-300 text-gray-600 hover:border-gray-400'">
+                                    <span class="relative flex h-4 w-4 items-center justify-center rounded border text-white transition-colors" :class="sampleMode === 'sat' ? 'border-indigo-600 bg-indigo-600' : 'border-gray-300 bg-white'">
+                                        <input
+                                            type="radio"
+                                            name="factor_sample"
+                                            value="sat"
+                                            x-model="sampleMode"
+                                            @change="factorsChanged()"
+                                            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                        >
+                                        <svg class="h-3 w-3" x-show="sampleMode === 'sat'" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </span>
+                                    SAT
+                                </label>
+                                <label class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-md border bg-white px-3 text-sm font-semibold shadow-sm transition-colors" :class="sampleMode === 'sog' ? 'border-indigo-600 text-indigo-700' : 'border-gray-300 text-gray-600 hover:border-gray-400'">
+                                    <span class="relative flex h-4 w-4 items-center justify-center rounded border text-white transition-colors" :class="sampleMode === 'sog' ? 'border-indigo-600 bg-indigo-600' : 'border-gray-300 bg-white'">
+                                        <input
+                                            type="radio"
+                                            name="factor_sample"
+                                            value="sog"
+                                            x-model="sampleMode"
+                                            @change="factorsChanged()"
+                                            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                        >
+                                        <svg class="h-3 w-3" x-show="sampleMode === 'sog'" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </span>
+                                    SOG only
+                                </label>
+                            </div>
+                            <div class="flex flex-wrap items-end gap-3">
+                                <div
+                                    class="relative w-72"
+                                    @click.outside="factorOpen = false"
+                                >
+                                    <span class="text-xs font-medium text-gray-600">Factor</span>
+                                    <button
+                                        type="button"
+                                        class="mt-1 flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-3 text-left text-sm shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        :aria-expanded="factorOpen ? 'true' : 'false'"
+                                        @click="factorOpen = !factorOpen"
+                                    >
+                                        <span class="truncate font-medium capitalize text-gray-800" x-text="factorLabel()"></span>
+                                        <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200" :class="factorOpen ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </button>
+                                    <div
+                                        x-show="factorOpen"
+                                        x-cloak
+                                        x-transition.opacity.duration.150ms
+                                        class="absolute left-0 z-30 mt-2 w-80 overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg"
+                                    >
+                                        <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2">
+                                            <span class="text-[11px] font-semibold uppercase text-gray-500">Temporary Factors</span>
+                                            <button
+                                                type="button"
+                                                class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                                @click="toggleAllFactors()"
+                                                x-text="factorToggleLabel()"
+                                            >
+                                            </button>
+                                        </div>
+                                        <div class="max-h-72 overflow-y-auto py-1">
+                                        @foreach($factorDefinitions as $key => $definition)
+                                            <label
+                                                class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                                                x-data="{ factorKey: @js((string) $key) }"
+                                            >
+                                                <span class="font-medium">{{ $definition['label'] }}</span>
+                                                <span class="relative flex h-5 w-5 items-center justify-center rounded border text-white transition-colors" :class="selectedFactors.includes(factorKey) ? 'border-indigo-600 bg-indigo-600 shadow-sm' : 'border-gray-300 bg-white'">
+                                                    <input
+                                                        type="checkbox"
+                                                        name="factor_keys[]"
+                                                        value="{{ $key }}"
+                                                        x-model="selectedFactors"
+                                                        @change="factorsChanged()"
+                                                        class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                    >
+                                                    <svg class="h-3.5 w-3.5" x-show="selectedFactors.includes(factorKey)" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                        <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                                    </svg>
+                                                </span>
+                                            </label>
+                                        @endforeach
+                                        </div>
+                                    </div>
+                                </div>
+                                <div
+                                    class="relative w-96"
+                                    @click.outside="valueOpen = false"
+                                >
+                                    <template x-for="excludedKey in excludedValues" :key="excludedKey">
+                                        <input type="hidden" name="factor_value_exclusions[]" :value="excludedKey">
+                                    </template>
+                                    <span class="text-xs font-medium text-gray-600">Values</span>
+                                    <button
+                                        type="button"
+                                        class="mt-1 flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-gray-300 bg-white px-3 text-left text-sm shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                                        :aria-expanded="valueOpen ? 'true' : 'false'"
+                                        @click="valueOpen = !valueOpen"
+                                    >
+                                        <span class="truncate font-medium text-gray-800" x-text="loadingValues ? 'Loading values...' : valueLabel()"></span>
+                                        <svg class="h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200" :class="valueOpen ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </button>
+                                    <div
+                                        x-show="valueOpen"
+                                        x-cloak
+                                        x-transition.opacity.duration.150ms
+                                        class="absolute left-0 z-30 mt-2 w-[30rem] overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg"
+                                    >
+                                        <div class="flex items-center justify-between gap-2 border-b border-gray-100 px-3 py-2">
+                                            <span class="text-[11px] font-semibold uppercase text-gray-500">Visible Values</span>
+                                            <div class="flex items-center gap-3">
+                                                <button
+                                                    type="button"
+                                                    class="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700"
+                                                    @click="selectAllValues()"
+                                                >
+                                                    All
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="text-[11px] font-semibold text-gray-500 hover:text-gray-700"
+                                                    @click="selectNoValues()"
+                                                >
+                                                    None
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="max-h-80 overflow-y-auto py-1">
+                                            <template x-if="loadingValues">
+                                                <div class="px-3 py-6 text-sm text-gray-500">Loading values...</div>
+                                            </template>
+                                            <template x-if="! loadingValues && values.length === 0">
+                                                <div class="px-3 py-6 text-sm text-gray-500">No values match the selected factors.</div>
+                                            </template>
+                                            <template x-for="option in values" :key="`${valuesVersion}:${option.key}`">
+                                                <label
+                                                    class="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                                                >
+                                                    <span class="min-w-0">
+                                                        <span class="block truncate font-medium" x-text="option.label"></span>
+                                                        <span class="block text-xs text-gray-500" x-text="formattedAttempts(option.attempts)"></span>
+                                                    </span>
+                                                    <span class="relative flex h-5 w-5 shrink-0 items-center justify-center rounded border text-white transition-colors" :class="valueIsChecked(option.key) ? 'border-indigo-600 bg-indigo-600 shadow-sm' : 'border-gray-300 bg-white'">
+                                                        <input
+                                                            type="checkbox"
+                                                            :checked="valueIsChecked(option.key)"
+                                                            @change="toggleValue(option.key)"
+                                                            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                        >
+                                                        <svg class="h-3.5 w-3.5" x-show="valueIsChecked(option.key)" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                            <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                                        </svg>
+                                                    </span>
+                                                </label>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                                <label class="inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:border-gray-400">
+                                    <span class="relative flex h-4 w-4 items-center justify-center rounded border text-white transition-colors" :class="includeUnknowns ? 'border-indigo-600 bg-indigo-600' : 'border-gray-300 bg-white'">
+                                        <input
+                                            type="checkbox"
+                                            name="include_unknowns"
+                                            value="1"
+                                            x-model="includeUnknowns"
+                                            @checked($includeUnknowns)
+                                            @change="factorsChanged()"
+                                            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                        >
+                                        <svg class="h-3 w-3" x-show="includeUnknowns" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M16.704 5.29a1 1 0 0 1 .006 1.414l-7.25 7.32a1 1 0 0 1-1.42.001L3.29 9.226a1 1 0 1 1 1.42-1.408l4.04 4.08 6.54-6.602a1 1 0 0 1 1.414-.006Z" clip-rule="evenodd" />
+                                        </svg>
+                                    </span>
+                                    Unknowns
+                                </label>
+                                <button type="submit" class="inline-flex min-h-9 items-center rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">Apply</button>
+                            </div>
+                        </form>
+                        @php
+                            $factorColumns = $factorSampleMode === 'sat'
+                                ? [
+                                    'factor_label' => 'Factor',
+                                    'factor_value' => 'Value',
+                                    'attempts' => 'SAT',
+                                    'blocked_attempts' => 'Blocks',
+                                    'missed_attempts' => 'Misses',
+                                    'shots_on_goal' => 'SOG',
+                                    'sog_rate' => 'SOG %',
+                                    'goals' => 'Goals',
+                                    'goal_rate' => 'Goal %',
+                                    'shooting_rate' => 'Shooting %',
+                                    'block_rate' => 'Block %',
+                                    'avg_distance' => 'Avg Dist',
+                                    'avg_angle' => 'Avg Angle',
+                                ]
+                                : [
+                                    'factor_label' => 'Factor',
+                                    'factor_value' => 'Value',
+                                    'attempts' => 'SOG',
+                                    'goals' => 'Goals',
+                                    'shooting_rate' => 'Shooting %',
+                                    'avg_distance' => 'Avg Dist',
+                                    'avg_angle' => 'Avg Angle',
+                                ];
+                        @endphp
+                        <table class="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                <tr>
+                                    @foreach($factorColumns as $sortKey => $label)
+                                        <th class="whitespace-nowrap px-4 py-3">
+                                            <a href="{{ $sortUrl($sortKey, 'factors') }}" class="inline-flex items-center gap-1 hover:text-gray-900">
+                                                <span>{{ $label }}</span>
+                                                @if($sortArrow($sortKey) !== '')
+                                                    <span class="text-[10px] text-indigo-600" aria-hidden="true">{{ $sortArrow($sortKey) }}</span>
+                                                @endif
+                                            </a>
+                                        </th>
+                                    @endforeach
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 bg-white">
+                                @forelse($factorRows as $row)
+                                    <tr>
+                                        <td class="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{{ $row->factor_label }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $row->factor_value ?? 'Unknown' }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->attempts) }}</td>
+                                        @if($factorSampleMode === 'sat')
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->blocked_attempts) }}</td>
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->missed_attempts) }}</td>
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->shots_on_goal) }}</td>
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->sog_rate) }}{{ $row->sog_rate === null ? '' : '%' }}</td>
+                                        @endif
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->goals) }}</td>
+                                        @if($factorSampleMode === 'sat')
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->goal_rate) }}{{ $row->goal_rate === null ? '' : '%' }}</td>
+                                        @endif
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->shooting_rate) }}{{ $row->shooting_rate === null ? '' : '%' }}</td>
+                                        @if($factorSampleMode === 'sat')
+                                            <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->block_rate) }}{{ $row->block_rate === null ? '' : '%' }}</td>
+                                        @endif
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->avg_distance) }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->avg_angle, 1) }}</td>
+                                    </tr>
+                                @empty
+                                    <tr><td colspan="{{ count($factorColumns) }}" class="px-4 py-8 text-center text-sm text-gray-500">No factor rows match these filters.</td></tr>
+                                @endforelse
+                            </tbody>
+                        </table>
                     @elseif($activeTab === 'aggregates')
                         <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-4 py-3">
-                            @foreach(request()->except(['group_by', 'page']) as $key => $value)
-                                <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                            @endforeach
+                            {!! $hiddenRequestInputs(['group_by', 'page']) !!}
                             <input type="hidden" name="tab" value="aggregates">
                             <label class="inline-flex items-center gap-2 text-sm text-gray-700">
                                 Group by
@@ -516,7 +941,7 @@
                                     @foreach([
                                         'group_value' => $groupLabels[$groupBy] ?? 'Group',
                                         'attempts' => 'Attempts',
-                                        'unblocked_attempts' => 'Unblocked',
+                                        'blocked_attempts' => 'Blocked',
                                         'shots_on_goal' => 'SOG',
                                         'sog_rate' => 'SOG %',
                                         'goals' => 'Goals',
@@ -540,7 +965,7 @@
                                     <tr>
                                         <td class="whitespace-nowrap px-4 py-3 font-medium text-gray-900">{{ $row->group_value ?? 'N/A' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->attempts) }}</td>
-                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->unblocked_attempts) }}</td>
+                                        <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->blocked_attempts) }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->shots_on_goal) }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatDecimal($row->sog_rate) }}{{ $row->sog_rate === null ? '' : '%' }}</td>
                                         <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $formatNumber($row->goals) }}</td>
@@ -608,9 +1033,7 @@
                         </table>
                     @elseif($activeTab === 'predictive')
                         <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-4 py-3">
-                            @foreach(request()->except(['predictive_group', 'min_attempts', 'page']) as $key => $value)
-                                <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                            @endforeach
+                            {!! $hiddenRequestInputs(['predictive_group', 'min_attempts', 'page']) !!}
                             <input type="hidden" name="tab" value="predictive">
                             <div class="flex flex-wrap items-end gap-3">
                                 <label class="block text-sm text-gray-700">
@@ -677,11 +1100,7 @@
                         </table>
                     @elseif($activeTab === 'biometrics')
                         <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-4 py-3">
-                            @foreach(request()->except(['biometric_min_attempts', 'page']) as $key => $value)
-                                @if(is_scalar($value))
-                                    <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                @endif
-                            @endforeach
+                            {!! $hiddenRequestInputs(['biometric_min_attempts', 'page']) !!}
                             <input type="hidden" name="tab" value="biometrics">
                             <div class="flex flex-wrap items-end justify-end gap-3">
                                 <label class="block">
@@ -746,11 +1165,7 @@
                         </table>
                     @elseif($activeTab === 'player-profiles')
                         <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 px-4 py-3">
-                            @foreach(request()->except(['player_search', 'position', 'profile_min_attempts', 'profile_sort', 'profile_direction', 'profile_bucket_sort', 'profile_bucket_direction', 'page']) as $key => $value)
-                                @if(is_scalar($value))
-                                    <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                @endif
-                            @endforeach
+                            {!! $hiddenRequestInputs(['player_search', 'position', 'profile_min_attempts', 'profile_sort', 'profile_direction', 'profile_bucket_sort', 'profile_bucket_direction', 'page']) !!}
                             <input type="hidden" name="tab" value="player-profiles">
                             <div class="flex flex-wrap items-end gap-3">
                                 <label class="block">
@@ -938,7 +1353,7 @@
                                 </div>
 
                                 <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 pb-4">
-                                    @foreach(request()->except([
+                                    {!! $hiddenRequestInputs([
                                         'skater_o_profile_season_id',
                                         'skater_o_profile_game_type',
                                         'skater_o_profile_team_abbrev',
@@ -950,11 +1365,7 @@
                                         'skater_o_profile_sequence_group',
                                         'skater_o_profile_min_sat_for',
                                         'page',
-                                    ]) as $key => $value)
-                                        @if(is_scalar($value))
-                                            <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                        @endif
-                                    @endforeach
+                                    ]) !!}
                                     <input type="hidden" name="tab" value="skater-o-profiles">
                                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-10">
                                         <label class="block">
@@ -1163,7 +1574,7 @@
                                 </div>
 
                                 <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 pb-4">
-                                    @foreach(request()->except([
+                                    {!! $hiddenRequestInputs([
                                         'goalie_profile_season_id',
                                         'goalie_profile_game_type',
                                         'goalie_profile_team_abbrev',
@@ -1174,11 +1585,7 @@
                                         'goalie_profile_sequence_group',
                                         'goalie_profile_min_sat_against',
                                         'page',
-                                    ]) as $key => $value)
-                                        @if(is_scalar($value))
-                                            <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                        @endif
-                                    @endforeach
+                                    ]) !!}
                                     <input type="hidden" name="tab" value="g-sat-profiles">
                                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-9">
                                         <label class="block">
@@ -1380,7 +1787,7 @@
                                 </div>
 
                                 <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 pb-4">
-                                    @foreach(request()->except([
+                                    {!! $hiddenRequestInputs([
                                         'skater_d_profile_season_id',
                                         'skater_d_profile_game_type',
                                         'skater_d_profile_team_abbrev',
@@ -1392,11 +1799,7 @@
                                         'skater_d_profile_sequence_group',
                                         'skater_d_profile_min_sat_against',
                                         'page',
-                                    ]) as $key => $value)
-                                        @if(is_scalar($value))
-                                            <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                        @endif
-                                    @endforeach
+                                    ]) !!}
                                     <input type="hidden" name="tab" value="skater-d-profiles">
                                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-10">
                                         <label class="block">
@@ -2063,7 +2466,7 @@
                                 </div>
 
                                 <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 pb-4">
-                                    @foreach(request()->except([
+                                    {!! $hiddenRequestInputs([
                                         'projection_source_season_id',
                                         'projection_target_season_id',
                                         'projection_version',
@@ -2073,11 +2476,7 @@
                                         'projection_player_search',
                                         'projection_min_xsat',
                                         'page',
-                                    ]) as $key => $value)
-                                        @if(is_scalar($value))
-                                            <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                        @endif
-                                    @endforeach
+                                    ]) !!}
                                     <input type="hidden" name="tab" value="projections">
                                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
                                         <label class="block">
@@ -2247,7 +2646,7 @@
                                         </button>
                                         <div id="goalie-workload-projections-panel" x-cloak x-show="open" class="border-t border-gray-200">
                                             <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 p-4">
-                                                @foreach(request()->except([
+                                                {!! $hiddenRequestInputs([
                                                     'goalie_workload_target_season_id',
                                                     'goalie_workload_version',
                                                     'goalie_workload_status',
@@ -2257,11 +2656,7 @@
                                                     'goalie_workload_sort',
                                                     'goalie_workload_direction',
                                                     'page',
-                                                ]) as $key => $value)
-                                                    @if(is_scalar($value))
-                                                        <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                                    @endif
-                                                @endforeach
+                                                ]) !!}
                                                 <input type="hidden" name="tab" value="projections">
                                                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                                                     <label class="block">
@@ -2402,7 +2797,7 @@
                                         </button>
                                         <div id="goalie-projections-panel" x-cloak x-show="open" class="border-t border-gray-200">
                                             <form method="GET" action="{{ route('admin.nhl-shot-attempts.index') }}" class="border-b border-gray-200 p-4">
-                                                @foreach(request()->except([
+                                                {!! $hiddenRequestInputs([
                                                     'goalie_projection_target_season_id',
                                                     'goalie_projection_version',
                                                     'goalie_projection_status',
@@ -2412,11 +2807,7 @@
                                                     'goalie_projection_sort',
                                                     'goalie_projection_direction',
                                                     'page',
-                                                ]) as $key => $value)
-                                                    @if(is_scalar($value))
-                                                        <input type="hidden" name="{{ $key }}" value="{{ $value }}">
-                                                    @endif
-                                                @endforeach
+                                                ]) !!}
                                                 <input type="hidden" name="tab" value="projections">
                                                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                                                     <label class="block">

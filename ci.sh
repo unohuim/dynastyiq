@@ -120,4 +120,4 @@ elif grep -qE '^\s*DB_CONNECTION=' .env.ci; then
 fi
 
 # --- Run tests ---
-php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" artisan test
+php -d memory_limit="${PHP_CI_MEMORY_LIMIT}" ./vendor/bin/pest

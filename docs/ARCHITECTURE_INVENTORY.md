@@ -803,6 +803,124 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 
 ## Stats & Player Data
 
+### NHL SAT Models
+
+**Name:** NHL SAT Models
+**Type:** Versioned SAT Model Registry
+**Location:**
+- `app/Http/Controllers/Admin/NhlModelRunController.php`
+- `app/Events/NhlSatModelUpdated.php`
+- `app/Jobs/BuildNhlSatModelEntityProfileForEntityJob.php`
+- `app/Jobs/BuildNhlSatModelEntityProfilesJob.php`
+- `app/Jobs/BuildNhlSatModelEntityRateComparisonForEntityJob.php`
+- `app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php`
+- `app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php`
+- `app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php`
+- `app/Jobs/BackfillNhlExpectedGoalsJob.php`
+- `app/Models/NhlModelRun.php`
+- `app/Services/NhlSatModelEntityProfileBuilder.php`
+- `app/Services/NhlSatModelGenericBucketStabilityBuilder.php`
+- `app/Services/NhlSatModelEntityRateComparisonBuilder.php`
+- `app/Services/NhlSatModelEntityRateProjectionBuilder.php`
+- `database/migrations/2026_08_19_000001_create_nhl_model_runs_table.php`
+- `database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php`
+- `database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php`
+- `database/migrations/2026_08_20_000004_create_nhl_sat_model_entity_profile_buckets_table.php`
+- `database/migrations/2026_08_21_000001_add_per_60_fields_to_nhl_sat_model_entity_profile_buckets.php`
+- `database/migrations/2026_08_21_000002_create_nhl_sat_model_entity_rate_projection_buckets_table.php`
+- `database/migrations/2026_08_21_000003_create_nhl_sat_model_entity_test_profile_buckets_table.php`
+- `database/migrations/2026_08_21_000004_create_nhl_sat_model_entity_rate_comparison_tables.php`
+- `database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php`
+- `database/migrations/2026_08_21_000007_create_nhl_sat_model_generic_bucket_stabilities_table.php`
+- `resources/views/admin/nhl-sat-models/index.blade.php`
+- `resources/views/admin/nhl-sat-models/_model-row.blade.php`
+- `resources/views/admin/nhl-sat-models/buckets.blade.php`
+- `resources/views/admin/nhl-sat-models/profiles.blade.php`
+- `resources/views/admin/nhl-sat-models/bucket-stability.blade.php`
+- `resources/views/admin/nhl-sat-models/training-drift.blade.php`
+- `resources/views/admin/nhl-sat-models/rate-projection-aggregate-comparison.blade.php`
+- `resources/views/admin/nhl-sat-models/rate-projection-comparison.blade.php`
+- `resources/views/admin/nhl-sat-models/rate-projections.blade.php`
+- `resources/js/admin/nhl-sat-models.js`
+- `docs/architecture/stats/StatModelLifecycle.yaml`
+- `docs/architecture/stats/NhlModelRuns.yaml`
+- `docs/architecture/stats/NhlSatEntityRateProjection.yaml`
+
+**Purpose:**
+Register SAT models with explicit training seasons, optional test season, configuration, status, shrinkage confidence, aggregate training profiles, single-season profile snapshots, generic bucket stability diagnostics, and metrics.
+Skater-offense SAT /60 projection strategy is documented separately in `docs/architecture/stats/NhlSatEntityRateProjection.yaml`; the current `skater_offense_segmented_xsat_v2` strategy uses training-season profiles, true training-season snapshots, training-season production tiers from `nhl_game_summaries`, latest active bucket count, position type, goal-per-game tier, and S2-vs-S1 direction without using the held-out test season as input.
+
+**When to Use:**
+SAT-to-SOG and SOG-to-goal danger evaluation workflows that must be compared without overwriting prior model outputs.
+
+**When Not to Use:**
+Raw NHL imports, shot-attempt fact storage, non-SAT model families, or directly launching long-running model jobs as a hidden side effect.
+
+**Public Interface:**
+- `admin.nhl-sat-models.index`
+- `admin.nhl-sat-models.store`
+- `admin.nhl-sat-models.buckets`
+- `admin.nhl-sat-models.train`
+- `admin.nhl-sat-models.profiles`
+- `admin.nhl-sat-models.profiles.build`
+- `admin.nhl-sat-models.profiles.bucket-stability`
+- `admin.nhl-sat-models.profiles.bucket-stability.export`
+- `admin.nhl-sat-models.profiles.training-drift`
+- `admin.nhl-sat-models.rate-projections`
+- `admin.nhl-sat-models.rate-projections.build`
+- `admin.nhl-sat-models.rate-projections.compare.aggregates`
+- `admin.nhl-sat-models.rate-projections.compare.build`
+- `admin.nhl-sat-models.rate-projections.compare.raw`
+- `admin.sat-models`
+- `NhlSatModelUpdated`
+- `nhl_model_runs`
+- `nhl_sat_model_entity_profile_buckets`
+- `nhl_sat_model_entity_test_profile_buckets`
+- `nhl_sat_model_generic_bucket_stabilities`
+- `nhl_sat_model_entity_rate_projection_buckets`
+- `nhl_sat_model_entity_rate_comparison_buckets`
+- `nhl_sat_model_entity_rate_comparison_aggregates`
+- `NhlModelRun`
+
+**Example Usage:**
+```php
+NhlModelRun::query()->where('model_family', 'sat')->latest()->get();
+```
+
+---
+
+### Stat Model Lifecycle
+
+**Name:** Stat Model Lifecycle
+**Type:** Modeling Workflow Invariant
+**Location:**
+- `docs/architecture/stats/StatModelLifecycle.yaml`
+- `docs/architecture/stats/NhlModelRuns.yaml`
+- `docs/architecture/stats/NhlExpectedGoalsModel.yaml`
+
+**Purpose:**
+Define the required order for measured facts, data quality, probability training, entity profiles, evaluation, and projection.
+
+**When to Use:**
+Designing SAT or future stat modeling actions, especially deciding whether an action trains, scores, profiles, evaluates, or projects.
+
+**When Not to Use:**
+Raw imports, fact table construction, or treating per-event scoring as the same step as probability training.
+
+**Public Interface:**
+- `docs/architecture/stats/StatModelLifecycle.yaml`
+- `admin.nhl-sat-models.train`
+- `nhl_model_runs`
+- `nhl_expected_goals_models`
+- `nhl_expected_goals_model_buckets`
+
+**Example Usage:**
+```text
+Measured facts -> Eval SAT -> SAT-to-SOG probabilities; Eval SOG -> SOG-to-goal probabilities; later Score Events -> Entity Profiles -> Evaluate -> Project.
+```
+
+---
+
 ### Perspective-Driven Stats Payload
 
 **Name:** Perspective-Driven Stats Payload
@@ -1066,6 +1184,7 @@ GROUP BY winning_team_abbrev, winning_team_zone_bucket;
 - `app/Services/NhlExpectedGoalsBackfiller.php`
 - `database/migrations/2026_07_29_000003_create_nhl_expected_goals_tables.php`
 - `database/migrations/2026_07_29_000004_add_prediction_target_to_nhl_expected_goals_tables.php`
+- `database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php`
 - `docs/architecture/stats/NhlExpectedGoalsModel.yaml`
 - `data/shot_attempts_model_analysis_20252026.md`
 - `data/shot_attempts_model_input_20252026.csv`
@@ -1081,6 +1200,7 @@ Importing play-by-play, changing shot-fact construction, storing xG on shot fact
 
 **Public Interface:**
 - `nhl:xg:backfill`
+- `admin.nhl-sat-models.train`
 - `nhl_expected_goals_models`
 - `nhl_expected_goals_model_buckets`
 - `nhl_shot_attempt_predictions`
@@ -1285,7 +1405,7 @@ php artisan nhl:skater-defensive-chance-profiles --season=20252026 --game-type=2
 
 **Purpose:**
 Store historical official and head-coach SAT chance profiles using granular bucket rows with empirical-Bayes shrinkage.
-Readable aggregate profile rows are also persisted separately from the exact buckets, merging exact SAT buckets into the narrowest grouping that produces a small useful profile set.
+Readable aggregate profile rows are also persisted separately from the exact buckets. Canonical comparison buckets are persisted for every eligible entity at one-trait and two-trait levels when bucket SAT is sufficient, while selected summary buckets still merge exact SAT buckets into a small useful profile set.
 
 **When to Use:**
 Exploring whether referees, linesmen, or head coaches have interesting historical SAT chance-shape context; comparing official-assigned games; or comparing coach offense-side and defense-side SAT environments from right-rail game context.
@@ -1296,7 +1416,7 @@ Replacing shot-attempt facts, expected-goals model training, game-context import
 **Required Fallback Transparency:**
 Sparse bucket probabilities must expose exact bucket SAT, selected parent/prior bucket key, parent/prior SAT, prior weight SAT, shrinkage weight, confidence score, and confidence bucket as first-class row fields. Admin and API surfaces that display profile probabilities must make clear when a displayed rate is mostly borrowed from broader parent-bucket evidence.
 Admin inspection should include rankable context helpers such as SAT per game, same-bucket peer average share, share delta, persisted aggregate bucket labels, and included exact bucket counts so raw bucket probabilities are not mistaken for coach/ref rankings.
-Profile row inspection sections are lazy-loaded behind collapsed accordions; exact bucket detail is audit/debug content and must not run during the initial tab render. Bucket comparison inspection groups persisted aggregate bucket rows by aggregate bucket key, renders each group as a collapsed nested lazy accordion, shows SAT-weighted average shot distance and average absolute shot angle when aggregate metadata is available, and loads matching officials and staff contexts only when that bucket is expanded. Expanded bucket peer tables support AJAX header sorting with a visible active-direction arrow and default to SAT per game descending.
+Profile row inspection sections are lazy-loaded behind collapsed accordions; exact bucket detail is audit/debug content and must not run during the initial tab render. Bucket comparison inspection groups persisted comparison-purpose aggregate bucket rows by aggregate bucket key, renders each group as a collapsed nested lazy accordion, shows SAT-weighted average shot distance and average absolute shot angle when aggregate metadata is available, and loads matching officials and staff contexts only when that bucket is expanded. Expanded bucket peer tables support AJAX header sorting with a visible active-direction arrow and default to SAT per game descending.
 Admin useful-row filters may combine direct SAT, shrinkage weight, and confidence thresholds for inspection, but those filters are presentation aids and must not replace persisted fallback provenance.
 
 **Public Interface:**
@@ -2806,10 +2926,10 @@ SeasonSumJob::dispatch($seasonId, $runId);
 - `docs/architecture/admin/AdminNhlShotAttempts.yaml`
 
 **Purpose:**
-Provide a super-admin review panel for raw NHL shot-attempt facts, grouped rates, distance/angle bucket analysis, biometric and bio-context impact cuts, QA coverage, expected-goals model review, offensive projection review, and projected matchup simulation.
+Provide a super-admin review panel for raw NHL shot-attempt facts, single-factor rates, grouped rates, biometric and bio-context impact cuts, QA coverage, expected-goals model review, offensive projection review, and projected matchup simulation.
 
 **When to Use:**
-Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing bucket behavior, reviewing observed biometric impacts with minimum-attempt thresholds, comparing objective height and weight buckets against shot context, reviewing TOI/offensive skater projection outputs, simulating projected team matchups, and auditing missing or suspicious shot-fact fields.
+Inspecting `nhl_shot_attempts_facts`, reviewing grouped shot rates, comparing individual factors before SAT modeling, reviewing observed biometric impacts with minimum-attempt thresholds, comparing objective height and weight ranges against shot context, reviewing TOI/offensive skater projection outputs, simulating projected team matchups, and auditing missing or suspicious shot-fact fields.
 
 **When Not to Use:**
 Running imports, mutating shot facts, replacing Game Imports, or adding biometric fields into model training without separate approval.

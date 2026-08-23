@@ -39,8 +39,10 @@ rules:
   - Granular profile bucket rows should be persisted at the most specific chance shape.
   - Sparse bucket probabilities must be shrunk toward broader parent buckets using empirical-Bayes weighting.
   - Readable aggregate profile buckets must be persisted separately from granular profile buckets so user-facing summaries do not overwrite auditable exact bucket rows.
-  - Aggregate profile buckets must merge exact buckets into the narrowest available grouping that produces a small usable profile set, targeting two to five buckets per entity/context.
+  - Aggregate profile builders must persist canonical comparison buckets for every eligible entity at one-trait and two-trait levels when bucket SAT is sufficient.
+  - Aggregate profile buckets must also merge exact buckets into the narrowest available grouping that produces a small usable summary set, targeting two to five summary buckets per entity/context.
   - Aggregate profile buckets may use broader semantic dimensions, such as outside-slot shot zones, when exact shot distance, angle, or sequence dimensions create too many small buckets.
+  - Aggregate profile metadata must distinguish comparison and summary bucket purposes; one row may carry both purposes when a canonical comparison bucket is also selected as a useful summary bucket.
   - Aggregate profile bucket rows must persist their aggregate key, aggregate level, label, dimensions, included exact bucket keys, included exact bucket count, SAT totals, share, shrunk goal/SOG probabilities, shrinkage weight, and confidence.
   - Stored goal and shot-on-goal probability fields represent shrunk expected rates; raw expected and actual rates must remain auditable in metadata.
   - Sparse-bucket fallback must be transparent wherever profile rows are inspected.
@@ -48,7 +50,7 @@ rules:
   - Admin and API surfaces that display profile probabilities must show enough fallback metadata to distinguish direct bucket evidence from parent-bucket borrowing.
   - Admin inspection surfaces should prefer persisted aggregate profile rows and rankable detail views over raw probability sorting alone, including SAT per game, same-bucket peer average share, share delta, aggregate bucket labels, and included exact bucket counts.
   - Admin inspection sections that query profile rows must be lazy-loaded behind collapsed accordions so the initial tab render does not execute heavy aggregate or exact bucket queries.
-  - Bucket comparison inspection must group persisted aggregate bucket rows by aggregate bucket key and expose the matching officials and staff contexts for direct peer comparison.
+  - Bucket comparison inspection must group persisted comparison-purpose aggregate bucket rows by aggregate bucket key and expose the matching officials and staff contexts for direct peer comparison.
   - Bucket comparison groups must render as collapsed nested lazy-load accordions; peer row tables must load only when the specific bucket accordion is expanded.
   - Bucket comparison peer row tables must support AJAX header sorting with a visible active-direction arrow and default to SAT per game descending.
   - Bucket comparison group metadata must include SAT-weighted average shot distance and average absolute shot angle when aggregate metadata is available.

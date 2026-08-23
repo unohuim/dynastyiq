@@ -24,6 +24,7 @@ use App\Services\NhlPlayerToiProjectionBuilder;
 use App\Services\NhlProjectedTeamMatchupSimulator;
 use App\Services\NhlShotAttemptAnalysisBuckets;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -45,8 +46,10 @@ class NhlShotAttemptController extends Controller
     public function index(Request $request): View
     {
         $input = $request->validate([
-            'tab' => ['nullable', Rule::in(['explorer', 'aggregates', 'buckets', 'predictive', 'biometrics', 'player-profiles', 'skater-o-profiles', 'g-sat-profiles', 'skater-d-profiles', 'context-sat-profiles', 'xg', 'projections', 'matchup', 'qa'])],
+            'tab' => ['nullable', Rule::in(['explorer', 'factors', 'aggregates', 'buckets', 'predictive', 'biometrics', 'player-profiles', 'skater-o-profiles', 'g-sat-profiles', 'skater-d-profiles', 'context-sat-profiles', 'xg', 'projections', 'matchup', 'qa'])],
             'season_id' => ['nullable', 'digits:8'],
+            'season_ids' => ['nullable', 'array'],
+            'season_ids.*' => ['digits:8'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date'],
             'game_type' => ['nullable', 'integer', 'min:1', 'max:99'],
@@ -78,6 +81,14 @@ class NhlShotAttemptController extends Controller
                 'is_rebound',
                 'previous_event_type',
             ])],
+            'factor' => ['nullable', Rule::in(array_keys($this->factorDefinitions()))],
+            'factor_keys' => ['nullable', 'array'],
+            'factor_keys.*' => [Rule::in(array_keys($this->factorDefinitions()))],
+            'factor_selection_state' => ['nullable', Rule::in(['explicit'])],
+            'factor_value_exclusions' => ['nullable', 'array'],
+            'factor_value_exclusions.*' => ['string', 'max:160'],
+            'factor_sample' => ['nullable', Rule::in(['sat', 'sog'])],
+            'include_unknowns' => ['nullable', Rule::in(['1', '0'])],
             'sort' => ['nullable', Rule::in($this->allSortKeys())],
             'direction' => ['nullable', Rule::in(['asc', 'desc'])],
             'xg_model_sort' => ['nullable', Rule::in(array_keys($this->xgModelSortColumns()))],
@@ -188,6 +199,8 @@ class NhlShotAttemptController extends Controller
 
         $tab = (string) ($input['tab'] ?? 'explorer');
         $filters = $this->filters($input);
+        $factorSampleMode = $this->factorSampleMode($input);
+        $includeUnknowns = $this->includeUnknownFactorValues($input);
         $tableExists = Schema::hasTable('nhl_shot_attempts_facts');
         $xgTableExists = $this->xgTablesExist();
         $projectionTablesExist = $this->projectionTablesExist();
@@ -213,6 +226,9 @@ class NhlShotAttemptController extends Controller
         $biometricMinAttempts = (int) ($input['biometric_min_attempts'] ?? 300);
         $profileMinAttempts = (int) ($input['profile_min_attempts'] ?? 25);
         $sort = $this->sortKey($tab, (string) ($input['sort'] ?? ''));
+        if ($tab === 'factors' && $factorSampleMode === 'sog' && in_array($sort, ['blocked_attempts', 'missed_attempts', 'shots_on_goal', 'sog_rate', 'block_rate'], true)) {
+            $sort = 'goal_rate';
+        }
         $direction = $this->sortDirection((string) ($input['direction'] ?? ''));
         $profileSort = (string) ($input['profile_sort'] ?? 'attempts');
         $profileDirection = $this->sortDirection((string) ($input['profile_direction'] ?? ''));
@@ -248,6 +264,17 @@ class NhlShotAttemptController extends Controller
         $skaterDProfileDirection = $this->sortDirection((string) ($input['skater_d_profile_direction'] ?? ''));
         $contextProfileSort = (string) ($input['context_profile_sort'] ?? 'source_xg');
         $contextProfileDirection = $this->sortDirection((string) ($input['context_profile_direction'] ?? ''));
+        $factorDefinitions = $this->factorDefinitions();
+        $selectedFactorKeys = $this->selectedFactorKeys($input);
+        $displayedFactorKeys = $this->activeFactorKeys($input, $selectedFactorKeys);
+        $factorFilters = $this->factorFilters($filters, $factorSampleMode, $includeUnknowns);
+        $factorValueOptions = $tableExists && $tab === 'factors'
+            ? $this->factorValueOptions($factorFilters, $displayedFactorKeys)
+            : collect();
+        $selectedFactorValueExclusions = $this->selectedFactorValueExclusions(
+            $input,
+            $factorValueOptions->pluck('key')->all()
+        );
         $latestXgModel = $xgTableExists ? $this->latestXgModel($filters['season_id'], NhlExpectedGoalsBackfiller::TARGET_GOAL) : null;
         $latestXsogModel = $xgTableExists ? $this->latestXgModel($filters['season_id'], NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL) : null;
         $projectionRows = $projectionTablesExist && $tab === 'projections'
@@ -323,6 +350,25 @@ class NhlShotAttemptController extends Controller
             'predictiveRows' => $tableExists && $tab === 'predictive'
                 ? $this->predictiveRows($filters, $predictiveGroup, $minAttempts, $sort, $direction)
                 : collect(),
+            'factorRows' => $tableExists && $tab === 'factors'
+                ? $this->factorRows(
+                    $factorFilters,
+                    $input['factor'] ?? null,
+                    $input['factor_keys'] ?? [],
+                    $selectedFactorValueExclusions,
+                    $factorValueOptions,
+                    $sort,
+                    $direction
+                )
+                : collect(),
+            'factorDefinitions' => $factorDefinitions,
+            'selectedFactor' => $input['factor'] ?? '',
+            'selectedFactorKeys' => $selectedFactorKeys,
+            'displayedFactorKeys' => $displayedFactorKeys,
+            'factorValueOptions' => $factorValueOptions,
+            'selectedFactorValueExclusions' => $selectedFactorValueExclusions,
+            'factorSampleMode' => $factorSampleMode,
+            'includeUnknowns' => $includeUnknowns,
             'biometricRows' => $tableExists && $tab === 'biometrics'
                 ? $this->biometricRows($filters, $latestXgModel?->id, $biometricMinAttempts, $sort, $direction)
                 : collect(),
@@ -902,6 +948,7 @@ class NhlShotAttemptController extends Controller
     {
         $input = $this->validateContextProfileSectionRequest($request);
         $filters = $this->contextProfileFilters($input);
+        $filters['aggregate_bucket_purpose'] = 'comparison';
         $rows = $this->contextProfileTablesExist()
             ? $this->contextProfileAggregateRows($filters, 1000)
             : collect();
@@ -919,6 +966,7 @@ class NhlShotAttemptController extends Controller
         $input = $this->validateContextProfileBucketComparisonRowsRequest($request);
         $filters = $this->contextProfileFilters($input);
         $filters['aggregate_bucket_key'] = $input['aggregate_bucket_key'];
+        $filters['aggregate_bucket_purpose'] = 'comparison';
         $sort = (string) ($input['context_profile_bucket_sort'] ?? 'source_sat_per_game');
         $direction = $this->sortDirection((string) ($input['context_profile_bucket_direction'] ?? 'desc'));
         $rows = $this->contextProfileTablesExist()
@@ -939,13 +987,71 @@ class NhlShotAttemptController extends Controller
     }
 
     /**
+     * Return factor values for the current Factors tab filters.
+     */
+    public function factorValues(Request $request): JsonResponse
+    {
+        $input = $request->validate([
+            'season_id' => ['nullable', 'digits:8'],
+            'season_ids' => ['nullable', 'array'],
+            'season_ids.*' => ['digits:8'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date'],
+            'game_type' => ['nullable', 'integer', 'min:1', 'max:99'],
+            'team_id' => ['nullable', 'integer'],
+            'strength_bucket' => ['nullable', 'string', 'max:32'],
+            'attempt_result' => ['nullable', 'string', 'max:32'],
+            'distance_bucket' => ['nullable', 'string', 'max:32'],
+            'angle_bucket' => ['nullable', 'string', 'max:32'],
+            'shot_type_bucket' => ['nullable', 'string', 'max:32'],
+            'shot_side' => ['nullable', Rule::in(['left', 'right', 'center', 'unknown'])],
+            'is_off_wing_attempt' => ['nullable', Rule::in(['1', '0'])],
+            'player_search' => ['nullable', 'string', 'max:120'],
+            'position' => ['nullable', 'string', 'max:20'],
+            'factor' => ['nullable', Rule::in(array_keys($this->factorDefinitions()))],
+            'factor_keys' => ['nullable', 'array'],
+            'factor_keys.*' => [Rule::in(array_keys($this->factorDefinitions()))],
+            'factor_selection_state' => ['nullable', Rule::in(['explicit'])],
+            'factor_sample' => ['nullable', Rule::in(['sat', 'sog'])],
+            'include_unknowns' => ['nullable', Rule::in(['1', '0'])],
+        ]);
+
+        if (! Schema::hasTable('nhl_shot_attempts_facts')) {
+            return response()->json(['values' => []]);
+        }
+
+        $selectedFactorKeys = $this->selectedFactorKeys($input);
+        $factorSampleMode = $this->factorSampleMode($input);
+        $includeUnknowns = $this->includeUnknownFactorValues($input);
+        $values = $this->factorValueOptions(
+            $this->factorFilters($this->filters($input), $factorSampleMode, $includeUnknowns),
+            $this->activeFactorKeys($input, $selectedFactorKeys)
+        );
+
+        return response()->json(['values' => $values->values()]);
+    }
+
+    /**
      * @param array<string, mixed> $input
      * @return array<string, mixed>
      */
     private function filters(array $input): array
     {
+        $seasonIds = collect($input['season_ids'] ?? [])
+            ->filter(fn ($seasonId): bool => is_string($seasonId) || is_numeric($seasonId))
+            ->map(fn ($seasonId): string => (string) $seasonId)
+            ->filter(fn (string $seasonId): bool => preg_match('/^\d{8}$/', $seasonId) === 1)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($seasonIds === [] && ($input['season_id'] ?? null)) {
+            $seasonIds = [(string) $input['season_id']];
+        }
+
         return [
-            'season_id' => $input['season_id'] ?? null,
+            'season_id' => count($seasonIds) === 1 ? $seasonIds[0] : null,
+            'season_ids' => $seasonIds,
             'start_date' => $input['start_date'] ?? null,
             'end_date' => $input['end_date'] ?? null,
             'game_type' => $input['game_type'] ?? null,
@@ -960,6 +1066,172 @@ class NhlShotAttemptController extends Controller
             'player_search' => $input['player_search'] ?? null,
             'position' => $input['position'] ?? null,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     */
+    private function factorSampleMode(array $input): string
+    {
+        return ($input['factor_sample'] ?? 'sog') === 'sat' ? 'sat' : 'sog';
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     */
+    private function includeUnknownFactorValues(array $input): bool
+    {
+        return ($input['include_unknowns'] ?? '0') === '1';
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return array<string, mixed>
+     */
+    private function factorFilters(array $filters, string $sampleMode, bool $includeUnknowns): array
+    {
+        $filters['factor_sample'] = $sampleMode;
+        $filters['include_unknowns'] = $includeUnknowns;
+
+        return $filters;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @return array<int, string>
+     */
+    private function selectedFactorKeys(array $input): array
+    {
+        $available = array_keys($this->factorDefinitions());
+        $factorKeys = collect($input['factor_keys'] ?? [])
+            ->filter(fn ($factorKey): bool => is_string($factorKey))
+            ->map(fn (string $factorKey): string => $factorKey)
+            ->filter(fn (string $factorKey): bool => in_array($factorKey, $available, true))
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($factorKeys === [] && ($input['factor'] ?? null)) {
+            $factor = (string) $input['factor'];
+            $factorKeys = in_array($factor, $available, true) ? [$factor] : [];
+        }
+
+        return $factorKeys;
+    }
+
+    /**
+     * @param array<int, string> $selectedFactorKeys
+     * @return array<int, string>
+     */
+    private function displayedFactorKeys(array $selectedFactorKeys): array
+    {
+        return $selectedFactorKeys === []
+            ? array_keys($this->factorDefinitions())
+            : $selectedFactorKeys;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @param array<int, string> $selectedFactorKeys
+     * @return array<int, string>
+     */
+    private function activeFactorKeys(array $input, array $selectedFactorKeys): array
+    {
+        if (($input['factor_selection_state'] ?? null) === 'explicit') {
+            return $selectedFactorKeys;
+        }
+
+        return $this->displayedFactorKeys($selectedFactorKeys);
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     * @param array<int, string> $availableKeys
+     * @return array<int, string>
+     */
+    private function selectedFactorValueExclusions(array $input, array $availableKeys): array
+    {
+        return collect($input['factor_value_exclusions'] ?? [])
+            ->filter(fn ($key): bool => is_string($key))
+            ->filter(fn (string $key): bool => in_array($key, $availableKeys, true))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @param array<int, string> $factorKeys
+     * @return Collection<int, array{key:string,factor_key:string,factor_label:string,value:string,label:string,attempts:int}>
+     */
+    private function factorValueOptions(array $filters, array $factorKeys): Collection
+    {
+        $definitions = $this->factorDefinitions();
+        $rows = collect();
+
+        foreach ($factorKeys as $factorKey) {
+            if (! isset($definitions[$factorKey])) {
+                continue;
+            }
+
+            $definition = $definitions[$factorKey];
+            $query = $this->baseQuery($filters);
+
+            if (($definition['join_blocker'] ?? false) === true) {
+                $query->leftJoin('players as blockers', 'blockers.nhl_id', '=', 'nhl_shot_attempts_facts.blocking_player_id');
+            }
+
+            $expression = $definition['expression'];
+            $this->applyLowTrustFactorValueExclusion($query, $expression, (bool) ($filters['include_unknowns'] ?? false));
+            $factorRows = $query
+                ->selectRaw($expression . ' as value')
+                ->selectRaw('COUNT(*) as attempts')
+                ->groupByRaw($expression)
+                ->orderByRaw($expression)
+                ->get()
+                ->map(function (object $row) use ($factorKey, $definition): array {
+                    $value = (string) ($row->value ?? 'Unknown');
+
+                    return [
+                        'key' => $this->factorValueOptionKey($factorKey, $value),
+                        'factor_key' => $factorKey,
+                        'factor_label' => $definition['label'],
+                        'value' => $value,
+                        'label' => $definition['label'] . ': ' . $value,
+                        'attempts' => (int) ($row->attempts ?? 0),
+                    ];
+                });
+
+            $rows = $rows->merge($factorRows);
+        }
+
+        return $rows->values();
+    }
+
+    private function factorValueOptionKey(string $factorKey, string $value): string
+    {
+        return $factorKey . '|' . sha1($value);
+    }
+
+    /**
+     * @param array<int, string> $excludedKeys
+     * @param Collection<int, array{key:string,factor_key:string,value:string}> $factorValueOptions
+     * @return array<string, array<int, string>>
+     */
+    private function factorValueExclusionsByFactor(array $excludedKeys, Collection $factorValueOptions): array
+    {
+        $excludedLookup = array_flip($excludedKeys);
+        $valuesByFactor = [];
+
+        foreach ($factorValueOptions as $option) {
+            if (! isset($excludedLookup[$option['key']])) {
+                continue;
+            }
+
+            $valuesByFactor[$option['factor_key']][] = $option['value'];
+        }
+
+        return $valuesByFactor;
     }
 
     /**
@@ -1217,8 +1489,13 @@ class NhlShotAttemptController extends Controller
     {
         $query = DB::table('nhl_shot_attempts_facts');
 
+        if (($filters['season_ids'] ?? []) !== []) {
+            $query->whereIn('nhl_shot_attempts_facts.season_id', $filters['season_ids']);
+        } elseif (($filters['season_id'] ?? null) !== null && $filters['season_id'] !== '') {
+            $query->where('nhl_shot_attempts_facts.season_id', $filters['season_id']);
+        }
+
         foreach ([
-            'season_id',
             'team_id',
             'strength_bucket',
             'attempt_result',
@@ -1234,6 +1511,10 @@ class NhlShotAttemptController extends Controller
 
         if ($filters['is_off_wing_attempt'] !== null && $filters['is_off_wing_attempt'] !== '') {
             $query->where('nhl_shot_attempts_facts.is_off_wing_attempt', $filters['is_off_wing_attempt'] === '1');
+        }
+
+        if (($filters['factor_sample'] ?? '') === 'sog') {
+            $query->where('nhl_shot_attempts_facts.is_shot_on_goal', true);
         }
 
         if (($filters['game_type'] ?? null) !== null && $filters['game_type'] !== '') {
@@ -1261,7 +1542,7 @@ class NhlShotAttemptController extends Controller
     {
         $row = $this->baseQuery($filters)
             ->selectRaw('COUNT(*) as attempts')
-            ->selectRaw('SUM(CASE WHEN is_unblocked_attempt THEN 1 ELSE 0 END) as unblocked_attempts')
+            ->selectRaw('SUM(CASE WHEN is_unblocked_attempt THEN 0 ELSE 1 END) as blocked_attempts')
             ->selectRaw('SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
             ->selectRaw('SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) as goals')
             ->selectRaw('SUM(CASE WHEN is_rebound THEN 1 ELSE 0 END) as rebounds')
@@ -1274,7 +1555,7 @@ class NhlShotAttemptController extends Controller
 
         return [
             'attempts' => $attempts,
-            'unblocked_attempts' => (int) ($row->unblocked_attempts ?? 0),
+            'blocked_attempts' => (int) ($row->blocked_attempts ?? 0),
             'shots_on_goal' => (int) ($row->shots_on_goal ?? 0),
             'goals' => $goals,
             'rebounds' => (int) ($row->rebounds ?? 0),
@@ -1349,29 +1630,189 @@ class NhlShotAttemptController extends Controller
 
         if ($groupBy === 'goalie_player_id') {
             $query->leftJoin('players as goalies', 'goalies.nhl_id', '=', 'nhl_shot_attempts_facts.goalie_player_id');
-            $groupExpression = "COALESCE(goalies.full_name, nhl_shot_attempts_facts.goalie_player_id::text)";
+            $groupExpression = "COALESCE(goalies.full_name, CAST(nhl_shot_attempts_facts.goalie_player_id AS TEXT))";
         }
 
         if ($groupBy === 'shooter_player_id') {
             $query->leftJoin('players as shooters', 'shooters.nhl_id', '=', 'nhl_shot_attempts_facts.shooter_player_id');
-            $groupExpression = "COALESCE(shooters.full_name, nhl_shot_attempts_facts.shooter_player_id::text)";
+            $groupExpression = "COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT))";
         }
 
         return $query
-            ->where('nhl_shot_attempts_facts.shot_type_bucket', '<>', 'unknown')
             ->selectRaw($groupExpression . ' as group_value')
             ->selectRaw('COUNT(*) as attempts')
-            ->selectRaw('SUM(CASE WHEN is_unblocked_attempt THEN 1 ELSE 0 END) as unblocked_attempts')
+            ->selectRaw('SUM(CASE WHEN is_unblocked_attempt THEN 0 ELSE 1 END) as blocked_attempts')
             ->selectRaw('SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
             ->selectRaw('SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) as goals')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
             ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
             ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
             ->groupByRaw($groupExpression)
             ->orderBy($sort, $direction)
             ->limit(100)
             ->get();
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     */
+    private function factorRows(
+        array $filters,
+        ?string $selectedFactor,
+        array $selectedFactorKeys,
+        array $excludedFactorValueKeys,
+        Collection $factorValueOptions,
+        string $sort,
+        string $direction
+    ): Collection
+    {
+        $definitions = $this->factorDefinitions();
+        $exclusionsByFactor = $this->factorValueExclusionsByFactor($excludedFactorValueKeys, $factorValueOptions);
+        $customFactorKeys = $this->selectedFactorKeys([
+            'factor' => $selectedFactor,
+            'factor_keys' => $selectedFactorKeys,
+        ]);
+
+        if (count($customFactorKeys) > 1) {
+            if (count($customFactorKeys) === count($definitions)) {
+                $customFactorKeys = [];
+            } else {
+                return $this->combinedFactorRows($filters, $customFactorKeys, $exclusionsByFactor, $sort, $direction);
+            }
+        }
+
+        $singleFactor = count($customFactorKeys) === 1 ? $customFactorKeys[0] : $selectedFactor;
+        $selectedDefinitions = $singleFactor !== null && $singleFactor !== ''
+            ? array_intersect_key($definitions, [$singleFactor => true])
+            : $definitions;
+        $rows = collect();
+
+        foreach ($selectedDefinitions as $key => $definition) {
+            $query = $this->baseQuery($filters);
+
+            if (($definition['join_blocker'] ?? false) === true) {
+                $query->leftJoin('players as blockers', 'blockers.nhl_id', '=', 'nhl_shot_attempts_facts.blocking_player_id');
+            }
+
+            $expression = $definition['expression'];
+            $this->applyLowTrustFactorValueExclusion($query, $expression, (bool) ($filters['include_unknowns'] ?? false));
+            $this->applyFactorValueExclusions($query, $expression, $exclusionsByFactor[$key] ?? []);
+            $rows = $rows->merge(
+                $query
+                    ->selectRaw('? as factor_key', [$key])
+                    ->selectRaw('? as factor_label', [$definition['label']])
+                    ->selectRaw($expression . ' as factor_value')
+                    ->selectRaw('COUNT(*) as attempts')
+                    ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
+                    ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
+                    ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 0 ELSE 1 END) as blocked_attempts')
+                    ->selectRaw("SUM(CASE WHEN nhl_shot_attempts_facts.attempt_result = 'missed_shot' THEN 1 ELSE 0 END) as missed_attempts")
+                    ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+                    ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+                    ->selectRaw('CASE WHEN SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)) * 100 ELSE NULL END as shooting_rate')
+                    ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 0 ELSE 1 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as block_rate')
+                    ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
+                    ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
+                    ->groupByRaw($expression)
+                    ->get()
+            );
+        }
+
+        return $this->sortFactorRows($rows, $sort, $direction)
+            ->take(300)
+            ->values();
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @param array<int, string> $factorKeys
+     * @param array<string, array<int, string>> $exclusionsByFactor
+     */
+    private function combinedFactorRows(
+        array $filters,
+        array $factorKeys,
+        array $exclusionsByFactor,
+        string $sort,
+        string $direction
+    ): Collection
+    {
+        $definitions = $this->factorDefinitions();
+        $query = $this->baseQuery($filters);
+        $selectedDefinitions = [];
+        $labelParts = [];
+        $valueParts = [];
+        $groupParts = [];
+        $joinedBlockers = false;
+
+        foreach ($factorKeys as $key) {
+            if (! isset($definitions[$key])) {
+                continue;
+            }
+
+            $definition = $definitions[$key];
+            $selectedDefinitions[$key] = $definition;
+
+            if (($definition['join_blocker'] ?? false) === true && ! $joinedBlockers) {
+                $query->leftJoin('players as blockers', 'blockers.nhl_id', '=', 'nhl_shot_attempts_facts.blocking_player_id');
+                $joinedBlockers = true;
+            }
+
+            $labelParts[] = $definition['label'];
+            $valueParts[] = "'" . str_replace("'", "''", $definition['label']) . ": ' || (" . $definition['expression'] . ')';
+            $groupParts[] = $definition['expression'];
+            $this->applyLowTrustFactorValueExclusion($query, $definition['expression'], (bool) ($filters['include_unknowns'] ?? false));
+            $this->applyFactorValueExclusions($query, $definition['expression'], $exclusionsByFactor[$key] ?? []);
+        }
+
+        $factorValueExpression = implode(" || ' · ' || ", $valueParts);
+
+        return $this->sortFactorRows(
+            $query
+                ->selectRaw('? as factor_key', [implode('|', array_keys($selectedDefinitions))])
+                ->selectRaw('? as factor_label', [implode(' + ', $labelParts)])
+                ->selectRaw($factorValueExpression . ' as factor_value')
+                ->selectRaw('COUNT(*) as attempts')
+                ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
+                ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
+                ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 0 ELSE 1 END) as blocked_attempts')
+                ->selectRaw("SUM(CASE WHEN nhl_shot_attempts_facts.attempt_result = 'missed_shot' THEN 1 ELSE 0 END) as missed_attempts")
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+                ->selectRaw('CASE WHEN SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)) * 100 ELSE NULL END as shooting_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 0 ELSE 1 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as block_rate')
+                ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
+                ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
+                ->groupByRaw(implode(', ', $groupParts))
+                ->get(),
+            $sort,
+            $direction
+        )
+            ->take(300)
+            ->values();
+    }
+
+    /**
+     * @param array<int, string> $excludedValues
+     */
+    private function applyFactorValueExclusions($query, string $expression, array $excludedValues): void
+    {
+        if ($excludedValues === []) {
+            return;
+        }
+
+        $placeholders = implode(', ', array_fill(0, count($excludedValues), '?'));
+        $query->whereRaw('(' . $expression . ') NOT IN (' . $placeholders . ')', array_values($excludedValues));
+    }
+
+    private function applyLowTrustFactorValueExclusion($query, string $expression, bool $includeUnknowns): void
+    {
+        if ($includeUnknowns) {
+            return;
+        }
+
+        $query->whereRaw('LOWER(' . $expression . ") NOT LIKE '%unknown%'")
+            ->whereRaw('LOWER(' . $expression . ") NOT LIKE '%other%'");
     }
 
     /**
@@ -1391,8 +1832,8 @@ class NhlShotAttemptController extends Controller
                 ->selectRaw('COUNT(*) as attempts')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
-                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
                 ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
                 ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
                 ->havingRaw('COUNT(*) >= ?', [self::ANALYSIS_BUCKET_MIN_ATTEMPTS]);
@@ -1433,9 +1874,9 @@ class NhlShotAttemptController extends Controller
             ->selectRaw('COUNT(*) as attempts')
             ->selectRaw('SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
             ->selectRaw('SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) as goals')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
-            ->selectRaw('CASE WHEN SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END)::decimal / SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END)) * 100 ELSE NULL END as shooting_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+            ->selectRaw('CASE WHEN SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END) > 0 THEN (SUM(CASE WHEN is_goal THEN 1 ELSE 0 END) * 1.0 / SUM(CASE WHEN is_shot_on_goal THEN 1 ELSE 0 END)) * 100 ELSE NULL END as shooting_rate')
             ->selectRaw('AVG(shot_distance) as avg_distance')
             ->selectRaw('AVG(abs_shot_angle) as avg_angle')
             ->groupByRaw($definition['group'])
@@ -1462,6 +1903,33 @@ class NhlShotAttemptController extends Controller
             'sog_rate' => fn (object $row): float => (float) ($row->sog_rate ?? 0),
             'goals' => fn (object $row): int => (int) $row->goals,
             'goal_rate' => fn (object $row): float => (float) ($row->goal_rate ?? 0),
+            'avg_distance' => fn (object $row): float => (float) ($row->avg_distance ?? 0),
+            'avg_angle' => fn (object $row): float => (float) ($row->avg_angle ?? 0),
+            default => fn (object $row): int => (int) $row->attempts,
+        };
+
+        return $direction === 'asc'
+            ? $rows->sortBy($sorter)
+            : $rows->sortByDesc($sorter);
+    }
+
+    /**
+     * @param Collection<int, object> $rows
+     */
+    private function sortFactorRows(Collection $rows, string $sort, string $direction): Collection
+    {
+        $sorter = match ($sort) {
+            'factor_label' => fn (object $row): string => (string) $row->factor_label,
+            'factor_value' => fn (object $row): string => (string) $row->factor_value,
+            'attempts' => fn (object $row): int => (int) $row->attempts,
+            'blocked_attempts' => fn (object $row): int => (int) $row->blocked_attempts,
+            'missed_attempts' => fn (object $row): int => (int) $row->missed_attempts,
+            'shots_on_goal' => fn (object $row): int => (int) $row->shots_on_goal,
+            'sog_rate' => fn (object $row): float => (float) ($row->sog_rate ?? 0),
+            'goals' => fn (object $row): int => (int) $row->goals,
+            'goal_rate' => fn (object $row): float => (float) ($row->goal_rate ?? 0),
+            'shooting_rate' => fn (object $row): float => (float) ($row->shooting_rate ?? 0),
+            'block_rate' => fn (object $row): float => (float) ($row->block_rate ?? 0),
             'avg_distance' => fn (object $row): float => (float) ($row->avg_distance ?? 0),
             'avg_angle' => fn (object $row): float => (float) ($row->avg_angle ?? 0),
             default => fn (object $row): int => (int) $row->attempts,
@@ -1591,8 +2059,8 @@ class NhlShotAttemptController extends Controller
                 ->selectRaw('COUNT(*) as attempts')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
                 ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
-                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+                ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
                 ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
                 ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
                 ->groupByRaw($definition['label_sql'])
@@ -1632,24 +2100,24 @@ class NhlShotAttemptController extends Controller
     ) {
         $query = $this->playerProfileBaseQuery($filters, $goalModelId, $sogModelId)
             ->selectRaw('nhl_shot_attempts_facts.shooter_player_id as nhl_player_id')
-            ->selectRaw("COALESCE(shooters.full_name, nhl_shot_attempts_facts.shooter_player_id::text) as player_name")
+            ->selectRaw("COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT)) as player_name")
             ->selectRaw("COALESCE(shooters.position, shooters.pos_type, 'N/A') as position")
-            ->selectRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, nhl_shot_attempts_facts.team_id::text) as team_abbrev")
+            ->selectRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, CAST(nhl_shot_attempts_facts.team_id AS TEXT)) as team_abbrev")
             ->selectRaw('COUNT(*) as attempts')
             ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) as shots_on_goal')
             ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
             ->selectRaw('SUM(goal_predictions.xg) as xg')
             ->selectRaw('SUM(sog_predictions.xg) as xsog')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
             ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(goal_predictions.xg) / COUNT(*)) * 100 ELSE NULL END as xg_per_sat')
             ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(sog_predictions.xg) / COUNT(*)) * 100 ELSE NULL END as xsog_per_sat')
             ->selectRaw('AVG(nhl_shot_attempts_facts.shot_distance) as avg_distance')
             ->selectRaw('AVG(nhl_shot_attempts_facts.abs_shot_angle) as avg_angle')
             ->groupByRaw('nhl_shot_attempts_facts.shooter_player_id')
-            ->groupByRaw("COALESCE(shooters.full_name, nhl_shot_attempts_facts.shooter_player_id::text)")
+            ->groupByRaw("COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT))")
             ->groupByRaw("COALESCE(shooters.position, shooters.pos_type, 'N/A')")
-            ->groupByRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, nhl_shot_attempts_facts.team_id::text)")
+            ->groupByRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, CAST(nhl_shot_attempts_facts.team_id AS TEXT))")
             ->havingRaw('COUNT(*) >= ?', [$minAttempts]);
 
         $column = $this->playerProfileSortColumns()[$sort] ?? $this->playerProfileSortColumns()['attempts'];
@@ -1691,8 +2159,8 @@ class NhlShotAttemptController extends Controller
                     ->where('goal_buckets.expected_goals_model_id', '=', $goalModelId);
             })
             ->selectRaw('nhl_shot_attempts_facts.shooter_player_id as nhl_player_id')
-            ->selectRaw("COALESCE(shooters.full_name, nhl_shot_attempts_facts.shooter_player_id::text) as player_name")
-            ->selectRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, nhl_shot_attempts_facts.team_id::text) as team_abbrev")
+            ->selectRaw("COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT)) as player_name")
+            ->selectRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, CAST(nhl_shot_attempts_facts.team_id AS TEXT)) as team_abbrev")
             ->selectRaw('goal_predictions.fallback_level')
             ->selectRaw($shotTypeExpression . ' as shot_type_group')
             ->selectRaw($distanceExpression . ' as distance_group')
@@ -1703,11 +2171,11 @@ class NhlShotAttemptController extends Controller
             ->selectRaw('SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) as goals')
             ->selectRaw('SUM(goal_predictions.xg) as xg')
             ->selectRaw('SUM(sog_predictions.xg) as xsog')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as sog_rate')
-            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END)::decimal / COUNT(*)) * 100 ELSE NULL END as goal_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_shot_on_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as sog_rate')
+            ->selectRaw('CASE WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN nhl_shot_attempts_facts.is_goal THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) * 100 ELSE NULL END as goal_rate')
             ->groupByRaw('nhl_shot_attempts_facts.shooter_player_id')
-            ->groupByRaw("COALESCE(shooters.full_name, nhl_shot_attempts_facts.shooter_player_id::text)")
-            ->groupByRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, nhl_shot_attempts_facts.team_id::text)")
+            ->groupByRaw("COALESCE(shooters.full_name, CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT))")
+            ->groupByRaw("COALESCE(nhl_teams.abbrev, shooters.team_abbrev, CAST(nhl_shot_attempts_facts.team_id AS TEXT))")
             ->groupByRaw('goal_predictions.fallback_level')
             ->groupByRaw($shotTypeExpression)
             ->groupByRaw($distanceExpression)
@@ -1742,7 +2210,7 @@ class NhlShotAttemptController extends Controller
                     ->where('goal_predictions.is_scored', '=', true);
             });
         } else {
-            $query->leftJoin(DB::raw('(SELECT NULL::bigint as shot_attempt_fact_id, NULL::decimal as xg) as goal_predictions'), function ($join): void {
+            $query->leftJoin(DB::raw('(SELECT CAST(NULL AS INTEGER) as shot_attempt_fact_id, CAST(NULL AS NUMERIC) as xg) as goal_predictions'), function ($join): void {
                 $join->on('goal_predictions.shot_attempt_fact_id', '=', 'nhl_shot_attempts_facts.id');
             });
         }
@@ -1755,7 +2223,7 @@ class NhlShotAttemptController extends Controller
                     ->where('sog_predictions.is_scored', '=', true);
             });
         } else {
-            $query->leftJoin(DB::raw('(SELECT NULL::bigint as shot_attempt_fact_id, NULL::decimal as xg) as sog_predictions'), function ($join): void {
+            $query->leftJoin(DB::raw('(SELECT CAST(NULL AS INTEGER) as shot_attempt_fact_id, CAST(NULL AS NUMERIC) as xg) as sog_predictions'), function ($join): void {
                 $join->on('sog_predictions.shot_attempt_fact_id', '=', 'nhl_shot_attempts_facts.id');
             });
         }
@@ -1765,7 +2233,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($playerSearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(shooters.full_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('nhl_shot_attempts_facts.shooter_player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(nhl_shot_attempts_facts.shooter_player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -1787,6 +2255,7 @@ class NhlShotAttemptController extends Controller
             'team_abbrev' => 'team_abbrev',
             'position' => 'position',
             'attempts' => 'attempts',
+            'blocked_attempts' => 'blocked_attempts',
             'shots_on_goal' => 'shots_on_goal',
             'sog_rate' => 'sog_rate',
             'goals' => 'goals',
@@ -2098,11 +2567,29 @@ class NhlShotAttemptController extends Controller
                 'keys' => [
                     'group_value' => true,
                     'attempts' => true,
-                    'unblocked_attempts' => true,
+                    'blocked_attempts' => true,
                     'shots_on_goal' => true,
                     'sog_rate' => true,
                     'goals' => true,
                     'goal_rate' => true,
+                    'avg_distance' => true,
+                    'avg_angle' => true,
+                ],
+            ],
+            'factors' => [
+                'default' => 'goal_rate',
+                'keys' => [
+                    'factor_label' => true,
+                    'factor_value' => true,
+                    'attempts' => true,
+                    'blocked_attempts' => true,
+                    'missed_attempts' => true,
+                    'shots_on_goal' => true,
+                    'sog_rate' => true,
+                    'goals' => true,
+                    'goal_rate' => true,
+                    'shooting_rate' => true,
+                    'block_rate' => true,
                     'avg_distance' => true,
                     'avg_angle' => true,
                 ],
@@ -2209,6 +2696,221 @@ class NhlShotAttemptController extends Controller
     {
         return $this->sortDefinitions()['explorer']['keys'][$sort]
             ?? $this->sortDefinitions()['explorer']['keys']['game'];
+    }
+
+    /**
+     * @return array<string, array{label:string,expression:string,join_blocker?:bool}>
+     */
+    private function factorDefinitions(): array
+    {
+        return [
+            'distance' => [
+                'label' => 'Distance',
+                'expression' => "COALESCE(NULLIF(nhl_shot_attempts_facts.distance_bucket, ''), 'Unknown')",
+            ],
+            'angle' => [
+                'label' => 'Angle',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.abs_shot_angle > 90 THEN 'Invalid >90'
+                    WHEN nhl_shot_attempts_facts.angle_bucket = 'a_090_plus' THEN 'Invalid >90'
+                    ELSE COALESCE(NULLIF(nhl_shot_attempts_facts.angle_bucket, ''), 'Unknown')
+                END",
+            ],
+            'shot_type' => [
+                'label' => 'Shot Type',
+                'expression' => "COALESCE(NULLIF(nhl_shot_attempts_facts.shot_type_bucket, ''), 'Unknown')",
+            ],
+            'sequence' => [
+                'label' => 'Sequence',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.is_rush AND nhl_shot_attempts_facts.is_rebound THEN 'Rush Rebound'
+                    WHEN nhl_shot_attempts_facts.is_rebound THEN 'Rebound'
+                    WHEN nhl_shot_attempts_facts.is_rush THEN 'Rush'
+                    ELSE 'Settled'
+                END",
+            ],
+            'strength' => [
+                'label' => 'Strength',
+                'expression' => "COALESCE(NULLIF(nhl_shot_attempts_facts.strength_bucket, ''), 'Unknown')",
+            ],
+            'rebound' => [
+                'label' => 'Rebound',
+                'expression' => "CASE WHEN nhl_shot_attempts_facts.is_rebound THEN 'Rebound' WHEN nhl_shot_attempts_facts.is_rebound = false THEN 'No Rebound' ELSE 'Unknown' END",
+            ],
+            'rush' => [
+                'label' => 'Rush',
+                'expression' => "CASE WHEN nhl_shot_attempts_facts.is_rush THEN 'Rush' WHEN nhl_shot_attempts_facts.is_rush = false THEN 'No Rush' ELSE 'Unknown' END",
+            ],
+            'period' => [
+                'label' => 'Period',
+                'expression' => "COALESCE(NULLIF(nhl_shot_attempts_facts.period_bucket, ''), 'Unknown')",
+            ],
+            'score_state' => [
+                'label' => 'Score State',
+                'expression' => "COALESCE(NULLIF(nhl_shot_attempts_facts.score_state_bucket, ''), 'Unknown')",
+            ],
+            'shooter_height' => [
+                'label' => 'Shooter Height',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.shooter_height_inches', [
+                    [68, '<= 68 in'],
+                    [71, '69-71 in'],
+                    [74, '72-74 in'],
+                    [77, '75-77 in'],
+                ], '78+ in'),
+            ],
+            'shooter_weight' => [
+                'label' => 'Shooter Weight',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.shooter_weight_lbs', [
+                    [179, '< 180 lb'],
+                    [199, '180-199 lb'],
+                    [219, '200-219 lb'],
+                ], '220+ lb'),
+            ],
+            'shooter_age' => [
+                'label' => 'Shooter Age',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.shooter_age_years', [
+                    [21, '<= 21'],
+                    [25, '22-25'],
+                    [29, '26-29'],
+                    [33, '30-33'],
+                ], '34+'),
+            ],
+            'shooter_handedness' => [
+                'label' => 'Shooter Handedness',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.shooter_shoots = 'L' THEN 'Left'
+                    WHEN nhl_shot_attempts_facts.shooter_shoots = 'R' THEN 'Right'
+                    ELSE 'Unknown'
+                END",
+            ],
+            'goalie_height' => [
+                'label' => 'Goalie Height',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.goalie_height_inches', [
+                    [72, '<= 72 in'],
+                    [74, '73-74 in'],
+                    [76, '75-76 in'],
+                    [78, '77-78 in'],
+                ], '79+ in'),
+            ],
+            'goalie_weight' => [
+                'label' => 'Goalie Weight',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.goalie_weight_lbs', [
+                    [189, '< 190 lb'],
+                    [209, '190-209 lb'],
+                    [229, '210-229 lb'],
+                ], '230+ lb'),
+            ],
+            'goalie_age' => [
+                'label' => 'Goalie Age',
+                'expression' => $this->rangeExpression('nhl_shot_attempts_facts.goalie_age_years', [
+                    [23, '<= 23'],
+                    [27, '24-27'],
+                    [31, '28-31'],
+                    [35, '32-35'],
+                ], '36+'),
+            ],
+            'goalie_handedness' => [
+                'label' => 'Goalie Handedness',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.goalie_catches = 'L' THEN 'Left'
+                    WHEN nhl_shot_attempts_facts.goalie_catches = 'R' THEN 'Right'
+                    ELSE 'Unknown'
+                END",
+            ],
+            'height_difference' => [
+                'label' => 'Height Difference',
+                'expression' => $this->differenceRangeExpression(
+                    'nhl_shot_attempts_facts.shooter_height_inches',
+                    'nhl_shot_attempts_facts.goalie_height_inches',
+                    'in'
+                ),
+            ],
+            'weight_difference' => [
+                'label' => 'Weight Difference',
+                'expression' => $this->differenceRangeExpression(
+                    'nhl_shot_attempts_facts.shooter_weight_lbs',
+                    'nhl_shot_attempts_facts.goalie_weight_lbs',
+                    'lb'
+                ),
+            ],
+            'age_difference' => [
+                'label' => 'Age Difference',
+                'expression' => $this->differenceRangeExpression(
+                    'nhl_shot_attempts_facts.shooter_age_years',
+                    'nhl_shot_attempts_facts.goalie_age_years',
+                    'yr'
+                ),
+            ],
+            'handedness_matchup' => [
+                'label' => 'Handedness Matchup',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.shooter_shoots IN ('L', 'R') AND nhl_shot_attempts_facts.goalie_catches IN ('L', 'R')
+                        THEN nhl_shot_attempts_facts.shooter_shoots || ' shooter vs ' || nhl_shot_attempts_facts.goalie_catches || ' goalie'
+                    ELSE 'Unknown'
+                END",
+            ],
+            'blocker_handedness' => [
+                'label' => 'Blocker Handedness',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 'No Blocker'
+                    WHEN nhl_shot_attempts_facts.blocking_player_id IS NULL THEN 'Unknown Blocker'
+                    WHEN blockers.shoots = 'L' THEN 'Left'
+                    WHEN blockers.shoots = 'R' THEN 'Right'
+                    ELSE 'Unknown'
+                END",
+                'join_blocker' => true,
+            ],
+            'shooter_blocker_same_hand' => [
+                'label' => 'Shooter/Blocker Same Hand',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 'No Blocker'
+                    WHEN nhl_shot_attempts_facts.blocking_player_id IS NULL THEN 'Unknown Blocker'
+                    WHEN nhl_shot_attempts_facts.shooter_shoots NOT IN ('L', 'R') OR blockers.shoots NOT IN ('L', 'R') THEN 'Unknown'
+                    WHEN nhl_shot_attempts_facts.shooter_shoots = blockers.shoots THEN 'Same'
+                    ELSE 'Different'
+                END",
+                'join_blocker' => true,
+            ],
+            'shooter_blocker_handedness' => [
+                'label' => 'Shooter vs Blocker Handedness',
+                'expression' => "CASE
+                    WHEN nhl_shot_attempts_facts.is_unblocked_attempt THEN 'No Blocker'
+                    WHEN nhl_shot_attempts_facts.blocking_player_id IS NULL THEN 'Unknown Blocker'
+                    WHEN nhl_shot_attempts_facts.shooter_shoots IN ('L', 'R') AND blockers.shoots IN ('L', 'R')
+                        THEN nhl_shot_attempts_facts.shooter_shoots || ' shooter vs ' || blockers.shoots || ' blocker'
+                    ELSE 'Unknown'
+                END",
+                'join_blocker' => true,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<int, array{0:int,1:string}> $ranges
+     */
+    private function rangeExpression(string $column, array $ranges, string $lastLabel): string
+    {
+        $sql = "CASE WHEN {$column} IS NULL THEN 'Unknown'";
+
+        foreach ($ranges as [$max, $label]) {
+            $sql .= " WHEN {$column} <= {$max} THEN '{$label}'";
+        }
+
+        return $sql . " ELSE '{$lastLabel}' END";
+    }
+
+    private function differenceRangeExpression(string $leftColumn, string $rightColumn, string $unit): string
+    {
+        $difference = "({$leftColumn} - {$rightColumn})";
+
+        return "CASE
+            WHEN {$leftColumn} IS NULL OR {$rightColumn} IS NULL THEN 'Unknown'
+            WHEN {$difference} <= -5 THEN 'Shooter -5+ {$unit}'
+            WHEN {$difference} BETWEEN -4 AND -2 THEN 'Shooter -4 to -2 {$unit}'
+            WHEN {$difference} BETWEEN -1 AND 1 THEN 'Same +/-1 {$unit}'
+            WHEN {$difference} BETWEEN 2 AND 4 THEN 'Shooter +2 to +4 {$unit}'
+            ELSE 'Shooter +5+ {$unit}'
+        END";
     }
 
     /**
@@ -2528,8 +3230,8 @@ class NhlShotAttemptController extends Controller
                 ->orderByDesc('projection_version')
                 ->pluck('projection_version'),
             'goalieProjectionVersions' => $this->validMatchupGoalieProjectionVersions()
-                ->orderByDesc('projection_version')
-                ->pluck('projection_version'),
+                ->orderByDesc('projections.projection_version')
+                ->pluck('projections.projection_version'),
             'teams' => DB::table('nhl_player_toi_projections')
                 ->whereNotNull('target_team_abbrev')
                 ->distinct()
@@ -2575,7 +3277,7 @@ class NhlShotAttemptController extends Controller
             })
             ->whereNotNull('projections.projection_version')
             ->groupBy('projections.projection_version')
-            ->selectRaw('projections.projection_version')
+            ->selectRaw('projections.projection_version as projection_version')
             ->selectRaw('MAX(projections.projected_at) as latest_projected_at');
     }
 
@@ -2624,7 +3326,7 @@ class NhlShotAttemptController extends Controller
 
         return $query
             ->selectRaw('players.nhl_id as goalie_player_id')
-            ->selectRaw("COALESCE(players.full_name, players.nhl_id::text) as goalie_name")
+            ->selectRaw("COALESCE(players.full_name, CAST(players.nhl_id AS TEXT)) as goalie_name")
             ->selectRaw('profiles.source_team_abbrev')
             ->selectRaw('players.team_abbrev as current_team_abbrev')
             ->selectRaw('profiles.source_games')
@@ -3071,7 +3773,7 @@ class NhlShotAttemptController extends Controller
                     ELSE NULL
                 END as projected_xgf_per_60"
             )
-            ->selectRaw("COALESCE(players.full_name, projections.player_id::text) as player_name");
+            ->selectRaw("COALESCE(players.full_name, CAST(projections.player_id AS TEXT)) as player_name");
 
         if (($filters['source_season_id'] ?? null) !== null && $filters['source_season_id'] !== '') {
             $query->where('projections.source_season_id', $filters['source_season_id']);
@@ -3106,7 +3808,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($playerSearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('projections.player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(projections.player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3166,7 +3868,7 @@ class NhlShotAttemptController extends Controller
                 'projections.projected_at',
             ])
             ->selectRaw('projections.projected_toi_per_game_seconds - projections.source_toi_per_game_seconds as toi_diff_per_game_seconds')
-            ->selectRaw("COALESCE(players.full_name, projections.player_id::text) as player_name");
+            ->selectRaw("COALESCE(players.full_name, CAST(projections.player_id AS TEXT)) as player_name");
 
         if (($filters['source_season_id'] ?? null) !== null && $filters['source_season_id'] !== '') {
             $query->where('projections.source_season_id', $filters['source_season_id']);
@@ -3197,7 +3899,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($playerSearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('projections.player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(projections.player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3256,7 +3958,7 @@ class NhlShotAttemptController extends Controller
                 'projections.flags',
                 'projections.projected_at',
             ])
-            ->selectRaw("COALESCE(players.full_name, projections.goalie_player_id::text) as goalie_name")
+            ->selectRaw("COALESCE(players.full_name, CAST(projections.goalie_player_id AS TEXT)) as goalie_name")
             ->selectRaw(
                 "CASE
                     WHEN players.dob IS NULL THEN NULL
@@ -3291,7 +3993,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($goalieSearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('projections.goalie_player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(projections.goalie_player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3350,7 +4052,7 @@ class NhlShotAttemptController extends Controller
                 'projections.flags',
                 'projections.projected_at',
             ])
-            ->selectRaw("COALESCE(players.full_name, projections.goalie_player_id::text) as goalie_name")
+            ->selectRaw("COALESCE(players.full_name, CAST(projections.goalie_player_id AS TEXT)) as goalie_name")
             ->selectRaw('projections.projected_xga / NULLIF(projections.projected_games, 0) as projected_xga_per_game')
             ->selectRaw('projections.projected_ga / NULLIF(projections.projected_games, 0) as projected_ga_per_game')
             ->selectRaw('projections.projected_gsax / NULLIF(projections.projected_games, 0) as projected_gsax_per_game')
@@ -3386,7 +4088,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($goalieSearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('projections.goalie_player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(projections.goalie_player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3434,7 +4136,7 @@ class NhlShotAttemptController extends Controller
                 'profiles.confidence_bucket',
                 'profiles.profiled_at',
             ])
-            ->selectRaw("COALESCE(players.full_name, profiles.goalie_player_id::text) as goalie_name")
+            ->selectRaw("COALESCE(players.full_name, CAST(profiles.goalie_player_id AS TEXT)) as goalie_name")
             ->selectRaw("
                 CASE
                     WHEN profiles.source_toi_seconds > 0
@@ -3479,7 +4181,7 @@ class NhlShotAttemptController extends Controller
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.first_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.last_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('profiles.goalie_player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(profiles.goalie_player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3528,7 +4230,7 @@ class NhlShotAttemptController extends Controller
                 'profiles.confidence_bucket',
                 'profiles.profiled_at',
             ])
-            ->selectRaw("COALESCE(players.full_name, profiles.player_id::text) as player_name");
+            ->selectRaw("COALESCE(players.full_name, CAST(profiles.player_id AS TEXT)) as player_name");
 
         if (($filters['season_id'] ?? null) !== null && $filters['season_id'] !== '') {
             $query->where('profiles.source_season_id', $filters['season_id']);
@@ -3563,7 +4265,7 @@ class NhlShotAttemptController extends Controller
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.first_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.last_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('profiles.player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(profiles.player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3612,7 +4314,7 @@ class NhlShotAttemptController extends Controller
                 'profiles.confidence_bucket',
                 'profiles.profiled_at',
             ])
-            ->selectRaw("COALESCE(players.full_name, profiles.player_id::text) as player_name");
+            ->selectRaw("COALESCE(players.full_name, CAST(profiles.player_id AS TEXT)) as player_name");
 
         if (($filters['season_id'] ?? null) !== null && $filters['season_id'] !== '') {
             $query->where('profiles.source_season_id', $filters['season_id']);
@@ -3647,7 +4349,7 @@ class NhlShotAttemptController extends Controller
                 $query->whereRaw("LOWER(COALESCE(players.full_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.first_name, '')) LIKE ?", [$like])
                     ->orWhereRaw("LOWER(COALESCE(players.last_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('profiles.player_id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(profiles.player_id AS TEXT) LIKE ?', [$like]);
             });
         }
 
@@ -3677,7 +4379,7 @@ class NhlShotAttemptController extends Controller
                     profiles.source_season_id,
                     profiles.game_type,
                     profiles.role,
-                    NULL::text as team_context,
+                    CAST(NULL AS TEXT) as team_context,
                     profiles.matched_bucket_key,
                     profiles.fallback_level,
                     profiles.shot_type_group,
@@ -3721,7 +4423,7 @@ class NhlShotAttemptController extends Controller
                     profiles.profiled_at,
                     'official' as entity_type,
                     profiles.nhl_official_id as entity_id,
-                    COALESCE(identities.display_name, profiles.nhl_official_id::text) as entity_name
+                    COALESCE(identities.display_name, CAST(profiles.nhl_official_id AS TEXT)) as entity_name
                 ");
 
             $this->applyContextProfileFilters($officialQuery, $filters);
@@ -3782,7 +4484,7 @@ class NhlShotAttemptController extends Controller
                     profiles.profiled_at,
                     'staff' as entity_type,
                     profiles.nhl_staff_id as entity_id,
-                    COALESCE(identities.display_name, profiles.nhl_staff_id::text) as entity_name
+                    COALESCE(identities.display_name, CAST(profiles.nhl_staff_id AS TEXT)) as entity_name
                 ");
 
             $this->applyContextProfileFilters($staffQuery, $filters);
@@ -3850,7 +4552,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($entitySearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(identities.display_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('identities.id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(identities.id AS TEXT) LIKE ?', [$like]);
             });
         }
     }
@@ -3873,7 +4575,7 @@ class NhlShotAttemptController extends Controller
                     profiles.source_season_id,
                     profiles.game_type,
                     profiles.role,
-                    NULL::text as team_context,
+                    CAST(NULL AS TEXT) as team_context,
                     profiles.aggregate_bucket_key,
                     profiles.aggregate_level,
                     profiles.aggregate_label,
@@ -3893,12 +4595,12 @@ class NhlShotAttemptController extends Controller
                     profiles.shrinkage_weight,
                     profiles.included_bucket_count,
                     profiles.included_bucket_keys,
-                    (profiles.metadata->>'avg_distance')::numeric as avg_distance,
-                    (profiles.metadata->>'avg_angle')::numeric as avg_angle,
+                    CAST(profiles.metadata->>'avg_distance' AS NUMERIC) as avg_distance,
+                    CAST(profiles.metadata->>'avg_angle' AS NUMERIC) as avg_angle,
                     profiles.profiled_at,
                     'official' as entity_type,
                     profiles.nhl_official_id as entity_id,
-                    COALESCE(identities.display_name, profiles.nhl_official_id::text) as entity_name
+                    COALESCE(identities.display_name, CAST(profiles.nhl_official_id AS TEXT)) as entity_name
                 ");
 
             $this->applyContextAggregateProfileFilters($officialQuery, $filters);
@@ -3933,12 +4635,12 @@ class NhlShotAttemptController extends Controller
                     profiles.shrinkage_weight,
                     profiles.included_bucket_count,
                     profiles.included_bucket_keys,
-                    (profiles.metadata->>'avg_distance')::numeric as avg_distance,
-                    (profiles.metadata->>'avg_angle')::numeric as avg_angle,
+                    CAST(profiles.metadata->>'avg_distance' AS NUMERIC) as avg_distance,
+                    CAST(profiles.metadata->>'avg_angle' AS NUMERIC) as avg_angle,
                     profiles.profiled_at,
                     'staff' as entity_type,
                     profiles.nhl_staff_id as entity_id,
-                    COALESCE(identities.display_name, profiles.nhl_staff_id::text) as entity_name
+                    COALESCE(identities.display_name, CAST(profiles.nhl_staff_id AS TEXT)) as entity_name
                 ");
 
             $this->applyContextAggregateProfileFilters($staffQuery, $filters);
@@ -4072,6 +4774,18 @@ class NhlShotAttemptController extends Controller
             $query->where('profiles.aggregate_bucket_key', $filters['aggregate_bucket_key']);
         }
 
+        if (($filters['aggregate_bucket_purpose'] ?? null) !== null && $filters['aggregate_bucket_purpose'] !== '') {
+            if (DB::connection()->getDriverName() === 'pgsql') {
+                $query->whereRaw('profiles.metadata::jsonb @> ?::jsonb', [
+                    json_encode(['aggregate_bucket_purposes' => [(string) $filters['aggregate_bucket_purpose']]], JSON_THROW_ON_ERROR),
+                ]);
+            } else {
+                $query->whereRaw("EXISTS (SELECT 1 FROM json_each(profiles.metadata, '$.aggregate_bucket_purposes') WHERE value = ?)", [
+                    (string) $filters['aggregate_bucket_purpose'],
+                ]);
+            }
+        }
+
         if (($filters['useful_only'] ?? false) === true) {
             $query->where('profiles.source_sat', '>=', 50)
                 ->where('profiles.confidence_score', '>=', 0.5);
@@ -4082,7 +4796,7 @@ class NhlShotAttemptController extends Controller
             $like = '%' . mb_strtolower($entitySearch) . '%';
             $query->where(function ($query) use ($like): void {
                 $query->whereRaw("LOWER(COALESCE(identities.display_name, '')) LIKE ?", [$like])
-                    ->orWhereRaw('identities.id::text LIKE ?', [$like]);
+                    ->orWhereRaw('CAST(identities.id AS TEXT) LIKE ?', [$like]);
             });
         }
     }
@@ -4275,7 +4989,7 @@ xga AS (
     GROUP BY predictions.opponent_team_id
 )
 SELECT
-    COALESCE(teams.abbrev, team_ids.team_id::text) as team_abbrev,
+    COALESCE(teams.abbrev, CAST(team_ids.team_id AS TEXT)) as team_abbrev,
     COALESCE(xgf.attempts_for, 0) as attempts_for,
     COALESCE(xgf.xg_for, 0) as xg_for,
     COALESCE(xgf.goals_for, 0) as goals_for,
@@ -4303,8 +5017,8 @@ SQL;
         $orderBy = $this->xgShooterSortColumns()[$sort];
         $sql = <<<SQL
 SELECT
-    COALESCE(players.full_name, facts.shooter_player_id::text) as shooter_name,
-    COALESCE(teams.abbrev, facts.team_id::text) as team_abbrev,
+    COALESCE(players.full_name, CAST(facts.shooter_player_id AS TEXT)) as shooter_name,
+    COALESCE(teams.abbrev, CAST(facts.team_id AS TEXT)) as team_abbrev,
     COUNT(*) as sat,
     SUM(CASE WHEN facts.is_shot_on_goal THEN 1 ELSE 0 END) as sog,
     SUM(CASE WHEN facts.is_goal THEN 1 ELSE 0 END) as goals,
@@ -4398,8 +5112,8 @@ rollups AS (
     GROUP BY shooter_player_id
 )
 SELECT
-    COALESCE(players.full_name, rollups.shooter_player_id::text) as shooter_name,
-    COALESCE(teams.abbrev, rollups.team_id::text) as team_abbrev,
+    COALESCE(players.full_name, CAST(rollups.shooter_player_id AS TEXT)) as shooter_name,
+    COALESCE(teams.abbrev, CAST(rollups.team_id AS TEXT)) as team_abbrev,
     sat_5,
     CASE WHEN sat_5 > 0 THEN ixg_5 / sat_5 ELSE NULL END as xg_per_sat_5,
     CASE WHEN sat_5 > 0 THEN xsog_5 / sat_5 ELSE NULL END as xsog_per_sat_5,
@@ -4514,8 +5228,8 @@ recent_rows AS (
     GROUP BY facts.shooter_player_id
 )
 SELECT
-    COALESCE(players.full_name, season_rows.shooter_player_id::text) as shooter_name,
-    COALESCE(teams.abbrev, season_rows.team_id::text) as team_abbrev,
+    COALESCE(players.full_name, CAST(season_rows.shooter_player_id AS TEXT)) as shooter_name,
+    COALESCE(teams.abbrev, CAST(season_rows.team_id AS TEXT)) as team_abbrev,
     season_rows.season_sat,
     recent_rows.recent_sat,
     recent_rows.recent_xg_per_sat,
@@ -4955,7 +5669,7 @@ SQL;
     {
         return [
             'attempts' => 0,
-            'unblocked_attempts' => 0,
+            'blocked_attempts' => 0,
             'shots_on_goal' => 0,
             'goals' => 0,
             'rebounds' => 0,

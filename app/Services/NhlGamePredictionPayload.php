@@ -298,6 +298,10 @@ class NhlGamePredictionPayload
      */
     private function goalieProjection(string $targetSeasonId, string $goalieProjectionVersion, string $team, int $goalieId): ?array
     {
+        $goalieNameFallback = DB::connection()->getDriverName() === 'pgsql'
+            ? 'projections.goalie_player_id::text'
+            : 'CAST(projections.goalie_player_id AS TEXT)';
+
         $row = DB::table('nhl_goalie_season_projections as projections')
             ->leftJoin('players', 'players.nhl_id', '=', 'projections.goalie_player_id')
             ->where('projections.target_season_id', $targetSeasonId)
@@ -320,7 +324,7 @@ class NhlGamePredictionPayload
                 'projections.confidence_score',
                 'projections.confidence_bucket',
             ])
-            ->selectRaw("COALESCE(players.full_name, projections.goalie_player_id::text) as name")
+            ->selectRaw("COALESCE(players.full_name, {$goalieNameFallback}) as name")
             ->first();
 
         if ($row === null) {
@@ -385,8 +389,8 @@ class NhlGamePredictionPayload
                 'team_abbrev' => $winnerTeam,
             ],
             'predicted_score' => [
-                'away' => round($awayGoals, 2),
-                'home' => round($homeGoals, 2),
+                'away' => (float) round($awayGoals, 2),
+                'home' => (float) round($homeGoals, 2),
             ],
             'goal_differential' => $goalDifferential,
             'confidence_score' => $this->confidenceScore($awaySide, $homeSide, $awayGoalie, $homeGoalie),

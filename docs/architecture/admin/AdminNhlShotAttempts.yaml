@@ -5,12 +5,11 @@ location:
   - resources/views/admin/nhl-shot-attempts/index.blade.php
   - routes/web.php
   - resources/views/nav/partials/_right-account-drawer.blade.php
-purpose: Provide a super-admin panel for reviewing NHL shot-attempt facts, aggregate rates, bucket behavior, QA coverage, and expected-goals model outputs.
+purpose: Provide a super-admin panel for reviewing NHL shot-attempt facts, single-factor rates, aggregate rates, QA coverage, and expected-goals model outputs.
 when_to_use:
   - Inspecting raw rows from nhl_shot_attempts_facts.
-  - Reviewing grouped shot-attempt rates by team, player, strength, result, or bucket.
-  - Comparing goal rates across distance and angle bucket combinations.
-  - Reviewing predictive grouped cuts that exclude unknown shot types, empty-net attempts, and shootout attempts by default.
+  - Reviewing single-factor shot-attempt rates before deciding how SAT models should combine features.
+  - Reviewing grouped shot-attempt rates by team, player, strength, result, or raw fact labels.
   - Reviewing observed biometric impact cuts for shooter and goalie age, height, and weight after fact snapshots are rebuilt.
   - Reviewing objective shooter height and weight buckets crossed with shot type, distance bucket, and angle bucket.
   - Building and reviewing bucket-smoothed xG and xSOG predictions for an imported season.
@@ -25,14 +24,21 @@ rules:
   - The panel reads from nhl_shot_attempts_facts and must not mutate shot facts.
   - The shot model build action may write only to versioned expected-goals model, bucket, and prediction tables.
   - The first version should use server-rendered tabs and query-string filters without new page-local JavaScript state.
-  - Tabs must separate raw fact inspection, grouped aggregates, bucket analysis, predictive cuts, biometric impact review, xG review, projection review, matchup simulation, and QA checks.
-  - Predictive grouped cuts must show attempts, goals, goal rate, shots on goal, shooting percentage, average distance, and average angle with a minimum-attempt threshold.
+  - Tabs must separate raw fact inspection, single-factor analysis, grouped aggregates, biometric impact review, xG review, projection review, matchup simulation, and QA checks.
+  - The visible raw fact tab label must be Facts, even if legacy query-string routing still uses explorer internally.
+  - The Factors tab must aggregate directly from nhl_shot_attempts_facts and must not persist model outputs.
+  - The Factors tab must show SAT, blocks, misses, SOG, goals, SOG rate, goal rate, block rate, average distance, and average angle.
+  - The Factors tab may include raw fact labels, biometric ranges, handedness, and blocker handedness comparisons.
+  - Zone must not be included in the first Factors tab because distance and angle are the preferred first-pass location factors.
+  - Impossible folded angle labels such as a_090_plus must display as Invalid >90 in Factors so they are treated as QA, not real angle categories.
+  - Blocker handedness factors must distinguish No Blocker from Unknown Blocker.
+  - The old bucket and predictive review tabs must not be shown in the primary tab navigation; trained model probability rows belong in the SAT Models area.
   - Biometric impact review must remain read-only and must not add age, height, or weight into model training until separately approved.
   - Biometric impact review must show observed SOG rate, goal rate, average xG per SAT, and goals minus xG when a latest goal model is available.
   - Biometric impact review may present objective height and weight context cuts, including height plus weight, height plus shot context, and weight plus shot context.
   - Biometric impact review must support a minimum-attempt threshold applied only to biometric aggregate rows.
   - Subjective player-frame labels such as power forward, sniper, dangler, or grinder must not be introduced until their derivation rules are documented and separately approved.
-  - The xG tab must expose a queued build button, model history, latest-model bucket probabilities, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
+  - The xG tab must expose a queued build button, model history, latest-model probability rows, team xG/xGA summaries, shooter ixG/xSOG summaries, rolling shooter trends, and recent profile shifts.
   - The projections tab must read from versioned projection tables and expose stored profile bucket breakdowns where the projection layer persists them.
   - The projections build actions may write only to versioned TOI and skater offensive projection tables.
   - The matchup tab must remain read-only and compute projected team-vs-team results on demand without persisting team profile buckets.

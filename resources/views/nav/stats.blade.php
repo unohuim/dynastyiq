@@ -212,16 +212,38 @@
                     @endphp
 
                     <div class="px-2 space-y-2">
-                        <template x-if="hasFantasyLeagues">
-                            {!! $item(route('leagues.index'), 'Leagues', $ico('M4.5 6.75h15m-15 4.5h15m-15 4.5h15'), request()->routeIs('leagues.index')) !!}
-                        </template>
+                        <a
+                            x-show="hasFantasyLeagues"
+                            x-cloak
+                            href="{{ route('leagues.index') }}"
+                            class="group flex items-center gap-3 rounded-xl px-4 py-3 {{ request()->routeIs('leagues.index') ? 'bg-white/10' : 'hover:bg-white/5' }}"
+                        >
+                            <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 6.75h15m-15 4.5h15m-15 4.5h15"/>
+                            </svg>
+                            <span class="text-sm">Leagues</span>
+                            <svg class="ml-auto h-4 w-4 text-gray-400 group-hover:text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                            </svg>
+                        </a>
 
                         {!! $item(route('stats.units.index'), 'Line Combos', $ico('M12 6v12m6-6H6'), request()->routeIs('stats.units.index')) !!}
 
                         @can('view-nav-communities')
-                            <template x-if="hasCommunities">
-                                {!! $item(route('communities.index'), 'Communities', $ico('M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5'), request()->routeIs('communities.index')) !!}
-                            </template>
+                            <a
+                                x-show="hasCommunities"
+                                x-cloak
+                                href="{{ route('communities.index') }}"
+                                class="group flex items-center gap-3 rounded-xl px-4 py-3 {{ request()->routeIs('communities.index') ? 'bg-white/10' : 'hover:bg-white/5' }}"
+                            >
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5"/>
+                                </svg>
+                                <span class="text-sm">Communities</span>
+                                <svg class="ml-auto h-4 w-4 text-gray-400 group-hover:text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </a>
                         @endcan
                     </div>
 

@@ -14,6 +14,7 @@ when_to_use:
   - Building an analytical source table for shot attempts from play_by_plays.
   - Deriving stable shot context such as result, surface, geometry buckets, rebound flags, strength, score state, and net state.
   - Producing sanitized aggregate extracts for AI-assisted or statistical shot-quality exploration.
+  - Producing single-factor admin analysis rows for raw fact labels, biometrics, handedness, and blocker context.
   - Feeding versioned expected-goals prediction and summary tables.
   - Queueing shots-only fact collection from an admin-selected game import run range.
 when_not_to_use:
@@ -28,10 +29,12 @@ rules:
   - Shootout attempts must be excluded or isolated from normal game shot-attempt analysis.
   - Penalty-shot attempts may be tracked as shot facts but must remain distinguishable from normal in-play attempts.
   - Shot geometry facts must reuse the canonical ShotGeometryService-derived distance and angle semantics.
-  - Stored `abs_shot_angle` must be folded into a 0-90 goalie-facing angle where 0 is goal-line/sharp angle and 90 is straight-on.
+  - Stored `abs_shot_angle` must be folded into a 0-90 goalie-facing angle where 0 is straight-on through the net center and 90 is goal-line/sharp angle.
+  - Folded absolute angle values above 90 are invalid QA conditions and must not be presented as real angle categories.
   - Score snapshots and score-state buckets must represent the pre-event game state before the shot outcome changes the score, derived from the ordered goal timeline rather than trusting per-row provider score snapshots.
   - Rush context must distinguish direct rush attempts from same-team rebounds that inherit rush sequence context inside the rebound window.
   - Shooter handedness, goalie catches hand, goalie-perspective shot side, and goalie hand matchup may be snapshotted as analysis context from canonical player records.
+  - Blocker handedness comparisons may be calculated at read time by joining blocking_player_id to canonical player records; they do not require a new shot fact field unless promoted into broader model inputs.
   - Shooter and goalie height, weight, and age-at-game may be snapshotted from canonical player records so historical facts do not drift when player records change.
   - Off-wing shot-attempt classification must use goalie-perspective side plus shooter handedness and remain nullable when side, handedness, or classified shot type is unavailable.
   - Bucket labels must remain deterministic feature labels and must not imply goal probability by themselves.

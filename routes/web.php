@@ -1,10 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Auth;
-use Laravel\Socialite\Facades\Socialite;
 use App\Http\Middleware\GlobalFreshInstallGuard;
-use App\Models\Organization;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\PlayByPlayController;
 use App\Http\Controllers\PlayerImportController;
@@ -29,7 +26,6 @@ use App\Http\Controllers\PlatformTeamRosterShareLinkController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\PatreonConnectController;
 use App\Http\Controllers\PatreonSyncController;
-use App\Services\ImportUserFantraxLeagues;
 
 /*
 |--------------------------------------------------------------------------
@@ -38,7 +34,7 @@ use App\Services\ImportUserFantraxLeagues;
 */
 
 Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
-    Route::get('/', fn () => view('welcome'))->name('welcome');
+    Route::view('/', 'welcome')->name('welcome');
 
     Route::post('/analytics/events', [AnalyticsController::class, 'store'])
         ->name('analytics.events.store');
@@ -65,35 +61,16 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         ->name('transactions.payload');
 
     // Discord Server joins
-    Route::middleware('auth')->get('/auth/discord-server/redirect/{organization}', function (Organization $organization) {
-        $user = Auth::user();
-
-        $isAdmin = $user?->roles()
-            ->wherePivot('organization_id', $organization->id)
-            ->max('level') >= 10;
-        abort_unless($isAdmin, 403);
-
-        $state = encrypt(['org_id' => $organization->id]);
-
-        return Socialite::driver('discord')
-            ->scopes(['identify', 'guilds'])
-            ->with(['state' => $state, 'prompt' => 'consent'])
-            ->redirectUrl(route('discord-server.callback'))
-            ->redirect();
-    })->name('discord-server.redirect');
+    Route::middleware('auth')
+        ->get('/auth/discord-server/redirect/{organization}', [\App\Http\Controllers\Auth\DiscordServerCallbackController::class, 'redirect'])
+        ->name('discord-server.redirect');
 
     Route::middleware('auth')->post('/auth/discord-server/attach', [\App\Http\Controllers\Auth\DiscordServerCallbackController::class, 'attach'])
         ->name('discord-server.attach');
 
     // Discord OAuth login
-    Route::get('/auth/discord/redirect', function () {
-        $redirectUri = config('services.discord.redirect') ?: route('discord.callback');
-
-        return Socialite::driver('discord')
-            ->scopes(['identify','email'])
-            ->redirectUrl($redirectUri)
-            ->redirect();
-    })->name('discord.redirect');
+    Route::get('/auth/discord/redirect', [\App\Http\Controllers\Auth\SocialiteCallbackController::class, 'redirect'])
+        ->name('discord.redirect');
 
     Route::get('/auth/discord/callback', \App\Http\Controllers\Auth\SocialiteCallbackController::class)
         ->name('discord.callback');
@@ -104,7 +81,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/auth/discord-bot-installed', [DiscordBotInstallController::class, 'callback'])
         ->name('discord-server.bot-installed.callback');
 
-    Route::get('/discord/join', fn () => Redirect::away(config('services.discord.invite')))
+    Route::get('/discord/join', [DiscordBotInstallController::class, 'join'])
         ->name('discord.join');
 
     // Authenticated dashboard/admin routes
@@ -114,7 +91,7 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         'verified',
     ])->group(function () {
 
-        Route::get('/dashboard', fn () => view('dashboard'))->name('dashboard');
+        Route::view('/dashboard', 'dashboard')->name('dashboard');
 
         Route::get('/admin', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
             ->middleware(['admin.super', 'admin.lifecycle'])
@@ -273,27 +250,24 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             });
 
         // Player + import tools
-        Route::controller(PlayerImportController::class)->group(function () {
-            Route::get('/admin/players-import',  'importNHL');
-            Route::get('/admin/fantrax-import',  'importFantrax');
-            Route::get('/admin/capwages-import', 'importCapWages');
-            Route::get('/admin/daily-import',    'importDaily');
-        });
+        Route::get('/admin/players-import', [PlayerImportController::class, 'importNHL']);
+        Route::get('/admin/fantrax-import', [PlayerImportController::class, 'importFantrax']);
+        Route::get('/admin/capwages-import', [PlayerImportController::class, 'importCapWages']);
+        Route::get('/admin/daily-import', [PlayerImportController::class, 'importDaily']);
 
-        Route::controller(PlayByPlayController::class)->group(function () {
-            Route::get('/admin/pbp-import', 'ImportNHLPlayByPlay');
-            Route::get('/admin/sum/{season_id}', 'sum')
-                ->where('season_id', '^\d{8}$');
-        });
+        Route::get('/admin/pbp-import', [PlayByPlayController::class, 'ImportNHLPlayByPlay']);
+        Route::get('/admin/sum/{season_id}', [PlayByPlayController::class, 'sum'])
+            ->where('season_id', '^\d{8}$');
 
         Route::any('/user/setup/fantrax', [LeagueController::class, 'import']);
 
         // Player Rankings
-        Route::controller(PlayerRankingController::class)->group(function () {
-            Route::get('/players/rankings',         'index')->name('player.rankings.index');
-            Route::post('/players/rankings/upload', 'upload')->name('player.rankings.upload');
-            Route::post('/players/rankings/manual', 'manual')->name('player.rankings.manual');
-        });
+        Route::get('/players/rankings', [PlayerRankingController::class, 'index'])
+            ->name('player.rankings.index');
+        Route::post('/players/rankings/upload', [PlayerRankingController::class, 'upload'])
+            ->name('player.rankings.upload');
+        Route::post('/players/rankings/manual', [PlayerRankingController::class, 'manual'])
+            ->name('player.rankings.manual');
 
         /*
         |--------------------------------------------------------------------------
@@ -345,6 +319,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/nhl-game-imports/games/{gameId}/rerun', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunStoppedGame'])
                     ->whereNumber('gameId')
                     ->name('admin.nhl-game-imports.games.rerun');
+                Route::delete('/nhl-game-imports/{run}', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'destroy'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-game-imports.destroy');
                 Route::post('/nhl-game-imports/rerun-failed', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'rerunFailedOnly'])
                     ->name('admin.nhl-game-imports.rerun-failed');
                 Route::post('/nhl-game-imports/duplicate-pbp/scan', [\App\Http\Controllers\Admin\NhlGameImportController::class, 'scanDuplicatePlayByPlay'])
@@ -375,6 +352,52 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 // NHL shot attempt analysis
                 Route::get('/nhl-shot-attempts', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'index'])
                     ->name('admin.nhl-shot-attempts.index');
+                Route::get('/nhl-shot-attempts/factor-values', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'factorValues'])
+                    ->name('admin.nhl-shot-attempts.factor-values');
+                Route::redirect('/nhl-model-runs', '/admin/nhl-sat-models');
+                Route::get('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'index'])
+                    ->name('admin.nhl-sat-models.index');
+                Route::post('/nhl-sat-models', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'store'])
+                    ->name('admin.nhl-sat-models.store');
+                Route::get('/nhl-sat-models/{run}/buckets', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buckets'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.buckets');
+                Route::post('/nhl-sat-models/{run}/train', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'train'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.train');
+                Route::post('/nhl-sat-models/{run}/profiles/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildProfiles'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.profiles.build');
+                Route::get('/nhl-sat-models/{run}/profiles', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'profiles'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.profiles');
+                Route::get('/nhl-sat-models/{run}/profiles/training-drift', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'trainingDrift'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.profiles.training-drift');
+                Route::get('/nhl-sat-models/{run}/profiles/bucket-stability', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'genericBucketStability'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.profiles.bucket-stability');
+                Route::get('/nhl-sat-models/{run}/profiles/bucket-stability/export', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'exportGenericBucketStability'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.profiles.bucket-stability.export');
+                Route::post('/nhl-sat-models/{run}/rate-projections/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildRateProjections'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections.build');
+                Route::post('/nhl-sat-models/{run}/rate-projections/compare/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildRateComparisons'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections.compare.build');
+                Route::get('/nhl-sat-models/{run}/rate-projections/compare/raw', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'compareRateProjectionsRaw'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections.compare.raw');
+                Route::get('/nhl-sat-models/{run}/rate-projections/compare/aggregates', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'compareRateProjectionsAggregate'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections.compare.aggregates');
+                Route::get('/nhl-sat-models/{run}/rate-projections/compare/aggregates/export', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'exportRateProjectionsAggregate'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections.compare.aggregates.export');
+                Route::get('/nhl-sat-models/{run}/rate-projections', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'rateProjections'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.rate-projections');
                 Route::get('/nhl-shot-attempts/context-sat-profiles/aggregate', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatAggregateProfiles'])
                     ->name('admin.nhl-shot-attempts.context-sat-profiles.aggregate');
                 Route::get('/nhl-shot-attempts/context-sat-profiles/exact', [\App\Http\Controllers\Admin\NhlShotAttemptController::class, 'contextSatExactProfiles'])
@@ -465,24 +488,21 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             });
 
         // Patreon
-        Route::controller(PatreonConnectController::class)->group(function () {
-            Route::get('/organizations/{organization}/patreon/redirect', 'redirect')->name('patreon.redirect');
-            Route::get('/organizations/patreon/callback', 'callback')->name('patreon.callback');
-            Route::delete('/organizations/{organization}/patreon', 'disconnect')->name('patreon.disconnect');
-        });
+        Route::get('/organizations/{organization}/patreon/redirect', [PatreonConnectController::class, 'redirect'])
+            ->name('patreon.redirect');
+        Route::get('/organizations/patreon/callback', [PatreonConnectController::class, 'callback'])
+            ->name('patreon.callback');
+        Route::delete('/organizations/{organization}/patreon', [PatreonConnectController::class, 'disconnect'])
+            ->name('patreon.disconnect');
 
         Route::post('/organizations/{organization}/patreon/sync', [PatreonSyncController::class, 'sync'])
             ->name('patreon.sync');
 
         // Play-by-play import all
-        Route::controller(PlayByPlayController::class)->group(function () {
-            Route::get('/admin/import-playbyplays', 'ImportPlayByPlays');
-        });
+        Route::get('/admin/import-playbyplays', [PlayByPlayController::class, 'ImportPlayByPlays']);
 
         // Season Stats
-        Route::controller(SeasonStatController::class)->group(function () {
-            Route::get('/sumseason/{season_id}', 'Sum');
-        });
+        Route::get('/sumseason/{season_id}', [SeasonStatController::class, 'Sum']);
 
         // Stats Units
         Route::get('/stats/units', [StatsUnitsController::class, 'index'])
@@ -507,19 +527,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.cap-projections.update');
         Route::post('/leagues/{league_id}/team-logos/sync', [LeagueController::class, 'syncTeamLogos'])
             ->name('leagues.team-logos.sync');
-        Route::post('/integrations/fantrax/logos/connect', function (\App\Support\FantraxLogoBrowserProfile $profile) {
-            abort_unless(auth()->user()?->hasGlobalRole('super-admin'), 403);
-
-            $state = $profile->initialize();
-
-            return response()->json([
-                'integration' => [
-                    'provider' => 'fantrax_logos',
-                    'connected' => $state['ready'],
-                    'ready' => $state['ready'],
-                ],
-            ]);
-        })->name('integrations.fantrax.logos.connect');
+        Route::post('/integrations/fantrax/logos/connect', [FantraxController::class, 'connectLogoBrowser'])
+            ->name('integrations.fantrax.logos.connect');
         Route::get('/leagues/{league_id}/stats-payload', [StatsController::class, 'leaguePayload'])
             ->name('leagues.stats.payload');
         Route::get('/leagues/{league_id}/players-payload', [LeagueController::class, 'playersPayload'])
@@ -542,9 +551,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
             ->name('leagues.panel');
 
         // Fantrax burst import
-        Route::get('/admin/fantrax', function () {
-            app(ImportUserFantraxLeagues::class)->import(Auth::user());
-        })->name('admin.fantrax.import');
+        Route::get('/admin/fantrax', [FantraxController::class, 'importUserLeagues'])
+            ->name('admin.fantrax.import');
 
         // Fantrax integration
         Route::prefix('integrations/fantrax')

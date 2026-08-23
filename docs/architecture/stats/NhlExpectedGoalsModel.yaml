@@ -8,6 +8,9 @@ location:
   - app/Services/NhlExpectedGoalsBackfiller.php
   - database/migrations/2026_07_29_000003_create_nhl_expected_goals_tables.php
   - database/migrations/2026_07_29_000004_add_prediction_target_to_nhl_expected_goals_tables.php
+  - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
+  - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
+  - docs/architecture/stats/StatModelLifecycle.yaml
   - docs/architecture/stats/NhlExpectedGoalsModel.yaml
   - data/shot_attempts_model_analysis_20252026.md
   - data/shot_attempts_model_input_20252026.csv
@@ -46,9 +49,29 @@ rules:
   - Historical xG and xGA must be derived by summing versioned goal-target shot-attempt prediction values by team_id or opponent_team_id.
   - Historical xSOG must be derived by summing versioned shot_on_goal-target shot-attempt prediction values by shooter_player_id or team_id.
   - Backfills must write predictions by model, prediction target, and shot-attempt fact id so reruns update rather than duplicate scored attempts.
+  - Run-aware Eval SAT from SAT Models must train from nhl_model_runs.train_season_ids and write model and bucket rows only.
+  - Run-aware Eval SAT must model P(shot_on_goal | SAT, selected context), not P(goal | SAT context) and not P(goal | shot_on_goal, selected context).
+  - Run-aware Eval SAT must exclude unavailable shot-type evidence using the SAT training constraints, but it must not require is_shot_on_goal=true because that would leak the target.
+  - Run-aware Eval SAT must not write nhl_shot_attempt_predictions or score a test season.
+  - Run-aware Eval SAT must evaluate approved single factors, then two-factor combinations from the strongest three to five singles, using only training-season SAT rows.
+  - Run-aware Eval SAT must store its selected factors and candidate scores in model feature_config or metrics so the admin UI can explain why those rows were trained.
+  - Run-aware Eval SOG from SAT Models must train from nhl_model_runs.train_season_ids and write model and bucket rows only.
+  - Run-aware Eval SOG must model P(goal | shot_on_goal, selected context), not P(goal | SAT context) and not P(shot_on_goal | SAT context).
+  - Run-aware Eval SOG must treat shot_type_bucket values `unknown` and `other` as unavailable shot-type evidence and exclude those rows from SOG evaluation.
+  - Run-aware Eval SOG must not write nhl_shot_attempt_predictions or score a test season.
+  - Run-aware Eval SOG must evaluate approved single factors, then two-factor combinations from the strongest three to five singles, using only training-season SOG rows.
+  - Run-aware Eval SOG must store its selected factors and candidate scores in model feature_config or metrics so the admin UI can explain why those rows were trained.
+  - Run-aware Eval SOG must not exclude observed rows with a hard minimum; it must keep observed rows, shrink low-sample rows toward the prior, and expose confidence metadata.
+  - Eval SOG metrics must distinguish total SOG in the training seasons from SOG eligible for model training after constraints.
+  - Eval SOG exclusion metrics must store training_total_sog, training_attempts, training_excluded_sog, and training_excluded_sog_rate.
+  - Bucket confidence must be based on direct bucket attempts relative to smoothing prior attempts, and shrinkage_weight must describe the borrowed prior share.
+  - Run-aware xG/xSOG models and later predictions must reference nhl_model_runs through model_run_id so experiments can be compared without overwriting prior outputs.
+  - Bucket fallback must preserve shot type before falling back to the league baseline: exact shot type plus distance plus angle plus sequence, then shot type plus distance plus angle, then shot type plus distance, then shot type, then league.
+  - Target or holdout seasons must never be included in the training season list for testing runs.
   - Analysis artifacts under data/ are evidence and bootstrap context, not canonical architecture authority.
 public_interface:
   - nhl:xg:backfill
+  - admin.nhl-sat-models.train
   - nhl_expected_goals_models
   - nhl_expected_goals_model_buckets
   - nhl_shot_attempt_predictions

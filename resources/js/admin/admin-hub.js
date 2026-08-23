@@ -58,6 +58,7 @@ export default function adminHub(options = {}) {
         gameImportProcessFaceoffsUrl: options.gameImportProcessFaceoffsUrl ?? '/admin/nhl-game-imports/process-faceoffs',
         gameImportProcessRefsStaffUrl: options.gameImportProcessRefsStaffUrl ?? '/admin/nhl-game-imports/process-refs-staff',
         gameImportRerunFailedUrl: options.gameImportRerunFailedUrl ?? '/admin/nhl-game-imports/rerun-failed',
+        gameImportDeleteUrl: options.gameImportDeleteUrl ?? '/admin/nhl-game-imports',
         gameImportDuplicatePbpScanUrl: options.gameImportDuplicatePbpScanUrl ?? '/admin/nhl-game-imports/duplicate-pbp/scan',
         gameImportDuplicatePbpDedupeUrl: options.gameImportDuplicatePbpDedupeUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
         gameImportDuplicatePbpRebuildUrl: options.gameImportDuplicatePbpRebuildUrl ?? '/admin/nhl-game-imports/duplicate-pbp',
@@ -111,6 +112,7 @@ export default function adminHub(options = {}) {
             processMenuRunId: null,
             rerunMenuRunId: null,
             rerunningRuns: {},
+            deletingRuns: {},
             rerunningGames: {},
             hasActiveRuns: false,
             completedGameFadeSteps: {},
@@ -1149,6 +1151,47 @@ export default function adminHub(options = {}) {
             }
         },
 
+        async deleteGameImportRun(run) {
+            const runId = run?.id;
+
+            if (!runId || !this.canDeleteGameImportRun(run) || this.gameImportDeleteBusy(run)) {
+                return;
+            }
+
+            this.closeGameImportProcessMenu(run);
+            this.closeGameImportRerunMenu(run);
+            this.gameImports.error = '';
+            this.gameImports.deletingRuns = {
+                ...this.gameImports.deletingRuns,
+                [runId]: true,
+            };
+
+            try {
+                await this.sendGameImportDeleteRequest(`${this.gameImportDeleteUrl}/${runId}`);
+
+                this.gameImports.runs = this.gameImports.runs.filter((item) => item.id !== runId);
+                this.gameImports.expandedRuns = Object.entries(this.gameImports.expandedRuns)
+                    .filter(([key]) => String(key) !== String(runId))
+                    .reduce((state, [key, value]) => ({ ...state, [key]: value }), {});
+                this.gameImports.pagination = {
+                    ...this.gameImports.pagination,
+                    total: Math.max(0, Number(this.gameImports.pagination.total || 0) - 1),
+                    to: Math.max(0, Number(this.gameImports.pagination.to || 0) - 1),
+                };
+
+                await this.loadGameImports({
+                    background: true,
+                    page: this.gameImports.pagination.currentPage,
+                });
+            } catch (error) {
+                this.gameImports.error = error.message ?? 'Unable to remove game import run';
+            } finally {
+                const next = { ...this.gameImports.deletingRuns };
+                delete next[runId];
+                this.gameImports.deletingRuns = next;
+            }
+        },
+
         async processGameImports(run = null, options = {}) {
             return this.processFullGameImports(run, options);
         },
@@ -1434,6 +1477,25 @@ export default function adminHub(options = {}) {
                         ?.getAttribute('content'),
                 },
                 body: JSON.stringify(body),
+            });
+            const payload = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                throw new Error(this.validationMessage(payload) ?? payload.message ?? 'Request failed');
+            }
+
+            return payload;
+        },
+
+        async sendGameImportDeleteRequest(url) {
+            const response = await fetch(url, {
+                method: 'DELETE',
+                headers: {
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': document
+                        .querySelector('meta[name="csrf-token"]')
+                        ?.getAttribute('content'),
+                },
             });
             const payload = await response.json().catch(() => ({}));
 
@@ -2345,6 +2407,14 @@ export default function adminHub(options = {}) {
             return this.canRerunGameImportRun(run)
                 && run.action !== 'season-sync'
                 && Number(run?.facts?.failed_rerun_game_count || 0) > 0;
+        },
+
+        canDeleteGameImportRun(run) {
+            return Boolean(run?.id) && ['completed', 'failed'].includes(run?.status);
+        },
+
+        gameImportDeleteBusy(run) {
+            return this.gameImports.deletingRuns[run?.id] === true;
         },
 
         canRunDuplicatePbpDedupe(run) {

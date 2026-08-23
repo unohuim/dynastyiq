@@ -30,6 +30,6 @@ class NhlGamePredictionsController extends Controller
         return response()->json($payload->build(
             (int) $input['nhl_game_id'],
             $input
-        ));
+        ), 200, [], JSON_PRESERVE_ZERO_FRACTION);
     }
 }

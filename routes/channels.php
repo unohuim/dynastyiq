@@ -15,3 +15,8 @@ Broadcast::channel('admin.imports', function ($user) {
     return $user->roles()->where('slug', 'super-admin')->exists()
         || $user->roles()->where('level', '>=', 99)->exists();
 });
+
+Broadcast::channel('admin.sat-models', function ($user) {
+    return $user->roles()->where('slug', 'super-admin')->exists()
+        || $user->roles()->where('level', '>=', 99)->exists();
+});

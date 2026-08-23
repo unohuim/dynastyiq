@@ -60,6 +60,7 @@ rules:
   - Duplicate play-by-play repair run rows must not be collapsed into or block normal date-range discovery and process runs.
   - Re-run launched from an existing game import or discovery run must reuse the existing exact-range run row, queue discovery for that range, and tag the payload so later processing replays existing stage rows for the whole range.
   - Re-run launched from an existing season sync run must queue a new season sync for the same stored season payload.
+  - Removing a game import run from the admin list may delete only terminal admin request rows and their run-scoped nhl_import_progress checklist rows; it must not delete NHL games, play-by-play rows, summaries, facts, or other imported hockey data.
   - Game-level reruns launched from a run card must preserve that run_id when reseeding progress rows so the same card reflects the rerun.
   - Game-level rerun endpoints must queue rebuild setup work and return before deleting or reseeding game-scoped import rows.
   - Game-level rebuild setup must run as visible queued phases: source preflight, game-scoped cleanup, progress reseeding, and PBP pipeline dispatch.
@@ -87,6 +88,7 @@ public_interface:
   - admin.nhl-game-imports.duplicate-pbp.dedupe
   - admin.nhl-game-imports.duplicate-pbp.rebuild
   - admin.nhl-game-imports.discover
+  - admin.nhl-game-imports.destroy
   - admin.nhl-game-imports.schedule-refresh
   - admin.nhl-game-imports.process
   - admin.nhl-game-imports.process-shots

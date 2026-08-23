@@ -216,6 +216,15 @@
                                 </svg>
                                 <span class="text-sm">Admin Shot Attempts</span>
                             </a>
+                            <a href="{{ route('admin.nhl-sat-models.index') }}"
+                                class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
+                                <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M4.5 18.75h15M6.75 15l3.75-3.75 3 3L18 9.75M6 5.25h12" />
+                                </svg>
+                                <span class="text-sm">SAT Models</span>
+                            </a>
                             <a href="{{ route('admin.nhl-faceoffs.index') }}"
                                 class="group flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
                                 <svg class="h-5 w-5 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor"

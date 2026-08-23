@@ -3,10 +3,12 @@
 declare(strict_types=1);
 
 use App\Events\NhlGameImportStatusUpdated;
+use App\Events\NhlSatModelUpdated;
 use App\Jobs\BuildNhlFaceoffFactsJob;
 use App\Jobs\BuildNhlOfficialSatProfilesJob;
 use App\Jobs\BuildNhlShotAttemptFactsJob;
 use App\Jobs\BuildNhlStaffSatProfilesJob;
+use App\Jobs\BackfillNhlExpectedGoalsJob;
 use App\Jobs\DedupeNhlPlayByPlayRepairJob;
 use App\Jobs\ImportYahooPlayersPageJob;
 use App\Jobs\NhlDiscoveryJob;
@@ -20,6 +22,7 @@ use App\Models\CapWagesPlayer;
 use App\Models\Contract;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameValidation;
+use App\Models\NhlModelRun;
 use App\Models\Player;
 use App\Models\PlayerExternalIdentity;
 use App\Models\PlatformLeague;
@@ -42,9 +45,10 @@ use Illuminate\Support\Facades\Queue;
 beforeEach(function () {
     $this->makeSuperAdmin = function (): User {
         $user = User::factory()->create();
-        $role = Role::create([
-            'name' => 'Super Admin',
+        $role = Role::firstOrCreate([
             'slug' => 'super-admin',
+        ], [
+            'name' => 'Super Admin',
             'level' => 99,
             'scope' => 'global',
             'is_active' => true,
@@ -185,6 +189,51 @@ it('blocks authenticated non-admin users from the NHL shot attempts admin panel'
         ->assertForbidden();
 });
 
+it('blocks guests from the NHL SAT model bucket view', function () {
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'sat-buckets-guest-blocked',
+        'name' => 'SAT buckets guest blocked',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_COMPLETE,
+        'completed_at' => now()->subMinute(),
+    ]);
+
+    $this->getJson(route('admin.nhl-sat-models.buckets', $run))->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from the NHL SAT model bucket view', function () {
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'sat-buckets-non-admin-blocked',
+        'name' => 'SAT buckets non-admin blocked',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_COMPLETE,
+        'metrics' => [
+            'training_attempts' => 1,
+            'training_total_sat' => 2,
+            'training_excluded_sat' => 1,
+            'training_excluded_sat_rate' => 0.5,
+        ],
+    ]);
+
+    $this->actingAs(User::factory()->create())
+        ->getJson(route('admin.nhl-sat-models.buckets', $run))
+        ->assertForbidden();
+});
+
 it('blocks guests from the NHL faceoffs admin panel', function () {
     $this->getJson(route('admin.nhl-faceoffs.index'))->assertUnauthorized();
 });
@@ -200,9 +249,10 @@ it('allows super admins to view the NHL shot attempts admin panel', function () 
         ->get(route('admin.nhl-shot-attempts.index'))
         ->assertOk()
         ->assertSee('NHL Shot Attempts')
-        ->assertSee('Explorer')
+        ->assertSee('Facts')
+        ->assertSee('Factors')
         ->assertSee('Aggregates')
-        ->assertSee('Buckets')
+        ->assertDontSee('Predictive')
         ->assertSee('QA');
 });
 
@@ -286,10 +336,10 @@ it('allows super admins to view NHL game-context SAT profiles', function () {
         'nhl_staff_id' => $staffId,
         'role' => 'head_coach',
         'team_context' => 'defense',
-        'matched_bucket_key' => 'L01|shot_type_group=slap|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+        'matched_bucket_key' => 'L01|shot_type_group=slap|distance_group=point_or_high|angle_group=straight_on|sequence_group=settled',
         'shot_type_group' => 'slap',
         'source_sat' => 24,
-        'prior_bucket_key' => 'L03|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+        'prior_bucket_key' => 'L03|distance_group=point_or_high|angle_group=straight_on|sequence_group=settled',
         'prior_fallback_level' => 3,
         'prior_sat' => 76,
         'prior_weight_sat' => 52,
@@ -324,9 +374,10 @@ it('allows super admins to view NHL game-context SAT profiles', function () {
         'included_bucket_count' => 2,
         'included_bucket_keys' => json_encode([
             'L01|shot_type_group=wrist|distance_group=mid|angle_group=center|sequence_group=settled',
-            'L01|shot_type_group=wrist|distance_group=point_or_high|angle_group=sharp|sequence_group=settled',
+            'L01|shot_type_group=wrist|distance_group=point_or_high|angle_group=straight_on|sequence_group=settled',
         ]),
         'metadata' => json_encode([
+            'aggregate_bucket_purposes' => ['comparison', 'summary'],
             'avg_distance' => 41.5,
             'avg_angle' => 18.25,
         ]),
@@ -428,7 +479,7 @@ it('allows super admins to view NHL game-context SAT profiles', function () {
         ->assertOk()
         ->assertSee('Referee Example')
         ->assertSee('Coach Example')
-        ->assertDontSee('L03|distance_group=point_or_high|angle_group=sharp|sequence_group=settled');
+        ->assertDontSee('L03|distance_group=point_or_high|angle_group=straight_on|sequence_group=settled');
 });
 
 it('allows super admins to queue NHL game-context SAT profiles from admin', function () {
@@ -613,22 +664,51 @@ it('groups NHL shot attempt aggregates by team abbreviation', function () {
         'created_at' => now(),
         'updated_at' => now(),
     ]);
-    DB::table('nhl_shot_attempts_facts')->insert([
-        'play_by_play_id' => 1,
+    DB::table('play_by_plays')->insert([
+        'id' => 11,
         'nhl_game_id' => 2025020001,
-        'season_id' => '20252026',
-        'game_date' => '2026-04-07',
-        'attempt_result' => 'goal',
-        'is_shot_attempt' => true,
-        'is_unblocked_attempt' => true,
-        'is_shot_on_goal' => true,
-        'is_goal' => true,
-        'team_id' => 10,
-        'shot_distance' => 12.5,
-        'abs_shot_angle' => 18.0,
-        'shot_type_bucket' => 'wrist',
+        'event_owner_team_id' => 10,
+        'period' => 1,
+        'seconds_in_game' => 180,
+        'type_desc_key' => 'blocked-shot',
         'created_at' => now(),
         'updated_at' => now(),
+    ]);
+    DB::table('nhl_shot_attempts_facts')->insert([
+        [
+            'play_by_play_id' => 1,
+            'nhl_game_id' => 2025020001,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-07',
+            'attempt_result' => 'goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => true,
+            'team_id' => 10,
+            'shot_distance' => 12.5,
+            'abs_shot_angle' => 18.0,
+            'shot_type_bucket' => 'wrist',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 11,
+            'nhl_game_id' => 2025020001,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-07',
+            'attempt_result' => 'blocked_shot',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => false,
+            'is_shot_on_goal' => false,
+            'is_goal' => false,
+            'team_id' => 10,
+            'shot_distance' => 42.5,
+            'abs_shot_angle' => 28.0,
+            'shot_type_bucket' => 'unknown',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
     ]);
 
     $this->actingAs(($this->makeSuperAdmin)())
@@ -638,8 +718,1288 @@ it('groups NHL shot attempt aggregates by team abbreviation', function () {
         ]))
         ->assertOk()
         ->assertSee('TOR')
+        ->assertSee('Blocked')
+        ->assertDontSee('Unblocked')
+        ->assertSee('2')
+        ->assertSee('1')
         ->assertSee('value="team_abbrev"', false)
         ->assertDontSee('value="team_id"', false);
+});
+
+it('filters NHL shot attempts by multiple selected seasons from the shared season control', function () {
+    DB::table('nhl_games')->insert([
+        [
+            'nhl_game_id' => 2024020001,
+            'season_id' => '20242025',
+            'game_type' => 2,
+            'game_date' => '2025-01-01',
+            'game_dow' => 'Wed',
+            'game_month' => 'Jan',
+            'home_team_id' => 10,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 20,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2023020001,
+            'season_id' => '20232024',
+            'game_type' => 2,
+            'game_date' => '2024-01-01',
+            'game_dow' => 'Mon',
+            'game_month' => 'Jan',
+            'home_team_id' => 10,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 20,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2022020001,
+            'season_id' => '20222023',
+            'game_type' => 2,
+            'game_date' => '2023-01-01',
+            'game_dow' => 'Sun',
+            'game_month' => 'Jan',
+            'home_team_id' => 10,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 20,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+    DB::table('play_by_plays')->insert([
+        [
+            'id' => 101,
+            'nhl_game_id' => 2024020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'shot-on-goal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 102,
+            'nhl_game_id' => 2023020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'shot-on-goal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 103,
+            'nhl_game_id' => 2022020001,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'shot-on-goal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+    DB::table('nhl_shot_attempts_facts')->insert([
+        [
+            'play_by_play_id' => 101,
+            'nhl_game_id' => 2024020001,
+            'season_id' => '20242025',
+            'game_date' => '2025-01-01',
+            'attempt_result' => 'shot_on_goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => false,
+            'team_id' => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 102,
+            'nhl_game_id' => 2023020001,
+            'season_id' => '20232024',
+            'game_date' => '2024-01-01',
+            'attempt_result' => 'shot_on_goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => false,
+            'team_id' => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 103,
+            'nhl_game_id' => 2022020001,
+            'season_id' => '20222023',
+            'game_date' => '2023-01-01',
+            'attempt_result' => 'shot_on_goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => false,
+            'team_id' => 10,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'explorer',
+            'season_ids' => ['20242025', '20232024'],
+        ]))
+        ->assertOk()
+        ->assertSee('name="season_ids[]"', false)
+        ->assertDontSee('name="season_id"', false)
+        ->assertSee('2024020001')
+        ->assertSee('2023020001')
+        ->assertDontSee('2022020001');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'season_ids' => ['20242025', '20232024'],
+        ]))
+        ->assertOk()
+        ->assertSee('name="season_ids[]"', false)
+        ->assertSee('Factors');
+});
+
+it('shows NHL shot attempt factor rows from raw facts', function () {
+    $shooter = ($this->makePlayer)([
+        'nhl_id' => 901001,
+        'first_name' => 'Left',
+        'last_name' => 'Shooter',
+        'full_name' => 'Left Shooter',
+        'shoots' => 'L',
+    ]);
+    $blocker = ($this->makePlayer)([
+        'nhl_id' => 901002,
+        'first_name' => 'Right',
+        'last_name' => 'Blocker',
+        'full_name' => 'Right Blocker',
+        'shoots' => 'R',
+    ]);
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2025020002,
+        'season_id' => '20252026',
+        'game_type' => 2,
+        'game_date' => '2026-04-08',
+        'game_dow' => 'Wed',
+        'game_month' => 'Apr',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 20,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('play_by_plays')->insert([
+        [
+            'id' => 21,
+            'nhl_game_id' => 2025020002,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'blocked-shot',
+            'shooting_player_id' => $shooter->nhl_id,
+            'blocking_player_id' => $blocker->nhl_id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 22,
+            'nhl_game_id' => 2025020002,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 180,
+            'type_desc_key' => 'goal',
+            'shooting_player_id' => $shooter->nhl_id,
+            'blocking_player_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 23,
+            'nhl_game_id' => 2025020002,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 240,
+            'type_desc_key' => 'blocked-shot',
+            'shooting_player_id' => $shooter->nhl_id,
+            'blocking_player_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 24,
+            'nhl_game_id' => 2025020002,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 300,
+            'type_desc_key' => 'missed-shot',
+            'shooting_player_id' => $shooter->nhl_id,
+            'blocking_player_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 25,
+            'nhl_game_id' => 2025020002,
+            'event_owner_team_id' => 10,
+            'period' => 1,
+            'seconds_in_game' => 360,
+            'type_desc_key' => 'shot-on-goal',
+            'shooting_player_id' => $shooter->nhl_id,
+            'blocking_player_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+    DB::table('nhl_shot_attempts_facts')->insert([
+        [
+            'play_by_play_id' => 21,
+            'nhl_game_id' => 2025020002,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-08',
+            'attempt_result' => 'blocked_shot',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => false,
+            'is_shot_on_goal' => false,
+            'is_goal' => false,
+            'team_id' => 10,
+            'shooter_player_id' => $shooter->nhl_id,
+            'shooter_shoots' => 'L',
+            'blocking_player_id' => $blocker->nhl_id,
+            'shot_distance' => 42.5,
+            'abs_shot_angle' => 28.0,
+            'distance_bucket' => 'point_or_high',
+            'angle_bucket' => 'a_020_030',
+            'shot_type_bucket' => 'wrist',
+            'is_rebound' => false,
+            'is_rush' => false,
+            'strength_bucket' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 22,
+            'nhl_game_id' => 2025020002,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-08',
+            'attempt_result' => 'goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => true,
+            'team_id' => 10,
+            'shooter_player_id' => $shooter->nhl_id,
+            'shooter_shoots' => 'L',
+            'blocking_player_id' => null,
+            'shot_distance' => 12.5,
+            'abs_shot_angle' => 18.0,
+            'distance_bucket' => 'slot',
+            'angle_bucket' => 'a_010_020',
+            'shot_type_bucket' => 'wrist',
+            'is_rebound' => true,
+            'is_rush' => false,
+            'strength_bucket' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 23,
+            'nhl_game_id' => 2025020002,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-08',
+            'attempt_result' => 'blocked_shot',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => false,
+            'is_shot_on_goal' => false,
+            'is_goal' => false,
+            'team_id' => 10,
+            'shooter_player_id' => $shooter->nhl_id,
+            'shooter_shoots' => 'L',
+            'blocking_player_id' => null,
+            'shot_distance' => 40.0,
+            'abs_shot_angle' => 31.0,
+            'distance_bucket' => 'point_or_high',
+            'angle_bucket' => 'a_030_040',
+            'shot_type_bucket' => 'snap',
+            'is_rebound' => false,
+            'is_rush' => false,
+            'strength_bucket' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 24,
+            'nhl_game_id' => 2025020002,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-08',
+            'attempt_result' => 'missed_shot',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => false,
+            'is_goal' => false,
+            'team_id' => 10,
+            'shooter_player_id' => $shooter->nhl_id,
+            'shooter_shoots' => 'L',
+            'blocking_player_id' => null,
+            'shot_distance' => 30.0,
+            'abs_shot_angle' => 91.0,
+            'distance_bucket' => 'mid_range',
+            'angle_bucket' => null,
+            'shot_type_bucket' => 'wrist',
+            'is_rebound' => false,
+            'is_rush' => false,
+            'strength_bucket' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 25,
+            'nhl_game_id' => 2025020002,
+            'season_id' => '20252026',
+            'game_date' => '2026-04-08',
+            'attempt_result' => 'shot_on_goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => false,
+            'team_id' => 10,
+            'shooter_player_id' => $shooter->nhl_id,
+            'shooter_shoots' => 'L',
+            'blocking_player_id' => null,
+            'shot_distance' => 16.0,
+            'abs_shot_angle' => 25.0,
+            'distance_bucket' => 'slot',
+            'angle_bucket' => 'a_020_030',
+            'shot_type_bucket' => 'other',
+            'is_rebound' => false,
+            'is_rush' => false,
+            'strength_bucket' => 'EV',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'factor' => 'shooter_blocker_same_hand',
+            'sort' => 'attempts',
+            'direction' => 'desc',
+        ]))
+        ->assertOk()
+        ->assertSee('Factors')
+        ->assertSee('SOG only')
+        ->assertSee('Shooting %')
+        ->assertDontSee('SOG %')
+        ->assertDontSee('Goal %')
+        ->assertDontSee('Blocks')
+        ->assertDontSee('Misses')
+        ->assertDontSee('Block %');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'factor' => 'shooter_blocker_same_hand',
+            'factor_sample' => 'sat',
+            'include_unknowns' => '1',
+            'sort' => 'attempts',
+            'direction' => 'desc',
+        ]))
+        ->assertOk()
+        ->assertSee('Shooter/Blocker Same Hand')
+        ->assertSee('Different')
+        ->assertSee('No Blocker')
+        ->assertSee('Unknown Blocker')
+        ->assertSee('SAT')
+        ->assertSee('Blocks')
+        ->assertSee('Misses')
+        ->assertSee('SOG %')
+        ->assertSee('Goal %')
+        ->assertSee('Shooting %')
+        ->assertDontSee('Buckets')
+        ->assertDontSee('Predictive');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'factor' => 'angle',
+            'factor_sample' => 'sat',
+        ]))
+        ->assertOk()
+        ->assertSee('Invalid &gt;90', false)
+        ->assertDontSee('a_090_plus')
+        ->assertDontSee('Zone');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'factor_keys' => ['distance', 'shot_type'],
+            'factor_sample' => 'sat',
+            'sort' => 'attempts',
+            'direction' => 'desc',
+        ]))
+        ->assertOk()
+        ->assertSee('name="factor_keys[]"', false)
+        ->assertSee('Distance + Shot Type')
+        ->assertSee('Distance: point_or_high')
+        ->assertSee('Shot Type: wrist')
+        ->assertSee('Shot Type: snap');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.nhl-shot-attempts.index', [
+            'tab' => 'factors',
+            'factor_keys' => ['distance', 'shot_type'],
+            'factor_sample' => 'sat',
+            'factor_value_exclusions' => ['shot_type|' . sha1('snap')],
+            'sort' => 'attempts',
+            'direction' => 'desc',
+        ]))
+        ->assertOk()
+        ->assertSee('name="factor_value_exclusions[]"', false)
+        ->assertSee('Distance + Shot Type')
+        ->assertSee('Distance: point_or_high · Shot Type: wrist')
+        ->assertDontSee('Distance: point_or_high · Shot Type: snap');
+
+    $factorValueResponse = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-shot-attempts.factor-values', [
+            'tab' => 'factors',
+            'factor_keys' => ['shot_type'],
+            'factor_sample' => 'sat',
+        ]))
+        ->assertOk()
+        ->assertJsonFragment(['label' => 'Shot Type: wrist'])
+        ->assertJsonFragment(['label' => 'Shot Type: snap'])
+        ->assertJsonMissing(['label' => 'Shot Type: other']);
+
+    expect(collect($factorValueResponse->json('values'))->pluck('label')->all())
+        ->not->toContain('Distance: point_or_high');
+
+    $unknownExcludedResponse = $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-shot-attempts.factor-values', [
+            'tab' => 'factors',
+            'factor_keys' => ['shooter_blocker_same_hand'],
+            'factor_sample' => 'sat',
+        ]))
+        ->assertOk()
+        ->assertJsonFragment(['label' => 'Shooter/Blocker Same Hand: Different'])
+        ->assertJsonMissing(['label' => 'Shooter/Blocker Same Hand: Unknown Blocker']);
+
+    expect(collect($unknownExcludedResponse->json('values'))->pluck('label')->all())
+        ->not->toContain('Shooter/Blocker Same Hand: Unknown Blocker');
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-shot-attempts.factor-values', [
+            'tab' => 'factors',
+            'factor_keys' => ['shot_type'],
+            'factor_sample' => 'sat',
+            'include_unknowns' => '1',
+        ]))
+        ->assertOk()
+        ->assertJsonFragment(['label' => 'Shot Type: other']);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.nhl-shot-attempts.factor-values', [
+            'tab' => 'factors',
+            'factor_selection_state' => 'explicit',
+            'factor_sample' => 'sat',
+        ]))
+        ->assertOk()
+        ->assertJsonCount(0, 'values');
+});
+
+it('creates draft NHL SAT models from the admin workflow', function () {
+    $admin = ($this->makeSuperAdmin)();
+
+    $this->actingAs($admin)
+        ->post(route('admin.nhl-sat-models.store'), [
+            'name' => 'SAT train 2023 2024 test 2025',
+            'model_version' => 'sat_xg_v1',
+            'train_season_ids' => ['20232024', '20242025'],
+            'test_season_id' => '20252026',
+            'notes' => 'First two-season training run.',
+        ])
+        ->assertRedirect(route('admin.nhl-sat-models.index'));
+
+    $this->assertDatabaseHas('nhl_model_runs', [
+        'name' => 'SAT train 2023 2024 test 2025',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_DRAFT,
+    ]);
+
+    $run = NhlModelRun::query()->firstOrFail();
+
+    expect($run->train_season_ids)->toBe(['20232024', '20242025'])
+        ->and($run->season_weights)->toBe(['20232024' => 0.333333, '20242025' => 0.666667]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.index'))
+        ->assertOk()
+        ->assertSee('SAT Models')
+        ->assertSee('Create Model')
+        ->assertSee('SAT train 2023 2024 test 2025')
+        ->assertSee('20232024, 20242025')
+        ->assertSee('20252026')
+        ->assertSee('Eval SOG')
+        ->assertSee('Eval SAT')
+        ->assertDontSee('Family');
+});
+
+it('evaluates SAT model SOG danger immediately without scoring the test season', function () {
+    Queue::fake();
+
+    $admin = ($this->makeSuperAdmin)();
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-xg-v1-test-run',
+        'name' => 'SAT danger train 2023 2024',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_DRAFT,
+    ]);
+
+    $this->actingAs($admin)
+        ->post(route('admin.nhl-sat-models.train', $run), [
+            'smoothing_prior_attempts' => 75,
+        ])
+        ->assertRedirect(route('admin.nhl-sat-models.index'));
+
+    Queue::assertNothingPushed();
+    $run->refresh();
+
+    expect($run->status)->toBe(NhlModelRun::STATUS_COMPLETE)
+        ->and($run->run_config['training_version'])->toBe('sat_xg_v1__run_' . $run->id)
+        ->and($run->completed_at)->not->toBeNull()
+        ->and($run->metrics)->toHaveKey('sog_factor_evaluation')
+        ->and($run->metrics)->not->toHaveKey('xg_training_test_season_id');
+
+    $this->assertDatabaseHas('nhl_expected_goals_models', [
+        'model_run_id' => $run->id,
+        'version' => 'sat_xg_v1__run_' . $run->id,
+        'prediction_target' => 'goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'status' => 'draft',
+    ]);
+    $this->assertDatabaseMissing('nhl_expected_goals_models', [
+        'model_run_id' => $run->id,
+        'version' => 'sat_xg_v1__run_' . $run->id,
+        'prediction_target' => 'shot_on_goal',
+    ]);
+});
+
+it('evaluates SAT model SAT danger immediately without scoring the test season', function () {
+    Queue::fake();
+
+    $admin = ($this->makeSuperAdmin)();
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-to-sog-v1-test-run',
+        'name' => 'SAT to SOG danger train 2023 2024',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_DRAFT,
+    ]);
+
+    $this->actingAs($admin)
+        ->post(route('admin.nhl-sat-models.train', $run), [
+            'evaluation' => 'sat',
+            'smoothing_prior_attempts' => 75,
+        ])
+        ->assertRedirect(route('admin.nhl-sat-models.index'));
+
+    Queue::assertNothingPushed();
+    $run->refresh();
+
+    expect($run->status)->toBe(NhlModelRun::STATUS_COMPLETE)
+        ->and($run->run_config['training_version'])->toBe('sat_xg_v1__run_' . $run->id)
+        ->and($run->completed_at)->not->toBeNull()
+        ->and($run->metrics)->toHaveKey('sat_factor_evaluation')
+        ->and($run->metrics)->not->toHaveKey('xg_training_test_season_id');
+
+    $this->assertDatabaseHas('nhl_expected_goals_models', [
+        'model_run_id' => $run->id,
+        'version' => 'sat_xg_v1__run_' . $run->id,
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'status' => 'draft',
+    ]);
+});
+
+it('rebuilds trained SAT evaluation rows immediately when evaluating SAT again', function () {
+    Queue::fake();
+
+    $admin = ($this->makeSuperAdmin)();
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-preserve-trained-test-run',
+        'name' => 'SAT preserve trained model',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_COMPLETE,
+    ]);
+    $version = 'sat_xg_v1__run_' . $run->id;
+
+    $modelId = DB::table('nhl_expected_goals_models')->insertGetId([
+        'model_run_id' => $run->id,
+        'name' => \App\Services\NhlExpectedGoalsBackfiller::MODEL_NAME,
+        'version' => $version,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'feature_config' => json_encode([
+            'sample_mode' => 'sat',
+            'workflow_action' => 'eval_sat',
+            'sat_factor_evaluation' => [
+                'winner' => ['label' => 'Distance + Angle', 'score' => 0.0525],
+            ],
+        ]),
+        'metrics' => json_encode([
+            'bucket_count' => 1,
+            'training_attempts' => 260,
+            'training_total_sat' => 300,
+            'training_excluded_sat' => 40,
+            'training_excluded_sat_rate' => 0.133333,
+        ]),
+        'status' => 'draft',
+        'trained_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_expected_goals_model_buckets')->insert([
+        'expected_goals_model_id' => $modelId,
+        'bucket_key' => 'L01|distance_group=slot|angle_group=central',
+        'fallback_level' => 1,
+        'bucket_dimensions' => json_encode(['distance_group' => 'slot', 'angle_group' => 'central']),
+        'attempts' => 120,
+        'goals' => 90,
+        'raw_goal_rate' => 0.750000,
+        'smoothed_goal_probability' => 0.720000,
+        'confidence_score' => 0.6154,
+        'confidence_bucket' => 'medium',
+        'shrinkage_weight' => 0.3846,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->post(route('admin.nhl-sat-models.train', $run), [
+            'evaluation' => 'sat',
+            'smoothing_prior_attempts' => 100,
+        ])
+        ->assertRedirect(route('admin.nhl-sat-models.index'));
+
+    Queue::assertNothingPushed();
+    $run->refresh();
+
+    $model = DB::table('nhl_expected_goals_models')
+        ->where('model_run_id', $run->id)
+        ->where('version', $version)
+        ->where('prediction_target', 'shot_on_goal')
+        ->first();
+    $featureConfig = json_decode($model->feature_config, true, 512, JSON_THROW_ON_ERROR);
+    $metrics = json_decode($model->metrics, true, 512, JSON_THROW_ON_ERROR);
+
+    expect($run->status)->toBe(NhlModelRun::STATUS_COMPLETE)
+        ->and($run->completed_at)->not->toBeNull()
+        ->and($model->status)->toBe('draft')
+        ->and($model->trained_at)->not->toBeNull()
+        ->and($featureConfig['workflow_action'])->toBe('eval_sat')
+        ->and($featureConfig['sat_factor_evaluation']['winner']['label'])->not->toBeNull()
+        ->and($metrics['bucket_count'])->toBe(1)
+        ->and(DB::table('nhl_expected_goals_model_buckets')->where('expected_goals_model_id', $model->id)->count())->toBe(1);
+});
+
+it('shows an empty SAT evaluation state when no SAT rows exist yet', function () {
+    $admin = ($this->makeSuperAdmin)();
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-empty-test-run',
+        'name' => 'SAT empty model',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_RUNNING,
+    ]);
+
+    DB::table('nhl_expected_goals_models')->insert([
+        'model_run_id' => $run->id,
+        'name' => \App\Services\NhlExpectedGoalsBackfiller::MODEL_NAME,
+        'version' => 'sat_xg_v1__run_' . $run->id,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 100,
+        'feature_config' => json_encode([
+            'sample_mode' => 'sat',
+            'workflow_action' => 'eval_sat',
+        ]),
+        'metrics' => json_encode(['queued_at' => now()->toIso8601String()]),
+        'status' => 'queued',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.buckets', [
+            'run' => $run,
+            'target' => 'shot_on_goal',
+        ]))
+        ->assertOk()
+        ->assertSee('Eval SAT before reviewing SAT danger.')
+        ->assertSee('No SAT eval yet')
+        ->assertDontSee('Eval SAT is Queued');
+});
+
+it('marks SAT model SOG evaluation complete when goal buckets finish', function () {
+    Event::fake([NhlSatModelUpdated::class]);
+
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-complete-test-run',
+        'name' => 'SAT danger train completion',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_RUNNING,
+    ]);
+
+    $version = 'sat_xg_v1__run_' . $run->id;
+
+    DB::table('nhl_expected_goals_models')->insert([
+        'model_run_id' => $run->id,
+        'name' => $version . '_goal',
+        'version' => $version,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'metrics' => json_encode([
+            'training_total_sog' => 200,
+            'training_attempts' => 180,
+            'training_excluded_sog' => 20,
+            'training_excluded_sog_rate' => 0.1,
+            'sog_factor_evaluation' => [
+                'winner' => ['label' => 'Distance + Angle'],
+            ],
+        ]),
+        'status' => 'draft',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $backfiller = Mockery::mock(\App\Services\NhlExpectedGoalsBackfiller::class);
+    $backfiller->shouldReceive('trainBucketsForRun')->once();
+
+    (new BackfillNhlExpectedGoalsJob(
+        seasonId: '20242025',
+        version: $version,
+        minimumBucketAttempts: 0,
+        smoothingPriorAttempts: 75,
+        predictionTarget: 'goal',
+        modelRunId: $run->id
+    ))->handle($backfiller);
+
+    expect($run->refresh()->status)->toBe(NhlModelRun::STATUS_COMPLETE)
+        ->and($run->completed_at)->not->toBeNull()
+        ->and($run->metrics)->toHaveKey('trained_at')
+        ->and($run->metrics['training_excluded_sog_rate'])->toBe(0.1)
+        ->and($run->metrics['training_excluded_sog'])->toBe(20);
+
+    Event::assertDispatched(NhlSatModelUpdated::class, function (NhlSatModelUpdated $event) use ($run): bool {
+        return $event->modelId === $run->id
+            && $event->reason === 'sog-eval-completed';
+    });
+});
+
+it('keeps a SAT model run running when SOG evaluation finishes while SAT evaluation is queued', function () {
+    Event::fake([NhlSatModelUpdated::class]);
+
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sog-complete-sat-pending-test-run',
+        'name' => 'SOG complete with SAT pending',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_RUNNING,
+    ]);
+
+    $version = 'sat_xg_v1__run_' . $run->id;
+
+    DB::table('nhl_expected_goals_models')->insert([
+        [
+            'model_run_id' => $run->id,
+            'name' => $version . '_goal',
+            'version' => $version,
+            'model_type' => 'bucket_smoothed',
+            'prediction_target' => 'goal',
+            'training_season_id' => '20242025',
+            'minimum_bucket_attempts' => 0,
+            'smoothing_prior_attempts' => 75,
+            'metrics' => json_encode([
+                'training_total_sog' => 200,
+                'training_attempts' => 180,
+                'training_excluded_sog' => 20,
+                'training_excluded_sog_rate' => 0.1,
+                'sog_factor_evaluation' => [
+                    'winner' => ['label' => 'Distance + Angle'],
+                ],
+            ]),
+            'status' => 'draft',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'model_run_id' => $run->id,
+            'name' => $version . '_shot_on_goal',
+            'version' => $version,
+            'model_type' => 'bucket_smoothed',
+            'prediction_target' => 'shot_on_goal',
+            'training_season_id' => '20242025',
+            'minimum_bucket_attempts' => 0,
+            'smoothing_prior_attempts' => 75,
+            'metrics' => json_encode(['queued_at' => now()->toIso8601String()]),
+            'status' => 'queued',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $backfiller = Mockery::mock(\App\Services\NhlExpectedGoalsBackfiller::class);
+    $backfiller->shouldReceive('trainBucketsForRun')->once();
+
+    (new BackfillNhlExpectedGoalsJob(
+        seasonId: '20242025',
+        version: $version,
+        minimumBucketAttempts: 0,
+        smoothingPriorAttempts: 75,
+        predictionTarget: 'goal',
+        modelRunId: $run->id
+    ))->handle($backfiller);
+
+    expect($run->refresh()->status)->toBe(NhlModelRun::STATUS_RUNNING)
+        ->and($run->completed_at)->toBeNull()
+        ->and($run->metrics['training_excluded_sog_rate'])->toBe(0.1);
+
+    Event::assertDispatched(NhlSatModelUpdated::class, function (NhlSatModelUpdated $event) use ($run): bool {
+        return $event->modelId === $run->id
+            && $event->reason === 'sog-eval-completed';
+    });
+});
+
+it('marks SAT model SAT evaluation complete when shot-on-goal buckets finish', function () {
+    Event::fake([NhlSatModelUpdated::class]);
+
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'training-sat-to-sog-complete-test-run',
+        'name' => 'SAT to SOG train completion',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_xg_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_RUNNING,
+    ]);
+
+    $version = 'sat_xg_v1__run_' . $run->id;
+
+    DB::table('nhl_expected_goals_models')->insert([
+        'model_run_id' => $run->id,
+        'name' => $version . '_shot_on_goal',
+        'version' => $version,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'metrics' => json_encode([
+            'training_total_sat' => 240,
+            'training_attempts' => 220,
+            'training_excluded_sat' => 20,
+            'training_excluded_sat_rate' => 0.083333,
+            'sat_factor_evaluation' => [
+                'winner' => ['label' => 'Distance + Angle'],
+            ],
+        ]),
+        'status' => 'draft',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $backfiller = Mockery::mock(\App\Services\NhlExpectedGoalsBackfiller::class);
+    $backfiller->shouldReceive('trainBucketsForRun')->once();
+
+    (new BackfillNhlExpectedGoalsJob(
+        seasonId: '20242025',
+        version: $version,
+        minimumBucketAttempts: 0,
+        smoothingPriorAttempts: 75,
+        predictionTarget: 'shot_on_goal',
+        modelRunId: $run->id
+    ))->handle($backfiller);
+
+    expect($run->refresh()->status)->toBe(NhlModelRun::STATUS_COMPLETE)
+        ->and($run->completed_at)->not->toBeNull()
+        ->and($run->metrics)->toHaveKey('trained_at')
+        ->and($run->metrics['training_excluded_sat_rate'])->toBe(0.083333)
+        ->and($run->metrics['training_excluded_sat'])->toBe(20)
+        ->and($run->metrics['sat_factor_evaluation']['winner']['label'])->toBe('Distance + Angle');
+
+    Event::assertDispatched(NhlSatModelUpdated::class, function (NhlSatModelUpdated $event) use ($run): bool {
+        return $event->modelId === $run->id
+            && $event->reason === 'sat-eval-completed';
+    });
+});
+
+it('shows sortable trained SAT model buckets to super admins', function () {
+    $admin = ($this->makeSuperAdmin)();
+    $run = NhlModelRun::query()->create([
+        'run_key' => 'sat-buckets-sortable',
+        'name' => 'SAT buckets sortable model',
+        'model_family' => NhlModelRun::FAMILY_SAT,
+        'workflow_stage' => NhlModelRun::STAGE_TRAINING,
+        'model_version' => 'sat_v1',
+        'train_start_season_id' => '20232024',
+        'train_end_season_id' => '20242025',
+        'train_season_ids' => ['20232024', '20242025'],
+        'season_weights' => ['20232024' => 0.333333, '20242025' => 0.666667],
+        'target_season_id' => '20252026',
+        'status' => NhlModelRun::STATUS_COMPLETE,
+    ]);
+
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2024020001,
+        'season_id' => '20242025',
+        'game_type' => 2,
+        'game_date' => '2025-01-01',
+        'game_dow' => 'Wed',
+        'game_month' => 'Jan',
+        'home_team_id' => 10,
+        'home_team_abbrev' => 'TOR',
+        'away_team_id' => 20,
+        'away_team_abbrev' => 'MTL',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('play_by_plays')->insert([
+        [
+            'id' => 900001,
+            'nhl_game_id' => 2024020001,
+            'period' => 1,
+            'seconds_in_game' => 120,
+            'type_desc_key' => 'shot-on-goal',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'id' => 900002,
+            'nhl_game_id' => 2024020001,
+            'period' => 1,
+            'seconds_in_game' => 180,
+            'type_desc_key' => 'missed-shot',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    DB::table('nhl_shot_attempts_facts')->insert([
+        [
+            'play_by_play_id' => 900001,
+            'nhl_game_id' => 2024020001,
+            'season_id' => '20242025',
+            'game_date' => '2025-01-01',
+            'attempt_result' => 'shot_on_goal',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => true,
+            'is_goal' => false,
+            'shot_type_bucket' => 'wrist',
+            'period_type' => 'REG',
+            'is_empty_net' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'play_by_play_id' => 900002,
+            'nhl_game_id' => 2024020001,
+            'season_id' => '20242025',
+            'game_date' => '2025-01-01',
+            'attempt_result' => 'missed_shot',
+            'is_shot_attempt' => true,
+            'is_unblocked_attempt' => true,
+            'is_shot_on_goal' => false,
+            'is_goal' => false,
+            'shot_type_bucket' => 'unknown',
+            'period_type' => 'REG',
+            'is_empty_net' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $modelId = DB::table('nhl_expected_goals_models')->insertGetId([
+        'model_run_id' => $run->id,
+        'name' => 'nhl_expected_goals_v1',
+        'version' => 'sat_v1__run_' . $run->id,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'feature_config' => json_encode([
+            'sample_mode' => 'sog',
+            'workflow_action' => 'eval_sog',
+            'sog_factor_evaluation' => [
+                'baseline_sog' => 180,
+                'baseline_goals' => 18,
+                'baseline_rate' => 0.1,
+                'candidate_method' => 'weighted_absolute_lift_on_training_sog',
+                'winner' => [
+                    'label' => 'Distance + Angle',
+                    'score' => 0.0725,
+                ],
+                'singles' => [
+                    ['label' => 'Distance', 'rows' => 3, 'sog' => 180, 'score' => 0.061],
+                ],
+                'doubles' => [
+                    ['label' => 'Distance + Angle', 'rows' => 8, 'sog' => 180, 'score' => 0.0725],
+                ],
+            ],
+        ]),
+        'metrics' => json_encode([
+            'bucket_count' => 2,
+            'training_attempts' => 1,
+            'training_total_sog' => 2,
+            'training_excluded_sog' => 1,
+            'training_excluded_sog_rate' => 0.5,
+        ]),
+        'status' => 'queued',
+        'trained_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_expected_goals_model_buckets')->insert([
+        [
+            'expected_goals_model_id' => $modelId,
+            'bucket_key' => 'L01|shot_type_group=tip|distance_group=slot',
+            'fallback_level' => 1,
+            'bucket_dimensions' => json_encode(['shot_type_group' => 'tip', 'distance_group' => 'slot']),
+            'attempts' => 40,
+            'goals' => 8,
+            'raw_goal_rate' => 0.200000,
+            'smoothed_goal_probability' => 0.170000,
+            'confidence_score' => 0.6000,
+            'confidence_bucket' => 'medium',
+            'shrinkage_weight' => 0.4000,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'expected_goals_model_id' => $modelId,
+            'bucket_key' => 'L01|shot_type_group=wrist|distance_group=point_or_high',
+            'fallback_level' => 1,
+            'bucket_dimensions' => json_encode(['shot_type_group' => 'wrist', 'distance_group' => 'point_or_high']),
+            'attempts' => 100,
+            'goals' => 4,
+            'raw_goal_rate' => 0.040000,
+            'smoothed_goal_probability' => 0.060000,
+            'confidence_score' => 0.8000,
+            'confidence_bucket' => 'high',
+            'shrinkage_weight' => 0.2000,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $satModelId = DB::table('nhl_expected_goals_models')->insertGetId([
+        'model_run_id' => $run->id,
+        'name' => 'nhl_expected_sog_v1',
+        'version' => 'sat_v1',
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'feature_config' => json_encode([
+            'sample_mode' => 'sat',
+            'workflow_action' => 'eval_sat',
+            'sat_factor_evaluation' => [
+                'baseline_sat' => 260,
+                'baseline_sog' => 180,
+                'baseline_rate' => 0.692308,
+                'candidate_method' => 'weighted_absolute_lift_on_training_sat',
+                'winner' => [
+                    'label' => 'Distance + Angle',
+                    'score' => 0.0525,
+                ],
+                'singles' => [
+                    ['label' => 'Distance', 'rows' => 3, 'sat' => 260, 'score' => 0.041],
+                ],
+                'doubles' => [
+                    ['label' => 'Distance + Angle', 'rows' => 8, 'sat' => 260, 'score' => 0.0525],
+                ],
+            ],
+        ]),
+        'metrics' => json_encode([
+            'bucket_count' => 2,
+            'training_attempts' => 1,
+            'training_total_sat' => 2,
+            'training_excluded_sat' => 1,
+            'training_excluded_sat_rate' => 0.5,
+        ]),
+        'status' => 'queued',
+        'trained_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('nhl_expected_goals_model_buckets')->insert([
+        [
+            'expected_goals_model_id' => $satModelId,
+            'bucket_key' => 'L01|distance_group=slot|angle_group=central',
+            'fallback_level' => 1,
+            'bucket_dimensions' => json_encode(['distance_group' => 'slot', 'angle_group' => 'central']),
+            'attempts' => 120,
+            'goals' => 90,
+            'raw_goal_rate' => 0.750000,
+            'smoothed_goal_probability' => 0.720000,
+            'confidence_score' => 0.6154,
+            'confidence_bucket' => 'medium',
+            'shrinkage_weight' => 0.3846,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    DB::table('nhl_expected_goals_models')->insert([
+        'model_run_id' => $run->id,
+        'name' => 'nhl_expected_sog_v1',
+        'version' => 'sat_v1__run_' . $run->id,
+        'model_type' => 'bucket_smoothed',
+        'prediction_target' => 'shot_on_goal',
+        'training_season_id' => '20242025',
+        'minimum_bucket_attempts' => 0,
+        'smoothing_prior_attempts' => 75,
+        'feature_config' => json_encode([
+            'sample_mode' => 'sat',
+            'workflow_action' => 'eval_sat',
+        ]),
+        'metrics' => json_encode(['queued_at' => now()->toIso8601String()]),
+        'status' => 'queued',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.buckets', $run))
+        ->assertOk()
+        ->assertSee('SAT buckets sortable model')
+        ->assertSee('SOG Danger')
+        ->assertSee('Excluded')
+        ->assertSee('SOG Interpretation')
+        ->assertSee('Distance + Angle')
+        ->assertSee('50.0%')
+        ->assertSee('1 of 2')
+        ->assertSee('Smoothed %')
+        ->assertSee('Confidence')
+        ->assertSee('Shrinkage')
+        ->assertSee('sort=attempts', false)
+        ->assertSeeInOrder([
+            'L01|shot_type_group=tip|distance_group=slot',
+            'L01|shot_type_group=wrist|distance_group=point_or_high',
+        ]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.buckets', [
+            'run' => $run,
+            'sort' => 'attempts',
+            'direction' => 'desc',
+        ]))
+        ->assertOk()
+        ->assertSeeInOrder([
+            'L01|shot_type_group=wrist|distance_group=point_or_high',
+            'L01|shot_type_group=tip|distance_group=slot',
+        ]);
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.index'))
+        ->assertOk()
+        ->assertSee('Excluded')
+        ->assertSee('View SAT')
+        ->assertSee('Eval SAT');
+
+    $this->actingAs($admin)
+        ->get(route('admin.nhl-sat-models.buckets', [
+            'run' => $run,
+            'target' => 'shot_on_goal',
+        ]))
+        ->assertOk()
+        ->assertSee('SAT Danger')
+        ->assertSee('SAT Interpretation')
+        ->assertDontSee('Queued SAT-to-SOG model')
+        ->assertSee('Training SAT')
+        ->assertSee('Baseline SOG %')
+        ->assertSee('260')
+        ->assertSee('180 SOG')
+        ->assertSee('SAT')
+        ->assertSee('SOG')
+        ->assertSee('72.00%');
 });
 
 it('renders sortable NHL shot attempt aggregate columns and rebound groupings', function () {
@@ -925,6 +2285,101 @@ it('blocks authenticated non-admin users from queuing NHL season stat syncs', fu
             'season' => '20252026',
         ])
         ->assertForbidden();
+});
+
+it('blocks guests from removing NHL game import runs', function () {
+    $run = NhlGameImportRun::query()->create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    $this->deleteJson(route('admin.nhl-game-imports.destroy', $run))
+        ->assertUnauthorized();
+});
+
+it('blocks authenticated non-admin users from removing NHL game import runs', function () {
+    $run = NhlGameImportRun::query()->create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    $this->actingAs(User::factory()->create())
+        ->deleteJson(route('admin.nhl-game-imports.destroy', $run))
+        ->assertForbidden();
+});
+
+it('allows super admins to remove terminal NHL game import runs and their run progress rows', function () {
+    Event::fake([NhlGameImportStatusUpdated::class]);
+
+    $run = NhlGameImportRun::query()->create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    DB::table('nhl_import_progress')->insert([
+        'run_id' => $run->id,
+        'season_id' => '20252026',
+        'game_date' => '2026-01-15',
+        'game_id' => '2025020001',
+        'game_type' => 2,
+        'import_type' => NhlImportStages::PBP,
+        'items_count' => 0,
+        'status' => 'completed',
+        'discovered_at' => '2026-01-15 12:00:00',
+        'created_at' => '2026-01-15 12:00:00',
+        'updated_at' => '2026-01-15 12:00:00',
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->deleteJson(route('admin.nhl-game-imports.destroy', $run))
+        ->assertOk()
+        ->assertJsonPath('deleted_run_id', $run->id)
+        ->assertJsonPath('deleted_progress_rows', 1);
+
+    expect(NhlGameImportRun::query()->whereKey($run->id)->exists())->toBeFalse()
+        ->and(DB::table('nhl_import_progress')->where('run_id', $run->id)->count())->toBe(0);
+
+    Event::assertDispatched(NhlGameImportStatusUpdated::class, function (NhlGameImportStatusUpdated $event): bool {
+        return $event->reason === 'run-removed';
+    });
+});
+
+it('prevents removing active NHL game import runs', function () {
+    $run = NhlGameImportRun::query()->create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_DATE,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-01-15',
+        'end_date' => '2026-01-15',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => ['date' => '2026-01-15'],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->deleteJson(route('admin.nhl-game-imports.destroy', $run))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('run_id');
+
+    expect(NhlGameImportRun::query()->whereKey($run->id)->exists())->toBeTrue();
 });
 
 it('allows super admins to queue NHL game discovery for a single date', function () {

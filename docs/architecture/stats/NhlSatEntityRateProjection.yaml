@@ -1,0 +1,66 @@
+name: NHL SAT Entity Rate Projection
+type: Training-Season Entity Rate Projection Strategy
+location:
+  - app/Services/NhlSatModelEntityRateProjectionBuilder.php
+  - app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php
+  - database/migrations/2026_08_21_000002_create_nhl_sat_model_entity_rate_projection_buckets_table.php
+  - docs/architecture/stats/NhlModelRuns.yaml
+  - docs/architecture/stats/NhlSatEntityRateProjection.yaml
+purpose: Define how SAT model entity profile rows become future-facing per-60 projection rows without using held-out test-season data.
+when_to_use:
+  - Building SAT model entity /60 projection rows after entity training profiles and training-season snapshots exist.
+  - Comparing candidate skater-offense SAT rate projection strategies against a held-out target season.
+  - Explaining why projected bucket rates differ from aggregate training and latest-training-season entity rates.
+when_not_to_use:
+  - Training SAT-to-SOG or SOG-to-goal probability buckets.
+  - Building historical entity profiles or single-season entity snapshots.
+  - Projecting full-season volume, future TOI, games played, opportunity, SOG, or goals before those strategies are separately validated.
+rules:
+  - Build /60 projections must not use the SAT model target season or held-out test-season profile rows as inputs.
+  - Skater-offense SAT /60 projections must use only the model training seasons, training profile rows, training-season snapshots, and skater production from nhl_game_summaries for those same training seasons.
+  - Skater-offense SAT /60 projection inputs must retain bucket rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row, then roll the remaining profile rows into an explicit Other bucket.
+  - Skater-offense SAT /60 projections must use true per-season snapshots for the prior and latest training seasons when comparing season-one and season-two movement.
+  - Skater-offense SAT /60 entity targets must be position-aware: defense, center, left wing, and right wing may use different S2-vs-S1 regression behavior when validated aggregate comparisons support it.
+  - Skater-offense SAT /60 entity targets must exclude goalie-position entities from the skater-offense projection path.
+  - Skater-offense SAT /60 projections must segment entities first by latest-training-season active bucket count: 0-2 buckets, 3-6 buckets, and 7+ buckets.
+  - Skater-offense entities with 0-2 latest-training-season active buckets must be treated as low-information rows and must be projected mostly from the training-only cohort baseline rather than from the entity's sparse latest-season bucket shape.
+  - Skater-offense entities with 3-6 latest-training-season active buckets must use a partial latest-to-train blend rather than the full position and scoring-tier formula table.
+  - Skater-offense entities with 7+ latest-training-season active buckets may use position type, goal-per-game tier, and latest-season direction against the prior training season to select the entity target formula.
+  - Forward goal-per-game tiers are high at 0.40 or greater, mid at 0.20 through 0.39, and low below 0.20, measured only from training-season nhl_game_summaries.
+  - Defense goal-per-game tiers are high at 0.15 or greater, mid at 0.07 through 0.149, and low below 0.07, measured only from training-season nhl_game_summaries.
+  - Training-only cohort baselines used by skater-offense SAT /60 projections must be grouped by position type and goal-per-game tier, not by held-out target-season performance.
+  - The current skater-offense SAT /60 projection strategy version is skater_offense_segmented_xsat_v2.
+  - skater_offense_segmented_xsat_v2 must use latest-training-season bucket shape as the bucket-level base, calculate an entity-level xSAT/60 target from segment rules, then scale the entity's bucket rows so projected bucket xSAT/60 sums to that target.
+  - For skater_offense_segmented_xsat_v2, 0-2 latest active buckets must use `0.25 * avg(train, latest) + 0.75 * cohort`.
+  - For skater_offense_segmented_xsat_v2, 3-6 latest active buckets must use `latest + 0.25 * (train - latest)`.
+  - For skater_offense_segmented_xsat_v2, forward high-goal entities whose latest season is below the prior season must use `0.90 * avg(train, latest) + 0.10 * cohort`.
+  - For skater_offense_segmented_xsat_v2, forward mid-goal or low-goal entities whose latest season is below the prior season must use `0.90 * latest + 0.10 * cohort`.
+  - For skater_offense_segmented_xsat_v2, forward mid-goal entities whose latest season is at or above the prior season must use `0.70 * avg(train, latest) + 0.30 * cohort`.
+  - For skater_offense_segmented_xsat_v2, forward low-goal entities whose latest season is at or above the prior season must use `latest - 0.50 * (latest - prior)`.
+  - For skater_offense_segmented_xsat_v2, defense mid-goal entities whose latest season is below the prior season must use `0.90 * latest + 0.10 * cohort`.
+  - For skater_offense_segmented_xsat_v2, defense mid-goal entities whose latest season is at or above the prior season must use `latest - 0.50 * (latest - prior)`.
+  - For skater_offense_segmented_xsat_v2, defense low-goal entities whose latest season is below the prior season must use `latest + 0.25 * (latest - prior)`.
+  - For skater_offense_segmented_xsat_v2, defense low-goal entities whose latest season is at or above the prior season must use the prior training-season rate.
+  - Defense SAT /60 projections must anchor mostly on the latest training season; when S2 is higher than S1, low-goal defense must regress harder than mid-goal defense, and mid-goal defense must regress harder than high-goal defense.
+  - Left-wing and right-wing low-goal SAT /60 projections may regress S2 spikes and rebound S2 dips more aggressively than center low-goal projections when aggregate comparison evidence supports that shape.
+  - Goal-per-game and point-per-game classes must be derived from nhl_game_summaries over the training seasons only; defense goal-per-game classes must use defense-specific thresholds, while point class is diagnostic unless explicitly approved as a driver.
+  - Active bucket count is a validated level and shot-option breadth signal for skater-offense SAT; bucket-count change is diagnostic and must not drive projection rates without separate validation.
+  - Bucket-level skater-offense SAT projections must preserve latest-training-season bucket shape for the current validated strategy, then scale bucket rows to the entity target.
+  - SOG and goal /60 projection columns in this workflow may be scaled from the SAT projection shape for comparison display, but SAT remains the validated projection target until SOG and goal strategies are separately approved.
+  - Peer bucket, peer entity, and tendency multiplier columns may be persisted as diagnostics but must not drive skater-offense SAT projection rates until validated.
+  - Non-skater-offense profile types must not borrow skater-offense production tiers, age groups, or active-bucket-count assumptions unless a profile-type-specific projection strategy is documented and approved.
+public_interface:
+  - NhlSatModelEntityRateProjectionBuilder
+  - BuildNhlSatModelEntityRateProjectionsJob
+  - BuildNhlSatModelEntityRateProjectionForEntityJob
+  - nhl_sat_model_entity_rate_projection_buckets
+  - admin.nhl-sat-models.rate-projections
+  - admin.nhl-sat-models.rate-projections.build
+  - admin.nhl-sat-models.rate-projections.compare.aggregates
+  - admin.nhl-sat-models.rate-projections.compare.raw
+example_usage: |
+  Build Profiles for a SAT model trained on 20232024 and 20242025,
+  then Build /60 to create skater-offense SAT projection buckets using
+  those training profiles, the 20232024 and 20242025 season snapshots,
+  and training-season skater production from nhl_game_summaries.

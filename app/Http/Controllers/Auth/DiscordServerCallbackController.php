@@ -9,9 +9,31 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Laravel\Socialite\Facades\Socialite;
 
 class DiscordServerCallbackController extends Controller
 {
+    /**
+     * Redirect an organization admin to Discord's guild authorization flow.
+     */
+    public function redirect(Organization $organization)
+    {
+        $user = Auth::user();
+
+        $isAdmin = $user?->roles()
+            ->wherePivot('organization_id', $organization->id)
+            ->max('level') >= 10;
+        abort_unless($isAdmin, 403);
+
+        $state = encrypt(['org_id' => $organization->id]);
+
+        return Socialite::driver('discord')
+            ->scopes(['identify', 'guilds'])
+            ->with(['state' => $state, 'prompt' => 'consent'])
+            ->redirectUrl(route('discord-server.callback'))
+            ->redirect();
+    }
+
     // GET /auth/discord-server/callback
     public function __invoke(Request $request)
     {

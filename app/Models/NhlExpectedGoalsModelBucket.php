@@ -24,6 +24,8 @@ class NhlExpectedGoalsModelBucket extends Model
         'bucket_dimensions' => 'array',
         'raw_goal_rate' => 'decimal:6',
         'smoothed_goal_probability' => 'decimal:6',
+        'confidence_score' => 'decimal:4',
+        'shrinkage_weight' => 'decimal:4',
     ];
 
     /**
@@ -36,4 +38,3 @@ class NhlExpectedGoalsModelBucket extends Model
         return $this->belongsTo(NhlExpectedGoalsModel::class, 'expected_goals_model_id');
     }
 }
-

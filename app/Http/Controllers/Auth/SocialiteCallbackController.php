@@ -19,6 +19,19 @@ class SocialiteCallbackController extends Controller
 {
     use HasAPITrait;
 
+    /**
+     * Redirect the user to Discord's OAuth login flow.
+     */
+    public function redirect()
+    {
+        $redirectUri = config('services.discord.redirect') ?: route('discord.callback');
+
+        return Socialite::driver('discord')
+            ->scopes(['identify', 'email'])
+            ->redirectUrl($redirectUri)
+            ->redirect();
+    }
+
     public function __invoke()
     {
         $oauth = Socialite::driver('discord')

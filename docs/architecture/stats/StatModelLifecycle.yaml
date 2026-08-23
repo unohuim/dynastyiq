@@ -1,0 +1,40 @@
+name: Stat Model Lifecycle
+type: Modeling Workflow Invariant
+location:
+  - docs/architecture/stats/StatModelLifecycle.yaml
+  - docs/architecture/stats/NhlModelRuns.yaml
+  - docs/architecture/stats/NhlExpectedGoalsModel.yaml
+purpose: Define the required order for turning measured sports events into probabilities, profiles, evaluations, and projections without combining lifecycle steps.
+when_to_use:
+  - Designing SAT modeling workflows from shot-attempt facts.
+  - Designing future stat models for other measured event families.
+  - Deciding whether an admin action should train, score, profile, evaluate, or project.
+  - Naming model actions and outputs in admin UI.
+when_not_to_use:
+  - Importing raw provider data.
+  - Replacing sport-specific fact table rules.
+  - Treating a projection as a trained model.
+  - Treating per-event scoring as the same step as probability training.
+rules:
+  - Modeling starts from measured event facts that already exist in source-of-truth fact tables.
+  - Data quality evaluation must be represented separately from probability training so confidence can explain input reliability.
+  - Probability training assigns probabilities to event characteristics and stores model/bucket outputs only.
+  - Probability training should prefer shrinkage plus confidence over hard sample cutoffs when the goal is discovery without overclaiming.
+  - Probability training must not write per-event predictions, entity profiles, evaluations, or projections as hidden side effects.
+  - Per-event scoring is a separate lifecycle step that applies a trained probability model to a chosen season or event set.
+  - Entity profile building is a separate lifecycle step that uses measured facts and trained probabilities to identify tendencies and patterns by entity.
+  - Evaluation is a separate lifecycle step that compares model outputs against completed known results.
+  - Projection is a separate lifecycle step that estimates future performance from trained probabilities, entity profiles, expected usage, team context, and other approved inputs.
+  - Admin UI labels must name the lifecycle action literally; Eval SAT means evaluate SAT-to-SOG danger factors from training seasons and store probabilities only.
+  - Admin UI labels must name the lifecycle action literally; Eval SOG means evaluate SOG-to-goal danger factors from training seasons and store probabilities only.
+public_interface:
+  - docs/architecture/stats/StatModelLifecycle.yaml
+  - admin.nhl-sat-models.train
+  - admin.sat-models
+  - nhl_model_runs
+  - nhl_expected_goals_models
+  - nhl_expected_goals_model_buckets
+example_usage: |
+  For SAT danger: measured shot-attempt facts -> Eval SAT -> SAT-to-SOG probabilities.
+  For SOG danger: measured shot-attempt facts -> Eval SOG -> SOG-to-goal probabilities;
+  later: Score Events -> Entity Profiles -> Evaluate -> Project.

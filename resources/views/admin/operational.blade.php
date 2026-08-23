@@ -25,6 +25,7 @@
             gameImportProcessFaceoffsUrl: @js(route('admin.nhl-game-imports.process-faceoffs')),
             gameImportProcessRefsStaffUrl: @js(route('admin.nhl-game-imports.process-refs-staff')),
             gameImportRerunFailedUrl: @js(route('admin.nhl-game-imports.rerun-failed')),
+            gameImportDeleteUrl: @js(url('/admin/nhl-game-imports')),
             gameImportDuplicatePbpScanUrl: @js(route('admin.nhl-game-imports.duplicate-pbp.scan')),
             gameImportDuplicatePbpDedupeUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
             gameImportDuplicatePbpRebuildUrl: @js(url('/admin/nhl-game-imports/duplicate-pbp')),
@@ -1032,6 +1033,20 @@
                                                     </button>
                                                 </div>
                                             </div>
+                                            <button
+                                                type="button"
+                                                x-show="canDeleteGameImportRun(run)"
+                                                x-cloak
+                                                class="inline-flex size-7 items-center justify-center rounded-full border border-red-200 bg-white text-red-600 shadow-sm transition-colors hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                                @click.stop.prevent="deleteGameImportRun(run)"
+                                                :disabled="gameImportDeleteBusy(run)"
+                                                :aria-label="`Remove ${gameImportTitle(run)}`"
+                                                title="Remove run"
+                                            >
+                                                <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd" />
+                                                </svg>
+                                            </button>
                                         </div>
                                     </div>
 

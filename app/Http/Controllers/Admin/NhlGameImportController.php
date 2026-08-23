@@ -311,6 +311,40 @@ class NhlGameImportController extends Controller
     }
 
     /**
+     * Remove a terminal admin-visible game import run and its run-scoped progress rows.
+     */
+    public function destroy(NhlGameImportRun $run): JsonResponse
+    {
+        if (in_array($run->status, [
+            NhlGameImportRun::STATUS_QUEUED,
+            NhlGameImportRun::STATUS_RUNNING,
+        ], true)) {
+            throw ValidationException::withMessages([
+                'run_id' => 'Only completed or failed NHL game import runs can be removed.',
+            ]);
+        }
+
+        $runId = (int) $run->id;
+        $deletedProgressRows = DB::transaction(function () use ($run, $runId): int {
+            $deletedRows = DB::table('nhl_import_progress')
+                ->where('run_id', $runId)
+                ->delete();
+
+            $run->delete();
+
+            return $deletedRows;
+        });
+
+        $this->safeBroadcast('run-removed', $runId);
+
+        return response()->json([
+            'message' => 'Game import run removed.',
+            'deleted_run_id' => $runId,
+            'deleted_progress_rows' => $deletedProgressRows,
+        ]);
+    }
+
+    /**
      * Queue NHL game discovery for a validated date selection.
      */
     public function discover(Request $request): JsonResponse

@@ -1,0 +1,75 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('nhl_sat_model_entity_rate_projection_buckets', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('model_run_id')
+                ->constrained('nhl_model_runs')
+                ->cascadeOnDelete();
+            $table->json('source_season_ids');
+            $table->unsignedTinyInteger('game_type')->default(2);
+            $table->string('profile_type', 40);
+            $table->string('entity_key', 120);
+            $table->integer('entity_id')->nullable();
+            $table->string('entity_name')->nullable();
+            $table->string('entity_role', 40)->nullable();
+            $table->string('team_context', 20)->nullable();
+            $table->string('matched_bucket_key', 600);
+            $table->json('bucket_dimensions')->nullable();
+            $table->boolean('is_other_bucket')->default(false);
+            $table->unsignedInteger('source_sat')->default(0);
+            $table->unsignedInteger('source_sog')->default(0);
+            $table->unsignedInteger('source_goals')->default(0);
+            $table->decimal('source_profile_share', 9, 6)->default(0);
+            $table->decimal('source_xsat_per_60', 12, 4)->nullable();
+            $table->decimal('source_xsog_per_60', 12, 4)->nullable();
+            $table->decimal('source_xg_per_60', 12, 4)->nullable();
+            $table->decimal('peer_xsat_per_60', 12, 4)->nullable();
+            $table->decimal('peer_profile_share', 9, 6)->nullable();
+            $table->decimal('entity_xsat_per_60', 12, 4)->nullable();
+            $table->decimal('peer_entity_xsat_per_60', 12, 4)->nullable();
+            $table->decimal('overall_rate_multiplier', 12, 6)->nullable();
+            $table->decimal('raw_tendency_multiplier', 12, 6)->nullable();
+            $table->decimal('shrunk_tendency_multiplier', 12, 6)->nullable();
+            $table->decimal('projected_xsat_per_60', 12, 4)->nullable();
+            $table->decimal('projected_xsog_per_60', 12, 4)->nullable();
+            $table->decimal('projected_xg_per_60', 12, 4)->nullable();
+            $table->decimal('sat_probability', 9, 6)->default(0);
+            $table->decimal('goal_probability', 9, 6)->default(0);
+            $table->decimal('confidence_score', 9, 4)->default(0);
+            $table->decimal('shrinkage_weight', 9, 4)->default(0);
+            $table->string('confidence_bucket', 20)->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamp('projected_at')->nullable();
+            $table->timestamps();
+
+            $table->unique(
+                ['model_run_id', 'profile_type', 'entity_key', 'matched_bucket_key'],
+                'uq_nhl_sat_model_rate_projection'
+            );
+            $table->index(['model_run_id', 'profile_type'], 'ix_nhl_sat_model_rate_projection_type');
+            $table->index(['profile_type', 'entity_id'], 'ix_nhl_sat_model_rate_projection_entity');
+            $table->index(['model_run_id', 'matched_bucket_key'], 'ix_nhl_sat_model_rate_projection_bucket');
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('nhl_sat_model_entity_rate_projection_buckets');
+    }
+};

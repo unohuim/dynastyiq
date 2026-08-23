@@ -16,6 +16,7 @@ when_not_to_use:
 rules:
   - Shot geometry calculations must stay centralized in ShotGeometryService.
   - Backfills must use the same service as import-time calculations.
+  - Shot angle is measured against the direct line from the shot coordinate to the target net center: 0 is straight-on through the net center and 90 is goal-line/sharp angle.
   - Geometry-related enum-like values must remain referenced from docs/ENUMS.md when applicable.
 public_interface:
   - ShotGeometryService::isShotAttempt()
@@ -24,4 +25,3 @@ public_interface:
   - BackfillShotGeometryCommand
 example_usage: |
   app(ShotGeometryService::class)->computeFromPlay($playByPlay, $game);
-

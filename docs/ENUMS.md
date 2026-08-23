@@ -137,6 +137,50 @@ Do not introduce new enum values without updating this document.
 
 ## Hockey Domain
 
+### NHL SAT Model Family
+
+**Name:** NHL SAT model family
+**Storage location(s):** `nhl_model_runs.model_family` (string column)
+**Allowed values currently emitted:**
+
+- `sat`
+
+**Semantic meaning:**
+
+- `sat`: SAT modeling workflow that starts from shot-attempt facts and supports SAT-to-SOG evaluation plus SOG-to-goal evaluation.
+
+### NHL Model Run Workflow Stage
+
+**Name:** NHL model run workflow stage
+**Storage location(s):** `nhl_model_runs.workflow_stage` (string column)
+**Allowed values currently emitted:**
+
+- `training`
+
+**Semantic meaning:**
+
+- `training`: A SAT model setup that learns from historical shot-attempt fact seasons without scoring the optional test season.
+
+### NHL Model Run Status
+
+**Name:** NHL model run status
+**Storage location(s):** `nhl_model_runs.status` (string column)
+**Allowed values currently emitted:**
+
+- `draft`
+- `running`
+- `complete`
+- `failed`
+- `archived`
+
+**Semantic meaning:**
+
+- `draft`: Run metadata exists but execution has not started.
+- `running`: Run execution has started.
+- `complete`: Run execution completed.
+- `failed`: Run execution failed.
+- `archived`: Run is retained for history but hidden from normal active workflows.
+
 ### Player Shoots
 
 **Name:** Player handedness / shoots
@@ -1723,7 +1767,7 @@ Do not introduce new enum values without updating this document.
 **Allowed values currently emitted:**
 
 - Distance buckets use `d_000_005`, `d_005_010`, continuing in five-foot ranges, plus `d_060_plus` and `unknown`.
-- Angle buckets use folded absolute-angle ranges from `a_000_010` through `a_080_090`, plus `unknown`; folded angle treats `0` as goal-line/sharp angle and `90` as straight-on.
+- Angle buckets use folded absolute-angle ranges from `a_000_010` through `a_080_090`, plus `unknown`; folded angle treats `0` as straight-on through the net center and `90` as goal-line/sharp angle.
 - Strength buckets: `ev`, `pp`, `pk`, `en`, `ps`, `unknown`.
 - Shot type buckets: `wrist`, `snap`, `slap`, `backhand`, `tip`, `deflection`, `wrap`, `poke`, `other`, `unknown`.
 - Rebound buckets: `rebound`, `not_rebound`, `unknown`.
@@ -1850,12 +1894,13 @@ Do not introduce new enum values without updating this document.
 
 **Semantic meaning:**
 
-- `goal`: Probability that a SAT attempt becomes a goal. Summed as xG.
-- `shot_on_goal`: Probability that a SAT attempt becomes a shot on goal. Summed as xSOG.
+- `goal`: Probability that a shot-attempt sample reaches the configured goal target. In Eval SOG, this is P(goal | shot_on_goal, selected context).
+- `shot_on_goal`: Probability that a SAT attempt becomes a shot on goal. In Eval SAT, this is P(shot_on_goal | SAT, selected context). Summed as xSOG in legacy scoring paths.
 
 **Notes:**
 
-- Both targets use the same SAT context feature system.
+- Run-aware Eval SOG queues the `goal` target on SOG rows.
+- Run-aware Eval SAT queues the `shot_on_goal` target on SAT rows.
 - `attempt_result` must not be used as a model input because it leaks the target outcome.
 
 ---
@@ -1992,6 +2037,24 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+### NHL Expected Goals Bucket Confidence Bucket
+
+**Name:** NHL expected goals bucket confidence bucket
+**Storage location(s):** `nhl_expected_goals_model_buckets.confidence_bucket` (nullable string column)
+**Allowed values currently emitted:**
+
+- `low`
+- `medium`
+- `high`
+
+**Semantic meaning:**
+
+- `low`: Trained probability bucket is mostly prior because direct attempts are small relative to the smoothing prior.
+- `medium`: Trained probability bucket blends meaningful direct attempts with meaningful prior shrinkage.
+- `high`: Trained probability bucket is mostly direct evidence and uses little prior shrinkage.
+
+---
+
 ### NHL Goalie Chance Profile Confidence Bucket
 
 **Name:** NHL goalie chance profile confidence bucket
@@ -2123,6 +2186,34 @@ Do not introduce new enum values without updating this document.
 - `low`: Historical game-context SAT bucket required substantial empirical-Bayes shrinkage toward a parent bucket.
 - `medium`: Historical game-context SAT bucket required moderate empirical-Bayes shrinkage toward a parent bucket.
 - `high`: Historical game-context SAT bucket is mostly driven by its direct bucket sample.
+
+---
+
+### NHL SAT Model Entity Profile Type
+
+**Name:** NHL SAT model entity profile type
+**Storage location(s):** `nhl_sat_model_entity_profile_buckets.profile_type` (string column)
+**Allowed values:**
+
+- `skater_offense`
+- `skater_defense`
+- `goalie_faced`
+- `team_offense`
+- `team_defense`
+- `staff_offense`
+- `staff_defense`
+- `official`
+
+**Semantic meaning:**
+
+- `skater_offense`: Shot attempts taken by a skater.
+- `skater_defense`: Shot attempts taken against a skater while on ice.
+- `goalie_faced`: Shot attempts faced by a goalie.
+- `team_offense`: Shot attempts taken by a team.
+- `team_defense`: Shot attempts taken by opponents against a team.
+- `staff_offense`: Shot attempts taken by the staff member's assigned team.
+- `staff_defense`: Shot attempts taken by opponents against the staff member's assigned team.
+- `official`: Shot attempts associated with an official assignment context.
 
 ---
 

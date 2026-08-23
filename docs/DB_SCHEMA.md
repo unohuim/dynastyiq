@@ -58,6 +58,12 @@ Migrations remain the **sole source of truth**.
 - nhl_expected_goals_model_buckets
 - nhl_expected_goals_models
 - nhl_game_import_runs
+- nhl_model_runs
+- nhl_sat_model_entity_profile_buckets
+- nhl_sat_model_entity_test_profile_buckets
+- nhl_sat_model_entity_rate_projection_buckets
+- nhl_sat_model_entity_rate_comparison_buckets
+- nhl_sat_model_entity_rate_comparison_aggregates
 - nhl_game_officials
 - nhl_goalie_chance_profile_buckets
 - nhl_game_source_statuses
@@ -3079,6 +3085,45 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_model_runs
+
+**Organization-owned:** No
+**Purpose:** Registry of versioned SAT models with explicit training seasons, optional stored test season, configuration, status, and metrics.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| run_key | string(160) | No | Unique stable model identifier |
+| name | string(160) | No | Human-readable model name |
+| model_family | string(64) | No | Model family; currently emitted as `sat` |
+| workflow_stage | string(32) | No | Workflow stage; currently emitted as `training` |
+| model_version | string(80) | No | Modeling version/config label |
+| train_start_season_id | string(8) | Yes | Earliest training season helper |
+| train_end_season_id | string(8) | Yes | Latest training season helper |
+| train_season_ids | json | No | Complete ordered training season list |
+| season_weights | json | Yes | Optional per-season training weights |
+| target_season_id | string(8) | Yes | Stored test season for later scoring/evaluation |
+| status | string(32) | No | Model status; defaults to `draft` |
+| run_config | json | Yes | Model configuration metadata |
+| metrics | json | Yes | Model training/evaluation metrics |
+| notes | text | Yes | Operator notes |
+| started_at | timestamp | Yes | Execution start timestamp |
+| completed_at | timestamp | Yes | Execution completion timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- Unique: `run_key`
+- Index: `(model_family, workflow_stage)` (`ix_nhl_model_runs_family_stage`)
+- Index: `(target_season_id, status)` (`ix_nhl_model_runs_target_status`)
+- Index: `(train_start_season_id, train_end_season_id)` (`ix_nhl_model_runs_train_window`)
+
+---
+
 ## nhl_expected_goals_models
 
 **Organization-owned:** No
@@ -3089,13 +3134,14 @@ Migrations remain the **sole source of truth**.
 | Name | Type | Nullable | Notes |
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
+| model_run_id | bigint | Yes | FK -> `nhl_model_runs.id`; set null on delete |
 | name | string(80) | No | Model name |
 | version | string(80) | No | Model version |
 | model_type | string(80) | No | Model family; defaults to `bucket_smoothed` |
 | prediction_target | string(32) | No | Prediction target; defaults to `goal` |
 | training_season_id | string(8) | Yes | Season used for training |
-| minimum_bucket_attempts | unsignedInteger | No | Minimum attempts before bucket fallback |
-| smoothing_prior_attempts | unsignedInteger | No | League-average smoothing prior |
+| minimum_bucket_attempts | unsignedInteger | No | Legacy/explicit backfill minimum; SAT Models Train emits `0` and uses shrinkage confidence instead |
+| smoothing_prior_attempts | unsignedInteger | No | Prior attempt weight used for bucket shrinkage |
 | training_filters | json | Yes | Training filter metadata |
 | feature_config | json | Yes | Feature configuration |
 | calibration_config | json | Yes | Calibration configuration |
@@ -3109,7 +3155,9 @@ Migrations remain the **sole source of truth**.
 ### Keys & Indexes
 
 - PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with null on delete
 - Unique: `(name, version, prediction_target)` (`uq_nhl_xg_models_name_version_target`)
+- Index: `model_run_id` (`ix_nhl_xg_models_model_run`)
 - Index: `(training_season_id, status)` (`ix_nhl_xg_models_training_status`)
 
 ---
@@ -3124,6 +3172,7 @@ Migrations remain the **sole source of truth**.
 | Name | Type | Nullable | Notes |
 | --- | --- | --- | --- |
 | id | bigint | No | Primary key |
+| model_run_id | bigint | Yes | FK -> `nhl_model_runs.id`; set null on delete |
 | expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
 | bucket_key | string(600) | No | Stable bucket identity |
 | fallback_level | unsignedTinyInteger | No | Bucket fallback depth used by the model |
@@ -3132,15 +3181,299 @@ Migrations remain the **sole source of truth**.
 | goals | unsignedInteger | No | Training goals in bucket |
 | raw_goal_rate | decimal(9,6) | No | Raw observed target rate |
 | smoothed_goal_probability | decimal(9,6) | No | Smoothed target probability |
+| confidence_score | decimal(5,4) | Yes | Direct-evidence share after shrinkage |
+| confidence_bucket | string(24) | Yes | Confidence bucket: `low`, `medium`, or `high` |
+| shrinkage_weight | decimal(5,4) | No | Prior-borrowed share after shrinkage |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
 ### Keys & Indexes
 
 - PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with null on delete
 - FK: `expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
 - Unique: `(expected_goals_model_id, bucket_key)` (`uq_nhl_xg_buckets_model_key`)
 - Index: `(expected_goals_model_id, fallback_level)` (`ix_nhl_xg_buckets_level`)
+- Index: `(expected_goals_model_id, confidence_bucket)` (`ix_nhl_xg_buckets_confidence`)
+
+---
+
+## nhl_sat_model_entity_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Stores model-run scoped entity SAT profile rows after Eval SAT, with optional Eval SOG expected-goal columns.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| sat_expected_goals_model_id | bigint | No | FK -> SAT-to-SOG Eval SAT model |
+| sog_expected_goals_model_id | bigint | Yes | FK -> SOG-to-goal Eval SOG model |
+| source_season_ids | json | No | Training seasons used by the SAT model |
+| game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater, goalie, team, staff role, or official role |
+| team_context | string(20) | Yes | Offense, defense, faced, or game context |
+| matched_bucket_key | string(600) | No | Matched Eval SAT probability bucket |
+| fallback_level | unsignedTinyInteger | No | Matched bucket fallback level |
+| bucket_dimensions | json | No | Matched bucket dimensions |
+| source_sat | unsignedInteger | No | Observed SAT in entity/profile bucket |
+| source_sog | unsignedInteger | No | Observed SOG in entity/profile bucket |
+| source_goals | unsignedInteger | No | Observed goals in entity/profile bucket |
+| source_profile_share | decimal(9,6) | No | Bucket SAT share within the entity profile |
+| source_toi_seconds | unsignedInteger | Yes | Historical exposure denominator used for profile /60 rates |
+| source_xsat_per_60 | decimal(12,4) | Yes | Historical source SAT per 60 exposure minutes |
+| source_xsog_per_60 | decimal(12,4) | Yes | Historical expected SOG per 60 exposure minutes |
+| source_xg_per_60 | decimal(12,4) | Yes | Historical expected goals per 60 exposure minutes |
+| expected_sog | decimal(12,4) | No | Sum of Eval SAT SOG probabilities |
+| expected_goals | decimal(12,4) | No | Sum of Eval SOG goal probabilities for observed SOG |
+| sog_above_expected | decimal(12,4) | No | Observed SOG minus expected SOG |
+| goals_above_expected | decimal(12,4) | No | Observed goals minus expected goals |
+| sat_probability | decimal(9,6) | No | Average SAT-to-SOG probability |
+| goal_probability | decimal(9,6) | No | Average SOG-to-goal probability when available |
+| confidence_score | decimal(9,4) | No | Average matched bucket confidence |
+| shrinkage_weight | decimal(9,4) | No | Average matched bucket prior-borrowed share after shrinkage |
+| confidence_bucket | string(20) | Yes | Confidence label |
+| flags | json | Yes | Reserved profile flags |
+| metadata | json | Yes | Build metadata |
+| profiled_at | timestamp | Yes | Build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- FK: `sat_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `sog_expected_goals_model_id` references `nhl_expected_goals_models.id` with null on delete
+- Unique: `(model_run_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_profile`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_entity_profiles_type`)
+- Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_entity_profiles_bucket`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_entity_profiles_entity`)
+
+---
+
+## nhl_sat_model_entity_test_profile_buckets
+
+**Organization-owned:** No
+**Purpose:** Stores single-season entity SAT profile snapshot rows for training seasons and the held-out target season using the same grain and bucket matching as aggregate training entity profiles.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| sat_expected_goals_model_id | bigint | No | FK -> SAT-to-SOG Eval SAT model |
+| sog_expected_goals_model_id | bigint | Yes | FK -> SOG-to-goal Eval SOG model |
+| source_season_ids | json | No | Profiled season as a one-item array |
+| test_season_id | string(8) | No | Single profiled season id; includes training-season snapshots and held-out target-season snapshots |
+| game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater, goalie, team, staff role, or official role |
+| team_context | string(20) | Yes | Offense, defense, faced, or game context |
+| matched_bucket_key | string(600) | No | Matched Eval SAT probability bucket |
+| fallback_level | unsignedTinyInteger | No | Matched bucket fallback level |
+| bucket_dimensions | json | No | Matched bucket dimensions |
+| source_sat | unsignedInteger | No | Actual SAT in the single-season entity/profile bucket |
+| source_sog | unsignedInteger | No | Actual SOG in the single-season entity/profile bucket |
+| source_goals | unsignedInteger | No | Actual goals in the single-season entity/profile bucket |
+| source_profile_share | decimal(9,6) | No | Bucket SAT share within the single-season entity profile |
+| source_toi_seconds | unsignedInteger | Yes | Single-season exposure denominator used for /60 actuals |
+| source_xsat_per_60 | decimal(12,4) | Yes | Single-season actual SAT per 60 exposure minutes |
+| source_xsog_per_60 | decimal(12,4) | Yes | Single-season expected SOG per 60 exposure minutes |
+| source_xg_per_60 | decimal(12,4) | Yes | Single-season expected goals per 60 exposure minutes |
+| expected_sog | decimal(12,4) | No | Sum of Eval SAT SOG probabilities over single-season SAT |
+| expected_goals | decimal(12,4) | No | Sum of Eval SOG goal probabilities over single-season SOG |
+| sog_above_expected | decimal(12,4) | No | Single-season observed SOG minus expected SOG |
+| goals_above_expected | decimal(12,4) | No | Single-season observed goals minus expected goals |
+| sat_probability | decimal(9,6) | No | Average SAT-to-SOG probability |
+| goal_probability | decimal(9,6) | No | Average SOG-to-goal probability when available |
+| confidence_score | decimal(9,4) | No | Average matched bucket confidence |
+| shrinkage_weight | decimal(9,4) | No | Average matched bucket prior-borrowed share after shrinkage |
+| confidence_bucket | string(20) | Yes | Confidence label |
+| flags | json | Yes | Reserved profile flags |
+| metadata | json | Yes | Build metadata |
+| profiled_at | timestamp | Yes | Build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- FK: `sat_expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `sog_expected_goals_model_id` references `nhl_expected_goals_models.id` with null on delete
+- Unique: `(model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_entity_test_profile`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_entity_test_profiles_type`)
+- Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_entity_test_profiles_bucket`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_entity_test_profiles_entity`)
+
+---
+
+## nhl_sat_model_entity_rate_projection_buckets
+
+**Organization-owned:** No
+**Purpose:** Stores model-run scoped entity bucket /60 projections derived from built SAT profiles.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| source_season_ids | json | No | Training seasons used by the SAT model |
+| game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater, goalie, team, staff role, or official role |
+| team_context | string(20) | Yes | Offense, defense, faced, or game context |
+| matched_bucket_key | string(600) | No | Core profile bucket or explicit Other bucket |
+| bucket_dimensions | json | Yes | Bucket dimensions or Other marker |
+| is_other_bucket | boolean | No | True when low-volume buckets were rolled together |
+| source_sat | unsignedInteger | No | Historical SAT behind the projection row |
+| source_sog | unsignedInteger | No | Historical SOG behind the projection row |
+| source_goals | unsignedInteger | No | Historical goals behind the projection row |
+| source_profile_share | decimal(9,6) | No | Historical SAT share within the entity profile |
+| source_xsat_per_60 | decimal(12,4) | Yes | Historical source SAT per 60 exposure minutes |
+| source_xsog_per_60 | decimal(12,4) | Yes | Historical expected SOG per 60 exposure minutes |
+| source_xg_per_60 | decimal(12,4) | Yes | Historical expected goals per 60 exposure minutes |
+| peer_xsat_per_60 | decimal(12,4) | Yes | Peer bucket xSAT/60 baseline |
+| peer_profile_share | decimal(9,6) | Yes | Peer bucket profile-share baseline |
+| entity_xsat_per_60 | decimal(12,4) | Yes | Entity overall historical xSAT/60 |
+| peer_entity_xsat_per_60 | decimal(12,4) | Yes | Peer overall xSAT/60 baseline |
+| overall_rate_multiplier | decimal(12,6) | Yes | Entity overall xSAT/60 divided by peer overall xSAT/60 |
+| raw_tendency_multiplier | decimal(12,6) | Yes | Entity bucket share divided by peer bucket share |
+| shrunk_tendency_multiplier | decimal(12,6) | Yes | Bucket tendency multiplier shrunk toward peer average |
+| projected_xsat_per_60 | decimal(12,4) | Yes | Projected SAT rate per 60 |
+| projected_xsog_per_60 | decimal(12,4) | Yes | Projected SOG rate per 60 |
+| projected_xg_per_60 | decimal(12,4) | Yes | Projected goal rate per 60 |
+| sat_probability | decimal(9,6) | No | SAT-to-SOG probability applied to projected xSAT/60 |
+| goal_probability | decimal(9,6) | No | SOG-to-goal probability applied to projected xSOG/60 |
+| confidence_score | decimal(9,4) | No | Average matched profile confidence |
+| shrinkage_weight | decimal(9,4) | No | Average matched profile shrinkage weight |
+| confidence_bucket | string(20) | Yes | Confidence label |
+| metadata | json | Yes | Build metadata and formula notes |
+| projected_at | timestamp | Yes | Build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_rate_projection`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_projection_type`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_projection_entity`)
+- Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_rate_projection_bucket`)
+
+---
+
+## nhl_sat_model_entity_rate_comparison_buckets
+
+**Organization-owned:** No
+**Purpose:** Stores model-run scoped raw bucket comparisons between training profiles, /60 projections, and held-out test profiles.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| test_season_id | string(8) | No | Held-out test season |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater, goalie, team, staff role, or official role |
+| team_context | string(20) | Yes | Offense, defense, faced, or game context |
+| matched_bucket_key | string(600) | No | Projected bucket key, including explicit Other when applicable |
+| bucket_dimensions | json | Yes | Bucket dimensions or Other marker |
+| is_other_bucket | boolean | No | True when the projection row is the low-volume Other bucket |
+| train_sat / train_sog / train_goals | unsignedInteger | No | Training profile observed counts |
+| test_sat / test_sog / test_goals | unsignedInteger | No | Held-out test profile observed counts |
+| train_profile_share | decimal(9,6) | No | Training SAT share within the entity profile |
+| test_profile_share | decimal(9,6) | Yes | Held-out SAT share within the entity profile |
+| share_drift / share_drift_rate | decimal | Yes | Held-out share minus training share, absolute and relative |
+| train_xsat_per_60 / train_xsog_per_60 / train_xg_per_60 | decimal(12,4) | Yes | Training profile /60 rates |
+| projected_xsat_per_60 / projected_xsog_per_60 / projected_xg_per_60 | decimal(12,4) | Yes | Projection /60 rates |
+| test_xsat_per_60 / test_xsog_per_60 / test_xg_per_60 | decimal(12,4) | Yes | Held-out actual /60 rates |
+| xsat_drift / xsog_drift / xg_drift | decimal(12,4) | Yes | Held-out actual /60 minus training actual /60 |
+| xsat_drift_rate / xsog_drift_rate / xg_drift_rate | decimal(12,6) | Yes | Relative drift versus training actual /60 |
+| xsat_error / xsog_error / xg_error | decimal(12,4) | Yes | Held-out actual /60 minus projected /60 |
+| xsat_error_rate / xsog_error_rate / xg_error_rate | decimal(12,6) | Yes | Relative error versus projected /60 |
+| confidence_score | decimal(9,4) | No | Projection confidence copied from the projection row |
+| shrinkage_weight | decimal(9,4) | No | Projection shrinkage copied from the projection row |
+| metadata | json | Yes | Build metadata |
+| compared_at | timestamp | Yes | Comparison build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, test_season_id, profile_type, entity_key, matched_bucket_key)` (`uq_nhl_sat_model_rate_compare_bucket`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_compare_bucket_type`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_compare_bucket_entity`)
+
+---
+
+## nhl_sat_model_entity_rate_comparison_aggregates
+
+**Organization-owned:** No
+**Purpose:** Stores one entity/profile aggregate comparison row summed from raw /60 comparison buckets.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| test_season_id | string(8) | No | Held-out test season |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater, goalie, team, staff role, or official role |
+| team_context | string(20) | Yes | Offense, defense, faced, or game context |
+| bucket_rows | unsignedInteger | No | Raw comparison rows included |
+| matched_bucket_rows | unsignedInteger | No | Raw comparison rows with held-out test SAT |
+| train_games / test_games | unsignedInteger | No | Entity/profile game denominators used for per-game train/test totals |
+| train_sat / train_sog / train_goals | unsignedInteger | No | Summed training profile counts |
+| test_sat / test_sog / test_goals | unsignedInteger | No | Summed held-out test profile counts |
+| train_profile_share | decimal(9,6) | No | Summed training bucket share |
+| test_profile_share | decimal(9,6) | Yes | Summed held-out bucket share |
+| share_drift / share_drift_rate | decimal | Yes | Held-out share minus training share, absolute and relative |
+| train_xsat_per_60 / train_xsog_per_60 / train_xg_per_60 | decimal(12,4) | Yes | Summed training /60 rates |
+| projected_xsat_per_60 / projected_xsog_per_60 / projected_xg_per_60 | decimal(12,4) | Yes | Summed projected /60 rates |
+| test_xsat_per_60 / test_xsog_per_60 / test_xg_per_60 | decimal(12,4) | Yes | Summed held-out actual /60 rates |
+| xsat_drift / xsog_drift / xg_drift | decimal(12,4) | Yes | Held-out actual /60 minus training actual /60 |
+| xsat_drift_rate / xsog_drift_rate / xg_drift_rate | decimal(12,6) | Yes | Relative drift versus training actual /60 |
+| xsat_error / xsog_error / xg_error | decimal(12,4) | Yes | Held-out actual /60 minus projected /60 |
+| xsat_error_rate / xsog_error_rate / xg_error_rate | decimal(12,6) | Yes | Relative error versus projected /60 |
+| metadata | json | Yes | Build metadata |
+| compared_at | timestamp | Yes | Comparison build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, test_season_id, profile_type, entity_key)` (`uq_nhl_sat_model_rate_compare_aggregate`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_compare_agg_type`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_compare_agg_entity`)
 
 ---
 
@@ -3671,6 +4004,7 @@ Migrations remain the **sole source of truth**.
 - FK: `play_by_play_id` references `play_by_plays.id` with cascade delete
 - FK: `nhl_game_id` references `nhl_games.nhl_game_id` with cascade delete
 - Unique: `(expected_goals_model_id, shot_attempt_fact_id)` (`uq_nhl_xg_predictions_model_fact`)
+- Index: `(model_run_id, season_id)` (`ix_nhl_xg_predictions_model_run_season`)
 - Index: `(expected_goals_model_id, season_id, game_date)` (`ix_nhl_xg_predictions_model_date`)
 - Index: `(expected_goals_model_id, nhl_game_id, team_id)` (`ix_nhl_xg_predictions_game_team`)
 - Index: `(expected_goals_model_id, team_id, game_date)` (`ix_nhl_xg_predictions_team_date`)

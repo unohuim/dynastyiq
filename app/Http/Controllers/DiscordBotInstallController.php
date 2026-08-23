@@ -18,6 +18,14 @@ use Illuminate\View\View;
 class DiscordBotInstallController extends Controller
 {
     /**
+     * Redirect users to the configured public Discord invite URL.
+     */
+    public function join(): RedirectResponse
+    {
+        return redirect()->away((string) config('services.discord.invite'));
+    }
+
+    /**
      * Redirect to Discord's configured bot install URL with app-owned callback state.
      */
     public function redirect(

@@ -27,20 +27,11 @@ class NhlShotAttemptAnalysisBuckets
                 'angle_group' => $this->angleGroup($tableAlias),
             ],
             3 => [
-                'distance_group' => $this->distanceGroup($tableAlias),
-                'angle_group' => $this->angleGroup($tableAlias),
-                'sequence_group' => $this->sequenceGroup($tableAlias),
-            ],
-            4 => [
-                'distance_group' => $this->distanceGroup($tableAlias),
-                'angle_group' => $this->angleGroup($tableAlias),
-            ],
-            5 => [
                 'shot_type_group' => $this->shotTypeGroup($tableAlias),
                 'distance_group' => $this->distanceGroup($tableAlias),
             ],
-            6 => [
-                'distance_group' => $this->distanceGroup($tableAlias),
+            4 => [
+                'shot_type_group' => $this->shotTypeGroup($tableAlias),
             ],
             99 => [
                 'baseline' => "'league'",
@@ -61,10 +52,8 @@ class NhlShotAttemptAnalysisBuckets
         return [
             "(1, 'L01|shot_type_group=' || {$shotType} || '|distance_group=' || {$distance} || '|angle_group=' || {$angle} || '|sequence_group=' || {$sequence})",
             "(2, 'L02|shot_type_group=' || {$shotType} || '|distance_group=' || {$distance} || '|angle_group=' || {$angle})",
-            "(3, 'L03|distance_group=' || {$distance} || '|angle_group=' || {$angle} || '|sequence_group=' || {$sequence})",
-            "(4, 'L04|distance_group=' || {$distance} || '|angle_group=' || {$angle})",
-            "(5, 'L05|shot_type_group=' || {$shotType} || '|distance_group=' || {$distance})",
-            "(6, 'L06|distance_group=' || {$distance})",
+            "(3, 'L03|shot_type_group=' || {$shotType} || '|distance_group=' || {$distance})",
+            "(4, 'L04|shot_type_group=' || {$shotType})",
             "(99, 'L99|baseline=league')",
         ];
     }
@@ -77,10 +66,8 @@ class NhlShotAttemptAnalysisBuckets
         return [
             1 => ['shot_type_group', 'distance_group', 'angle_group', 'sequence_group'],
             2 => ['shot_type_group', 'distance_group', 'angle_group'],
-            3 => ['distance_group', 'angle_group', 'sequence_group'],
-            4 => ['distance_group', 'angle_group'],
-            5 => ['shot_type_group', 'distance_group'],
-            6 => ['distance_group'],
+            3 => ['shot_type_group', 'distance_group'],
+            4 => ['shot_type_group'],
             99 => ['baseline'],
         ];
     }
@@ -110,10 +97,10 @@ class NhlShotAttemptAnalysisBuckets
     {
         return "CASE
             WHEN {$tableAlias}.abs_shot_angle IS NULL THEN 'unknown'
-            WHEN {$tableAlias}.abs_shot_angle < 20 THEN 'sharp'
+            WHEN {$tableAlias}.abs_shot_angle < 20 THEN 'straight_on'
             WHEN {$tableAlias}.abs_shot_angle < 45 THEN 'inside_lane'
-            WHEN {$tableAlias}.abs_shot_angle < 70 THEN 'central'
-            ELSE 'straight_on'
+            WHEN {$tableAlias}.abs_shot_angle < 70 THEN 'wide'
+            ELSE 'sharp'
         END";
     }
 

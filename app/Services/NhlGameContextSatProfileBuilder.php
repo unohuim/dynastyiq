@@ -625,15 +625,49 @@ SQL;
      */
     private function aggregatePayloads(object $summary, array $exactPayloads, string $method): array
     {
-        $selectedGroups = $this->selectedAggregateGroups(collect($exactPayloads));
+        $exactRows = collect($exactPayloads);
+        $selectedGroups = $this->selectedAggregateGroups($exactRows);
+        $comparisonGroups = $this->comparisonAggregateGroups($exactRows);
         $sourceSat = max(1, (int) $summary->source_sat);
         $now = now();
+        $groupsByKey = [];
 
-        return $selectedGroups
-            ->map(function (Collection $rows) use ($exactPayloads, $method, $sourceSat, $summary, $now): array {
+        foreach ($comparisonGroups as $group) {
+            /** @var Collection<int, array<string,mixed>> $rows */
+            $rows = $group['rows'];
+            $dimensions = $group['dimensions'];
+            $key = $this->aggregateBucketKey($dimensions);
+            $groupsByKey[$key] = [
+                'rows' => $rows,
+                'dimensions' => $dimensions,
+                'purposes' => ['comparison'],
+            ];
+        }
+
+        foreach ($selectedGroups as $rows) {
+            $dimensions = $this->aggregateDimensions($rows);
+            $key = $this->aggregateBucketKey($dimensions);
+
+            if (isset($groupsByKey[$key])) {
+                $groupsByKey[$key]['purposes'][] = 'summary';
+                continue;
+            }
+
+            $groupsByKey[$key] = [
+                'rows' => $rows,
+                'dimensions' => $dimensions,
+                'purposes' => ['summary'],
+            ];
+        }
+
+        return collect($groupsByKey)
+            ->map(function (array $group) use ($exactPayloads, $method, $sourceSat, $summary, $now): array {
+                /** @var Collection<int, array<string,mixed>> $rows */
+                $rows = $group['rows'];
                 $first = $rows->first();
                 $bucketSat = max(1, (int) $rows->sum('source_sat'));
-                $aggregateDimensions = $this->aggregateDimensions($rows);
+                $aggregateDimensions = $group['dimensions'];
+                $purposes = array_values(array_unique($group['purposes']));
                 $confidenceScore = $this->weightedAverage($rows, 'confidence_score', $bucketSat);
                 $shrinkageWeight = $this->weightedAverage($rows, 'shrinkage_weight', $bucketSat);
                 $avgDistance = $this->weightedMetadataAverage($rows, 'avg_distance');
@@ -675,6 +709,7 @@ SQL;
                     'flags' => json_encode($this->aggregateFlags(count($includedBucketKeys), $shrinkageWeight), JSON_THROW_ON_ERROR),
                     'metadata' => json_encode([
                         'builder' => 'NhlGameContextSatProfileBuilder',
+                        'aggregate_bucket_purposes' => $purposes,
                         'exact_bucket_count' => count($exactPayloads),
                         'included_bucket_keys' => $includedBucketKeys,
                         'avg_distance' => $avgDistance,
@@ -718,6 +753,29 @@ SQL;
     }
 
     /**
+     * @param Collection<int, array<string,mixed>> $rows
+     * @return Collection<int, array{rows:Collection<int, array<string,mixed>>,dimensions:array<string, string|int>}>
+     */
+    private function comparisonAggregateGroups(Collection $rows): Collection
+    {
+        return collect($this->comparisonAggregateLevelDefinitions())
+            ->flatMap(function (array $columns, int $level) use ($rows): Collection {
+                return $rows
+                    ->groupBy(fn (array $row): string => $this->aggregateGroupKey($row, $level, $columns))
+                    ->map(fn (Collection $group): Collection => $group->values())
+                    ->filter(fn (Collection $group): bool => (int) $group->sum('source_sat') >= self::MIN_AGGREGATE_BUCKET_SAT)
+                    ->map(function (Collection $group) use ($level, $columns): array {
+                        return [
+                            'rows' => $group,
+                            'dimensions' => $this->aggregateDimensionsForRow($group->first(), $level, $columns),
+                        ];
+                    })
+                    ->values();
+            })
+            ->values();
+    }
+
+    /**
      * @return array<int, array<int, string>>
      */
     private function aggregateLevelDefinitions(): array
@@ -727,9 +785,26 @@ SQL;
             2 => ['shot_type_group', 'distance_zone', 'angle_group'],
             3 => ['shot_type_group', 'distance_zone'],
             4 => ['distance_zone', 'angle_group'],
+            8 => ['shot_type_group', 'angle_group'],
             5 => ['shot_type_group'],
             6 => ['distance_zone'],
+            7 => ['angle_group'],
             99 => ['all'],
+        ];
+    }
+
+    /**
+     * @return array<int, array<int, string>>
+     */
+    private function comparisonAggregateLevelDefinitions(): array
+    {
+        return [
+            5 => ['shot_type_group'],
+            6 => ['distance_zone'],
+            7 => ['angle_group'],
+            3 => ['shot_type_group', 'distance_zone'],
+            8 => ['shot_type_group', 'angle_group'],
+            4 => ['distance_zone', 'angle_group'],
         ];
     }
 
@@ -880,8 +955,9 @@ SQL;
     private function angleLabel(string $angleGroup): string
     {
         return match ($angleGroup) {
+            'straight_on' => 'straight-on',
             'inside_lane' => 'inside lane',
-            'central' => 'central',
+            'wide' => 'wide angle',
             'sharp' => 'sharp angle',
             default => str_replace('_', ' ', $angleGroup),
         };

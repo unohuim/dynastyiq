@@ -1,0 +1,141 @@
+name: NHL SAT Models
+type: Versioned SAT Model Registry
+location:
+  - app/Http/Controllers/Admin/NhlModelRunController.php
+  - app/Events/NhlSatModelUpdated.php
+  - app/Jobs/BuildNhlSatModelEntityProfileForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityProfilesJob.php
+  - app/Jobs/BuildNhlSatModelEntityRateComparisonForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php
+  - app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php
+  - app/Jobs/BackfillNhlExpectedGoalsJob.php
+  - app/Models/NhlModelRun.php
+  - app/Services/NhlSatModelEntityProfileBuilder.php
+  - app/Services/NhlSatModelEntityRateComparisonBuilder.php
+  - app/Services/NhlSatModelEntityRateProjectionBuilder.php
+  - database/migrations/2026_08_19_000001_create_nhl_model_runs_table.php
+  - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
+  - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
+  - database/migrations/2026_08_20_000004_create_nhl_sat_model_entity_profile_buckets_table.php
+  - database/migrations/2026_08_20_000005_add_shrinkage_weight_to_nhl_sat_model_entity_profile_buckets.php
+  - database/migrations/2026_08_21_000001_add_per_60_fields_to_nhl_sat_model_entity_profile_buckets.php
+  - database/migrations/2026_08_21_000002_create_nhl_sat_model_entity_rate_projection_buckets_table.php
+  - database/migrations/2026_08_21_000003_create_nhl_sat_model_entity_test_profile_buckets_table.php
+  - database/migrations/2026_08_21_000004_create_nhl_sat_model_entity_rate_comparison_tables.php
+  - database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php
+  - database/migrations/2026_08_21_000006_add_variety_metrics_to_nhl_sat_model_entity_rate_comparison_aggregates.php
+  - resources/views/admin/nhl-sat-models/index.blade.php
+  - resources/views/admin/nhl-sat-models/_model-row.blade.php
+  - resources/views/admin/nhl-sat-models/buckets.blade.php
+  - resources/views/admin/nhl-sat-models/profiles.blade.php
+  - resources/views/admin/nhl-sat-models/rate-projection-aggregate-comparison.blade.php
+  - resources/views/admin/nhl-sat-models/rate-projection-comparison.blade.php
+  - resources/views/admin/nhl-sat-models/rate-projections.blade.php
+  - resources/js/admin/nhl-sat-models.js
+  - docs/architecture/stats/StatModelLifecycle.yaml
+  - docs/architecture/stats/NhlModelRuns.yaml
+  - docs/architecture/stats/NhlSatEntityRateProjection.yaml
+purpose: Register versioned SAT models so training seasons, test season, configuration, and training outputs can be compared without overwriting prior models.
+when_to_use:
+  - Creating a repeatable SAT model from one or more historical shot-attempt fact seasons.
+  - Creating a SAT model that can later score a completed test season without including that season in training inputs.
+  - Comparing whether adding older completed seasons improved or degraded SAT model performance.
+when_not_to_use:
+  - Storing raw NHL imports, play-by-play facts, or season-summary source data.
+  - Replacing domain-specific prediction, profile, or projection output tables.
+  - Modeling non-SAT stats before those aggregate/modeling workflows exist.
+rules:
+  - SAT models are immutable experiment anchors; adding a new training season must create a new comparable model instead of overwriting prior model outputs.
+  - A SAT model must identify model version, training seasons, optional test season, status, configuration, and metrics.
+  - Multi-season training windows must be represented by `train_season_ids`; `train_start_season_id` and `train_end_season_id` are query helpers, not complete authority.
+  - Season weights must be stored with the model when weighted training is used so older and newer completed seasons remain auditable.
+  - Downstream xG/xSOG model, profile, projection, prediction, and evaluation tables should reference the SAT model through model_run_id when they become run-aware.
+  - Queries over run-aware outputs must filter by model_run_id before comparing or publishing projections.
+  - Training workflows must never include the test season in their training-season inputs.
+  - Draft model creation must not start imports, queues, schedulers, migrations, or model execution as a hidden side effect.
+  - Eval SAT from a SAT model queues only training-season SAT danger evaluation: P(shot_on_goal | SAT, selected context). It must not score events, create predictions, create entity profiles, evaluate results against the test season, or project future performance as a hidden side effect.
+  - Eval SAT must use only nhl_model_runs.train_season_ids; the optional test season is stored for later evaluation and must not be used during SAT evaluation.
+  - Eval SAT must test approved single factors, then two-factor combinations from the strongest three to five single factors, and store the selected factor interpretation with the trained model.
+  - Eval SAT must keep observed rows and use shrinkage plus confidence instead of hard minimum row exclusion.
+  - Eval SOG from a SAT model queues only training-season SOG danger evaluation: P(goal | shot_on_goal, selected context). It must not score events, create predictions, create entity profiles, evaluate results against the test season, or project future performance as a hidden side effect.
+  - Eval SOG must use only nhl_model_runs.train_season_ids; the optional test season is stored for later evaluation and must not be used during SOG evaluation.
+  - Eval SOG must test approved single factors, then two-factor combinations from the strongest three to five single factors, and store the selected factor interpretation with the trained model.
+  - Eval SOG must keep observed rows and use shrinkage plus confidence instead of hard minimum row exclusion.
+  - Build Profiles must run only after Eval SAT exists for the SAT model and must use only the SAT model's training seasons.
+  - Build Profiles must queue a parent job that dispatches one child job per profile entity instead of performing all profile SQL during the admin HTTP request.
+  - Build Profiles must also build single-season entity profile snapshots for every training season and the held-out target season when present, using the same bucket matching as training profiles but writing to the separate season snapshot table.
+  - Build Profiles must also build generic profile-bucket stability rows after entity profile and season snapshot rows exist.
+  - Build Profiles must persist entity-level SAT profile rows separately from trained probability buckets; it must not score the optional test season or create projections.
+  - Training Drift inspection must be read-only and compare aggregate training profiles against the latest training-season snapshot without creating profiles, projections, comparisons, or test evaluations.
+  - Training Drift detail rows must aggregate to one row per entity and profile type; entity SAT, SOG, and goal counts must be shown per entity game, while bucket-level training/latest diagnostics belong in profile review or projection comparison views.
+  - Training Drift inspection may include collection rows for grand total and skater-offense age groups, but those rows must summarize the same aggregate-training versus latest-training-season snapshot join used by the row table; collection SAT, SOG, and goal counts must be shown per eligible game, while collection /60 rates must be shown per entity.
+  - Generic Bucket Stability inspection must be read-only and compare the same profile_type plus matched_bucket_key across aggregate training, prior training season, latest training season, and held-out test season, independent of individual entity profile selection.
+  - Generic Bucket Stability may be used to evaluate S1 to S2 to S3 bucket-level stability, but it must not feed SAT/SOG eval, entity profile construction, or /60 projection math unless a later approved change explicitly wires it in.
+  - Season snapshot profile rows must not feed back into aggregate training profiles, Eval SAT, Eval SOG, or /60 projection building.
+  - Held-out test profile rows must use nhl_model_runs.target_season_id only for Compare /60 and must not feed back into training profiles, Eval SAT, Eval SOG, or /60 projection building.
+  - Entity profile rows must use explicit profile_type values so skaters and goalies are not collapsed into an ambiguous player label.
+  - Entity profile rows must expose matched Eval SAT confidence and shrinkage so borrowed probability remains visible during profile review.
+  - Entity profile rows must store historical source exposure and normalized xSAT/60, xSOG/60, and xG/60 rates; these rates describe training-season profile performance and are not future projections.
+  - Entity profile inspection defaults to core tendencies: profile rows sorted by entity share until 60% cumulative share, capped at six rows per entity, with an explicit long-tail option for rare profile rows.
+  - Entity profile inspection may label row values as below average, average, or above average by comparing against rows in the same model and profile type.
+  - Entity /60 projections must follow the profile-type-specific projection authority in docs/architecture/stats/NhlSatEntityRateProjection.yaml.
+  - Entity SAT profiles may use Eval SOG probabilities when present to expose expected-goal columns, but Eval SOG is not allowed to change the SAT-to-SOG profile membership.
+  - Build /60 must run only after Build Profiles and must persist projection-rate rows separately from historical entity profile rows.
+  - Build /60 must queue a parent job that dispatches one child job per profile entity instead of performing all projection SQL during the admin HTTP request.
+  - Build /60 must not use future TOI, opportunity, schedules, or the optional test season; it estimates bucket rates per 60 from training-season entity profiles only.
+  - Build /60 must keep skater-offense SAT projections scoped to validated skater-offense inputs; peer and tendency baseline columns may remain stored for diagnostics but must not drive skater-offense SAT rates until separately validated.
+  - Build /60 must use entity profile rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row as projection inputs and roll lower-volume or remaining profile rows into an explicit Other row.
+  - Build /60 skater-offense projections must use the skater_offense_segmented_xsat_v2 strategy documented in NhlSatEntityRateProjection.yaml: latest-training-season bucket shape, entity targets segmented by active bucket count, position type, training goal-per-game tier, and latest-versus-prior training-season direction, then bucket scaling to the entity target.
+  - Compare /60 must queue a parent job that dispatches one child job per profile entity instead of performing all comparison SQL during the admin HTTP request.
+  - Compare /60 must be buildable only when a SAT model has both projection-rate rows and season snapshot rows for its target season.
+  - Compare /60 must persist raw bucket comparison rows and aggregate entity comparison rows separately from projections and profiles.
+  - Raw Compare /60 and Aggregate Compare /60 must be enabled only after persisted comparison rows exist.
+  - Raw Compare /60 must show projection-first entity bucket rows split by profile_type and compare training actuals, projections, and held-out test-season rates for SAT share, xSAT/60, xSOG/60, and xG/60 without feeding test data back into training or projection builds.
+  - Raw Compare /60 must aggregate held-out test profile buckets that do not match projected core buckets into the projected Other row for that entity/profile type.
+  - Aggregate Compare /60 must summarize one row per entity/profile type using summed raw comparison buckets; train and test SAT/SOG/G counts must be shown as per-game rates, /60 cells must show Train, latest training season, Proj, and Test, collection /60 summaries must be shown per entity, and projected season totals must not be shown until an opportunity model exists.
+  - Aggregate Compare /60 skater-offense collection rows must include grand total, age groups, and position-aware training G/GP tiers; forwards use skater scoring thresholds, while defense uses defense-specific goal-scoring thresholds.
+  - Aggregate Compare /60 player collection rows must include position cuts and position-type cuts where player position is available; C, L, and R are forwards, while D and G are separate position types.
+  - Aggregate Compare /60 collection rows must expose xSAT/60 entity hit rates for absolute projection error under 3%, 5%, and 10% so average collection error cannot hide offsetting entity misses.
+  - Aggregate Compare /60 must persist train, latest-training-season, and test shot-option breadth metrics for each aggregate row: active bucket count, top-three SAT share, explicit Other SAT share, and bucket entropy.
+  - Aggregate Compare /60 exports must use the same filters, sort, collection rows, entity rows, Train/Last/Proj/Test rate fields, shot-option breadth fields, and Train/Last/Test TOI per game when source TOI is available.
+  - SAT model status must move from running to complete after the requested SAT or SOG danger evaluation job finishes successfully.
+  - SAT model status must move to failed when the requested SAT or SOG danger evaluation fails.
+  - SAT model status changes must broadcast a row update on the admin SAT models channel so the admin page does not require refresh.
+  - SAT and SOG inspection must be read-only and scoped to one SAT model.
+  - SAT and SOG inspection tables must use whitelisted server-side sortable columns so large trained models remain usable.
+  - SAT model list and inspection views must expose excluded training share for the evaluated sample so removed SAT or SOG rows remain auditable.
+  - Run-aware xG model versions should be derived from the SAT model version plus stored model identity so repeated experiments do not overwrite unrelated model outputs.
+public_interface:
+  - admin.nhl-sat-models.index
+  - admin.nhl-sat-models.store
+  - admin.nhl-sat-models.buckets
+  - admin.nhl-sat-models.train
+  - admin.nhl-sat-models.profiles
+  - admin.nhl-sat-models.profiles.build
+  - admin.nhl-sat-models.profiles.bucket-stability
+  - admin.nhl-sat-models.profiles.bucket-stability.export
+  - admin.nhl-sat-models.profiles.training-drift
+  - admin.nhl-sat-models.rate-projections
+  - admin.nhl-sat-models.rate-projections.build
+  - admin.nhl-sat-models.rate-projections.compare.aggregates
+  - admin.nhl-sat-models.rate-projections.compare.aggregates.export
+  - admin.nhl-sat-models.rate-projections.compare.build
+  - admin.nhl-sat-models.rate-projections.compare.raw
+  - admin.sat-models
+  - NhlSatModelUpdated
+  - nhl_model_runs
+  - nhl_sat_model_entity_profile_buckets
+  - nhl_sat_model_entity_test_profile_buckets
+  - nhl_sat_model_generic_bucket_stabilities
+  - nhl_sat_model_entity_rate_projection_buckets
+  - nhl_sat_model_entity_rate_comparison_buckets
+  - nhl_sat_model_entity_rate_comparison_aggregates
+  - NhlModelRun
+  - NhlModelRunController
+example_usage: |
+  Create a SAT model with train_season_ids ["20232024", "20242025"]
+  and test season "20252026", then Eval SAT to store training-season SAT-to-SOG probabilities
+  or Eval SOG to store training-season SOG-to-goal probabilities only. After Eval SAT,
+  Build Profiles to persist skater, goalie, team, staff offense/defense, and official entity profile rows
+  for training seasons and, when present, the held-out test season in a separate table.
