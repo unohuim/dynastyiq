@@ -1,0 +1,70 @@
+name: NHL SAT Model Entity TOI Projection
+type: Model-Run Scoped Opportunity Projection Layer
+location:
+  - app/Http/Controllers/Admin/NhlModelRunController.php
+  - app/Jobs/BuildNhlSatModelEntityToiProjectionForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityToiProjectionsJob.php
+  - app/Services/NhlSatModelEntityToiProjectionBuilder.php
+  - database/migrations/2026_08_23_000001_create_nhl_sat_model_entity_toi_projections_table.php
+  - resources/views/admin/nhl-sat-models/_model-row.blade.php
+  - resources/views/admin/nhl-sat-models/index.blade.php
+  - resources/views/admin/nhl-sat-models/toi-projections.blade.php
+  - resources/js/admin/nhl-sat-models.js
+  - routes/web.php
+  - docs/architecture/stats/NhlSatModelEntityToiProjection.yaml
+purpose: Persist SAT-model scoped skater TOI projections so opportunity assumptions can be reviewed beside the same model's profile and /60 performance outputs.
+when_to_use:
+  - Building skater opportunity projections for one SAT model after entity profiles exist.
+  - Reviewing training average TOI, prior training-season TOI, latest training-season TOI, role bucket movement, age adjustment, and projected games before season-volume projections are introduced.
+  - Keeping model-run opportunity assumptions separate from global player TOI projections.
+when_not_to_use:
+  - Projecting goalie workload, team opportunity, staff context, official context, or raw shot-attempt performance.
+  - Replacing nhl_season_stats or game-summary source data.
+  - Feeding held-out test-season values into model-run opportunity projections.
+  - Publishing season-volume skater projections before a separate opportunity-to-volume workflow exists.
+rules:
+  - Build TOI must run only after Build Profiles has produced skater entity profiles for the SAT model.
+  - Build TOI must use the SAT model train_season_ids as its source seasons and must not use the optional target test season as an input.
+  - Build TOI must persist one row per model_run_id, profile_type, and entity_key for skater_offense and skater_defense entities only.
+  - Build TOI must exclude goalies; goalie opportunity remains governed by the goalie workload projection architecture.
+  - Training TOI per game must prefer aggregate training-season nhl_game_summaries totals as SUM(toi) divided by COUNT(DISTINCT game), with nhl_season_stats allowed only as a fallback when game summaries are unavailable.
+  - Prior and latest training-season rows must be preserved separately so S1/S2 role and TOI movement remains reviewable.
+  - Prior and latest role buckets must be derived from the same source used for season TOI rows; game-summary role ranks must group players by team and position type, ordered by season points, TOI, and player id.
+  - Projected TOI per game must anchor on latest training-season TOI per game when available, falling back to aggregate training TOI per game only when latest-season TOI is unavailable.
+  - Projected TOI per game must anchor on latest training-season TOI per game and use only small segment-specific adjustments.
+  - Projected TOI per game must store the formula segment used for later error isolation.
+  - Top-100 forwards by aggregate training points per season may receive only modest role-up adjustments and slight PP mean reversion; stable premium forward roles should stay close to latest training-season TOI.
+  - Top-200 defensemen by aggregate training points per season must stay close to latest training-season TOI; defense role-up signals are intentionally muted until proven predictive.
+  - Role-down penalties must be weak unless confirmed by declining PP usage between the prior and latest training seasons.
+  - Depth-role skaters must use tighter caps and some aggregate-training shrinkage because their S2/S3 opportunity is less stable.
+  - Build TOI must capture prior and latest training-season PP TOI per game, PP drift, PP role bucket, and PP adjustment in projection_inputs.
+  - PP usage is a role-security/context signal for TOI and games; it must not be treated as a direct one-for-one all-situation TOI addition.
+  - Build TOI must capture latest-training-season pre-March and March-1-plus TOI context from nhl_game_summaries in projection_inputs, including games, TOI per game, late TOI delta, and late TOI signal.
+  - Late-training-season TOI is a secondary role confirmation signal: a March-1-plus TOI drop may reduce projected TOI per game more than a March-1-plus increase may raise it, and all such adjustments must remain tightly capped.
+  - Projected games must be computed through a separate game-projection segment, anchored on latest training-season games.
+  - Projected games must inspect S1-to-S2 games movement before choosing the haircut; S2 games increases are fragile and must receive a larger haircut, while S2 games declines are treated as more persistent.
+  - Projected games must usually be calculated as latest training-season games minus a movement- and PP-adjusted haircut. Training-average games may only be used as a bounded fallback for missing-S1 low-games depth entities.
+  - Projected games must not add automatic games bonuses for top scorers, defensemen, or high PP usage. Role and PP may stabilize the S2 anchor or apply small penalties, but they must not independently inflate games.
+  - Projected games must persist the S1/S2 games delta, movement bucket, formula segment, and human-readable projection reason in projection_inputs for export review.
+  - Projected season TOI must remain projected TOI per game multiplied by projected games, keeping TOI/GP error and season-volume error separately measurable.
+  - Confidence must describe trust in the projection formula for that entity context, not only source sample size.
+  - Confidence scoring must consider both player-specific source strength and known backtest quality for the applied projection segments.
+  - Confidence scoring may use current coded segment priors from backtest analysis, including TOI/GP formula segment MAE, games formula segment MAE, S1/S2 movement-bucket MAE, PP-bucket MAE, and role-change risk.
+  - Projection rows must store confidence explanation inputs in projection_inputs JSON, including the applied formula segments, movement bucket, PP bucket, missing-data indicators, and any MAE/risk priors used by the score.
+  - Projection rows must continue using the existing confidence_score and confidence_bucket columns for the final display value.
+  - A separate persisted segment-metrics table is not required until confidence needs to be generated from saved backtest aggregates rather than coded/current analysis constants.
+  - If a persisted segment-metrics table is introduced later, it must store segment key, metric name, sample size, MAE, within-threshold rates, and source model_run_id or backtest window.
+  - Role buckets and age adjustments may reuse the NHL Player TOI Projections role logic, but the stored rows and lifecycle remain scoped to the SAT model.
+  - Build TOI must queue a parent job that dispatches one child job per eligible entity instead of doing all entity work inside the admin HTTP request.
+  - Build TOI must update SAT model status and broadcast row updates through the SAT model admin channel.
+  - SAT-model TOI projections are opportunity assumptions; they must stay separate from entity /60 performance projections until an approved season-volume workflow combines them.
+public_interface:
+  - admin.nhl-sat-models.toi-projections
+  - admin.nhl-sat-models.toi-projections.build
+  - nhl_sat_model_entity_toi_projections
+  - NhlSatModelEntityToiProjectionBuilder
+  - BuildNhlSatModelEntityToiProjectionForEntityJob
+  - BuildNhlSatModelEntityToiProjectionsJob
+example_usage: |
+  Build Profiles for a SAT model, then Build TOI to persist skater opportunity rows
+  keyed by model_run_id, profile_type, and entity_key before reviewing projected TOI/GP.

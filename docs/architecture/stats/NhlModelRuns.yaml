@@ -9,11 +9,14 @@ location:
   - app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php
   - app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php
   - app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php
+  - app/Jobs/BuildNhlSatModelEntityToiProjectionForEntityJob.php
+  - app/Jobs/BuildNhlSatModelEntityToiProjectionsJob.php
   - app/Jobs/BackfillNhlExpectedGoalsJob.php
   - app/Models/NhlModelRun.php
   - app/Services/NhlSatModelEntityProfileBuilder.php
   - app/Services/NhlSatModelEntityRateComparisonBuilder.php
   - app/Services/NhlSatModelEntityRateProjectionBuilder.php
+  - app/Services/NhlSatModelEntityToiProjectionBuilder.php
   - database/migrations/2026_08_19_000001_create_nhl_model_runs_table.php
   - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
   - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
@@ -25,6 +28,7 @@ location:
   - database/migrations/2026_08_21_000004_create_nhl_sat_model_entity_rate_comparison_tables.php
   - database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php
   - database/migrations/2026_08_21_000006_add_variety_metrics_to_nhl_sat_model_entity_rate_comparison_aggregates.php
+  - database/migrations/2026_08_23_000001_create_nhl_sat_model_entity_toi_projections_table.php
   - resources/views/admin/nhl-sat-models/index.blade.php
   - resources/views/admin/nhl-sat-models/_model-row.blade.php
   - resources/views/admin/nhl-sat-models/buckets.blade.php
@@ -32,10 +36,12 @@ location:
   - resources/views/admin/nhl-sat-models/rate-projection-aggregate-comparison.blade.php
   - resources/views/admin/nhl-sat-models/rate-projection-comparison.blade.php
   - resources/views/admin/nhl-sat-models/rate-projections.blade.php
+  - resources/views/admin/nhl-sat-models/toi-projections.blade.php
   - resources/js/admin/nhl-sat-models.js
   - docs/architecture/stats/StatModelLifecycle.yaml
   - docs/architecture/stats/NhlModelRuns.yaml
   - docs/architecture/stats/NhlSatEntityRateProjection.yaml
+  - docs/architecture/stats/NhlSatModelEntityToiProjection.yaml
 purpose: Register versioned SAT models so training seasons, test season, configuration, and training outputs can be compared without overwriting prior models.
 when_to_use:
   - Creating a repeatable SAT model from one or more historical shot-attempt fact seasons.
@@ -87,6 +93,12 @@ rules:
   - Build /60 must keep skater-offense SAT projections scoped to validated skater-offense inputs; peer and tendency baseline columns may remain stored for diagnostics but must not drive skater-offense SAT rates until separately validated.
   - Build /60 must use entity profile rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row as projection inputs and roll lower-volume or remaining profile rows into an explicit Other row.
   - Build /60 skater-offense projections must use the skater_offense_segmented_xsat_v2 strategy documented in NhlSatEntityRateProjection.yaml: latest-training-season bucket shape, entity targets segmented by active bucket count, position type, training goal-per-game tier, and latest-versus-prior training-season direction, then bucket scaling to the entity target.
+  - Build /60 skater-offense projections may use latest-training-season March-1-plus SAT signals only as conservative training-data modifiers; late spikes must not create upside, late drops may apply small capped downside, and the held-out test season must remain excluded.
+  - Build TOI must run only after Build Profiles and must persist SAT-model scoped skater opportunity rows separately from entity profiles and /60 performance projections.
+  - Build TOI must use aggregate training-season TOI per game from nhl_game_summaries as the primary baseline with nhl_season_stats only as fallback, preserve prior/latest training-season TOI context, reuse approved role and age adjustment logic from the same season source, and must not use the optional held-out test season.
+  - Build TOI must anchor projected TOI per game on latest training-season TOI when available, segment top skaters by aggregate training points per season, use a latest-season-heavy blend for top forwards, and preserve first-pass role and age adjustment behavior for top defensemen.
+  - Build TOI must persist latest-training-season pre-March and March-1-plus TOI signals in projection_inputs and may use March-1-plus TOI movement only as a bounded secondary adjustment.
+  - Build TOI must queue a parent job that dispatches one child job per eligible skater entity instead of performing all opportunity SQL during the admin HTTP request.
   - Compare /60 must queue a parent job that dispatches one child job per profile entity instead of performing all comparison SQL during the admin HTTP request.
   - Compare /60 must be buildable only when a SAT model has both projection-rate rows and season snapshot rows for its target season.
   - Compare /60 must persist raw bucket comparison rows and aggregate entity comparison rows separately from projections and profiles.
@@ -98,7 +110,7 @@ rules:
   - Aggregate Compare /60 player collection rows must include position cuts and position-type cuts where player position is available; C, L, and R are forwards, while D and G are separate position types.
   - Aggregate Compare /60 collection rows must expose xSAT/60 entity hit rates for absolute projection error under 3%, 5%, and 10% so average collection error cannot hide offsetting entity misses.
   - Aggregate Compare /60 must persist train, latest-training-season, and test shot-option breadth metrics for each aggregate row: active bucket count, top-three SAT share, explicit Other SAT share, and bucket entropy.
-  - Aggregate Compare /60 exports must use the same filters, sort, collection rows, entity rows, Train/Last/Proj/Test rate fields, shot-option breadth fields, and Train/Last/Test TOI per game when source TOI is available.
+  - Aggregate Compare /60 exports must use the same filters, sort, collection rows, entity rows, Train/Last/Proj/Test rate fields, shot-option breadth fields, late-training-season SAT and TOI signal fields, and S1/S2/Proj/S3 TOI per game plus season TOI when source and projected TOI are available; S1 TOI may be derived as aggregate training TOI minus latest training-season TOI for two-season training windows.
   - SAT model status must move from running to complete after the requested SAT or SOG danger evaluation job finishes successfully.
   - SAT model status must move to failed when the requested SAT or SOG danger evaluation fails.
   - SAT model status changes must broadcast a row update on the admin SAT models channel so the admin page does not require refresh.
@@ -122,6 +134,8 @@ public_interface:
   - admin.nhl-sat-models.rate-projections.compare.aggregates.export
   - admin.nhl-sat-models.rate-projections.compare.build
   - admin.nhl-sat-models.rate-projections.compare.raw
+  - admin.nhl-sat-models.toi-projections
+  - admin.nhl-sat-models.toi-projections.build
   - admin.sat-models
   - NhlSatModelUpdated
   - nhl_model_runs
@@ -131,6 +145,7 @@ public_interface:
   - nhl_sat_model_entity_rate_projection_buckets
   - nhl_sat_model_entity_rate_comparison_buckets
   - nhl_sat_model_entity_rate_comparison_aggregates
+  - nhl_sat_model_entity_toi_projections
   - NhlModelRun
   - NhlModelRunController
 example_usage: |
@@ -138,4 +153,5 @@ example_usage: |
   and test season "20252026", then Eval SAT to store training-season SAT-to-SOG probabilities
   or Eval SOG to store training-season SOG-to-goal probabilities only. After Eval SAT,
   Build Profiles to persist skater, goalie, team, staff offense/defense, and official entity profile rows
-  for training seasons and, when present, the held-out test season in a separate table.
+  for training seasons and, when present, the held-out test season in a separate table. Then Build TOI
+  to persist skater opportunity assumptions for the same SAT model without reading the held-out test season.

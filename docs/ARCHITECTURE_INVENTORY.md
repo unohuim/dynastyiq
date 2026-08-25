@@ -816,12 +816,15 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 - `app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php`
 - `app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php`
 - `app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php`
+- `app/Jobs/BuildNhlSatModelEntityToiProjectionForEntityJob.php`
+- `app/Jobs/BuildNhlSatModelEntityToiProjectionsJob.php`
 - `app/Jobs/BackfillNhlExpectedGoalsJob.php`
 - `app/Models/NhlModelRun.php`
 - `app/Services/NhlSatModelEntityProfileBuilder.php`
 - `app/Services/NhlSatModelGenericBucketStabilityBuilder.php`
 - `app/Services/NhlSatModelEntityRateComparisonBuilder.php`
 - `app/Services/NhlSatModelEntityRateProjectionBuilder.php`
+- `app/Services/NhlSatModelEntityToiProjectionBuilder.php`
 - `database/migrations/2026_08_19_000001_create_nhl_model_runs_table.php`
 - `database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php`
 - `database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php`
@@ -832,6 +835,7 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 - `database/migrations/2026_08_21_000004_create_nhl_sat_model_entity_rate_comparison_tables.php`
 - `database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php`
 - `database/migrations/2026_08_21_000007_create_nhl_sat_model_generic_bucket_stabilities_table.php`
+- `database/migrations/2026_08_23_000001_create_nhl_sat_model_entity_toi_projections_table.php`
 - `resources/views/admin/nhl-sat-models/index.blade.php`
 - `resources/views/admin/nhl-sat-models/_model-row.blade.php`
 - `resources/views/admin/nhl-sat-models/buckets.blade.php`
@@ -841,14 +845,18 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 - `resources/views/admin/nhl-sat-models/rate-projection-aggregate-comparison.blade.php`
 - `resources/views/admin/nhl-sat-models/rate-projection-comparison.blade.php`
 - `resources/views/admin/nhl-sat-models/rate-projections.blade.php`
+- `resources/views/admin/nhl-sat-models/toi-projections.blade.php`
 - `resources/js/admin/nhl-sat-models.js`
 - `docs/architecture/stats/StatModelLifecycle.yaml`
 - `docs/architecture/stats/NhlModelRuns.yaml`
 - `docs/architecture/stats/NhlSatEntityRateProjection.yaml`
+- `docs/architecture/stats/NhlSatModelEntityToiProjection.yaml`
 
 **Purpose:**
 Register SAT models with explicit training seasons, optional test season, configuration, status, shrinkage confidence, aggregate training profiles, single-season profile snapshots, generic bucket stability diagnostics, and metrics.
 Skater-offense SAT /60 projection strategy is documented separately in `docs/architecture/stats/NhlSatEntityRateProjection.yaml`; the current `skater_offense_segmented_xsat_v2` strategy uses training-season profiles, true training-season snapshots, training-season production tiers from `nhl_game_summaries`, latest active bucket count, position type, goal-per-game tier, and S2-vs-S1 direction without using the held-out test season as input.
+SAT-model scoped TOI projection strategy is documented separately in `docs/architecture/stats/NhlSatModelEntityToiProjection.yaml`; it uses training-season nhl_game_summaries TOI and role ranks as the primary opportunity input, falls back to nhl_season_stats only when summaries are unavailable, and does not consume the held-out test season.
+Aggregate Compare /60 rows and exports may display SAT-model TOI projections beside S1/S2/S3 TOI context when the projection rows have been built; S1 is derived from aggregate training minus latest training-season TOI for two-season training windows.
 
 **When to Use:**
 SAT-to-SOG and SOG-to-goal danger evaluation workflows that must be compared without overwriting prior model outputs.
@@ -871,6 +879,8 @@ Raw NHL imports, shot-attempt fact storage, non-SAT model families, or directly 
 - `admin.nhl-sat-models.rate-projections.compare.aggregates`
 - `admin.nhl-sat-models.rate-projections.compare.build`
 - `admin.nhl-sat-models.rate-projections.compare.raw`
+- `admin.nhl-sat-models.toi-projections`
+- `admin.nhl-sat-models.toi-projections.build`
 - `admin.sat-models`
 - `NhlSatModelUpdated`
 - `nhl_model_runs`
@@ -880,6 +890,7 @@ Raw NHL imports, shot-attempt fact storage, non-SAT model families, or directly 
 - `nhl_sat_model_entity_rate_projection_buckets`
 - `nhl_sat_model_entity_rate_comparison_buckets`
 - `nhl_sat_model_entity_rate_comparison_aggregates`
+- `nhl_sat_model_entity_toi_projections`
 - `NhlModelRun`
 
 **Example Usage:**

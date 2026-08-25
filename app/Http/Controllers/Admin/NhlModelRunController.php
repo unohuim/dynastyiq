@@ -9,6 +9,7 @@ use App\Events\NhlSatModelUpdated;
 use App\Jobs\BuildNhlSatModelEntityProfilesJob;
 use App\Jobs\BuildNhlSatModelEntityRateComparisonsJob;
 use App\Jobs\BuildNhlSatModelEntityRateProjectionsJob;
+use App\Jobs\BuildNhlSatModelEntityToiProjectionsJob;
 use App\Models\NhlExpectedGoalsModel;
 use App\Models\NhlExpectedGoalsModelBucket;
 use App\Models\NhlModelRun;
@@ -60,6 +61,7 @@ class NhlModelRunController extends Controller
             'statuses' => NhlModelRun::statuses(),
             'comparisonStates' => $this->rateComparisonStatesForRuns($runs->getCollection()),
             'genericBucketStabilityStates' => $this->genericBucketStabilityStatesForRuns($runs->getCollection()),
+            'toiProjectionStates' => $this->toiProjectionStatesForRuns($runs->getCollection()),
             'trainingDriftStates' => $this->trainingDriftStatesForRuns($runs->getCollection()),
             'trainingSummaries' => $this->trainingSummariesForRuns($runs->getCollection()),
             'runs' => $runs,
@@ -414,6 +416,76 @@ class NhlModelRunController extends Controller
         return redirect()
             ->route('admin.nhl-sat-models.index')
             ->with('status', 'Queued /60.');
+    }
+
+    /**
+     * Build model-run entity TOI projections from SAT model training seasons.
+     */
+    public function buildToiProjections(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
+    {
+        abort_unless(
+            $run->model_family === NhlModelRun::FAMILY_SAT
+            && $run->workflow_stage === NhlModelRun::STAGE_TRAINING,
+            404
+        );
+
+        if (! Schema::hasTable('nhl_sat_model_entity_toi_projections')) {
+            $message = 'Run migrations before building TOI.';
+
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $message], 422);
+            }
+
+            return back()->withErrors(['run' => $message]);
+        }
+
+        if (! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $run->id)->exists()) {
+            $message = 'Build profiles before building TOI.';
+
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $message], 422);
+            }
+
+            return back()->withErrors(['run' => $message]);
+        }
+
+        if ($run->status === NhlModelRun::STATUS_RUNNING) {
+            $message = 'This model already has work running.';
+
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $message], 422);
+            }
+
+            return back()->withErrors(['run' => $message]);
+        }
+
+        $run->forceFill([
+            'status' => NhlModelRun::STATUS_RUNNING,
+            'metrics' => array_merge($run->metrics ?? [], [
+                'toi_projections_started_at' => now()->toIso8601String(),
+            ]),
+            'started_at' => $run->started_at ?? now(),
+            'completed_at' => null,
+        ])->save();
+
+        BuildNhlSatModelEntityToiProjectionsJob::dispatch(modelRunId: (int) $run->id);
+
+        try {
+            broadcast(new NhlSatModelUpdated((int) $run->id, 'toi-projections-queued'));
+        } catch (\Throwable) {
+            // The Ajax response already carries the updated row; broadcast failure should not fail queueing.
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Queued TOI.',
+                'row_html' => $this->renderRow($run),
+            ]);
+        }
+
+        return redirect()
+            ->route('admin.nhl-sat-models.index')
+            ->with('status', 'Queued TOI.');
     }
 
     /**
@@ -1053,6 +1125,162 @@ class NhlModelRunController extends Controller
     }
 
     /**
+     * Show entity TOI projections for a SAT model.
+     */
+    public function toiProjections(Request $request, NhlModelRun $run): View
+    {
+        abort_unless(
+            $run->model_family === NhlModelRun::FAMILY_SAT
+            && $run->workflow_stage === NhlModelRun::STAGE_TRAINING,
+            404
+        );
+
+        $profileTypes = [
+            'skater_offense' => 'Skater Offense',
+            'skater_defense' => 'Skater Defense',
+        ];
+        $sorts = $this->toiProjectionSorts();
+
+        if (! Schema::hasTable('nhl_sat_model_entity_toi_projections')) {
+            $projections = DB::table('nhl_model_runs')->whereRaw('1 = 0')->paginate(50);
+
+            return view('admin.nhl-sat-models.toi-projections', [
+                'direction' => 'desc',
+                'profileType' => 'skater_offense',
+                'profileTypes' => $profileTypes,
+                'projections' => $projections,
+                'run' => $run,
+                'search' => '',
+                'sort' => 'projected_toi_per_game_seconds',
+                'sorts' => $sorts,
+                'summary' => collect(),
+            ]);
+        }
+
+        $input = $request->validate([
+            'profile_type' => ['nullable', Rule::in(array_keys($profileTypes))],
+            'sort' => ['nullable', Rule::in(array_keys($sorts))],
+            'direction' => ['nullable', Rule::in(['asc', 'desc'])],
+            'q' => ['nullable', 'string', 'max:120'],
+        ]);
+        $profileType = $input['profile_type'] ?? 'skater_offense';
+        $sort = $input['sort'] ?? 'projected_toi_per_game_seconds';
+        $direction = $input['direction'] ?? 'desc';
+        $search = trim((string) ($input['q'] ?? ''));
+        $latestTrainingSeasonId = $this->latestTrainingSeasonId($run);
+        $trainingSeasonIds = $this->seasonIdsFromArray($run->train_season_ids ?? []);
+        $summary = DB::table('nhl_sat_model_entity_toi_projections')
+            ->where('model_run_id', $run->id)
+            ->selectRaw('profile_type')
+            ->selectRaw('COUNT(*) as entities')
+            ->selectRaw('SUM(projected_games) as projected_games')
+            ->selectRaw('SUM(projected_toi_seconds) as projected_toi_seconds')
+            ->selectRaw('AVG(projected_toi_per_game_seconds) as projected_toi_per_game_seconds')
+            ->groupBy('profile_type')
+            ->get()
+            ->keyBy('profile_type');
+        $profileTrainToiSubquery = DB::table('nhl_sat_model_entity_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', $profileType)
+            ->selectRaw('profile_type')
+            ->selectRaw('entity_key')
+            ->selectRaw('MAX(source_toi_seconds) as profile_train_toi_seconds')
+            ->groupBy('profile_type', 'entity_key');
+        $profileLatestToiSubquery = DB::table('nhl_sat_model_entity_test_profile_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', $profileType)
+            ->where('test_season_id', (string) $latestTrainingSeasonId)
+            ->selectRaw('profile_type')
+            ->selectRaw('entity_key')
+            ->selectRaw('MAX(source_toi_seconds) as profile_latest_toi_seconds')
+            ->groupBy('profile_type', 'entity_key');
+        $profileTrainGameRows = $this->trainingDriftEntityGameRows($profileType, $trainingSeasonIds);
+        $profileLatestGameRows = $latestTrainingSeasonId === null
+            ? DB::query()
+                ->fromRaw("(SELECT NULL::varchar as entity_key, 0::integer as games) as entity_games")
+                ->whereRaw('1 = 0')
+            : $this->trainingDriftEntityGameRows($profileType, [$latestTrainingSeasonId]);
+
+        $projections = DB::table('nhl_sat_model_entity_toi_projections as toi_projections')
+            ->leftJoinSub($profileTrainToiSubquery, 'profile_train_toi', function ($join): void {
+                $join
+                    ->on('profile_train_toi.profile_type', '=', 'toi_projections.profile_type')
+                    ->on('profile_train_toi.entity_key', '=', 'toi_projections.entity_key');
+            })
+            ->leftJoinSub($profileLatestToiSubquery, 'profile_latest_toi', function ($join): void {
+                $join
+                    ->on('profile_latest_toi.profile_type', '=', 'toi_projections.profile_type')
+                    ->on('profile_latest_toi.entity_key', '=', 'toi_projections.entity_key');
+            })
+            ->leftJoinSub($profileTrainGameRows, 'profile_train_games', 'profile_train_games.entity_key', '=', 'toi_projections.entity_key')
+            ->leftJoinSub($profileLatestGameRows, 'profile_latest_games', 'profile_latest_games.entity_key', '=', 'toi_projections.entity_key')
+            ->where('toi_projections.model_run_id', $run->id)
+            ->where('toi_projections.profile_type', $profileType)
+            ->select('toi_projections.*')
+            ->addSelect([
+                'profile_train_toi.profile_train_toi_seconds',
+                'profile_latest_toi.profile_latest_toi_seconds',
+                'profile_train_games.games as profile_train_games',
+                'profile_latest_games.games as profile_latest_games',
+            ])
+            ->selectRaw(
+                'CASE
+                    WHEN profile_train_toi.profile_train_toi_seconds IS NOT NULL
+                        AND profile_latest_toi.profile_latest_toi_seconds IS NOT NULL
+                        AND profile_train_games.games IS NOT NULL
+                        AND profile_latest_games.games IS NOT NULL
+                        AND (profile_train_games.games - profile_latest_games.games) > 0
+                    THEN GREATEST(0, (profile_train_toi.profile_train_toi_seconds - profile_latest_toi.profile_latest_toi_seconds) / NULLIF(profile_train_games.games - profile_latest_games.games, 0))
+                    ELSE NULL
+                END as s1_toi_per_game_seconds'
+            )
+            ->selectRaw(
+                'CASE
+                    WHEN profile_latest_toi.profile_latest_toi_seconds IS NOT NULL
+                        AND profile_latest_games.games IS NOT NULL
+                        AND profile_latest_games.games > 0
+                    THEN profile_latest_toi.profile_latest_toi_seconds / profile_latest_games.games
+                    ELSE NULL
+                END as s2_toi_per_game_seconds'
+            )
+            ->selectRaw(
+                'CASE
+                    WHEN profile_train_toi.profile_train_toi_seconds IS NOT NULL
+                        AND profile_train_games.games IS NOT NULL
+                        AND profile_train_games.games > 0
+                    THEN profile_train_toi.profile_train_toi_seconds / profile_train_games.games
+                    ELSE NULL
+                END as profile_train_toi_per_game_seconds'
+            )
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where(function ($searchQuery) use ($search): void {
+                    $like = '%' . $search . '%';
+
+                    $searchQuery
+                        ->where('toi_projections.entity_name', 'ilike', $like)
+                        ->orWhere('toi_projections.entity_key', 'ilike', $like)
+                        ->orWhere('toi_projections.position', 'ilike', $like);
+                });
+            })
+            ->orderBy($sorts[$sort], $direction)
+            ->orderBy('entity_key')
+            ->paginate(50)
+            ->withQueryString();
+
+        return view('admin.nhl-sat-models.toi-projections', [
+            'direction' => $direction,
+            'profileType' => $profileType,
+            'profileTypes' => $profileTypes,
+            'projections' => $projections,
+            'run' => $run,
+            'search' => $search,
+            'sort' => $sort,
+            'sorts' => $sorts,
+            'summary' => $summary,
+        ]);
+    }
+
+    /**
      * Show raw bucket-level held-out test-season /60 comparison rows.
      */
     public function compareRateProjectionsRaw(Request $request, NhlModelRun $run): View
@@ -1651,6 +1879,30 @@ class NhlModelRunController extends Controller
     /**
      * @return array<string, string>
      */
+    private function toiProjectionSorts(): array
+    {
+        return [
+            'entity' => 'toi_projections.entity_key',
+            'position' => 'toi_projections.position',
+            'age' => 'toi_projections.age_years',
+            'prior_games' => 'toi_projections.prior_games',
+            'latest_games' => 'toi_projections.latest_games',
+            'train_games' => 'toi_projections.train_games',
+            'prior_toi_per_game_seconds' => 's1_toi_per_game_seconds',
+            'latest_toi_per_game_seconds' => 's2_toi_per_game_seconds',
+            'train_toi_per_game_seconds' => 'profile_train_toi_per_game_seconds',
+            'projected_games' => 'toi_projections.projected_games',
+            'projected_toi_per_game_seconds' => 'toi_projections.projected_toi_per_game_seconds',
+            'projected_toi_hours' => 'toi_projections.projected_toi_hours',
+            'role_adjustment_seconds_per_game' => 'toi_projections.role_adjustment_seconds_per_game',
+            'age_adjustment_seconds_per_game' => 'toi_projections.age_adjustment_seconds_per_game',
+            'confidence_score' => 'toi_projections.confidence_score',
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
     private function rateProjectionComparisonSorts(): array
     {
         return [
@@ -2176,6 +2428,39 @@ SQL;
             ->selectRaw("'skater_offense:' || summaries.nhl_player_id::text as entity_key")
             ->selectRaw('SUM(COALESCE(summaries.g, 0))::numeric / NULLIF(COUNT(DISTINCT summaries.nhl_game_id), 0) as train_g_gp')
             ->groupBy('summaries.nhl_player_id');
+        $toiProjectionSubquery = Schema::hasTable('nhl_sat_model_entity_toi_projections')
+            ? DB::table('nhl_sat_model_entity_toi_projections')
+                ->where('model_run_id', $run->id)
+                ->selectRaw('profile_type as toi_projection_profile_type')
+                ->selectRaw('entity_key as toi_projection_entity_key')
+                ->selectRaw('projected_games as projected_toi_games')
+                ->selectRaw('projected_toi_seconds')
+                ->selectRaw('projected_toi_per_game_seconds')
+                ->selectRaw('source_role_bucket as projected_source_role_bucket')
+                ->selectRaw('target_role_bucket as projected_target_role_bucket')
+                ->selectRaw('role_adjustment_seconds_per_game as projected_role_adjustment_seconds_per_game')
+                ->selectRaw('age_adjustment_seconds_per_game as projected_age_adjustment_seconds_per_game')
+                ->selectRaw('projection_inputs as projected_toi_inputs')
+            : DB::query()
+                ->fromRaw('(SELECT NULL::varchar as toi_projection_profile_type, NULL::varchar as toi_projection_entity_key, NULL::numeric as projected_toi_games, NULL::numeric as projected_toi_seconds, NULL::numeric as projected_toi_per_game_seconds, NULL::varchar as projected_source_role_bucket, NULL::varchar as projected_target_role_bucket, NULL::numeric as projected_role_adjustment_seconds_per_game, NULL::numeric as projected_age_adjustment_seconds_per_game, NULL::json as projected_toi_inputs) as toi_projection_empty')
+                ->whereRaw('1 = 0');
+        $rateProjectionSignalSubquery = Schema::hasTable('nhl_sat_model_entity_rate_projection_buckets')
+            ? DB::table('nhl_sat_model_entity_rate_projection_buckets')
+                ->where('model_run_id', $run->id)
+                ->selectRaw('profile_type as rate_signal_profile_type')
+                ->selectRaw('entity_key as rate_signal_entity_key')
+                ->selectRaw("MAX((metadata->>'pre_march_sat60')::numeric) as pre_march_sat60")
+                ->selectRaw("MAX((metadata->>'late_sat60')::numeric) as late_sat60")
+                ->selectRaw("MAX((metadata->>'late_sat60_delta')::numeric) as late_sat60_delta")
+                ->selectRaw("MAX((metadata->>'pre_march_sat_gp')::numeric) as pre_march_sat_gp")
+                ->selectRaw("MAX((metadata->>'late_sat_gp')::numeric) as late_sat_gp")
+                ->selectRaw("MAX((metadata->>'late_sat_gp_delta')::numeric) as late_sat_gp_delta")
+                ->selectRaw("MAX(metadata->>'late_sat_signal') as late_sat_signal")
+                ->selectRaw("MAX((metadata->>'late_sat_adjustment_xsat_per_60')::numeric) as late_sat_adjustment_xsat_per_60")
+                ->groupBy('profile_type', 'entity_key')
+            : DB::query()
+                ->fromRaw('(SELECT NULL::varchar as rate_signal_profile_type, NULL::varchar as rate_signal_entity_key, NULL::numeric as pre_march_sat60, NULL::numeric as late_sat60, NULL::numeric as late_sat60_delta, NULL::numeric as pre_march_sat_gp, NULL::numeric as late_sat_gp, NULL::numeric as late_sat_gp_delta, NULL::varchar as late_sat_signal, NULL::numeric as late_sat_adjustment_xsat_per_60) as rate_projection_signal_empty')
+                ->whereRaw('1 = 0');
 
         return DB::table('nhl_sat_model_entity_rate_comparison_aggregates')
             ->leftJoinSub($trainToiSubquery, 'train_toi', function ($join): void {
@@ -2198,6 +2483,16 @@ SQL;
             })
             ->leftJoinSub($trainingGoalRateSubquery, 'training_goal_rates', function ($join): void {
                 $join->on('training_goal_rates.entity_key', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.entity_key');
+            })
+            ->leftJoinSub($toiProjectionSubquery, 'toi_projection', function ($join): void {
+                $join
+                    ->on('toi_projection.toi_projection_profile_type', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.profile_type')
+                    ->on('toi_projection.toi_projection_entity_key', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.entity_key');
+            })
+            ->leftJoinSub($rateProjectionSignalSubquery, 'rate_projection_signals', function ($join): void {
+                $join
+                    ->on('rate_projection_signals.rate_signal_profile_type', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.profile_type')
+                    ->on('rate_projection_signals.rate_signal_entity_key', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.entity_key');
             })
             ->where('nhl_sat_model_entity_rate_comparison_aggregates.model_run_id', $run->id)
             ->where('nhl_sat_model_entity_rate_comparison_aggregates.test_season_id', $testSeasonId)
@@ -2231,6 +2526,22 @@ SQL;
                 'latest_comparison_rates.last_toi_seconds',
                 'latest_entity_games.games as last_games',
                 'test_toi.test_toi_seconds',
+                'toi_projection.projected_toi_games',
+                'toi_projection.projected_toi_seconds',
+                'toi_projection.projected_toi_per_game_seconds',
+                'toi_projection.projected_source_role_bucket',
+                'toi_projection.projected_target_role_bucket',
+                'toi_projection.projected_role_adjustment_seconds_per_game',
+                'toi_projection.projected_age_adjustment_seconds_per_game',
+                'toi_projection.projected_toi_inputs',
+                'rate_projection_signals.pre_march_sat60',
+                'rate_projection_signals.late_sat60',
+                'rate_projection_signals.late_sat60_delta',
+                'rate_projection_signals.pre_march_sat_gp',
+                'rate_projection_signals.late_sat_gp',
+                'rate_projection_signals.late_sat_gp_delta',
+                'rate_projection_signals.late_sat_signal',
+                'rate_projection_signals.late_sat_adjustment_xsat_per_60',
             ])
             ->when($profileType === 'skater_offense', function ($query) use ($ageDate): void {
                 $query
@@ -2273,6 +2584,49 @@ SQL;
             ->selectRaw('SUM(latest_comparison_rates.last_toi_seconds) as last_toi_seconds')
             ->selectRaw('SUM(latest_entity_games.games) as last_games')
             ->selectRaw('SUM(test_toi.test_toi_seconds) as test_toi_seconds')
+            ->selectRaw('SUM(toi_projection.projected_toi_games) as projected_toi_games')
+            ->selectRaw('SUM(toi_projection.projected_toi_seconds) as projected_toi_seconds')
+            ->selectRaw('AVG(
+                CASE
+                    WHEN train_toi.train_toi_seconds IS NOT NULL
+                        AND latest_comparison_rates.last_toi_seconds IS NOT NULL
+                        AND (train_games - COALESCE(latest_entity_games.games, 0)) > 0
+                    THEN (train_toi.train_toi_seconds - latest_comparison_rates.last_toi_seconds)
+                        / NULLIF((train_games - COALESCE(latest_entity_games.games, 0))::numeric, 0)
+                    ELSE NULL
+                END
+            ) as s1_toi_per_game_seconds')
+            ->selectRaw('AVG(
+                CASE
+                    WHEN latest_comparison_rates.last_toi_seconds IS NOT NULL
+                        AND COALESCE(latest_entity_games.games, 0) > 0
+                    THEN latest_comparison_rates.last_toi_seconds / NULLIF(latest_entity_games.games::numeric, 0)
+                    ELSE NULL
+                END
+            ) as last_toi_per_game_seconds')
+            ->selectRaw('AVG(toi_projection.projected_toi_per_game_seconds) FILTER (
+                WHERE test_toi.test_toi_seconds IS NOT NULL
+                    AND test_games > 0
+                    AND toi_projection.projected_toi_per_game_seconds IS NOT NULL
+            ) as projected_toi_per_game_seconds')
+            ->selectRaw('AVG(
+                CASE
+                    WHEN test_toi.test_toi_seconds IS NOT NULL
+                        AND test_games > 0
+                    THEN test_toi.test_toi_seconds / NULLIF(test_games::numeric, 0)
+                    ELSE NULL
+                END
+            ) as test_toi_per_game_seconds')
+            ->selectRaw('AVG(toi_projection.projected_role_adjustment_seconds_per_game) as projected_role_adjustment_seconds_per_game')
+            ->selectRaw('AVG(toi_projection.projected_age_adjustment_seconds_per_game) as projected_age_adjustment_seconds_per_game')
+            ->selectRaw('AVG(rate_projection_signals.pre_march_sat60) as pre_march_sat60')
+            ->selectRaw('AVG(rate_projection_signals.late_sat60) as late_sat60')
+            ->selectRaw('AVG(rate_projection_signals.late_sat60_delta) as late_sat60_delta')
+            ->selectRaw('AVG(rate_projection_signals.pre_march_sat_gp) as pre_march_sat_gp')
+            ->selectRaw('AVG(rate_projection_signals.late_sat_gp) as late_sat_gp')
+            ->selectRaw('AVG(rate_projection_signals.late_sat_gp_delta) as late_sat_gp_delta')
+            ->selectRaw('NULL::varchar as late_sat_signal')
+            ->selectRaw('AVG(rate_projection_signals.late_sat_adjustment_xsat_per_60) as late_sat_adjustment_xsat_per_60')
             ->selectRaw('SUM(train_sat) as train_sat')
             ->selectRaw('SUM(train_sog) as train_sog')
             ->selectRaw('SUM(train_goals) as train_goals')
@@ -2346,18 +2700,52 @@ SQL;
             'train_bucket_entropy',
             'last_bucket_entropy',
             'test_bucket_entropy',
-            'train_games',
-            'last_games',
-            'test_games',
-            'train_toi_gp',
-            'last_toi_gp',
-            'test_toi_gp',
+            's1_games',
+            's2_games',
+            'projected_games',
+            's3_games',
+            's1_toi_gp',
+            's2_toi_gp',
+            'projected_toi_gp',
+            's3_toi_gp',
+            'pre_march_toi_gp',
+            'late_toi_gp',
+            'late_toi_gp_delta',
+            'late_toi_signal',
+            's1_role',
+            's2_role',
+            'toi_formula_segment',
+            'game_formula_segment',
+            's1_s2_games_delta',
+            'games_movement_bucket',
+            'games_projection_reason',
+            's1_pp_toi_gp',
+            's2_pp_toi_gp',
+            'pp_toi_gp_drift',
+            'pp_role_bucket',
+            'role_adjustment_toi_gp',
+            'age_adjustment_toi_gp',
+            'pp_adjustment_toi_gp',
+            'game_formula_base_games',
+            'game_adjustment',
+            's1_toi_season_hours',
+            's2_toi_season_hours',
+            'projected_toi_season_hours',
+            's3_toi_season_hours',
             'train_sat_gp',
             'test_sat_gp',
             'train_sog_gp',
             'test_sog_gp',
             'train_g_gp',
             'test_g_gp',
+            'pre_march_sat_gp',
+            'late_sat_gp',
+            'late_sat_gp_delta',
+            'pre_march_sat_60',
+            'late_sat_60',
+            'late_sat_60_delta',
+            'late_sat_signal',
+            'late_sat_adjustment_xsat_60',
             'train_xsat_60',
             'last_xsat_60',
             'projected_xsat_60',
@@ -2400,12 +2788,29 @@ SQL;
         $trainGames = (int) ($row->train_games ?? 0);
         $lastGames = (int) ($row->last_games ?? 0);
         $testGames = (int) ($row->test_games ?? 0);
+        $s1Games = max(0, $trainGames - $lastGames);
+        $s1ToiSeconds = ($row->train_toi_seconds ?? null) === null || ($row->last_toi_seconds ?? null) === null
+            ? null
+            : max(0, (float) $row->train_toi_seconds - (float) $row->last_toi_seconds);
         $perGame = fn ($value, int $games): ?float => $games > 0 && $value !== null
             ? ((float) $value) / $games
             : null;
         $toiPerGame = fn ($seconds, int $games): ?float => $games > 0 && $seconds !== null
             ? (((float) $seconds) / 60) / $games
             : null;
+        $seasonHours = fn ($seconds, float $divisor = 1.0): ?float => $seconds !== null && $divisor > 0
+            ? (((float) $seconds) / $divisor) / 3600
+            : null;
+        $s1ToiPerGame = ($row->s1_toi_per_game_seconds ?? null) === null
+            ? $toiPerGame($s1ToiSeconds, $s1Games)
+            : ((float) $row->s1_toi_per_game_seconds) / 60;
+        $lastToiPerGame = ($row->last_toi_per_game_seconds ?? null) === null
+            ? $toiPerGame($row->last_toi_seconds ?? null, $lastGames)
+            : ((float) $row->last_toi_per_game_seconds) / 60;
+        $testToiPerGame = ($row->test_toi_per_game_seconds ?? null) === null
+            ? $toiPerGame($row->test_toi_seconds ?? null, $testGames)
+            : ((float) $row->test_toi_per_game_seconds) / 60;
+        $toiInputs = $this->decodeProjectionInputs($row->projected_toi_inputs ?? null);
 
         return [
             $section,
@@ -2429,18 +2834,52 @@ SQL;
             $row->train_bucket_entropy ?? null,
             $row->last_bucket_entropy ?? null,
             $row->test_bucket_entropy ?? null,
-            $row->train_games ?? null,
+            $s1Games,
             $row->last_games ?? null,
+            $row->projected_toi_games ?? null,
             $row->test_games ?? null,
-            $toiPerGame($row->train_toi_seconds ?? null, $trainGames),
-            $toiPerGame($row->last_toi_seconds ?? null, $lastGames),
-            $toiPerGame($row->test_toi_seconds ?? null, $testGames),
+            $s1ToiPerGame,
+            $lastToiPerGame,
+            ($row->projected_toi_per_game_seconds ?? null) === null ? null : ((float) $row->projected_toi_per_game_seconds) / 60,
+            $testToiPerGame,
+            $section === 'entity' && isset($toiInputs['pre_march_toi_per_game_seconds']) ? ((float) $toiInputs['pre_march_toi_per_game_seconds']) / 60 : null,
+            $section === 'entity' && isset($toiInputs['late_toi_per_game_seconds']) ? ((float) $toiInputs['late_toi_per_game_seconds']) / 60 : null,
+            $section === 'entity' && isset($toiInputs['late_toi_per_game_delta_seconds']) ? ((float) $toiInputs['late_toi_per_game_delta_seconds']) / 60 : null,
+            $section === 'entity' ? ($toiInputs['late_toi_signal'] ?? null) : null,
+            $section === 'entity' ? ($row->projected_source_role_bucket ?? null) : null,
+            $section === 'entity' ? ($row->projected_target_role_bucket ?? null) : null,
+            $section === 'entity' ? ($toiInputs['toi_formula_segment'] ?? null) : null,
+            $section === 'entity' ? ($toiInputs['game_formula_segment'] ?? null) : null,
+            $section === 'entity' ? ($toiInputs['s1_s2_games_delta'] ?? null) : null,
+            $section === 'entity' ? ($toiInputs['games_movement_bucket'] ?? null) : null,
+            $section === 'entity' ? ($toiInputs['games_projection_reason'] ?? null) : null,
+            $section === 'entity' && isset($toiInputs['prior_pp_toi_per_game_seconds']) ? ((float) $toiInputs['prior_pp_toi_per_game_seconds']) / 60 : null,
+            $section === 'entity' && isset($toiInputs['latest_pp_toi_per_game_seconds']) ? ((float) $toiInputs['latest_pp_toi_per_game_seconds']) / 60 : null,
+            $section === 'entity' && isset($toiInputs['pp_toi_per_game_drift_seconds']) ? ((float) $toiInputs['pp_toi_per_game_drift_seconds']) / 60 : null,
+            $section === 'entity' ? ($toiInputs['pp_role_bucket'] ?? null) : null,
+            ($row->projected_role_adjustment_seconds_per_game ?? null) === null ? null : ((float) $row->projected_role_adjustment_seconds_per_game) / 60,
+            ($row->projected_age_adjustment_seconds_per_game ?? null) === null ? null : ((float) $row->projected_age_adjustment_seconds_per_game) / 60,
+            isset($toiInputs['pp_adjustment_seconds_per_game']) ? ((float) $toiInputs['pp_adjustment_seconds_per_game']) / 60 : null,
+            $toiInputs['game_formula_base_games'] ?? null,
+            $toiInputs['game_adjustment'] ?? null,
+            $seasonHours($s1ToiSeconds),
+            $seasonHours($row->last_toi_seconds ?? null),
+            $seasonHours($row->projected_toi_seconds ?? null),
+            $seasonHours($row->test_toi_seconds ?? null),
             $perGame($row->train_sat ?? null, $trainGames),
             $perGame($row->test_sat ?? null, $testGames),
             $perGame($row->train_sog ?? null, $trainGames),
             $perGame($row->test_sog ?? null, $testGames),
             $perGame($row->train_goals ?? null, $trainGames),
             $perGame($row->test_goals ?? null, $testGames),
+            $row->pre_march_sat_gp ?? null,
+            $row->late_sat_gp ?? null,
+            $row->late_sat_gp_delta ?? null,
+            $row->pre_march_sat60 ?? null,
+            $row->late_sat60 ?? null,
+            $row->late_sat60_delta ?? null,
+            $row->late_sat_signal ?? null,
+            $row->late_sat_adjustment_xsat_per_60 ?? null,
             $row->train_xsat_per_60 ?? null,
             $row->last_xsat_per_60 ?? null,
             $row->projected_xsat_per_60 ?? null,
@@ -2473,6 +2912,28 @@ SQL;
             $row->xg_error ?? null,
             $row->xg_error_rate ?? null,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeProjectionInputs(mixed $inputs): array
+    {
+        if (is_array($inputs)) {
+            return $inputs;
+        }
+
+        if (is_object($inputs)) {
+            return (array) $inputs;
+        }
+
+        if (! is_string($inputs) || trim($inputs) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($inputs, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -2522,6 +2983,44 @@ SQL;
             'has_rate_comparisons' => $hasRateComparisons,
             'can_build_rate_comparison' => $hasRateProjections && $hasTestProfiles,
             'can_view_rate_comparison' => $hasRateComparisons,
+        ];
+    }
+
+    /**
+     * @param iterable<int, NhlModelRun> $runs
+     * @return array<int, array{has_profiles:bool,has_toi_projections:bool,can_build_toi_projection:bool,can_view_toi_projection:bool}>
+     */
+    private function toiProjectionStatesForRuns(iterable $runs): array
+    {
+        $states = [];
+
+        foreach ($runs as $run) {
+            $states[(int) $run->id] = $this->toiProjectionStateForRun($run);
+        }
+
+        return $states;
+    }
+
+    /**
+     * @return array{has_profiles:bool,has_toi_projections:bool,can_build_toi_projection:bool,can_view_toi_projection:bool}
+     */
+    private function toiProjectionStateForRun(NhlModelRun $run): array
+    {
+        $hasProfiles = Schema::hasTable('nhl_sat_model_entity_profile_buckets')
+            && DB::table('nhl_sat_model_entity_profile_buckets')
+                ->where('model_run_id', $run->id)
+                ->whereIn('profile_type', ['skater_offense', 'skater_defense'])
+                ->exists();
+        $hasToiProjections = Schema::hasTable('nhl_sat_model_entity_toi_projections')
+            && DB::table('nhl_sat_model_entity_toi_projections')
+                ->where('model_run_id', $run->id)
+                ->exists();
+
+        return [
+            'has_profiles' => $hasProfiles,
+            'has_toi_projections' => $hasToiProjections,
+            'can_build_toi_projection' => $hasProfiles,
+            'can_view_toi_projection' => $hasToiProjections,
         ];
     }
 
@@ -2613,6 +3112,7 @@ SQL;
             'comparisonState' => $this->rateComparisonStateForRun($run),
             'genericBucketStabilityState' => $this->genericBucketStabilityStateForRun($run),
             'run' => $run,
+            'toiProjectionState' => $this->toiProjectionStateForRun($run),
             'trainingDriftState' => $this->trainingDriftStateForRun($run),
             'trainingSummary' => $this->trainingSummaryForRun($run),
         ])->render();

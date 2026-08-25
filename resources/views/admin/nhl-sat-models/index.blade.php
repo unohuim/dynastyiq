@@ -120,6 +120,7 @@
                                         'comparisonState' => $comparisonStates[$run->id] ?? null,
                                         'genericBucketStabilityState' => $genericBucketStabilityStates[$run->id] ?? null,
                                         'run' => $run,
+                                        'toiProjectionState' => $toiProjectionStates[$run->id] ?? null,
                                         'trainingDriftState' => $trainingDriftStates[$run->id] ?? null,
                                         'trainingSummary' => $trainingSummaries[$run->id] ?? null,
                                     ])

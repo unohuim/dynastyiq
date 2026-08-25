@@ -383,6 +383,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/nhl-sat-models/{run}/rate-projections/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildRateProjections'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.rate-projections.build');
+                Route::post('/nhl-sat-models/{run}/toi-projections/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildToiProjections'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.toi-projections.build');
+                Route::get('/nhl-sat-models/{run}/toi-projections', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'toiProjections'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.toi-projections');
                 Route::post('/nhl-sat-models/{run}/rate-projections/compare/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildRateComparisons'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.rate-projections.compare.build');

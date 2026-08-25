@@ -130,6 +130,7 @@ class NhlSatModelEntityRateProjectionBuilder
         $latestTrainingSeasonId = max($seasonIds);
         $priorTrainingSeasonId = min($seasonIds);
         $gameType = (int) ($run->game_type ?? 2);
+        $latestTrainingMarchDate = mb_substr($latestTrainingSeasonId, 4, 4) . '-03-01';
         $entityWhereSql = $entityKey === null ? '' : 'AND adjusted_rows.entity_key = ?';
 
         $sql = <<<SQL
@@ -306,6 +307,86 @@ prior_grouped_rows AS (
     FROM prior_source_rows
     GROUP BY prior_source_rows.entity_key, prior_source_rows.projection_bucket_key
 ),
+latest_late_toi_features AS (
+    SELECT
+        'skater_offense:' || summaries.nhl_player_id::text as entity_key,
+        COUNT(DISTINCT summaries.nhl_game_id) FILTER (WHERE games.game_date < ?::date) as pre_march_games,
+        COUNT(DISTINCT summaries.nhl_game_id) FILTER (WHERE games.game_date >= ?::date) as late_games,
+        SUM(summaries.toi) FILTER (WHERE games.game_date < ?::date) as pre_march_toi_seconds,
+        SUM(summaries.toi) FILTER (WHERE games.game_date >= ?::date) as late_toi_seconds
+    FROM nhl_game_summaries summaries
+    INNER JOIN nhl_games games ON games.nhl_game_id = summaries.nhl_game_id
+    WHERE games.season_id = ?
+        AND games.game_type = ?
+        AND summaries.toi IS NOT NULL
+    GROUP BY summaries.nhl_player_id
+),
+latest_late_sat_features AS (
+    SELECT
+        'skater_offense:' || facts.shooter_player_id::text as entity_key,
+        COUNT(*) FILTER (WHERE games.game_date < ?::date) as pre_march_sat,
+        COUNT(*) FILTER (WHERE games.game_date >= ?::date) as late_sat
+    FROM nhl_shot_attempts_facts facts
+    INNER JOIN nhl_games games ON games.nhl_game_id = facts.nhl_game_id
+    WHERE games.season_id = ?
+        AND games.game_type = ?
+        AND facts.shooter_player_id IS NOT NULL
+        AND COALESCE(facts.period_type, '') <> 'SO'
+        AND COALESCE(facts.is_empty_net, false) = false
+        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
+    GROUP BY facts.shooter_player_id
+),
+latest_late_rate_features AS (
+    SELECT
+        latest_late_toi_features.entity_key,
+        latest_late_toi_features.pre_march_games,
+        latest_late_toi_features.late_games,
+        latest_late_toi_features.pre_march_toi_seconds,
+        latest_late_toi_features.late_toi_seconds,
+        latest_late_sat_features.pre_march_sat,
+        latest_late_sat_features.late_sat,
+        ROUND((latest_late_sat_features.pre_march_sat::numeric / NULLIF(latest_late_toi_features.pre_march_toi_seconds, 0)) * 3600, 4) as pre_march_sat_per_60,
+        ROUND((latest_late_sat_features.late_sat::numeric / NULLIF(latest_late_toi_features.late_toi_seconds, 0)) * 3600, 4) as late_sat_per_60,
+        ROUND(latest_late_sat_features.pre_march_sat::numeric / NULLIF(latest_late_toi_features.pre_march_games, 0), 4) as pre_march_sat_per_game,
+        ROUND(latest_late_sat_features.late_sat::numeric / NULLIF(latest_late_toi_features.late_games, 0), 4) as late_sat_per_game
+    FROM latest_late_toi_features
+    LEFT JOIN latest_late_sat_features ON latest_late_sat_features.entity_key = latest_late_toi_features.entity_key
+),
+latest_late_signals AS (
+    SELECT
+        latest_late_rate_features.*,
+        ROUND((latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60)::numeric, 4) as late_sat_per_60_delta,
+        ROUND((latest_late_rate_features.late_sat_per_game - latest_late_rate_features.pre_march_sat_per_game)::numeric, 4) as late_sat_per_game_delta,
+        CASE
+            WHEN latest_late_rate_features.late_games < 8
+                OR latest_late_rate_features.pre_march_games < 20
+                OR latest_late_rate_features.late_sat_per_60 IS NULL
+                OR latest_late_rate_features.pre_march_sat_per_60 IS NULL THEN 'late_sat_insufficient'
+            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 > 2 THEN 'late_sat_spike'
+            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 < -2 THEN 'late_sat_drop'
+            ELSE 'late_sat_stable'
+        END as late_sat_signal,
+        CASE
+            WHEN latest_late_rate_features.late_games < 8
+                OR latest_late_rate_features.pre_march_games < 20
+                OR latest_late_rate_features.late_sat_per_60 IS NULL
+                OR latest_late_rate_features.pre_march_sat_per_60 IS NULL THEN 0::numeric
+            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 > 2
+                THEN -1 * LEAST(0.25, ABS(latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) * 0.05)
+            WHEN latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60 < -2
+                THEN GREATEST(-0.50, (latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) * 0.10)
+            ELSE 0::numeric
+        END as late_sat_adjustment_xsat_per_60,
+        CASE
+            WHEN latest_late_rate_features.late_games < 8
+                OR latest_late_rate_features.pre_march_games < 20
+                OR latest_late_rate_features.late_sat_per_60 IS NULL
+                OR latest_late_rate_features.pre_march_sat_per_60 IS NULL THEN -0.08
+            WHEN ABS(latest_late_rate_features.late_sat_per_60 - latest_late_rate_features.pre_march_sat_per_60) <= 2 THEN 0.03
+            ELSE -0.05
+        END as late_sat_confidence_adjustment
+    FROM latest_late_rate_features
+),
 production_rows AS (
     SELECT
         'skater_offense:' || summaries.nhl_player_id::text as entity_key,
@@ -444,6 +525,17 @@ entity_targets AS (
         entity_scored_features.*,
         goal_tier_baselines.goal_tier_baseline_xsat_per_60,
         bucket_tier_baselines.bucket_tier_baseline_xsat_per_60,
+        latest_late_signals.pre_march_games,
+        latest_late_signals.late_games,
+        latest_late_signals.pre_march_sat_per_60,
+        latest_late_signals.late_sat_per_60,
+        latest_late_signals.late_sat_per_60_delta,
+        latest_late_signals.pre_march_sat_per_game,
+        latest_late_signals.late_sat_per_game,
+        latest_late_signals.late_sat_per_game_delta,
+        latest_late_signals.late_sat_signal,
+        COALESCE(latest_late_signals.late_sat_adjustment_xsat_per_60, 0) as late_sat_adjustment_xsat_per_60,
+        COALESCE(latest_late_signals.late_sat_confidence_adjustment, 0) as late_sat_confidence_adjustment,
         COALESCE(goal_tier_baselines.goal_tier_baseline_xsat_per_60, entity_scored_features.entity_xsat_per_60) as cohort_xsat_per_60,
         CASE
             WHEN entity_scored_features.entity_latest_xsat_per_60 >= entity_scored_features.entity_season_one_xsat_per_60
@@ -539,6 +631,7 @@ entity_targets AS (
         ON goal_tier_baselines.position_type = entity_scored_features.position_type
         AND goal_tier_baselines.goal_tier = entity_scored_features.goal_tier
     LEFT JOIN bucket_tier_baselines ON bucket_tier_baselines.bucket_count_tier = entity_scored_features.bucket_count_tier
+    LEFT JOIN latest_late_signals ON latest_late_signals.entity_key = entity_scored_features.entity_key
     WHERE COALESCE(entity_scored_features.player_position, '') <> 'G'
 ),
 adjusted_rows AS (
@@ -562,7 +655,22 @@ adjusted_rows AS (
         entity_targets.cohort_xsat_per_60,
         entity_targets.goal_tier_baseline_xsat_per_60,
         entity_targets.bucket_tier_baseline_xsat_per_60,
-        COALESCE(entity_targets.entity_target_xsat_per_60 / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0), 1) as entity_projection_scale,
+        entity_targets.pre_march_games,
+        entity_targets.late_games,
+        entity_targets.pre_march_sat_per_60,
+        entity_targets.late_sat_per_60,
+        entity_targets.late_sat_per_60_delta,
+        entity_targets.pre_march_sat_per_game,
+        entity_targets.late_sat_per_game,
+        entity_targets.late_sat_per_game_delta,
+        entity_targets.late_sat_signal,
+        entity_targets.late_sat_adjustment_xsat_per_60,
+        entity_targets.late_sat_confidence_adjustment,
+        COALESCE(
+            GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
+                / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+            1
+        ) as entity_projection_scale,
         1::numeric as overall_rate_multiplier,
         1::numeric as raw_tendency_multiplier,
         1::numeric as shrunk_tendency_multiplier,
@@ -570,7 +678,11 @@ adjusted_rows AS (
             GREATEST(
                 0,
                 bucket_preliminary_rows.preliminary_xsat_per_60
-                    * COALESCE(entity_targets.entity_target_xsat_per_60 / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0), 1)
+                    * COALESCE(
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
+                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        1
+                    )
             )::numeric,
             4
         ) as projected_xsat_per_60,
@@ -578,7 +690,11 @@ adjusted_rows AS (
             GREATEST(
                 0,
                 bucket_preliminary_rows.preliminary_xsog_per_60
-                    * COALESCE(entity_targets.entity_target_xsat_per_60 / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0), 1)
+                    * COALESCE(
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
+                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        1
+                    )
             )::numeric,
             4
         ) as projected_xsog_per_60,
@@ -586,7 +702,11 @@ adjusted_rows AS (
             GREATEST(
                 0,
                 bucket_preliminary_rows.preliminary_xg_per_60
-                    * COALESCE(entity_targets.entity_target_xsat_per_60 / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0), 1)
+                    * COALESCE(
+                        GREATEST(0, entity_targets.entity_target_xsat_per_60 + entity_targets.late_sat_adjustment_xsat_per_60)
+                            / NULLIF(entity_targets.entity_preliminary_xsat_per_60, 0),
+                        1
+                    )
             )::numeric,
             4
         ) as projected_xg_per_60
@@ -626,7 +746,7 @@ SELECT
     adjusted_rows.projected_xg_per_60,
     COALESCE(adjusted_rows.sat_probability, 0) as sat_probability,
     COALESCE(adjusted_rows.goal_probability, 0) as goal_probability,
-    COALESCE(adjusted_rows.confidence_score, 0) as confidence_score,
+    LEAST(1, GREATEST(0, COALESCE(adjusted_rows.confidence_score, 0) + adjusted_rows.late_sat_confidence_adjustment)) as confidence_score,
     COALESCE(adjusted_rows.shrinkage_weight, 0) as shrinkage_weight,
     adjusted_rows.confidence_bucket,
     json_build_object(
@@ -657,7 +777,18 @@ SELECT
         'cohort_xsat_per_60', adjusted_rows.cohort_xsat_per_60,
         'goal_tier_baseline_xsat_per_60', adjusted_rows.goal_tier_baseline_xsat_per_60,
         'bucket_tier_baseline_xsat_per_60', adjusted_rows.bucket_tier_baseline_xsat_per_60,
-        'formula', 'S2 bucket shape scaled to S2 bucket-count + position + G/GP tier + S2-vs-S1 entity SAT target'
+        'pre_march_games', adjusted_rows.pre_march_games,
+        'late_games', adjusted_rows.late_games,
+        'pre_march_sat60', adjusted_rows.pre_march_sat_per_60,
+        'late_sat60', adjusted_rows.late_sat_per_60,
+        'late_sat60_delta', adjusted_rows.late_sat_per_60_delta,
+        'pre_march_sat_gp', adjusted_rows.pre_march_sat_per_game,
+        'late_sat_gp', adjusted_rows.late_sat_per_game,
+        'late_sat_gp_delta', adjusted_rows.late_sat_per_game_delta,
+        'late_sat_signal', adjusted_rows.late_sat_signal,
+        'late_sat_adjustment_xsat_per_60', adjusted_rows.late_sat_adjustment_xsat_per_60,
+        'late_sat_confidence_adjustment', adjusted_rows.late_sat_confidence_adjustment,
+        'formula', 'S2 bucket shape scaled to S2 bucket-count + position + G/GP tier + S2-vs-S1 entity SAT target, with conservative late-season SAT signal adjustment'
     ) as metadata,
     ?::timestamp as projected_at,
     ?::timestamp as created_at,
@@ -717,6 +848,16 @@ SQL;
             $run->id,
             $priorTrainingSeasonId,
             self::SKATER_OFFENSE_PROFILE_TYPE,
+            $latestTrainingMarchDate,
+            $latestTrainingMarchDate,
+            $latestTrainingMarchDate,
+            $latestTrainingMarchDate,
+            $latestTrainingSeasonId,
+            $gameType,
+            $latestTrainingMarchDate,
+            $latestTrainingMarchDate,
+            $latestTrainingSeasonId,
+            $gameType,
             $priorTrainingSeasonId,
             $latestTrainingSeasonId,
             $gameType,

@@ -64,6 +64,7 @@ Migrations remain the **sole source of truth**.
 - nhl_sat_model_entity_rate_projection_buckets
 - nhl_sat_model_entity_rate_comparison_buckets
 - nhl_sat_model_entity_rate_comparison_aggregates
+- nhl_sat_model_entity_toi_projections
 - nhl_game_officials
 - nhl_goalie_chance_profile_buckets
 - nhl_game_source_statuses
@@ -3376,6 +3377,63 @@ Migrations remain the **sole source of truth**.
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_projection_type`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_projection_entity`)
 - Index: `(model_run_id, matched_bucket_key)` (`ix_nhl_sat_model_rate_projection_bucket`)
+
+---
+
+## nhl_sat_model_entity_toi_projections
+
+**Organization-owned:** No
+**Purpose:** Stores SAT-model scoped skater opportunity projections derived from model training-season TOI history.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| source_season_ids | json | No | Training seasons used by the SAT model |
+| prior_training_season_id | string(8) | Yes | First training season used for S1 context |
+| latest_training_season_id | string(8) | Yes | Latest training season used for S2 context |
+| target_season_id | string(8) | Yes | SAT model target/test season, stored for review only |
+| game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
+| profile_type | string(40) | No | Entity profile type |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source player id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater role from the entity profile |
+| team_context | string(20) | Yes | Offense or defense context |
+| position | string(12) | Yes | Player position |
+| age_years | decimal(5,2) | Yes | Age at the target season anchor date |
+| source_team_id / target_team_id | integer | Yes | Prior/latest training-season team ids |
+| source_team_abbrev / target_team_abbrev | string(12) | Yes | Prior/latest training-season team labels |
+| prior_games / latest_games / train_games | decimal | Yes | Prior, latest, and aggregate training games |
+| prior_toi_seconds / latest_toi_seconds / train_toi_seconds | unsignedInteger | No | Prior, latest, and aggregate training TOI seconds |
+| prior_toi_per_game_seconds / latest_toi_per_game_seconds / train_toi_per_game_seconds | decimal(10,2) | Yes | Prior, latest, and aggregate training TOI per game |
+| source_role_bucket / target_role_bucket | string(32) | Yes | Training-season role buckets |
+| projected_games | decimal(8,2) | Yes | Projected games normalized toward the 84-game cap |
+| projected_toi_seconds | unsignedInteger | No | Projected season TOI seconds |
+| projected_toi_per_game_seconds | decimal(10,2) | Yes | Projected TOI per game |
+| projected_toi_hours | decimal(10,4) | Yes | Projected season TOI hours |
+| age_adjustment_seconds_per_game | decimal(10,2) | Yes | Age adjustment applied to training TOI/GP baseline |
+| role_adjustment_seconds_per_game | decimal(10,2) | Yes | Role-bucket adjustment applied to training TOI/GP baseline |
+| team_change_adjustment_seconds_per_game | decimal(10,2) | Yes | Reserved team-change adjustment |
+| confidence_score | decimal(5,4) | Yes | Opportunity projection confidence |
+| confidence_bucket | string(24) | Yes | Confidence bucket |
+| projection_inputs | json | Yes | Reviewable projection inputs |
+| flags | json | Yes | Projection caveat flags |
+| metadata | json | Yes | Build metadata |
+| projected_at | timestamp | Yes | Build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, profile_type, entity_key)` (`uq_nhl_sat_model_entity_toi_projection`)
+- Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_entity_toi_type`)
+- Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_entity_toi_entity`)
+- Index: `(target_season_id, position)` (`ix_nhl_sat_model_entity_toi_target_pos`)
 
 ---
 

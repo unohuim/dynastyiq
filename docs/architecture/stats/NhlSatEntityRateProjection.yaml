@@ -21,6 +21,8 @@ rules:
   - Skater-offense SAT /60 projections must use only the model training seasons, training profile rows, training-season snapshots, and skater production from nhl_game_summaries for those same training seasons.
   - Skater-offense SAT /60 projection inputs must retain bucket rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row, then roll the remaining profile rows into an explicit Other bucket.
   - Skater-offense SAT /60 projections must use true per-season snapshots for the prior and latest training seasons when comparing season-one and season-two movement.
+  - Skater-offense SAT /60 projections must compute latest-training-season pre-March versus March-1-plus SAT/60 and SAT/GP from training data only.
+  - Late-training-season SAT signals are conservative modifiers only: stable late SAT may slightly improve confidence, late SAT spikes must not create projection upside, and late SAT drops may apply a small capped downside adjustment.
   - Skater-offense SAT /60 entity targets must be position-aware: defense, center, left wing, and right wing may use different S2-vs-S1 regression behavior when validated aggregate comparisons support it.
   - Skater-offense SAT /60 entity targets must exclude goalie-position entities from the skater-offense projection path.
   - Skater-offense SAT /60 projections must segment entities first by latest-training-season active bucket count: 0-2 buckets, 3-6 buckets, and 7+ buckets.
@@ -31,7 +33,7 @@ rules:
   - Defense goal-per-game tiers are high at 0.15 or greater, mid at 0.07 through 0.149, and low below 0.07, measured only from training-season nhl_game_summaries.
   - Training-only cohort baselines used by skater-offense SAT /60 projections must be grouped by position type and goal-per-game tier, not by held-out target-season performance.
   - The current skater-offense SAT /60 projection strategy version is skater_offense_segmented_xsat_v2.
-  - skater_offense_segmented_xsat_v2 must use latest-training-season bucket shape as the bucket-level base, calculate an entity-level xSAT/60 target from segment rules, then scale the entity's bucket rows so projected bucket xSAT/60 sums to that target.
+  - skater_offense_segmented_xsat_v2 must use latest-training-season bucket shape as the bucket-level base, calculate an entity-level xSAT/60 target from segment rules, apply only capped late-training-season SAT signal adjustments, then scale the entity's bucket rows so projected bucket xSAT/60 sums to that target.
   - For skater_offense_segmented_xsat_v2, 0-2 latest active buckets must use `0.25 * avg(train, latest) + 0.75 * cohort`.
   - For skater_offense_segmented_xsat_v2, 3-6 latest active buckets must use `latest + 0.25 * (train - latest)`.
   - For skater_offense_segmented_xsat_v2, forward high-goal entities whose latest season is below the prior season must use `0.90 * avg(train, latest) + 0.10 * cohort`.

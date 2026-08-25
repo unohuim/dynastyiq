@@ -15,6 +15,8 @@
     $canViewRateComparison = (bool) data_get($comparisonState ?? [], 'can_view_rate_comparison', false);
     $canViewTrainingDrift = (bool) data_get($trainingDriftState ?? [], 'can_view_training_drift', false);
     $canViewGenericBucketStability = (bool) data_get($genericBucketStabilityState ?? [], 'can_view_bucket_stability', false);
+    $canBuildToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_build_toi_projection', false);
+    $canViewToiProjection = (bool) data_get($toiProjectionState ?? [], 'can_view_toi_projection', false);
 @endphp
 
 <tr data-sat-model-row="{{ $run->id }}" class="transition-colors hover:bg-gray-50/70">
@@ -126,6 +128,27 @@
                 <a href="{{ route('admin.nhl-sat-models.rate-projections', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
                     View /60
                 </a>
+                @if($canBuildToiProjection)
+                    <form method="POST" action="{{ route('admin.nhl-sat-models.toi-projections.build', $run) }}" data-sat-model-toi-build-form>
+                        @csrf
+                        <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
+                            Build TOI
+                        </button>
+                    </form>
+                @else
+                    <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">
+                        Build TOI
+                    </span>
+                @endif
+                @if($canViewToiProjection)
+                    <a href="{{ route('admin.nhl-sat-models.toi-projections', $run) }}" class="block px-3 py-2 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950" role="menuitem">
+                        View TOI
+                    </a>
+                @else
+                    <span class="block cursor-not-allowed px-3 py-2 text-xs font-medium text-gray-300" role="menuitem" aria-disabled="true">
+                        View TOI
+                    </span>
+                @endif
                 @if($canBuildRateComparison)
                     <form method="POST" action="{{ route('admin.nhl-sat-models.rate-projections.compare.build', $run) }}" data-sat-model-rate-compare-build-form>
                         @csrf

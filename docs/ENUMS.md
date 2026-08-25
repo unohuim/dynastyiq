@@ -2192,7 +2192,7 @@ Do not introduce new enum values without updating this document.
 ### NHL SAT Model Entity Profile Type
 
 **Name:** NHL SAT model entity profile type
-**Storage location(s):** `nhl_sat_model_entity_profile_buckets.profile_type` (string column)
+**Storage location(s):** `nhl_sat_model_entity_profile_buckets.profile_type`, `nhl_sat_model_entity_test_profile_buckets.profile_type`, `nhl_sat_model_entity_rate_projection_buckets.profile_type`, `nhl_sat_model_entity_rate_comparison_buckets.profile_type`, `nhl_sat_model_entity_rate_comparison_aggregates.profile_type`, `nhl_sat_model_entity_toi_projections.profile_type` (string columns)
 **Allowed values:**
 
 - `skater_offense`
@@ -2256,7 +2256,7 @@ Do not introduce new enum values without updating this document.
 ### NHL Player TOI Projection Role Bucket
 
 **Name:** NHL player TOI projection role bucket
-**Storage location(s):** `nhl_player_toi_projections.source_role_bucket`, `nhl_player_toi_projections.target_role_bucket` (nullable string columns)
+**Storage location(s):** `nhl_player_toi_projections.source_role_bucket`, `nhl_player_toi_projections.target_role_bucket`, `nhl_sat_model_entity_toi_projections.source_role_bucket`, `nhl_sat_model_entity_toi_projections.target_role_bucket` (nullable string columns)
 **Allowed values currently emitted:**
 
 - `top6_f`

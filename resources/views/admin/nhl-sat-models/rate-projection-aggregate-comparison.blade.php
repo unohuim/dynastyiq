@@ -4,6 +4,8 @@
     $formatDelta = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format((float) $value, 2);
     $formatDeltaPct = fn ($value) => $value === null ? '-' : (((float) $value) >= 0 ? '+' : '') . number_format(((float) $value) * 100, 1) . '%';
     $formatCount = fn ($value) => $value === null ? '-' : number_format((float) $value, 1);
+    $formatToiGp = fn ($seconds) => $seconds === null ? '-' : number_format(((float) $seconds) / 60, 1);
+    $formatSeasonHours = fn ($seconds, float $divisor = 1.0) => $seconds === null || $divisor <= 0 ? '-' : number_format((((float) $seconds) / $divisor) / 3600, 1);
     $formatHitRate = function ($count, $rate): string {
         if ($count === null || $rate === null) {
             return '-';
@@ -43,6 +45,34 @@
             e($deltaClass($error)),
             e($formatDelta($error)),
             e($formatDeltaPct($errorRate)),
+        );
+    };
+    $toiCell = function ($row) use ($formatToiGp, $formatSeasonHours): string {
+        $secondsPerGame = function ($seconds, $games): ?float {
+            return $seconds !== null && (float) ($games ?? 0) > 0
+                ? ((float) $seconds) / (float) $games
+                : null;
+        };
+        $s1ToiSeconds = ($row->train_toi_seconds ?? null) === null || ($row->last_toi_seconds ?? null) === null
+            ? null
+            : max(0, (float) $row->train_toi_seconds - (float) $row->last_toi_seconds);
+        $s1Games = ($row->train_games ?? null) === null || ($row->last_games ?? null) === null
+            ? null
+            : max(0, (float) $row->train_games - (float) $row->last_games);
+        $s1ToiPerGameSeconds = ($row->s1_toi_per_game_seconds ?? null) ?? $secondsPerGame($s1ToiSeconds, $s1Games);
+        $lastToiPerGameSeconds = ($row->last_toi_per_game_seconds ?? null) ?? $secondsPerGame($row->last_toi_seconds ?? null, $row->last_games ?? null);
+        $testToiPerGameSeconds = ($row->test_toi_per_game_seconds ?? null) ?? $secondsPerGame($row->test_toi_seconds ?? null, $row->test_games ?? null);
+
+        return sprintf(
+            '<div class="space-y-0.5 tabular-nums"><div class="flex justify-between gap-2"><span class="text-gray-400">S1</span><span class="font-semibold text-gray-950">%s / %s h</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">S2</span><span class="font-semibold text-gray-700">%s / %s h</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">Proj</span><span class="font-semibold text-gray-950">%s / %s h</span></div><div class="flex justify-between gap-2"><span class="text-gray-400">S3</span><span class="font-semibold text-gray-700">%s / %s h</span></div></div>',
+            e($formatToiGp($s1ToiPerGameSeconds)),
+            e($formatSeasonHours($s1ToiSeconds)),
+            e($formatToiGp($lastToiPerGameSeconds)),
+            e($formatSeasonHours($row->last_toi_seconds ?? null)),
+            e($formatToiGp($row->projected_toi_per_game_seconds ?? null)),
+            e($formatSeasonHours($row->projected_toi_seconds ?? null)),
+            e($formatToiGp($testToiPerGameSeconds)),
+            e($formatSeasonHours($row->test_toi_seconds ?? null)),
         );
     };
 @endphp
@@ -119,7 +149,7 @@
             <button type="submit" class="inline-flex h-8 items-center rounded-md border border-gray-300 bg-white px-3 text-xs font-semibold text-gray-700 transition-colors hover:border-gray-400 hover:text-gray-950">
                 Search
             </button>
-            <span class="text-xs text-gray-400">SAT/SOG/G are per game for train and test. Collection /60 values are per entity. Drift is test minus train. Error is test minus projection.</span>
+            <span class="text-xs text-gray-400">SAT/SOG/G are per game for train and test. TOI shows derived S1, S2, projected S3, and actual S3. Collection /60 values are per entity. Drift is test minus train. Error is test minus projection.</span>
         </form>
 
         @if($collectionRows->isNotEmpty())
@@ -130,12 +160,13 @@
                 <table class="w-full table-fixed divide-y divide-gray-200 text-[10px]">
                     <thead class="bg-gray-50 text-left font-semibold uppercase text-gray-500">
                         <tr>
-                            <th class="w-[16%] px-1.5 py-2">Collection</th>
-                            <th class="w-[12%] px-1.5 py-2 text-right">SAT</th>
-                            <th class="w-[12%] px-1.5 py-2 text-right">SOG</th>
-                            <th class="w-[10%] px-1.5 py-2 text-right">G</th>
-                            <th class="w-[17%] px-1.5 py-2 text-right">xSAT/60/Entity</th>
-                            <th class="w-[17%] px-1.5 py-2 text-right">xSOG/60/Entity</th>
+                            <th class="w-[14%] px-1.5 py-2">Collection</th>
+                            <th class="w-[12%] px-1.5 py-2 text-right">TOI/GP · Hrs</th>
+                            <th class="w-[10%] px-1.5 py-2 text-right">SAT</th>
+                            <th class="w-[10%] px-1.5 py-2 text-right">SOG</th>
+                            <th class="w-[8%] px-1.5 py-2 text-right">G</th>
+                            <th class="w-[15%] px-1.5 py-2 text-right">xSAT/60/Entity</th>
+                            <th class="w-[15%] px-1.5 py-2 text-right">xSOG/60/Entity</th>
                             <th class="w-[16%] px-1.5 py-2 text-right">xG/60/Entity</th>
                         </tr>
                     </thead>
@@ -153,6 +184,7 @@
                                         · &lt;10% {{ $formatHitRate($collectionRow->xsat_error_within_10_count ?? null, $collectionRow->xsat_error_within_10_rate ?? null) }}
                                     </div>
                                 </td>
+                                <td class="px-1.5 py-2 text-right align-top">{!! $toiCell($collectionRow) !!}</td>
                                 <td class="px-1.5 py-2 text-right align-top tabular-nums">
                                     <div><span class="text-gray-400">Train/GP</span> <span class="font-semibold text-gray-950">{{ $formatCount($perGame($collectionRow->train_sat, $collectionRow->train_games ?? null)) }}</span></div>
                                     <div><span class="text-gray-400">Test/GP</span> <span class="font-semibold text-gray-700">{{ $formatCount($perGame($collectionRow->test_sat, $collectionRow->test_games ?? null)) }}</span></div>
@@ -185,12 +217,13 @@
                 <table class="w-full table-fixed divide-y divide-gray-200 text-[10px]">
                     <thead class="bg-gray-50 text-left font-semibold uppercase text-gray-500">
                         <tr>
-                            <th class="w-[16%] px-1.5 py-2"><a href="{{ $sortUrl('entity') }}">Entity {{ $sortArrow('entity') }}</a></th>
-                            <th class="w-[12%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_sat') }}">SAT {{ $sortArrow('test_sat') }}</a></th>
-                            <th class="w-[12%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_sog') }}">SOG {{ $sortArrow('test_sog') }}</a></th>
-                            <th class="w-[10%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_goals') }}">G {{ $sortArrow('test_goals') }}</a></th>
-                            <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsat_per_60') }}">xSAT/60 {{ $sortArrow('test_xsat_per_60') }}</a></th>
-                            <th class="w-[17%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsog_per_60') }}">xSOG/60 {{ $sortArrow('test_xsog_per_60') }}</a></th>
+                            <th class="w-[14%] px-1.5 py-2"><a href="{{ $sortUrl('entity') }}">Entity {{ $sortArrow('entity') }}</a></th>
+                            <th class="w-[12%] px-1.5 py-2 text-right">TOI/GP · Hrs</th>
+                            <th class="w-[10%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_sat') }}">SAT {{ $sortArrow('test_sat') }}</a></th>
+                            <th class="w-[10%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_sog') }}">SOG {{ $sortArrow('test_sog') }}</a></th>
+                            <th class="w-[8%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_goals') }}">G {{ $sortArrow('test_goals') }}</a></th>
+                            <th class="w-[15%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsat_per_60') }}">xSAT/60 {{ $sortArrow('test_xsat_per_60') }}</a></th>
+                            <th class="w-[15%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xsog_per_60') }}">xSOG/60 {{ $sortArrow('test_xsog_per_60') }}</a></th>
                             <th class="w-[16%] px-1.5 py-2 text-right"><a href="{{ $sortUrl('test_xg_per_60') }}">xG/60 {{ $sortArrow('test_xg_per_60') }}</a></th>
                         </tr>
                     </thead>
@@ -207,6 +240,7 @@
                                     @endif
                                     <div class="mt-1 text-gray-400">{{ number_format((int) $aggregate->matched_bucket_rows) }} of {{ number_format((int) $aggregate->bucket_rows) }} buckets matched</div>
                                 </td>
+                                <td class="px-1.5 py-2 text-right align-top">{!! $toiCell($aggregate) !!}</td>
                                 <td class="px-1.5 py-2 text-right align-top tabular-nums">
                                     <div><span class="text-gray-400">Train/GP</span> <span class="font-semibold text-gray-950">{{ $formatCount($perGame($aggregate->train_sat, $aggregate->train_games ?? null)) }}</span></div>
                                     <div><span class="text-gray-400">Test/GP</span> <span class="font-semibold text-gray-700">{{ $formatCount($perGame($aggregate->test_sat, $aggregate->test_games ?? null)) }}</span></div>

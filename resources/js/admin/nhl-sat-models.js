@@ -55,6 +55,10 @@ const actionMessage = (form) => {
         return 'Building /60...';
     }
 
+    if (form.matches('[data-sat-model-toi-build-form]')) {
+        return 'Building TOI...';
+    }
+
     if (form.matches('[data-sat-model-rate-compare-build-form]')) {
         return 'Comparing /60...';
     }
@@ -166,7 +170,7 @@ const mountSatModels = (root) => {
     });
 
     root.addEventListener('submit', async (event) => {
-        const form = event.target.closest('[data-sat-model-train-form], [data-sat-model-profile-build-form], [data-sat-model-rate-build-form], [data-sat-model-rate-compare-build-form]');
+        const form = event.target.closest('[data-sat-model-train-form], [data-sat-model-profile-build-form], [data-sat-model-rate-build-form], [data-sat-model-toi-build-form], [data-sat-model-rate-compare-build-form]');
 
         if (!form) return;
 
@@ -231,6 +235,12 @@ const mountSatModelBroadcasts = () => {
                 showToast('Queued /60.');
             } else if (event?.reason === 'rate-projections-failed') {
                 showToast('/60 failed.', 'error');
+            } else if (event?.reason === 'toi-projections-completed') {
+                showToast('Built TOI.');
+            } else if (event?.reason === 'toi-projections-queued') {
+                showToast('Queued TOI.');
+            } else if (event?.reason === 'toi-projections-failed') {
+                showToast('TOI failed.', 'error');
             } else if (event?.reason === 'rate-comparisons-completed') {
                 showToast('Compared /60.');
             } else if (event?.reason === 'rate-comparisons-queued') {

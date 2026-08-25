@@ -21,6 +21,7 @@ when_not_to_use:
   - Storing shot attempt, expected-goals, goalie, or team projection outputs.
   - Treating automated TOI assumptions as published product projections before admin review.
   - Encoding detailed per-factor audit rows before a separate factor table is approved.
+  - Building opportunity assumptions scoped to a specific SAT model run; use NHL SAT Model Entity TOI Projection for that workflow.
 rules:
   - TOI projection rows must be versioned so reruns can be audited and compared.
   - Source-season TOI and target-season projected TOI must remain distinguishable on every row.
@@ -33,6 +34,7 @@ rules:
   - Players younger than 25 should be eligible for TOI growth when their projected role is top-six forward or top-four defense.
   - Draft TOI output must remain admin-reviewable until a separate publishing workflow is approved.
   - TOI projection builds must dispatch one worker job per player so multiple queue workers can process projections concurrently.
+  - SAT-model scoped TOI projections may reuse this role and age adjustment logic, but they must write to the SAT model entity TOI table and follow the SAT model lifecycle.
 public_interface:
   - nhl_player_toi_projections
   - NhlPlayerToiProjection
