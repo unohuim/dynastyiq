@@ -85,8 +85,10 @@ These rules are mandatory for all new tests.
 
 ## Frontend Conventions
 
-- Blade is the primary templating system
-- Alpine.js is used for lightweight interactivity
+- Blade remains valid for existing server-rendered pages
+- Alpine.js remains valid for lightweight interactivity on Blade pages
+- Inertia/Vue may be used for explicitly approved staged page migrations
+- Migrated Inertia pages receive backend-owned props and use Vue for browser state and rendering
 - No global JavaScript state unless explicitly approved
 - Prefer progressive enhancement over JavaScript-first solutions
 

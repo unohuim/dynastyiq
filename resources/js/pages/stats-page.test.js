@@ -126,11 +126,11 @@ describe('stats page prospect controls', () => {
     expect(shell.buildParams().get('slice')).toBe('total');
   });
 
-  it('keeps requested slice in params when slicing is enabled', async () => {
+  it('uses total slice in params when slicing is enabled', async () => {
     const shell = await createShell({ meta: { canSlice: true }, settings: { slice: 'p60' } });
     shell.state.slice = 'p60';
 
-    expect(shell.buildParams().get('slice')).toBe('p60');
+    expect(shell.buildParams().get('slice')).toBe('total');
   });
 
   it('resets range state to season when syncing an unsupported payload', async () => {
@@ -236,6 +236,55 @@ describe('stats page prospect controls', () => {
     expect(document.body.textContent).toContain('Range');
   });
 
+  it('renders desktop range date inputs when range is selected', async () => {
+    const shell = await createShell({ meta: { supportsDateRange: true } });
+    shell.state.period = 'range';
+
+    shell.renderControls();
+
+    expect(document.body.querySelector('input[type="date"][aria-label="Start"]')).not.toBeNull();
+    expect(document.body.querySelector('input[type="date"][aria-label="End"]')).not.toBeNull();
+    expect(shell.buildParams().get('from')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(shell.buildParams().get('to')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('does not fetch immediately when range period or date inputs change', async () => {
+    const shell = await createShell({ meta: { supportsDateRange: true } });
+    shell.fetchPayload = vi.fn();
+
+    shell.setPeriod('range');
+    shell.setRangeDate('fromDate', '2026-01-01');
+    shell.setRangeDate('toDate', '2026-01-31');
+
+    expect(shell.fetchPayload).not.toHaveBeenCalled();
+  });
+
+  it('fetches range stats only after valid range dates are applied', async () => {
+    const shell = await createShell({ meta: { supportsDateRange: true } });
+    shell.fetchPayload = vi.fn();
+    shell.state.period = 'range';
+    shell.state.fromDate = '2026-01-01';
+    shell.state.toDate = '2026-01-31';
+
+    shell.applyRangeDates();
+
+    expect(shell.state.rangeError).toBe('');
+    expect(shell.fetchPayload).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks inverted range dates before fetching', async () => {
+    const shell = await createShell({ meta: { supportsDateRange: true } });
+    shell.fetchPayload = vi.fn();
+    shell.state.period = 'range';
+    shell.state.fromDate = '2026-02-01';
+    shell.state.toDate = '2026-01-31';
+
+    shell.applyRangeDates();
+
+    expect(shell.state.rangeError).toBe('Start date must be before end date.');
+    expect(shell.fetchPayload).not.toHaveBeenCalled();
+  });
+
   it('renders no mobile per-game slice option when slicing is disabled', async () => {
     const shell = await createShell({ mobile: true });
 
@@ -263,7 +312,7 @@ describe('stats page prospect controls', () => {
   it('renders desktop slice options when slicing is enabled', async () => {
     const shell = await createShell({ meta: { canSlice: true } });
 
-    shell.renderControls();
+    shell.render();
 
     expect(document.body.textContent).toContain('Per 60');
   });
@@ -607,6 +656,26 @@ describe('stats page prospect controls', () => {
     expect(document.body.querySelector('img[src="https://example.test/test-prospect.png"]')).not.toBeNull();
   });
 
+  it('renders mobile player cards through the Vue card list', async () => {
+    const shell = await createShell({ mobile: true });
+
+    shell.renderContent();
+
+    expect(document.body.querySelector('[data-vue-stats-mobile-card-list]')).not.toBeNull();
+    expect(document.body.querySelectorAll('[data-vue-stats-mobile-card]')).toHaveLength(1);
+    expect(document.body.querySelector('[data-vue-stats-mobile-card]')?.textContent).toContain('Test Prospect');
+  });
+
+  it('renders the Vue mobile empty state when no rows match', async () => {
+    const shell = await createShell({ mobile: true });
+    shell.payload.data = [];
+
+    shell.renderContent();
+
+    expect(document.body.querySelector('[data-vue-stats-mobile-card-list]')?.textContent)
+      .toContain('No players match the current view.');
+  });
+
   it('uses an aligned mobile player identity layout', async () => {
     const shell = await createShell({ mobile: true });
 
@@ -680,6 +749,29 @@ describe('stats page prospect controls', () => {
     shell.renderContent();
 
     expect(document.body.querySelector('img[src="https://example.test/test-prospect.png"]')).not.toBeNull();
+  });
+
+  it('renders generic desktop player rows through Vue', async () => {
+    const shell = await createShell();
+
+    shell.renderContent();
+
+    expect(document.body.querySelector('[data-vue-stats-desktop-row]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Test Prospect');
+  });
+
+  it('renders league owner desktop player rows through Vue', async () => {
+    const shell = await createShell({
+      settings: {
+        ownerColumn: true,
+        leaguePlatform: 'fantrax',
+      },
+    });
+
+    shell.renderContent();
+
+    expect(document.body.querySelector('[data-vue-stats-desktop-row]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Test Prospect');
   });
 
   it('sorts displayed toi by numeric toi seconds instead of the formatted label', async () => {

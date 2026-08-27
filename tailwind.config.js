@@ -10,6 +10,7 @@ export default {
         "./storage/framework/views/*.php",
         "./resources/views/**/*.blade.php",
         "./resources/js/**/*.js",
+        "./resources/js/**/*.vue",
     ],
 
     safelist: [
@@ -135,6 +136,7 @@ export default {
         extend: {
             fontFamily: {
                 sans: ["Figtree", ...defaultTheme.fontFamily.sans],
+                stats: ["Instrument Sans", ...defaultTheme.fontFamily.sans],
             },
             colors: {
                 navy: {
@@ -146,6 +148,7 @@ export default {
             },
             fontSize: {
                 xxs: "0.60rem", // 👈 Add this here
+                "3xs": "0.50rem",
             },
         },
     },

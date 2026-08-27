@@ -48,4 +48,14 @@ class NhlExpectedGoalsModel extends Model
     {
         return $this->hasMany(NhlShotAttemptPrediction::class, 'expected_goals_model_id');
     }
+
+    /**
+     * Shot-attempt facts scored by this model.
+     *
+     * @return HasMany<NhlShotAttemptModelScore>
+     */
+    public function shotAttemptScores(): HasMany
+    {
+        return $this->hasMany(NhlShotAttemptModelScore::class, 'expected_goals_model_id');
+    }
 }

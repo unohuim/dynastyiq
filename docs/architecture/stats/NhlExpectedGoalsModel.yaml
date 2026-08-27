@@ -4,12 +4,15 @@ location:
   - app/Console/Commands/BackfillNhlExpectedGoalsCommand.php
   - app/Models/NhlExpectedGoalsModel.php
   - app/Models/NhlExpectedGoalsModelBucket.php
+  - app/Models/NhlShotAttemptModelScore.php
   - app/Models/NhlShotAttemptPrediction.php
   - app/Services/NhlExpectedGoalsBackfiller.php
+  - app/Services/NhlShotAttemptModelScorer.php
   - database/migrations/2026_07_29_000003_create_nhl_expected_goals_tables.php
   - database/migrations/2026_07_29_000004_add_prediction_target_to_nhl_expected_goals_tables.php
   - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
   - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
+  - database/migrations/2026_08_26_000001_create_nhl_shot_attempt_model_scores_table.php
   - docs/architecture/stats/StatModelLifecycle.yaml
   - docs/architecture/stats/NhlExpectedGoalsModel.yaml
   - data/shot_attempts_model_analysis_20252026.md
@@ -46,6 +49,7 @@ rules:
   - Production xG probabilities must be calibrated against observed outcomes before public display or downstream use.
   - Calibration must compare predicted probability bands against actual goal rates and correct overconfidence before storing final expected-goals values.
   - Model outputs, coefficients, calibration bands, and scored shot predictions belong in versioned xG tables, not in nhl_shot_attempts_facts.
+  - Per-SAT model probabilities must be stored in `nhl_shot_attempt_model_scores`, keyed by `expected_goals_model_id` and `shot_attempt_fact_id`, so the same fact can be audited against specific model versions without mutating the base fact row.
   - Historical xG and xGA must be derived by summing versioned goal-target shot-attempt prediction values by team_id or opponent_team_id.
   - Historical xSOG must be derived by summing versioned shot_on_goal-target shot-attempt prediction values by shooter_player_id or team_id.
   - Backfills must write predictions by model, prediction target, and shot-attempt fact id so reruns update rather than duplicate scored attempts.
@@ -74,11 +78,14 @@ public_interface:
   - admin.nhl-sat-models.train
   - nhl_expected_goals_models
   - nhl_expected_goals_model_buckets
+  - nhl_shot_attempt_model_scores
   - nhl_shot_attempt_predictions
   - nhl_shot_attempts_facts
   - NhlExpectedGoalsBackfiller
+  - NhlShotAttemptModelScorer
   - NhlExpectedGoalsModel
   - NhlExpectedGoalsModelBucket
+  - NhlShotAttemptModelScore
   - NhlShotAttemptPrediction
   - data/shot_attempts_model_input_20252026.csv
   - data/shot_attempts_model_analysis_20252026.md

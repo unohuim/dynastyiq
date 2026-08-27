@@ -22,11 +22,11 @@
   }
 
   .players-list-mobile {
-    @apply relative w-full max-w-full space-y-px overflow-x-hidden;
+    @apply relative w-full max-w-full space-y-px overflow-x-hidden font-stats;
   }
 
   .player-stats-card-mobile {
-    @apply flex w-full max-w-full overflow-hidden bg-white border-b border-gray-100;
+    @apply flex w-full max-w-full overflow-hidden bg-white border-b border-gray-100 font-stats font-semibold uppercase;
   }
 
   .player-stats-team-strip-mobile {
@@ -39,7 +39,7 @@
 
 
   .player-stats-content-mobile {
-    @apply relative min-w-0 flex-1 w-full pl-[4.5rem] pr-3;
+    @apply relative min-w-0 flex-1 w-full pl-16 pr-3;
   }
 
   .player-stats-top-row-mobile {
@@ -55,7 +55,7 @@
   }
 
   .player-stats-icon-rail-mobile {
-    @apply absolute inset-y-0 left-3 flex shrink-0 items-center gap-1;
+    @apply absolute inset-y-0 left-2 flex shrink-0 items-center gap-1;
   }
 
   .player-stats-name-stack-mobile {
@@ -79,7 +79,7 @@
   }
 
   .player-stats-name-mobile {
-    @apply min-w-0 truncate text-xxs leading-none;
+    @apply min-w-0 truncate text-xs font-semibold leading-tight;
   }
 
   .player-stats-league-mobile {
@@ -87,7 +87,7 @@
   }
 
   .player-stats-age-mobile {
-    @apply shrink-0 uppercase text-xxs leading-none text-gray-500;
+    @apply shrink-0 uppercase text-3xs leading-none text-gray-500;
   }
 
   .player-stats-aav-mobile{
@@ -188,6 +188,17 @@
 
   .dual-slider input.max {
     z-index: 40;
+  }
+
+  .stats-select-native {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: none;
+  }
+
+  .stats-select-native::-ms-expand {
+    display: none;
   }
 
   .player-stats-sorted-label-mobile {

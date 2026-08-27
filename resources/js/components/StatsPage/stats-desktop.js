@@ -1,5 +1,9 @@
 // stats-desktop.js
-import { formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, statValueForKey, teamBg } from "./stats-utils.js";
+import { createApp, h, nextTick, reactive } from "vue";
+import { mountStatsSelect } from "../../pages/Stats/Controls/mountStatsSelect.js";
+import LeagueOwnerRows from "../../pages/Stats/Desktop/LeagueOwnerRows.vue";
+import PlayerRows from "../../pages/Stats/Desktop/PlayerRows.vue";
+import { deferAvatarImageSrc, formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, statValueForKey, teamBg } from "./stats-utils.js";
 
 // === keep your colours exactly as set before ===
 export const BORDER_COLOUR_F = "#7CCCF2";
@@ -159,7 +163,7 @@ const buildSelectChevron = () => {
 const wrapNativeSelect = (select) => {
     const wrapper = document.createElement("div");
     wrapper.className = "relative z-50 grid grid-cols-1";
-    select.classList.add("appearance-none", "col-start-1", "row-start-1", "pr-9");
+    select.classList.add("stats-select-native", "col-start-1", "row-start-1", "pr-9");
     wrapper.appendChild(select);
     wrapper.appendChild(buildSelectChevron());
 
@@ -172,6 +176,12 @@ const buildDropdownButtonChevron = () => {
     icon.classList.add("pointer-events-none", "ml-auto", "size-4", "shrink-0", "text-gray-400");
 
     return icon;
+};
+
+const desktopPositionButtons = (buttons) => {
+    if (!Array.isArray(buttons) || buttons.length === 0) return [];
+
+    return ["SKT", "F", "W", "C", "D", "G"];
 };
 
 const isRankableStatKey = (key) => {
@@ -281,7 +291,6 @@ const buildPlayerAvatar = (row, name) => {
     }
 
     const img = document.createElement("img");
-    img.src = avatarUrl;
     img.alt = "";
     img.loading = "lazy";
     img.className = "h-7 w-7 rounded-full object-cover";
@@ -289,6 +298,7 @@ const buildPlayerAvatar = (row, name) => {
         img.remove();
         wrap.textContent = playerInitials(name);
     });
+    deferAvatarImageSrc(img, avatarUrl);
     wrap.appendChild(img);
 
     return wrap;
@@ -305,7 +315,6 @@ const buildOwnerAvatar = (avatarUrl, name = "") => {
     }
 
     const img = document.createElement("img");
-    img.src = avatarUrl;
     img.alt = "";
     img.loading = "lazy";
     img.className = "h-7 w-7 rounded-full object-cover";
@@ -313,6 +322,7 @@ const buildOwnerAvatar = (avatarUrl, name = "") => {
         img.remove();
         wrap.textContent = playerInitials(name);
     });
+    deferAvatarImageSrc(img, avatarUrl);
     wrap.appendChild(img);
 
     return wrap;
@@ -392,6 +402,8 @@ const rosterRowClass = (row, allowRosterColors = false) => {
 
 // Persist filters per-container across re-renders
 const desktopState = new WeakMap();
+const desktopRowApps = new WeakMap();
+const desktopContainerApps = new WeakMap();
 
 const splitLeagueOwnerHeadings = (headings, useRosterSlotColumn = false) => {
     const srcHeadings = Array.isArray(headings) ? [...headings] : [];
@@ -481,6 +493,9 @@ const renderLeagueOwnerStatsDesktop = (
     settings,
     onSortChange
 ) => {
+    desktopContainerApps.get(container)?.unmount();
+    desktopContainerApps.delete(container);
+
     const prev = desktopState.get(container) || {};
     const state = {
         nameFilter: typeof prev.nameFilter === "string" ? prev.nameFilter : "",
@@ -655,7 +670,7 @@ const renderLeagueOwnerStatsDesktop = (
     wrapper.className = "w-full overflow-visible bg-white shadow rounded-lg border border-gray-200";
 
     const controls = document.createElement("div");
-    controls.className = "sticky top-0 z-50 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+    controls.className = "sticky top-0 z-50 flex items-center gap-2 border-b border-gray-200 bg-white/95 px-3 py-2 backdrop-blur";
 
     let nameInput = null;
     if (!isTeamAggregate) {
@@ -664,8 +679,8 @@ const renderLeagueOwnerStatsDesktop = (
         nameInput.placeholder = "Filter by name…";
         nameInput.value = state.nameFilter;
         nameInput.className =
-            "flex-1 max-w-md rounded-md border border-gray-300 px-3 py-2 text-sm " +
-            "focus:outline-none focus:ring-2 focus:ring-indigo-500";
+            "h-9 flex-1 max-w-md rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-900 " +
+            "placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500";
         controls.appendChild(nameInput);
     } else {
         const spacer = document.createElement("div");
@@ -680,7 +695,7 @@ const renderLeagueOwnerStatsDesktop = (
         const fantasyTeamButton = document.createElement("button");
         fantasyTeamButton.type = "button";
         fantasyTeamButton.className =
-            "flex h-10 w-full items-center gap-2 rounded-md border border-gray-300 bg-white px-2 text-left text-sm " +
+            "flex h-9 w-full items-center gap-2 rounded-md border border-gray-200 bg-white px-2 text-left text-sm " +
             "focus:outline-none focus:ring-2 focus:ring-indigo-500";
         const selectedFantasyTeam = () => fantasyTeams.find((team) => team.name === state.fantasyTeamFilter) || null;
         const renderFantasyTeamButton = () => {
@@ -746,8 +761,8 @@ const renderLeagueOwnerStatsDesktop = (
     const ranksButton = document.createElement("button");
     ranksButton.type = "button";
     ranksButton.className = state.showRanks
-        ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+        ? "h-9 rounded-md bg-gray-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        : "h-9 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
     ranksButton.textContent = "Ranks";
     ranksButton.title = isTeamAggregate
         ? "Show stat ranks among all teams in this view"
@@ -757,8 +772,8 @@ const renderLeagueOwnerStatsDesktop = (
         state.showRanks = !state.showRanks;
         desktopState.set(container, state);
         ranksButton.className = state.showRanks
-            ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+            ? "h-9 rounded-md bg-gray-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            : "h-9 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
         ranksButton.setAttribute("aria-pressed", state.showRanks ? "true" : "false");
         if (isTeamAggregate && state.showRanks && activeSortKey() !== TEAM_RANK_SUM_KEY) {
             onSortChange?.({
@@ -777,8 +792,8 @@ const renderLeagueOwnerStatsDesktop = (
         nhleButton.type = "button";
         const syncNhleButton = () => {
             nhleButton.className = settings.nhleLens === true
-                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+                ? "h-9 rounded-md bg-gray-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-9 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
             nhleButton.setAttribute("aria-pressed", settings.nhleLens === true ? "true" : "false");
         };
         nhleButton.textContent = "NHLe";
@@ -795,8 +810,8 @@ const renderLeagueOwnerStatsDesktop = (
         averagesButton.type = "button";
         const syncAveragesButton = () => {
             averagesButton.className = state.showAverages
-                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+                ? "h-9 rounded-md bg-gray-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-9 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
             averagesButton.setAttribute("aria-pressed", state.showAverages ? "true" : "false");
         };
         averagesButton.textContent = "Averages";
@@ -815,8 +830,8 @@ const renderLeagueOwnerStatsDesktop = (
         startersButton.type = "button";
         const syncStartersButton = () => {
             startersButton.className = settings.teamAggregateStartersOnly === true
-                ? "h-10 rounded-md bg-indigo-600 px-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                : "h-10 rounded-md border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+                ? "h-9 rounded-md bg-gray-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                : "h-9 rounded-md border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500";
             startersButton.setAttribute("aria-pressed", settings.teamAggregateStartersOnly === true ? "true" : "false");
         };
         startersButton.textContent = "Starters";
@@ -832,7 +847,7 @@ const renderLeagueOwnerStatsDesktop = (
     if (leagues.length > 0) {
         leagueSelect = document.createElement("select");
         leagueSelect.className =
-            "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
+            "h-9 w-40 rounded-md border border-gray-200 px-2 text-sm " +
             "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
         const optAllLeagues = document.createElement("option");
         optAllLeagues.value = "";
@@ -909,7 +924,13 @@ const renderLeagueOwnerStatsDesktop = (
     const leftBody = document.createElement("div");
     const statsBody = document.createElement("div");
     const ownerBody = document.createElement("div");
+    const rowMount = document.createElement("div");
+    rowMount.className = "hidden";
     const typeHeaderCells = [];
+    const leftTeamIdx = left.findIndex((heading) => String(heading?.key ?? "").toLowerCase() === "team");
+    const leftLeagueIdx = left.findIndex((heading) => String(heading?.key ?? "").toLowerCase() === "league");
+    const leftTypeIdx = left.findIndex((heading) => ["type", "pos_type"].includes(String(heading?.key ?? "").toLowerCase()));
+    const leftPlayerIdx = left.findIndex((heading) => /^(player|name)$/i.test(String(heading?.key)));
 
     const syncHeaderHorizontalScroll = () => {
         statsHeaderPane.style.transform = `translateX(${-statsScroll.scrollLeft}px)`;
@@ -1198,11 +1219,44 @@ const renderLeagueOwnerStatsDesktop = (
         return cell;
     };
 
+    const statCellDescriptor = (row, heading, rowGroup = "") => {
+        const key = heading?.key;
+
+        if (isTeamAggregate && state.showRanks && key === TEAM_RANK_SUM_KEY) {
+            const rankSum = teamRankSum(row);
+
+            return {
+                className: "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-700 font-semibold",
+                text: rankSum === null ? "-" : String(rankSum),
+            };
+        }
+
+        const rawVal = statCellValue(row, key, rowGroup);
+        const val = formatStatValue(key, rawVal);
+        const common = "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
+
+        if (state.showRanks && isRankableStatKey(key)) {
+            const sourceIndex = Number(row?.__rankSourceIndex);
+            const rank = Number.isInteger(sourceIndex) ? rankMaps.get(rankMapKey(key))?.get(sourceIndex) : null;
+
+            return {
+                className: activeSortKey() === key ? `${common} font-semibold` : common,
+                text: rank ? String(rank) : "-",
+            };
+        }
+
+        return {
+            className: activeSortKey() === key ? `${common} font-semibold` : common,
+            text: isCapKey(key)
+                ? formatCap(rawVal)
+                : (isTeamAggregate && state.showAverages ? formatDesktopAverage(val) : formatDesktopNumber(val)),
+        };
+    };
+
+    let leagueOwnerRowState = null;
     const renderRows = () => {
-        leftBody.innerHTML = "";
-        statsBody.innerHTML = "";
-        ownerBody.innerHTML = "";
         let goalieHeaderRow = null;
+        const rowEntries = [];
 
         const appendGroupSeparator = (label, tone = "blue") => {
             const separatorClass = tone === "gray"
@@ -1211,85 +1265,47 @@ const renderLeagueOwnerStatsDesktop = (
             const emptySeparatorClass = tone === "gray"
                 ? "border-t bg-gray-100"
                 : "border-t bg-blue-100";
-            const leftRow = document.createElement("div");
-            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${separatorClass}`;
-            leftRow.style.gridTemplateColumns = leftGridCols;
-            const leftLabel = document.createElement("div");
-            leftLabel.style.gridColumn = "1 / -1";
-            leftLabel.textContent = label;
-            leftRow.appendChild(leftLabel);
-            leftBody.appendChild(leftRow);
-
-            const statsRow = document.createElement("div");
-            statsRow.className = `grid h-8 px-4 py-1.5 ${emptySeparatorClass}`;
-            statsRow.style.gridTemplateColumns = statGridCols();
-            statsBody.appendChild(statsRow);
-
-            const ownerRow = document.createElement("div");
-            ownerRow.className = `h-8 px-4 py-1.5 ${emptySeparatorClass}`;
-            ownerBody.appendChild(ownerRow);
+            rowEntries.push({
+                type: "separator",
+                key: `separator:${label}:${rowEntries.length}`,
+                label,
+                leftClass: separatorClass,
+                statsClass: emptySeparatorClass,
+                statsGridCols: statGridCols(),
+            });
         };
 
         const appendGoalieHeader = () => {
             const rowClass = "border-t bg-gray-100 text-gray-700";
-
-            const leftRow = document.createElement("div");
-            leftRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${rowClass}`;
-            leftRow.style.gridTemplateColumns = leftGridCols;
-            const leftLabel = document.createElement("div");
-            leftLabel.style.gridColumn = "1 / -1";
-            leftLabel.textContent = "Goalies";
-            leftRow.appendChild(leftLabel);
-            leftBody.appendChild(leftRow);
-            goalieHeaderRow = leftRow;
-
-            const statsRow = document.createElement("div");
-            statsRow.className = `grid h-8 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide ${rowClass}`;
-            statsRow.style.gridTemplateColumns = goalieStatGridCols();
-            goalieStats.forEach((heading) => {
-                const cell = document.createElement("div");
-                cell.className = "flex items-center justify-center gap-1 whitespace-nowrap overflow-hidden text-ellipsis";
-                cell.textContent = heading?.label ?? "";
-                statsRow.appendChild(cell);
+            rowEntries.push({
+                type: "separator",
+                key: `goalie-header:${rowEntries.length}`,
+                label: "Goalies",
+                leftClass: rowClass,
+                statsClass: `${rowClass} text-[11px] font-semibold uppercase tracking-wide`,
+                statsGridCols: goalieStatGridCols(),
+                headerCells: goalieStats.map((heading) => ({ label: heading?.label ?? "" })),
+                isGoalieHeader: true,
             });
-            statsBody.appendChild(statsRow);
-
-            const ownerRow = document.createElement("div");
-            ownerRow.className = `h-8 px-4 py-1.5 ${rowClass}`;
-            ownerBody.appendChild(ownerRow);
         };
 
         const rows = applyFilters(data);
         const renderPlayerRow = (row, idx, rowStats = visibleStats(), rowStatGridCols = statGridCols(), rowGroup = "") => {
             const allowRosterColors = hasSelectedFantasyTeam() && !isProspectMode;
-
-            const leftRow = document.createElement("div");
-            leftRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
-            leftRow.style.gridTemplateColumns = leftGridCols;
-            left.forEach((heading, i) => leftRow.appendChild(renderLeftCell(row, heading, idx, i)));
-            leftBody.appendChild(leftRow);
-
-            const statsRow = document.createElement("div");
-            statsRow.className = `grid h-12 border-t px-4 py-2 text-sm transition-colors ${rosterRowClass(row, allowRosterColors)}`;
-            statsRow.style.gridTemplateColumns = rowStatGridCols;
-            rowStats.forEach((heading) => statsRow.appendChild(renderStatCell(row, heading, rowGroup)));
-            statsBody.appendChild(statsRow);
-
-            const ownerRow = document.createElement("div");
-            ownerRow.className = `flex h-12 min-w-0 items-center justify-end gap-2 border-t px-4 py-2 text-right text-xs text-gray-600 transition-colors ${rosterRowClass(row, allowRosterColors)}`;
             const ownerName = String(row?.fantasy_team_name ?? "").trim();
             const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
 
-            if (ownerName !== "") {
-                const name = document.createElement("span");
-                name.className = "min-w-0 truncate font-medium";
-                name.textContent = ownerName;
-                name.title = ownerName;
-                ownerRow.appendChild(name);
-                ownerRow.appendChild(buildOwnerAvatar(ownerAvatarUrl, ownerName));
-            }
-
-            ownerBody.appendChild(ownerRow);
+            rowEntries.push({
+                type: "player",
+                key: `player:${row?.id ?? row?.player_id ?? row?.name ?? idx}:${idx}:${rowEntries.length}`,
+                row,
+                rowIndex: idx,
+                rowClass: rosterRowClass(row, allowRosterColors),
+                statCells: rowStats.map((heading) => statCellDescriptor(row, heading, rowGroup)),
+                statsGridCols: rowStatGridCols,
+                ownerName,
+                ownerAvatarUrl,
+            });
         };
 
         if (isDefaultProspectSort()) {
@@ -1348,13 +1364,65 @@ const renderLeagueOwnerStatsDesktop = (
             }
         };
 
+        if (!leagueOwnerRowState) {
+            leagueOwnerRowState = reactive({
+                rows: rowEntries,
+                leftTarget: leftBody,
+                statsTarget: statsBody,
+                ownerTarget: ownerBody,
+                leftHeadings: left,
+                leftGridCols,
+                teamIdx: leftTeamIdx,
+                leagueIdx: leftLeagueIdx,
+                typeIdx: leftTypeIdx,
+                playerIdx: leftPlayerIdx,
+                sortKey: activeSortKey(),
+                useRosterSlotColumn: useRosterSlotColumn(),
+            });
+
+            const app = createApp({
+                render: () => h(LeagueOwnerRows, {
+                    rows: leagueOwnerRowState.rows,
+                    leftTarget: leagueOwnerRowState.leftTarget,
+                    statsTarget: leagueOwnerRowState.statsTarget,
+                    ownerTarget: leagueOwnerRowState.ownerTarget,
+                    leftHeadings: leagueOwnerRowState.leftHeadings,
+                    leftGridCols: leagueOwnerRowState.leftGridCols,
+                    teamIdx: leagueOwnerRowState.teamIdx,
+                    leagueIdx: leagueOwnerRowState.leagueIdx,
+                    typeIdx: leagueOwnerRowState.typeIdx,
+                    playerIdx: leagueOwnerRowState.playerIdx,
+                    sortKey: leagueOwnerRowState.sortKey,
+                    useRosterSlotColumn: leagueOwnerRowState.useRosterSlotColumn,
+                }),
+            });
+
+            app.mount(rowMount);
+            desktopRowApps.set(rowMount, app);
+            desktopContainerApps.set(container, app);
+        } else {
+            leagueOwnerRowState.rows = rowEntries;
+            leagueOwnerRowState.leftHeadings = left;
+            leagueOwnerRowState.leftGridCols = leftGridCols;
+            leagueOwnerRowState.teamIdx = leftTeamIdx;
+            leagueOwnerRowState.leagueIdx = leftLeagueIdx;
+            leagueOwnerRowState.typeIdx = leftTypeIdx;
+            leagueOwnerRowState.playerIdx = leftPlayerIdx;
+            leagueOwnerRowState.sortKey = activeSortKey();
+            leagueOwnerRowState.useRosterSlotColumn = useRosterSlotColumn();
+        }
+
+        nextTick(() => {
+            goalieHeaderRow = leftBody.querySelector('[data-desktop-goalie-header="true"]');
+            updateActiveStatsHeader();
+            updateScrollHints();
+        });
+
         if (container.__diqStatsHeaderScrollHandler) {
             document.removeEventListener("scroll", container.__diqStatsHeaderScrollHandler, true);
         }
         container.__diqStatsHeaderScrollHandler = updateActiveStatsHeader;
         document.addEventListener("scroll", updateActiveStatsHeader, true);
-        updateActiveStatsHeader();
-        updateScrollHints();
     };
 
     const updateScrollHints = () => {
@@ -1388,6 +1456,7 @@ const renderLeagueOwnerStatsDesktop = (
     statsViewport.appendChild(leftHint);
     statsViewport.appendChild(rightHint);
     ownerPane.appendChild(ownerBody);
+    wrapper.appendChild(rowMount);
     headerTable.appendChild(leftHeader);
     headerTable.appendChild(statsHeaderViewport);
     headerTable.appendChild(ownerHeader);
@@ -1422,6 +1491,9 @@ const renderLeagueOwnerStatsDesktop = (
             if (container.__diqStatsHeaderScrollHandler) {
                 document.removeEventListener("scroll", container.__diqStatsHeaderScrollHandler, true);
             }
+            desktopRowApps.get(rowMount)?.unmount();
+            desktopRowApps.delete(rowMount);
+            desktopContainerApps.delete(container);
             observer.disconnect();
         }
     });
@@ -1436,6 +1508,8 @@ export function renderStatsDesktop(
     onSortChange
 ) {
     if (settings?.ownerColumn === true) {
+        desktopContainerApps.get(container)?.unmount();
+        desktopContainerApps.delete(container);
         renderLeagueOwnerStatsDesktop(container, data, headings, settings, onSortChange);
         return;
     }
@@ -1508,65 +1582,162 @@ export function renderStatsDesktop(
     ).sort((a, b) => a.localeCompare(b));
 
     // ----- DOM build -----
+    desktopContainerApps.get(container)?.unmount();
+    desktopContainerApps.delete(container);
     container.innerHTML = "";
     const scrollWrap = document.createElement("div");
-    scrollWrap.className = "w-full overflow-x-auto pb-2";
+    scrollWrap.className = "w-full overflow-x-auto px-4 pb-2 sm:px-6";
 
     const wrapper = document.createElement("div");
     wrapper.className =
-        "min-w-max bg-white shadow rounded-lg border border-gray-200 relative";
+        "min-w-max border border-gray-200 bg-white shadow-sm relative";
 
     // Controls bar (sticky)
     const controls = document.createElement("div");
     controls.className =
-        "sticky top-0 z-50 bg-gray-50 border-b px-4 py-4 flex items-center gap-3";
+        "sticky top-0 z-50 flex items-center gap-5 border-b border-gray-200 bg-white/95 px-6 py-5 backdrop-blur";
 
     // Name filter input
+    const searchWrap = document.createElement("label");
+    searchWrap.className =
+        "relative flex h-11 w-[520px] shrink-0 items-center border border-gray-300 bg-white";
+    const searchIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    searchIcon.setAttribute("viewBox", "0 0 24 24");
+    searchIcon.setAttribute("fill", "none");
+    searchIcon.setAttribute("stroke", "currentColor");
+    searchIcon.setAttribute("stroke-width", "1.8");
+    searchIcon.setAttribute("stroke-linecap", "round");
+    searchIcon.setAttribute("stroke-linejoin", "round");
+    searchIcon.setAttribute("aria-hidden", "true");
+    searchIcon.classList.add("ml-5", "h-4", "w-4", "shrink-0", "text-gray-500");
+    const searchCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    searchCircle.setAttribute("cx", "11");
+    searchCircle.setAttribute("cy", "11");
+    searchCircle.setAttribute("r", "7");
+    const searchLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    searchLine.setAttribute("d", "m20 20-3.5-3.5");
+    searchIcon.appendChild(searchCircle);
+    searchIcon.appendChild(searchLine);
+    searchWrap.appendChild(searchIcon);
+
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.placeholder = "Filter by name…";
     nameInput.value = state.nameFilter;
     nameInput.className =
-        "flex-1 max-w-md rounded-md border border-gray-300 px-3 py-2 text-sm " +
-        "focus:outline-none focus:ring-2 focus:ring-indigo-500";
-    controls.appendChild(nameInput);
+        "h-full min-w-0 flex-1 border-0 bg-transparent px-4 text-sm text-gray-700 " +
+        "placeholder:text-gray-500 focus:outline-none focus:ring-0";
+    searchWrap.appendChild(nameInput);
+    controls.appendChild(searchWrap);
 
     // Team dropdown
-    const teamSelect = document.createElement("select");
-    teamSelect.className =
-        "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
-        "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
-    const optAll = document.createElement("option");
-    optAll.value = "";
-    optAll.textContent = "All Teams";
-    teamSelect.appendChild(optAll);
-    teams.forEach((t) => {
-        const opt = document.createElement("option");
-        opt.value = t;
-        opt.textContent = t;
-        teamSelect.appendChild(opt);
-    });
-    teamSelect.value = state.teamFilter;
-    controls.appendChild(wrapNativeSelect(teamSelect));
+    const teamGroup = document.createElement("div");
+    teamGroup.className = "w-52 shrink-0 border-l border-gray-200 pl-6";
+    const teamLabel = document.createElement("div");
+    teamLabel.className = "mb-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500";
+    teamLabel.textContent = "Team";
+    teamGroup.appendChild(teamLabel);
+    teamGroup.appendChild(mountStatsSelect({
+        options: [
+            { label: "All Teams", value: "" },
+            ...teams.map((team) => ({ label: team, value: team })),
+        ],
+        modelValue: state.teamFilter,
+        placeholder: "All Teams",
+        ariaLabel: "Team",
+        triggerClass: "h-8 w-full border-0 border-b border-gray-300 bg-transparent px-0 pb-1 text-left text-sm text-gray-950 focus:border-indigo-600 focus:outline-none focus:ring-0 inline-flex items-center justify-between gap-3",
+        onChange: (value) => {
+            state.teamFilter = value || "";
+            desktopState.set(container, state);
+            renderRows();
+        },
+    }));
+    controls.appendChild(teamGroup);
 
-    let leagueSelect = null;
-    if (leagues.length > 0) {
-        leagueSelect = document.createElement("select");
-        leagueSelect.className =
-            "w-40 rounded-md border border-gray-300 px-2 py-2 text-sm " +
-            "bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500";
-        const optAllLeagues = document.createElement("option");
-        optAllLeagues.value = "";
-        optAllLeagues.textContent = "All Leagues";
-        leagueSelect.appendChild(optAllLeagues);
-        leagues.forEach((league) => {
-            const opt = document.createElement("option");
-            opt.value = league;
-            opt.textContent = league;
-            leagueSelect.appendChild(opt);
+    const positionButtons = desktopPositionButtons(settings?.positionButtons);
+    if (positionButtons.length > 0 && typeof settings?.onPositionToggle === "function") {
+        const selectedPos = Array.isArray(settings?.selectedPos) ? settings.selectedPos.map(String) : [];
+        const selectedPosTypes = Array.isArray(settings?.selectedPosTypes) ? settings.selectedPosTypes.map(String) : [];
+        const positionGroup = document.createElement("div");
+        positionGroup.className = "shrink-0";
+        const positionLabel = document.createElement("div");
+        positionLabel.className = "mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500";
+        positionLabel.textContent = "Position Filter";
+        const buttonRow = document.createElement("div");
+        buttonRow.className = "inline-grid grid-flow-col overflow-hidden border border-gray-200 bg-white";
+
+        positionButtons.forEach((label) => {
+            const value = String(label);
+            const active = value === "SKT"
+                ? selectedPosTypes.includes("SKT") || (selectedPosTypes.includes("F") && selectedPosTypes.includes("D"))
+                : selectedPos.includes(value) || selectedPosTypes.includes(value);
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = value;
+            button.className = [
+                "h-8 min-w-10 border-r border-gray-200 px-3 text-[12px] font-semibold transition-colors last:border-r-0",
+                active
+                    ? "border-b-2 border-b-indigo-600 text-indigo-600"
+                    : "border-b-2 border-b-transparent text-gray-950 hover:bg-gray-50 hover:text-indigo-600",
+            ].join(" ");
+            button.addEventListener("click", () => settings.onPositionToggle(value));
+            buttonRow.appendChild(button);
         });
-        leagueSelect.value = state.leagueFilter;
-        controls.appendChild(wrapNativeSelect(leagueSelect));
+
+        positionGroup.appendChild(positionLabel);
+        positionGroup.appendChild(buttonRow);
+        controls.appendChild(positionGroup);
+    }
+
+    if (settings?.canSlice !== false && typeof settings?.onSliceChange === "function") {
+        const sliceGroup = document.createElement("div");
+        sliceGroup.className = "ml-auto shrink-0 border-l border-gray-200 pl-6";
+        const sliceLabel = document.createElement("div");
+        sliceLabel.className = "mb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-500";
+        sliceLabel.textContent = "Slice";
+        const sliceRow = document.createElement("div");
+        sliceRow.className = "inline-grid grid-flow-col items-end border-b border-gray-300";
+
+        [
+            { label: "Total", value: "total" },
+            { label: "P/GP", value: "pgp" },
+            { label: "Per 60", value: "p60" },
+        ].forEach((option) => {
+            const active = String(settings?.slice ?? "total") === option.value;
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = option.label;
+            button.className = [
+                "h-8 min-w-16 border-b-2 px-3 text-[12px] transition-colors",
+                active
+                    ? "border-indigo-600 font-semibold text-indigo-600"
+                    : "border-transparent font-medium text-gray-600 hover:text-gray-950",
+            ].join(" ");
+            button.addEventListener("click", () => settings.onSliceChange(option.value));
+            sliceRow.appendChild(button);
+        });
+
+        sliceGroup.appendChild(sliceLabel);
+        sliceGroup.appendChild(sliceRow);
+        controls.appendChild(sliceGroup);
+    }
+
+    if (leagues.length > 0) {
+        controls.appendChild(mountStatsSelect({
+            options: [
+                { label: "All Leagues", value: "" },
+                ...leagues.map((league) => ({ label: league, value: league })),
+            ],
+            modelValue: state.leagueFilter,
+            placeholder: "All Leagues",
+            ariaLabel: "League",
+            triggerClass: "h-8 w-40 border-0 border-b border-gray-300 bg-transparent px-0 pb-1 text-left text-sm text-gray-950 focus:border-indigo-600 focus:outline-none focus:ring-0 inline-flex items-center justify-between gap-3",
+            onChange: (value) => {
+                state.leagueFilter = value || "";
+                desktopState.set(container, state);
+                renderRows();
+            },
+        }));
     }
 
     // Columns header (original height, sticky under controls)
@@ -1670,108 +1841,57 @@ export function renderStatsDesktop(
         });
     };
 
+    let playerRowsState = null;
     const renderRows = () => {
-        bodyWrap.innerHTML = "";
         const rows = applyFilters(data);
 
-        rows.forEach((row, idx) => {
-            const tr = document.createElement("div");
-            tr.className =
-                "grid border-t px-4 py-2 text-sm hover:bg-gray-50 transition-colors";
-            tr.style.gridTemplateColumns = gridCols;
-
-            displayHeadings.forEach(({ key }, i) => {
-                const cell = document.createElement("div");
-
-                if (key === "__rk") {
-                    cell.className =
-                        "flex items-center justify-center text-gray-500";
-                    cell.textContent = String(idx + 1);
-                } else if (isOwnerColumn(key)) {
-                    const ownerName = String(row?.fantasy_team_name ?? "").trim();
-                    const ownerAvatarUrl = String(row?.fantasy_team_avatar_url ?? "").trim();
-
-                    cell.className =
-                        "sticky right-0 z-10 flex min-w-0 items-center justify-end gap-2 border-l border-gray-100 bg-white pl-3 text-right text-xs text-gray-600";
-
-                    if (ownerName !== "") {
-                        const name = document.createElement("span");
-                        name.className = "min-w-0 truncate font-medium";
-                        name.textContent = ownerName;
-                        name.title = ownerName;
-                        cell.appendChild(buildOwnerAvatar(ownerAvatarUrl, ownerName));
-                        cell.appendChild(name);
-                    }
-                } else if (i === teamIdx) {
-                    const badge = document.createElement("div");
-                    badge.className =
-                        "inline-flex h-7 px-3 rounded-md items-center justify-center " +
-                        "text-white font-semibold text-xs tracking-wide shadow-sm";
-                    badge.style.background = teamBg(row?.team);
-                    badge.textContent = row?.team ?? "—";
-                    cell.className =
-                        "flex items-center justify-center text-gray-500";
-                    cell.appendChild(badge);
-                } else if (i === leagueIdx) {
-                    const rawVal = statValueForKey(row, key);
-                    const val = formatStatValue(key, rawVal);
-                    cell.className =
-                        "flex items-center justify-center whitespace-nowrap text-xs font-semibold text-gray-500";
-                    cell.textContent = val ?? "";
-                } else if (i === typeIdx) {
-                    const val = row.pos ?? row.position ?? row[key] ?? row.pos_type ?? row.type;
-                    const typeVal = row.pos_type ?? row.type;
-                    cell.className =
-                        "flex items-center justify-center text-gray-500";
-                    cell.appendChild(buildPosShape(val, typeVal));
-                } else if (isCapKey(key)) {
-                    const raw = statValueForKey(row, key);
-                    cell.className =
-                        "flex items-center justify-center whitespace-nowrap text-sm text-gray-500";
-                    cell.textContent = formatCap(raw);
-                } else if (i === playerIdx) {
-                    const rawVal = statValueForKey(row, key);
-                    const val = formatStatValue(key, rawVal);
-                    cell.className =
-                        "flex min-w-0 items-center justify-start gap-2 whitespace-nowrap overflow-hidden pr-2 text-gray-700";
-                    cell.title = String(val ?? "");
-                    const name = document.createElement("span");
-                    name.className = "min-w-0 overflow-hidden text-ellipsis";
-                    name.textContent = val ?? "";
-                    cell.appendChild(buildPlayerAvatar(row, val));
-                    cell.appendChild(name);
-                } else {
-                    const rawVal = statValueForKey(row, key);
-                    const val = formatStatValue(key, rawVal);
-                    const common =
-                        "flex items-center justify-center whitespace-nowrap tabular-nums text-[11px] leading-5 text-gray-500";
-                    cell.className =
-                        settings.sortKey === key
-                            ? `${common} font-semibold`
-                            : common;
-                    cell.textContent = formatDesktopNumber(val);
-                }
-
-                tr.appendChild(cell);
+        if (!playerRowsState) {
+            playerRowsState = reactive({
+                rows,
+                headings: displayHeadings,
+                gridCols,
+                teamIdx,
+                leagueIdx,
+                typeIdx,
+                playerIdx,
+                ownerIdx,
+                sortKey: settings.sortKey,
             });
 
-            bodyWrap.appendChild(tr);
-        });
+            const app = createApp({
+                render: () => h(PlayerRows, {
+                    rows: playerRowsState.rows,
+                    headings: playerRowsState.headings,
+                    gridCols: playerRowsState.gridCols,
+                    teamIdx: playerRowsState.teamIdx,
+                    leagueIdx: playerRowsState.leagueIdx,
+                    typeIdx: playerRowsState.typeIdx,
+                    playerIdx: playerRowsState.playerIdx,
+                    ownerIdx: playerRowsState.ownerIdx,
+                    sortKey: playerRowsState.sortKey,
+                }),
+            });
+
+            app.mount(bodyWrap);
+            desktopRowApps.set(bodyWrap, app);
+            desktopContainerApps.set(container, app);
+            return;
+        }
+
+        playerRowsState.rows = rows;
+        playerRowsState.headings = displayHeadings;
+        playerRowsState.gridCols = gridCols;
+        playerRowsState.teamIdx = teamIdx;
+        playerRowsState.leagueIdx = leagueIdx;
+        playerRowsState.typeIdx = typeIdx;
+        playerRowsState.playerIdx = playerIdx;
+        playerRowsState.ownerIdx = ownerIdx;
+        playerRowsState.sortKey = settings.sortKey;
     };
 
     // listeners
     nameInput.addEventListener("input", () => {
         state.nameFilter = nameInput.value || "";
-        desktopState.set(container, state);
-        renderRows();
-    });
-    teamSelect.addEventListener("change", () => {
-        state.teamFilter = teamSelect.value || "";
-        desktopState.set(container, state);
-        renderRows();
-    });
-    leagueSelect?.addEventListener("change", () => {
-        state.leagueFilter = leagueSelect.value || "";
         desktopState.set(container, state);
         renderRows();
     });
@@ -1794,6 +1914,9 @@ export function renderStatsDesktop(
     // cleanup on outside rerender
     const observer = new MutationObserver(() => {
         if (!container.contains(wrapper)) {
+            desktopRowApps.get(bodyWrap)?.unmount();
+            desktopRowApps.delete(bodyWrap);
+            desktopContainerApps.delete(container);
             window.removeEventListener("resize", onResize);
             observer.disconnect();
         }

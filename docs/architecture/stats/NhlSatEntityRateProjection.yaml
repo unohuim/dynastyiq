@@ -5,6 +5,8 @@ location:
   - app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php
   - app/Jobs/BuildNhlSatModelEntityRateProjectionsJob.php
   - database/migrations/2026_08_21_000002_create_nhl_sat_model_entity_rate_projection_buckets_table.php
+  - database/migrations/2026_08_26_000004_add_split_hdsat_to_nhl_summary_tables.php
+  - database/migrations/2026_08_26_000005_create_nhl_sat_model_rate_projection_splits_table.php
   - docs/architecture/stats/NhlModelRuns.yaml
   - docs/architecture/stats/NhlSatEntityRateProjection.yaml
 purpose: Define how SAT model entity profile rows become future-facing per-60 projection rows without using held-out test-season data.
@@ -18,6 +20,7 @@ when_not_to_use:
   - Projecting full-season volume, future TOI, games played, opportunity, SOG, or goals before those strategies are separately validated.
 rules:
   - Build /60 projections must not use the SAT model target season or held-out test-season profile rows as inputs.
+  - Build /60 and Compare /60 currently queue and persist only `skater_offense` entities; other profile types may still have profile rows, but they are intentionally excluded from this projection/evaluation pass until profile-type-specific strategies are documented and approved.
   - Skater-offense SAT /60 projections must use only the model training seasons, training profile rows, training-season snapshots, and skater production from nhl_game_summaries for those same training seasons.
   - Skater-offense SAT /60 projection inputs must retain bucket rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row, then roll the remaining profile rows into an explicit Other bucket.
   - Skater-offense SAT /60 projections must use true per-season snapshots for the prior and latest training seasons when comparing season-one and season-two movement.
@@ -33,7 +36,64 @@ rules:
   - Defense goal-per-game tiers are high at 0.15 or greater, mid at 0.07 through 0.149, and low below 0.07, measured only from training-season nhl_game_summaries.
   - Training-only cohort baselines used by skater-offense SAT /60 projections must be grouped by position type and goal-per-game tier, not by held-out target-season performance.
   - The current skater-offense SAT /60 projection strategy version is skater_offense_segmented_xsat_v2.
+  - The current skater-offense strength-split SAT/HDSAT projection strategy version is skater_offense_strength_rate_v15.
   - skater_offense_segmented_xsat_v2 must use latest-training-season bucket shape as the bucket-level base, calculate an entity-level xSAT/60 target from segment rules, apply only capped late-training-season SAT signal adjustments, then scale the entity's bucket rows so projected bucket xSAT/60 sums to that target.
+  - skater_offense_strength_rate_v7 must write entity-level `all`, `ev`, `pp`, and `pk` rows to `nhl_sat_model_entity_rate_projection_splits` without using the held-out target season as input.
+  - skater_offense_strength_rate_v7 must use the existing bucket-level `skater_offense_segmented_xsat_v2` summed projection as the all-situation SAT/60 anchor instead of replacing the validated SAT/60 projection with an independent split formula.
+  - skater_offense_strength_rate_v7 must scale EV, PP, and PK SAT/60 around the anchored all-situation SAT/60 while preserving the training-season split-rate shape.
+  - skater_offense_strength_rate_v7 must leave all-situation and EV TOI/GP and GP uncalibrated while targeted PP/PK calibration is evaluated.
+  - skater_offense_strength_rate_v7 must assign training-only usage tiers and player projection cohorts before applying PP/PK calibration, so special-teams adjustments are not blanketed across low-usage and high-usage skaters.
+  - skater_offense_strength_rate_v7 must apply only a tightly capped PK TOI/GP event modifier from training-only `nhl_game_summaries` blocks and TK+GV context; the modifier must not alter SAT/60, HDSAT/SAT share, GP, or non-PK TOI projections.
+  - skater_offense_strength_rate_v7 must keep usage tier, projection cohort, PK event modifier, game-summary blocks/TK+GV inputs, and calibration multipliers visible in projection row metadata so compare exports can be audited against uncalibrated anchors.
+  - skater_offense_strength_rate_v7 must project HDSAT/60 from projected SAT/60 multiplied by a training-only HDSAT/SAT share signal, then derive HDSAT/GP and HDSAT/season from projected HDSAT/60, projected TOI/GP, and projected games.
+  - skater_offense_strength_rate_v7 must treat S1-to-S2 SAT and HDSAT spikes as regression pressure rather than automatic momentum, but must not regress HDSAT spikes so aggressively that the projection ignores the anchored SAT baseline.
+  - skater_offense_strength_rate_v7 may allow limited young-skater PP upside when high S2 SH% is paired with S1-to-S2 PP TOI gain, but SH% spikes must remain regression diagnostics instead of direct rate upside.
+  - skater_offense_strength_rate_v8 must preserve v7 behavior except for forward PP TOI/GP enhancements from the latest training season.
+  - skater_offense_strength_rate_v8 must define the latest training season dynamically from the model run training seasons; it must not hardcode S2 when more than two training seasons exist.
+  - skater_offense_strength_rate_v8 must rank latest-training-season forwards by top-400 PTS/GP with more than 25 games and by top-400 total points, then expose whether the forward is in both groups, only one group, or outside both groups.
+  - skater_offense_strength_rate_v8 must rank latest-training-season forwards within team by PTS/GP, total points, SAT/GP, SOG/GP, and HDSAT/GP for PP TOI diagnostics.
+  - skater_offense_strength_rate_v8 may boost only forward PP TOI/GP for latest top-400 forwards using capped team-rank modifiers, and may suppress outside-top-400 forward PP TOI/GP using age-based caps and latest-team SAT/GP rank; it must not alter ALL, EV, PK, SAT/60, HDSAT/SAT share, or GP formula behavior.
+  - skater_offense_strength_rate_v8 must keep latest-training-season top-400 flags, team-forward ranks, PP cohort, PP role modifier, PP cap, and final projected PP TOI/GP visible in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v9 must preserve v8 behavior except for defense PP TOI/GP enhancements from latest-training-season top-200 defense and latest-team defense PP role rank.
+  - skater_offense_strength_rate_v9 must rank latest-training-season defense by top-200 PTS/GP with more than 25 games, then rank same-team defense by PP PTS/GP, PP SAT/GP, and PP SOG/GP.
+  - skater_offense_strength_rate_v9 must define defense PP role rank as the best latest-team rank among PP PTS/GP, PP SAT/GP, and PP SOG/GP, with separate rank-1, rank-2 age, rank-3, and rank-4-plus opportunity rules.
+  - skater_offense_strength_rate_v9 may alter only PP TOI/GP for latest top-200 defense; it must not alter forward PP behavior, non-PP TOI, GP, SAT/60, or HDSAT/SAT behavior.
+  - skater_offense_strength_rate_v9 must keep latest-training-season defense ranks, defense PP role cohort, defense PP role modifier, and defense PP cap visible in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v10 must preserve v9 PP TOI role behavior while changing SAT/60 and PK TOI/GP formulas to match latest aggregate comparison analysis.
+  - skater_offense_strength_rate_v10 must keep EV SAT/60 S2-heavy, with only light regression for weak offensive cohorts.
+  - skater_offense_strength_rate_v10 must make PP SAT/60 train-heavy for most cohorts, keep higher S2 influence only for elite/top-scoring cohorts, and suppress low-offense PP cohorts more aggressively.
+  - skater_offense_strength_rate_v10 must treat PK SAT/60 as a low-confidence train-heavy fallback with reduced S2 and broad momentum influence.
+  - skater_offense_strength_rate_v10 must not add IPP as a SAT/60 driver and must not add broad train-minus-latest momentum logic.
+  - skater_offense_strength_rate_v10 must use train PK TOI/GP as the main PK TOI/GP anchor, blend latest-training-season PK TOI/GP secondarily, and use only a capped defense-specific blocks modifier; hits and broad train-minus-latest PK TOI momentum must not be major signals.
+  - skater_offense_strength_rate_v10 may expose SAT and PK TOI anchor strategies in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v11 must preserve v10 behavior except for segmented PK SAT/60 formulas based on latest-training-season PK TOI rank bands.
+  - skater_offense_strength_rate_v11 must rank latest-training-season forwards by PK TOI descending into ranks 1-100, 101-200, and 201-400, and rank latest-training-season defense by PK TOI descending into ranks 1-50, 51-100, and 101-200.
+  - skater_offense_strength_rate_v11 may use direct PK SAT/60 formulas for forward PK TOI ranks 1-100 and 101-200 and defense PK TOI ranks 1-50, using only training-season `nhl_game_summaries` and player-game strength TOI inputs.
+  - skater_offense_strength_rate_v11 may use a capped experimental formula for defense PK TOI ranks 51-100, but lower-confidence forward ranks 201-400, defense ranks 101-200, and outside-rank rows must remain conservative fallback paths.
+  - skater_offense_strength_rate_v11 must not use held-out target-season labels, hits, blocks, TK/GV, IPP, or broad train-minus-latest momentum as PK SAT/60 formula drivers.
+  - skater_offense_strength_rate_v11 must keep PK SAT rank bands, direct-formula source signals, and SAT anchor strategy visible in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v12 must preserve v11 behavior except for all-situation SAT/60 for latest-training-season top-200 defense ranked first on their team by points per game.
+  - skater_offense_strength_rate_v12 must define the D1 all-situation SAT cohort from the latest training season only: defense skaters with more than 25 latest-training-season games, top-200 defense points-per-game rank, and same-team defense points-per-game rank 1.
+  - skater_offense_strength_rate_v12 must project D1 all-situation SAT/60 as `0.70 * latest-training-season SAT/60 + 0.30 * train SAT/60`, using only `nhl_game_summaries` and model-run training seasons.
+  - skater_offense_strength_rate_v12 must not alter D2, D3, D4-plus, forward, EV, PP, PK, TOI/GP, GP, or HDSAT/SAT formula behavior.
+  - skater_offense_strength_rate_v12 must keep latest-team defense points-per-game rank, D all-situation SAT cohort, direct D1 SAT/60 value, and SAT anchor strategy visible in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v13 must preserve v12 behavior except for EV and PP SAT/60 calibration for latest-training-season top-200 defense ranked first, second, or third on their team by points per game.
+  - skater_offense_strength_rate_v13 may increase EV SAT/60 calibration for D1, D2, and D3 cohorts when training-only comparison analysis shows those cohorts are underprojected, while leaving D4-plus and non-defense EV calibration on the existing path.
+  - skater_offense_strength_rate_v13 may refine PP SAT/60 calibration for D1, D2, and D3 cohorts using latest-training-season PP TOI/GP gates; D4-plus must remain conservative until separately validated.
+  - skater_offense_strength_rate_v13 must keep D-rank EV/PP SAT calibration paths visible in split projection metadata and must not alter ALL D2/D3/D4-plus calibration, PK SAT/60 rank-band formulas, TOI/GP, GP, or HDSAT/SAT share behavior.
+  - skater_offense_strength_rate_v14 must preserve v13 behavior except for D SAT role cohort construction.
+  - skater_offense_strength_rate_v14 must define D SAT role cohorts from the latest training season only; held-out target-season data must not influence D rank assignment.
+  - skater_offense_strength_rate_v14 must qualify defense rank inputs with latest-training-season games greater than or equal to 25.
+  - skater_offense_strength_rate_v14 must define D1, D2, and D3 as same-team defense points-per-game ranks 1, 2, and 3 among qualifying latest-training-season defense.
+  - skater_offense_strength_rate_v14 must define D4-plus as qualifying defense with league-wide defense points-per-game rank 200 or better after excluding D1, D2, and D3.
+  - skater_offense_strength_rate_v14 must keep latest-team defense points-per-game rank, league-wide defense points-per-game rank, D SAT role cohort, and SAT anchor strategy visible in split projection metadata for compare export audits.
+  - skater_offense_strength_rate_v15 must preserve v14 behavior except for forward SAT role cohort construction, F10-plus all/EV SAT/60 calibration suppression, and F7-9/F10-plus PP TOI/GP suppression.
+  - skater_offense_strength_rate_v15 must qualify forward rank inputs with latest-training-season games greater than or equal to 25.
+  - skater_offense_strength_rate_v15 must define F1-3, F4-6, and F7-9 as same-team forward points-per-game rank buckets 1-3, 4-6, and 7-9 among qualifying latest-training-season forwards.
+  - skater_offense_strength_rate_v15 must define F10-plus as qualifying forwards with league-wide forward points-per-game rank 400 or better after excluding F1-3, F4-6, and F7-9.
+  - skater_offense_strength_rate_v15 may suppress only F10-plus all-situation and EV SAT/60 calibration from the broad forward path when comparison analysis shows those cohorts are materially overprojected.
+  - skater_offense_strength_rate_v15 may suppress and cap PP TOI/GP only for F7-9 and F10-plus cohorts; F1-6 forward PP TOI behavior must remain on the existing top-400 forward role path.
+  - skater_offense_strength_rate_v15 must keep latest-team qualified forward points-per-game rank, league-wide forward points-per-game rank, forward SAT role cohort, forward PP TOI rank modifier/cap, and SAT anchor strategy visible in split projection metadata for compare export audits.
   - For skater_offense_segmented_xsat_v2, 0-2 latest active buckets must use `0.25 * avg(train, latest) + 0.75 * cohort`.
   - For skater_offense_segmented_xsat_v2, 3-6 latest active buckets must use `latest + 0.25 * (train - latest)`.
   - For skater_offense_segmented_xsat_v2, forward high-goal entities whose latest season is below the prior season must use `0.90 * avg(train, latest) + 0.10 * cohort`.
@@ -49,6 +109,13 @@ rules:
   - Goal-per-game and point-per-game classes must be derived from nhl_game_summaries over the training seasons only; defense goal-per-game classes must use defense-specific thresholds, while point class is diagnostic unless explicitly approved as a driver.
   - Active bucket count is a validated level and shot-option breadth signal for skater-offense SAT; bucket-count change is diagnostic and must not drive projection rates without separate validation.
   - Bucket-level skater-offense SAT projections must preserve latest-training-season bucket shape for the current validated strategy, then scale bucket rows to the entity target.
+  - HDSAT reporting support in the Build /60 pass must update player-game `nhl_game_summaries.hdsat`, `evhdsat`, `pphdsat`, and `pkhdsat` counts and may refresh existing `nhl_season_stats` HDSAT totals and split totals from those rows; it must not store danger labels or model probabilities on `nhl_shot_attempts_facts`.
+  - HDSAT is defined as a SAT whose scored run-scoped latest draft goal-model probability is at least 0.10; per-SAT probabilities and matched bucket audit data should be stored in `nhl_shot_attempt_model_scores`, and `/GP` and `/60` HDSAT values must be derived from persisted aggregate totals plus GP and TOI.
+  - Compare /60 skater-offense entity jobs may refresh held-out target-season HDSAT actual labels from the same run-scoped goal model before writing that entity's aggregate comparison row; target-season HDSAT must remain evaluation-only and must not become an input to projection rows or training profiles.
+  - Aggregate /60 comparison reports may expose train/test HDSAT counts, HDSAT/GP, HDSAT/60, HDSAT/SAT rate, SAT/SOG/goals total, SAT/SOG/goals per game, SAT/SOG/goals per 60, TOI/GP, and GP/season for skater-offense player entities from `nhl_game_summaries`; raw bucket comparison rows must not imply bucket-level HDSAT until bucket-grain HDSAT storage is explicitly added.
+  - Compare /60 skater-offense reports must persist normalized situation split rows for `all`, `ev`, `pp`, and `pk` in `nhl_sat_model_entity_rate_comparison_splits`; EV/PP/PK SAT, SOG, goals, and HDSAT come from summary split columns, while EV/PP/PK TOI comes from `nhl_player_game_strength_summaries`.
+  - Aggregate Compare /60 exports may derive split SH%, Goal/SAT%, and S1/S2/S3 strength metrics at read time from persisted comparison splits plus latest-training-season game summaries; S1 means aggregate training minus latest training season, S2 means latest training season, and S3 means held-out test season.
+  - Aggregate Compare /60 exports may join `nhl_sat_model_entity_rate_projection_splits` to split comparison rows to expose projected split SAT/60, HDSAT/60, TOI/GP, GP, SAT/GP, HDSAT/GP, SAT/season, HDSAT/season, projection errors, and formula diagnostic buckets.
   - SOG and goal /60 projection columns in this workflow may be scaled from the SAT projection shape for comparison display, but SAT remains the validated projection target until SOG and goal strategies are separately approved.
   - Peer bucket, peer entity, and tendency multiplier columns may be persisted as diagnostics but must not drive skater-offense SAT projection rates until validated.
   - Non-skater-offense profile types must not borrow skater-offense production tiers, age groups, or active-bucket-count assumptions unless a profile-type-specific projection strategy is documented and approved.
@@ -57,6 +124,7 @@ public_interface:
   - BuildNhlSatModelEntityRateProjectionsJob
   - BuildNhlSatModelEntityRateProjectionForEntityJob
   - nhl_sat_model_entity_rate_projection_buckets
+  - nhl_sat_model_entity_rate_projection_splits
   - admin.nhl-sat-models.rate-projections
   - admin.nhl-sat-models.rate-projections.build
   - admin.nhl-sat-models.rate-projections.compare.aggregates

@@ -28,6 +28,7 @@ use App\Console\Commands\BuildNhlGoalieWorkloadProjectionsCommand;
 use App\Console\Commands\TruncateNhlChanceProjectionTablesCommand;
 use App\Http\Middleware\AdminLifecycleMiddleware;
 use App\Http\Middleware\AuthenticateApiClient;
+use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\HydrateDiscordSession;
 use App\Http\Middleware\SuperAdminMiddleware;
 use Illuminate\Foundation\Application;
@@ -68,6 +69,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         //$middleware->web(HydrateDiscordSession::class);
+        $middleware->web(append: [
+            HandleInertiaRequests::class,
+        ]);
+
         $middleware->alias([
             'admin.lifecycle' => AdminLifecycleMiddleware::class,
             'admin.super' => SuperAdminMiddleware::class,

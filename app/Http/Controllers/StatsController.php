@@ -22,17 +22,31 @@ use App\Support\Stats\SeasonStatsPayloadRequest;
 use App\Support\Stats\StatsFilterSet;
 use App\Support\Stats\StatsPayloadBuilder;
 use App\Support\Stats\StatsQueryContext;
-use Illuminate\Support\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\View\View;
-
+use Illuminate\Support\Carbon;
+use Inertia\Inertia;
+use Inertia\Response as InertiaResponse;
 
 class StatsController extends BaseController
 {
-    public function index(Request $request): View
+    /**
+     * Render the public stats page through the staged Inertia/Vue shell.
+     */
+    public function index(Request $request): InertiaResponse
+    {
+        return Inertia::render('Stats/Index', $this->statsPageProps($request));
+    }
+
+    /**
+     * Build the initial page props consumed by the stats Vue compatibility page.
+     *
+     * @return array<string, mixed>
+     */
+    private function statsPageProps(Request $request): array
     {
         $user = Auth::user();
 
@@ -57,7 +71,6 @@ class StatsController extends BaseController
         $selectedPerspectiveId = $first?->id;
         $selectedSlug          = $first?->slug ?? $first?->name ?? null;
         $seasonFilter          = $request->query('season_id', $request->query('season'));
-        $slice                 = (string) $request->query('slice', 'total');
         $gameType              = (int) $request->query('game_type', 2);
 
         if ($selectedPerspectiveId) {
@@ -65,7 +78,7 @@ class StatsController extends BaseController
                 $user,
                 $selectedPerspectiveId,
                 is_string($seasonFilter) ? $seasonFilter : null,
-                in_array($slice, ['total', 'pgp', 'p60'], true) ? $slice : 'total',
+                'total',
                 in_array($gameType, [1, 2, 3], true) ? $gameType : 2,
                 null
             );
@@ -96,14 +109,14 @@ class StatsController extends BaseController
             ];
         }
 
-        return view('stats.index', [
-            'payload'               => $payload,
-            'perspectives'          => $perspectives,
-            'selectedPerspectiveId' => $selectedPerspectiveId,
-            'selectedSlug'          => $selectedSlug,
-            'defaultSeason'         => $payload['meta']['season'] ?? null,
-            'connectedLeagues'      => $connectedLeagues,
-        ]);
+        return [
+            'initialPayload' => $payload,
+            'apiUrl' => url('/api/stats'),
+            'connectedLeagues' => $connectedLeagues,
+            'perspectives' => $perspectives,
+            'selectedPerspective' => $selectedSlug,
+            'mobileBreakpoint' => config('viewports.mobile', 640),
+        ];
     }
 
     /**
@@ -287,6 +300,11 @@ class StatsController extends BaseController
             );
         } else {
             [$fromDate, $toDate] = $this->resolveDates($period, $request->query('from'), $request->query('to'));
+            $rangeValidationResponse = $this->validateRangeDates($period, $fromDate, $toDate);
+
+            if ($rangeValidationResponse !== null) {
+                return $rangeValidationResponse;
+            }
 
             [$payload, , , $buildTimings] = $this->buildAndFormatPlayersPayloadRangeFromSettings(
                 $user,
@@ -643,6 +661,11 @@ class StatsController extends BaseController
 
         // Ranges / partial periods
         [$fromDate, $toDate] = $this->resolveDates($period, $request->query('from'), $request->query('to'));
+        $rangeValidationResponse = $this->validateRangeDates($period, $fromDate, $toDate);
+
+        if ($rangeValidationResponse !== null) {
+            return $rangeValidationResponse;
+        }
 
         [$payload] = $this->buildAndFormatPlayersPayloadRange(
             $user,
@@ -782,6 +805,27 @@ class StatsController extends BaseController
             'range'      => [$from ? Carbon::parse($from) : null, $to ? Carbon::parse($to) : null],
             default      => [null, null],
         };
+    }
+
+    private function validateRangeDates(string $period, ?Carbon $from, ?Carbon $to): ?JsonResponse
+    {
+        if ($period !== 'range') {
+            return null;
+        }
+
+        if ($from === null || $to === null) {
+            return response()->json([
+                'message' => 'Start and end dates are required for range stats.',
+            ], 422);
+        }
+
+        if ($from->gt($to)) {
+            return response()->json([
+                'message' => 'Start date must be before end date.',
+            ], 422);
+        }
+
+        return null;
     }
 
     private function leagueReportPerspectiveSlug(string $requestedPerspective): ?string

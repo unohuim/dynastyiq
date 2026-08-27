@@ -232,6 +232,7 @@ class NhlSeasonStatsPayload
             $this->statType('points', 'Points', 'basic', 'integer', 'points', true, true, true),
             $this->statType('shots_on_goal', 'Shots On Goal', 'basic', 'integer', 'shots', true, true, true),
             $this->statType('sat', 'Shot Attempts', 'basic', 'integer', 'attempts', true, true, true),
+            $this->statType('hdsat', 'High-Danger Shot Attempts', 'basic', 'integer', 'attempts', true, true, true),
             $this->statType('toi_seconds', 'TOI Seconds', 'basic', 'integer', 'seconds', false, false, true),
             $this->statType('goalie_starts', 'Goalie Starts', 'basic', 'integer', 'games', true, false, true),
             $this->statType('goalie_relief_appearances', 'Goalie Relief Appearances', 'basic', 'integer', 'games', true, false, true),
@@ -327,6 +328,7 @@ class NhlSeasonStatsPayload
             'points' => 'pts',
             'shots_on_goal' => 'sog',
             'sat' => 'sat',
+            'hdsat' => 'hdsat',
             'toi_seconds' => 'toi',
         ];
         $goalieStats = $this->goalieBasicStats();
@@ -335,7 +337,7 @@ class NhlSeasonStatsPayload
             ->where('season_id', $seasonKey)
             ->where('game_type', $gameType)
             ->select(array_merge(
-                ['nhl_player_id', 'nhl_team_id', 'gp', 'g', 'a', 'pts', 'sog', 'sat', 'toi'],
+                ['nhl_player_id', 'nhl_team_id', 'gp', 'g', 'a', 'pts', 'sog', 'sat', 'hdsat', 'toi'],
                 array_values($goalieStats)
             ))
             ->get()
@@ -409,6 +411,7 @@ class NhlSeasonStatsPayload
             'points' => 'pts',
             'shots_on_goal' => 'sog',
             'sat' => 'sat',
+            'hdsat' => 'hdsat',
             'toi_seconds' => 'toi',
         ];
 
@@ -483,6 +486,7 @@ WITH player_games AS (
         SUM(summaries.pts) as pts,
         SUM(summaries.sog) as sog,
         SUM(summaries.sat) as sat,
+        SUM(COALESCE(summaries.hdsat, 0)) as hdsat,
         SUM(summaries.toi) as toi,
         SUM(summaries.sa) as sa,
         SUM(summaries.sv) as sv,
@@ -550,6 +554,7 @@ SELECT
     SUM(pts) FILTER (WHERE recent_rank <= 5) as pts_5,
     SUM(sog) FILTER (WHERE recent_rank <= 5) as sog_5,
     SUM(sat) FILTER (WHERE recent_rank <= 5) as sat_5,
+    SUM(hdsat) FILTER (WHERE recent_rank <= 5) as hdsat_5,
     SUM(toi) FILTER (WHERE recent_rank <= 5) as toi_5,
     SUM(sa) FILTER (WHERE recent_rank <= 5) as sa_5,
     SUM(sv) FILTER (WHERE recent_rank <= 5) as sv_5,
@@ -580,6 +585,7 @@ SELECT
     SUM(pts) FILTER (WHERE recent_rank <= 10) as pts_10,
     SUM(sog) FILTER (WHERE recent_rank <= 10) as sog_10,
     SUM(sat) FILTER (WHERE recent_rank <= 10) as sat_10,
+    SUM(hdsat) FILTER (WHERE recent_rank <= 10) as hdsat_10,
     SUM(toi) FILTER (WHERE recent_rank <= 10) as toi_10,
     SUM(sa) FILTER (WHERE recent_rank <= 10) as sa_10,
     SUM(sv) FILTER (WHERE recent_rank <= 10) as sv_10,
@@ -610,6 +616,7 @@ SELECT
     SUM(pts) FILTER (WHERE recent_rank <= 20) as pts_20,
     SUM(sog) FILTER (WHERE recent_rank <= 20) as sog_20,
     SUM(sat) FILTER (WHERE recent_rank <= 20) as sat_20,
+    SUM(hdsat) FILTER (WHERE recent_rank <= 20) as hdsat_20,
     SUM(toi) FILTER (WHERE recent_rank <= 20) as toi_20,
     SUM(sa) FILTER (WHERE recent_rank <= 20) as sa_20,
     SUM(sv) FILTER (WHERE recent_rank <= 20) as sv_20,

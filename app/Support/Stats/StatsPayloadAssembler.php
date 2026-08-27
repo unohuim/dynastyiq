@@ -66,7 +66,7 @@ final class StatsPayloadAssembler
                 $toiSeconds = $this->entryToiSeconds($entry);
             } else {
                 $gamesPlayed = ($mode === 'range')
-                    ? (int) $playerStats->pluck('nhl_game_id')->unique()->count()
+                    ? $this->rangeGamesPlayed($playerStats)
                     : (int) $playerStats->sum('gp');
                 $toiSeconds = $this->collectionToiSeconds($playerStats);
             }
@@ -78,6 +78,10 @@ final class StatsPayloadAssembler
             }
 
             $toiPerGameSeconds = ($gamesPlayed > 0) ? (int) floor($toiSeconds / $gamesPlayed) : 0;
+            $sliceTotals = [
+                'gp' => max(0, $gamesPlayed),
+                'toi_total_seconds' => $toiSeconds,
+            ];
 
             $row = [
                 'name' => $player?->full_name ?? trim(($player->first_name ?? '') . ' ' . ($player->last_name ?? '')),
@@ -97,6 +101,7 @@ final class StatsPayloadAssembler
                 'drafted_year' => $player?->draft_year,
                 'drafted_label' => $this->draftedLabel($player?->draft_oa, $player?->draft_year),
                 'gp' => max(0, $gamesPlayed),
+                'toi_total_seconds' => $toiSeconds,
                 'nhl_player_id' => $player?->nhl_id ?? $entry->nhl_player_id ?? null,
                 'toi_seconds' => $toiPerGameSeconds,
                 'toi' => $this->formatTimeOnIce($toiPerGameSeconds),
@@ -119,6 +124,7 @@ final class StatsPayloadAssembler
                 $total = $isSeason
                     ? (float) ($entry->{$key} ?? 0)
                     : (float) $playerStats->sum($key);
+                $sliceTotals[$key] = fmod($total, 1.0) === 0.0 ? (int) $total : $total;
 
                 if ($canSlice && $slice !== 'total') {
                     if ($slice === 'pgp') {
@@ -135,11 +141,34 @@ final class StatsPayloadAssembler
             $row = $this->withNativeFantasyAliases($row, $playerStats, $gamesPlayed, $toiSeconds, $isSeason, $entry);
             $row = $this->withFormulaColumns($row, $columns);
             $row = $this->withComputedFantasyPoints($row, $columns);
+            foreach ($columns as $column) {
+                $key = trim((string) ($column['key'] ?? ''));
+                if ($key !== '' && is_numeric($row[$key] ?? null) && ! array_key_exists($key, $sliceTotals)) {
+                    $sliceTotals[$key] = $row[$key];
+                }
+            }
+            $row['__slice_totals'] = $sliceTotals;
 
             $rows->push($row);
         }
 
         return $rows;
+    }
+
+    /**
+     * @param Collection<int,object> $playerStats
+     */
+    private function rangeGamesPlayed(Collection $playerStats): int
+    {
+        if ($playerStats->count() === 1) {
+            $entry = $playerStats->first();
+
+            if (! isset($entry->nhl_game_id) && isset($entry->gp) && is_numeric($entry->gp)) {
+                return (int) $entry->gp;
+            }
+        }
+
+        return (int) $playerStats->pluck('nhl_game_id')->unique()->count();
     }
 
     private function draftedLabel(mixed $overallPick, mixed $year): ?string
@@ -645,6 +674,7 @@ final class StatsPayloadAssembler
 
         $sog = $total('sog');
         $sat = $total('sat');
+        $hdsat = $total('hdsat');
         $hits = $total('h');
         $blocks = $total('b');
         $shotsAgainst = $totalFirstAvailable(['sa', 'shots_against']);
@@ -666,6 +696,7 @@ final class StatsPayloadAssembler
             'pts_per_gp' => $this->perGameAlias($total('pts'), $gamesPlayed),
             'sog_per_gp' => $this->perGameAlias($sog, $gamesPlayed),
             'sat_per_gp' => $this->perGameAlias($sat, $gamesPlayed),
+            'hdsat_per_gp' => $this->perGameAlias($hdsat, $gamesPlayed),
             'hits_per_gp' => $this->perGameAlias($hits, $gamesPlayed),
             'blocks_per_gp' => $this->perGameAlias($blocks, $gamesPlayed),
             'fow_per_gp' => $this->perGameAlias($total('fow'), $gamesPlayed),
@@ -674,6 +705,7 @@ final class StatsPayloadAssembler
             'ga_per_gp' => $this->perGameAlias($goalsAgainst, $gamesPlayed),
             'sog_per_60' => $this->per60Alias($sog, $toiSeconds),
             'sat_per_60' => $this->per60Alias($sat, $toiSeconds),
+            'hdsat_per_60' => $this->per60Alias($hdsat, $toiSeconds),
             'hits_per_60' => $this->per60Alias($hits, $toiSeconds),
             'blocks_per_60' => $this->per60Alias($blocks, $toiSeconds),
             'a1_per_60' => $this->per60Alias($total('a1'), $toiSeconds),

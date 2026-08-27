@@ -62,8 +62,10 @@ Migrations remain the **sole source of truth**.
 - nhl_sat_model_entity_profile_buckets
 - nhl_sat_model_entity_test_profile_buckets
 - nhl_sat_model_entity_rate_projection_buckets
+- nhl_sat_model_entity_rate_projection_splits
 - nhl_sat_model_entity_rate_comparison_buckets
 - nhl_sat_model_entity_rate_comparison_aggregates
+- nhl_sat_model_entity_rate_comparison_splits
 - nhl_sat_model_entity_toi_projections
 - nhl_game_officials
 - nhl_goalie_chance_profile_buckets
@@ -80,6 +82,7 @@ Migrations remain the **sole source of truth**.
 - nhl_player_transactions
 - nhl_season_stats
 - nhl_shifts
+- nhl_shot_attempt_model_scores
 - nhl_shot_attempt_predictions
 - nhl_shot_attempts_facts
 - nhl_skater_defensive_chance_profile_buckets
@@ -1302,6 +1305,10 @@ Migrations remain the **sole source of truth**.
 | ppsat | unsignedSmallInteger | No | Power-play shot attempts; default `0` |
 | evsat | unsignedSmallInteger | No | Even-strength shot attempts; default `0` |
 | pksat | unsignedSmallInteger | No | Penalty-kill shot attempts; default `0` |
+| hdsat | unsignedSmallInteger | No | High-danger shot attempts from latest goal-model bucket probability >= 0.10; default `0` |
+| evhdsat | unsignedSmallInteger | No | Even-strength high-danger shot attempts from latest goal-model bucket probability >= 0.10; default `0` |
+| pphdsat | unsignedSmallInteger | No | Power-play high-danger shot attempts from latest goal-model bucket probability >= 0.10; default `0` |
+| pkhdsat | unsignedSmallInteger | No | Penalty-kill high-danger shot attempts from latest goal-model bucket probability >= 0.10; default `0` |
 | sa | unsignedSmallInteger | No | Shots against; default `0` |
 | evsa | unsignedSmallInteger | No | Even-strength shots against; default `0` |
 | ppsa | unsignedSmallInteger | No | Power-play shots against; default `0` |
@@ -1831,6 +1838,10 @@ Migrations remain the **sole source of truth**.
 | ppsat | unsignedSmallInteger | No | Power-play shot attempts; default `0` |
 | evsat | unsignedSmallInteger | No | Even-strength shot attempts; default `0` |
 | pksat | unsignedSmallInteger | No | Penalty-kill shot attempts; default `0` |
+| hdsat | unsignedSmallInteger | No | High-danger shot attempts aggregated from `nhl_game_summaries.hdsat`; default `0` |
+| evhdsat | unsignedSmallInteger | No | Even-strength high-danger shot attempts aggregated from `nhl_game_summaries.evhdsat`; default `0` |
+| pphdsat | unsignedSmallInteger | No | Power-play high-danger shot attempts aggregated from `nhl_game_summaries.pphdsat`; default `0` |
+| pkhdsat | unsignedSmallInteger | No | Penalty-kill high-danger shot attempts aggregated from `nhl_game_summaries.pkhdsat`; default `0` |
 | sa | unsignedSmallInteger | No | Shots against; default `0` |
 | evsa | unsignedSmallInteger | No | Even-strength shots against; default `0` |
 | ppsa | unsignedSmallInteger | No | Power-play shots against; default `0` |
@@ -1880,6 +1891,10 @@ Migrations remain the **sole source of truth**.
 | pts_p60 | decimal(6,3) | No | Points per 60; default `0` |
 | sog_p60 | decimal(6,3) | No | Shots on goal per 60; default `0` |
 | sat_p60 | decimal(6,3) | No | Shot attempts per 60; default `0` |
+| hdsat_p60 | decimal(6,3) | No | High-danger shot attempts per 60; default `0` |
+| evhdsat_p60 | decimal(6,3) | No | Even-strength high-danger shot attempts per 60; default `0` |
+| pphdsat_p60 | decimal(6,3) | No | Power-play high-danger shot attempts per 60; default `0` |
+| pkhdsat_p60 | decimal(6,3) | No | Penalty-kill high-danger shot attempts per 60; default `0` |
 | hits_p60 | decimal(6,3) | No | Hits per 60; default `0` |
 | blocks_p60 | decimal(6,3) | No | Blocks per 60; default `0` |
 | created_at | timestamp | Yes | Laravel timestamp |
@@ -3380,6 +3395,58 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_sat_model_entity_rate_projection_splits
+
+**Organization-owned:** No
+**Purpose:** Stores model-run scoped skater-offense strength-split SAT/HDSAT rate and opportunity projections derived only from training seasons.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| profile_type | string(40) | No | Entity profile type; first pass writes `skater_offense` |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source player id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater role from the entity profile |
+| team_context | string(20) | Yes | Offense context |
+| situation | string(12) | No | `all`, `ev`, `pp`, or `pk` |
+| age_group | string(12) | Yes | Formula age bucket |
+| sat_momentum_bucket / hdsat_momentum_bucket / toi_momentum_bucket / sh_regression_bucket | string(32) | Yes | Formula diagnostic buckets |
+| s1_gp / s2_gp / train_gp_per_season / projected_gp | decimal(12,4) | Yes | Games context and projected games |
+| s1_toi_seconds / s2_toi_seconds / train_toi_seconds | unsignedInteger | Yes | Training-season TOI context |
+| s1_toi_per_gp / s2_toi_per_gp / train_toi_per_gp / projected_toi_per_gp | decimal(12,4) | Yes | TOI per game in seconds |
+| s1_sat / s2_sat / train_sat | unsignedInteger | Yes | SAT source counts |
+| s1_sat_per_gp / s2_sat_per_gp / train_sat_per_gp / projected_sat_per_gp | decimal(12,4) | Yes | SAT per-game rates |
+| s1_sat_per_60 / s2_sat_per_60 / train_sat_per_60 / projected_sat_per_60 | decimal(12,4) | Yes | SAT per-60 rates |
+| projected_sat_season | decimal(12,4) | Yes | Projected season SAT from projected rate, TOI/GP, and GP |
+| s1_hdsat / s2_hdsat / train_hdsat | unsignedInteger | Yes | HDSAT source counts |
+| s1_hdsat_per_gp / s2_hdsat_per_gp / train_hdsat_per_gp / projected_hdsat_per_gp | decimal(12,4) | Yes | HDSAT per-game rates |
+| s1_hdsat_per_60 / s2_hdsat_per_60 / train_hdsat_per_60 / projected_hdsat_per_60 | decimal(12,4) | Yes | HDSAT per-60 rates |
+| s1_hdsat_sat_rate / s2_hdsat_sat_rate / train_hdsat_sat_rate / projected_hdsat_sat_rate | decimal(12,6) | Yes | HDSAT share of SAT |
+| projected_hdsat_season | decimal(12,4) | Yes | Projected season HDSAT from projected rate, TOI/GP, and GP |
+| s1_sog / s2_sog / train_sog | unsignedInteger | Yes | SOG source counts for SH% context |
+| s1_goals / s2_goals / train_goals | unsignedInteger | Yes | Goal source counts for SH% context |
+| s1_sh_pct / s2_sh_pct / train_sh_pct | decimal(12,6) | Yes | Goals divided by SOG |
+| formula_version | string(80) | No | Projection formula version |
+| formula_segment | string(120) | No | Formula diagnostic segment |
+| metadata | json | Yes | Formula inputs and diagnostics |
+| projected_at | timestamp | Yes | Build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, profile_type, entity_key, situation)` (`uq_nhl_sat_model_rate_projection_split`)
+- Index: `(model_run_id, profile_type, situation)` (`ix_nhl_sat_model_rate_projection_split_type`)
+- Index: `(profile_type, entity_id, situation)` (`ix_nhl_sat_model_rate_projection_split_entity`)
+
+---
+
 ## nhl_sat_model_entity_toi_projections
 
 **Organization-owned:** No
@@ -3508,11 +3575,29 @@ Migrations remain the **sole source of truth**.
 | bucket_rows | unsignedInteger | No | Raw comparison rows included |
 | matched_bucket_rows | unsignedInteger | No | Raw comparison rows with held-out test SAT |
 | train_games / test_games | unsignedInteger | No | Entity/profile game denominators used for per-game train/test totals |
-| train_sat / train_sog / train_goals | unsignedInteger | No | Summed training profile counts |
-| test_sat / test_sog / test_goals | unsignedInteger | No | Summed held-out test profile counts |
+| train_sat / train_hdsat / train_sog / train_goals | unsignedInteger | No | Summed training profile counts; HDSAT is populated for skater-offense player entities from `nhl_game_summaries.hdsat` |
+| test_sat / test_hdsat / test_sog / test_goals | unsignedInteger | No | Summed held-out test profile counts; HDSAT is populated for skater-offense player entities from `nhl_game_summaries.hdsat` |
+| train_eval_gp_per_season / test_eval_gp_per_season | decimal(12,4) | Yes | Summary-derived player games per season for train/test signal analysis |
+| train_eval_toi_seconds / test_eval_toi_seconds | unsignedInteger | Yes | Summary-derived total TOI seconds for skater-offense comparison entities |
+| train_eval_toi_per_gp / test_eval_toi_per_gp | decimal(12,4) | Yes | Summary-derived TOI seconds per game |
+| train_eval_sat / test_eval_sat | unsignedInteger | Yes | Summary-derived SAT totals from `nhl_game_summaries` |
+| train_eval_sat_per_gp / test_eval_sat_per_gp | decimal(12,4) | Yes | Summary-derived SAT per game |
+| train_eval_sat_per_60 / test_eval_sat_per_60 | decimal(12,4) | Yes | Summary-derived SAT per 60 |
+| train_eval_hdsat / test_eval_hdsat | unsignedInteger | Yes | Summary-derived HDSAT totals from `nhl_game_summaries.hdsat` |
+| train_eval_hdsat_per_gp / test_eval_hdsat_per_gp | decimal(12,4) | Yes | Summary-derived HDSAT per game |
+| train_eval_hdsat_per_60 / test_eval_hdsat_per_60 | decimal(12,4) | Yes | Summary-derived HDSAT per 60 |
+| train_eval_hdsat_sat_rate / test_eval_hdsat_sat_rate | decimal(12,6) | Yes | Summary-derived HDSAT divided by SAT |
+| train_eval_sog / test_eval_sog | unsignedInteger | Yes | Summary-derived SOG totals from `nhl_game_summaries` |
+| train_eval_sog_per_gp / test_eval_sog_per_gp | decimal(12,4) | Yes | Summary-derived SOG per game |
+| train_eval_sog_per_60 / test_eval_sog_per_60 | decimal(12,4) | Yes | Summary-derived SOG per 60 |
+| train_eval_goals / test_eval_goals | unsignedInteger | Yes | Summary-derived goal totals from `nhl_game_summaries` |
+| train_eval_goals_per_gp / test_eval_goals_per_gp | decimal(12,4) | Yes | Summary-derived goals per game |
+| train_eval_goals_per_60 / test_eval_goals_per_60 | decimal(12,4) | Yes | Summary-derived goals per 60 |
 | train_profile_share | decimal(9,6) | No | Summed training bucket share |
 | test_profile_share | decimal(9,6) | Yes | Summed held-out bucket share |
 | share_drift / share_drift_rate | decimal | Yes | Held-out share minus training share, absolute and relative |
+| train_hdsat_per_60 / test_hdsat_per_60 | decimal(12,4) | Yes | Skater-offense HDSAT per 60 from aggregate player-game HDSAT and TOI |
+| hdsat_drift / hdsat_drift_rate | decimal | Yes | Held-out HDSAT/60 minus training HDSAT/60, absolute and relative |
 | train_xsat_per_60 / train_xsog_per_60 / train_xg_per_60 | decimal(12,4) | Yes | Summed training /60 rates |
 | projected_xsat_per_60 / projected_xsog_per_60 / projected_xg_per_60 | decimal(12,4) | Yes | Summed projected /60 rates |
 | test_xsat_per_60 / test_xsog_per_60 / test_xg_per_60 | decimal(12,4) | Yes | Summed held-out actual /60 rates |
@@ -3532,6 +3617,56 @@ Migrations remain the **sole source of truth**.
 - Unique: `(model_run_id, test_season_id, profile_type, entity_key)` (`uq_nhl_sat_model_rate_compare_aggregate`)
 - Index: `(model_run_id, profile_type)` (`ix_nhl_sat_model_rate_compare_agg_type`)
 - Index: `(profile_type, entity_id)` (`ix_nhl_sat_model_rate_compare_agg_entity`)
+
+---
+
+## nhl_sat_model_entity_rate_comparison_splits
+
+**Organization-owned:** No
+**Purpose:** Stores situation-specific skater-offense aggregate comparison metrics for train/test signal analysis.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | No | FK -> `nhl_model_runs.id`; cascade delete |
+| test_season_id | string(8) | No | Held-out test season |
+| profile_type | string(40) | No | Entity profile type; currently `skater_offense` |
+| entity_key | string(120) | No | Stable entity/context key |
+| entity_id | integer | Yes | Source entity id when available |
+| entity_name | string | Yes | Display label fallback |
+| entity_role | string(40) | Yes | Skater role |
+| team_context | string(20) | Yes | Offense context |
+| situation | string(12) | No | `all`, `ev`, `pp`, or `pk` |
+| train_gp_per_season / test_gp_per_season | decimal(12,4) | Yes | Situation games per season for train/test analysis |
+| train_toi_seconds / test_toi_seconds | unsignedInteger | Yes | Situation TOI seconds; EV/PP/PK come from player-game strength summaries |
+| train_toi_per_gp / test_toi_per_gp | decimal(12,4) | Yes | Situation TOI seconds per game |
+| train_sat / test_sat | unsignedInteger | Yes | Situation SAT totals |
+| train_sat_per_gp / test_sat_per_gp | decimal(12,4) | Yes | Situation SAT per game |
+| train_sat_per_60 / test_sat_per_60 | decimal(12,4) | Yes | Situation SAT per 60 |
+| train_hdsat / test_hdsat | unsignedInteger | Yes | Situation HDSAT totals from persisted `nhl_game_summaries` HDSAT split columns |
+| train_hdsat_per_gp / test_hdsat_per_gp | decimal(12,4) | Yes | Situation HDSAT per game |
+| train_hdsat_per_60 / test_hdsat_per_60 | decimal(12,4) | Yes | Situation HDSAT per 60 |
+| train_hdsat_sat_rate / test_hdsat_sat_rate | decimal(12,6) | Yes | Situation HDSAT divided by SAT |
+| train_sog / test_sog | unsignedInteger | Yes | Situation SOG totals |
+| train_sog_per_gp / test_sog_per_gp | decimal(12,4) | Yes | Situation SOG per game |
+| train_sog_per_60 / test_sog_per_60 | decimal(12,4) | Yes | Situation SOG per 60 |
+| train_goals / test_goals | unsignedInteger | Yes | Situation goal totals |
+| train_goals_per_gp / test_goals_per_gp | decimal(12,4) | Yes | Situation goals per game |
+| train_goals_per_60 / test_goals_per_60 | decimal(12,4) | Yes | Situation goals per 60 |
+| metadata | json | Yes | Build metadata |
+| compared_at | timestamp | Yes | Comparison build timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with cascade delete
+- Unique: `(model_run_id, test_season_id, profile_type, entity_key, situation)` (`uq_nhl_sat_model_rate_compare_split`)
+- Index: `(model_run_id, profile_type, situation)` (`ix_nhl_sat_model_rate_compare_split_type`)
+- Index: `(profile_type, entity_id, situation)` (`ix_nhl_sat_model_rate_compare_split_entity`)
 
 ---
 
@@ -4068,6 +4203,57 @@ Migrations remain the **sole source of truth**.
 - Index: `(expected_goals_model_id, team_id, game_date)` (`ix_nhl_xg_predictions_team_date`)
 - Index: `(expected_goals_model_id, opponent_team_id, game_date)` (`ix_nhl_xg_predictions_opp_date`)
 - Index: `(prediction_target, season_id, game_date)` (`ix_nhl_xg_predictions_target_date`)
+
+---
+
+## nhl_shot_attempt_model_scores
+
+**Organization-owned:** No
+**Purpose:** Stores one versioned model score per NHL shot-attempt fact and expected-goals model, including the matched bucket probability used by HDSAT/HDSOG aggregate reporting.
+
+### Columns
+
+| Name | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| id | bigint | No | Primary key |
+| model_run_id | bigint | Yes | FK -> `nhl_model_runs.id`; set null on delete |
+| expected_goals_model_id | bigint | No | FK -> `nhl_expected_goals_models.id` |
+| prediction_target | string(32) | No | Model target, such as `goal` or `shot_on_goal` |
+| shot_attempt_fact_id | bigint | No | FK -> `nhl_shot_attempts_facts.id` |
+| play_by_play_id | bigint | No | FK -> `play_by_plays.id` |
+| nhl_game_id | bigint | No | FK -> `nhl_games.nhl_game_id` |
+| season_id | string(8) | Yes | NHL season id |
+| game_type | unsignedTinyInteger | Yes | NHL game type |
+| game_date | date | Yes | Game date |
+| team_id | integer | Yes | Shooting/event-owner team |
+| opponent_team_id | integer | Yes | Opposing team |
+| shooter_player_id | integer | Yes | Shooter NHL id |
+| goalie_player_id | integer | Yes | Goalie NHL id |
+| is_scored | boolean | No | Whether the shot fact received a matched model score |
+| exclusion_reason | string(80) | Yes | Why the fact was not scored |
+| probability | decimal(9,6) | Yes | Matched model probability for this shot-attempt fact |
+| is_high_danger | boolean | No | Whether `probability` met the stored high-danger threshold |
+| high_danger_threshold | decimal(9,6) | Yes | Threshold applied to set `is_high_danger` |
+| matched_bucket_key | string(600) | Yes | Bucket key selected through model fallback matching |
+| fallback_level | unsignedTinyInteger | Yes | Fallback depth used for scoring |
+| matched_bucket_payload | json | Yes | Matched bucket audit payload |
+| scored_at | timestamp | Yes | Scoring timestamp |
+| created_at | timestamp | Yes | Laravel timestamp |
+| updated_at | timestamp | Yes | Laravel timestamp |
+
+### Keys & Indexes
+
+- PK: `id`
+- FK: `model_run_id` references `nhl_model_runs.id` with null on delete
+- FK: `expected_goals_model_id` references `nhl_expected_goals_models.id` with cascade delete
+- FK: `shot_attempt_fact_id` references `nhl_shot_attempts_facts.id` with cascade delete
+- FK: `play_by_play_id` references `play_by_plays.id` with cascade delete
+- FK: `nhl_game_id` references `nhl_games.nhl_game_id` with cascade delete
+- Unique: `(expected_goals_model_id, shot_attempt_fact_id)` (`uq_nhl_sat_scores_model_fact`)
+- Index: `(model_run_id, season_id)` (`ix_nhl_sat_scores_run_season`)
+- Index: `(expected_goals_model_id, season_id, game_type)` (`ix_nhl_sat_scores_model_season_type`)
+- Index: `(expected_goals_model_id, nhl_game_id, shooter_player_id)` (`ix_nhl_sat_scores_model_game_shooter`)
+- Index: `(expected_goals_model_id, season_id, is_high_danger)` (`ix_nhl_sat_scores_model_season_hd`)
 
 ---
 

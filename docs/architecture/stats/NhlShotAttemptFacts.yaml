@@ -42,13 +42,15 @@ rules:
   - Analysis and expected-goals model buckets must use NhlShotAttemptAnalysisBuckets fallback levels instead of raw one-to-one fact bucket combinations.
   - Analysis and expected-goals model buckets must not expose or score sparse combinations below the approved sample floor; sparse attempts must resolve to broader parent buckets, then to league baseline when needed.
   - Strength state, shot side, and off-wing context may remain raw facts and filters, but must not fragment primary expected-goals fallback buckets until validated with enough sample size.
-  - Expected-goals probabilities, danger labels, and model outputs belong in versioned expected-goals prediction tables.
+  - Expected-goals probabilities, danger labels, and model outputs belong in versioned expected-goals score or prediction tables.
+  - Per-SAT model probabilities must be stored outside `nhl_shot_attempts_facts`; `nhl_shot_attempt_model_scores` is the versioned score table keyed by shot-attempt fact and expected-goals model.
   - Aggregate AI review must use sanitized exports or grouped facts and must remain advisory until validated against holdout data.
   - Sparse bucket combinations must fall back to broader groupings before they are used for probability estimates.
   - Shots-only admin processing must upsert shot facts from already imported play-by-play and must not fetch providers or run the full NHL import pipeline.
   - Shots-only admin runs must distinguish games selected for processing from games with at least one eligible shot-attempt source event so zero-attempt limited-scoring games do not look like failed or missing processing.
 public_interface:
   - nhl_shot_attempts_facts
+  - nhl_shot_attempt_model_scores
   - nhl_shot_attempt_predictions
   - nhl_expected_goals_models
   - play_by_plays.id

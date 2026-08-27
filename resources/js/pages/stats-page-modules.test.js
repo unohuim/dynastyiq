@@ -70,9 +70,26 @@ describe('stats page payload modules', () => {
   it('forces season params when date ranges are not supported', () => {
     const params = new StatsPayloadClient({ apiUrl: '/stats' }).buildParams(state({
       period: 'range',
+      fromDate: '2026-01-01',
+      toDate: '2026-01-31',
     }), { supportsDateRange: false });
 
     expect(params.get('period')).toBe('season');
+    expect(params.has('from')).toBe(false);
+    expect(params.has('to')).toBe(false);
+  });
+
+  it('adds date bounds for supported range request params', () => {
+    const params = new StatsPayloadClient({ apiUrl: '/stats' }).buildParams(state({
+      period: 'range',
+      fromDate: '2026-01-01',
+      toDate: '2026-01-31',
+    }), { supportsDateRange: true });
+
+    expect(params.get('period')).toBe('range');
+    expect(params.get('from')).toBe('2026-01-01');
+    expect(params.get('to')).toBe('2026-01-31');
+    expect(params.has('season_id')).toBe(false);
   });
 
   it('forces total slice when slicing is disabled', () => {
@@ -269,6 +286,50 @@ describe('stats page payload modules', () => {
 
     expect(current.selectedPos).toEqual([]);
     expect(current.selectedPosTypes).toEqual(['F']);
+  });
+
+  it('selects skater type filters when SKT is toggled on', () => {
+    const current = state({ selectedPos: ['G'], selectedPosTypes: ['G'] });
+
+    new StatsFilterState(current).togglePosition('SKT');
+
+    expect(current.selectedPos).toEqual([]);
+    expect(current.selectedPosTypes).toEqual(['SKT']);
+  });
+
+  it('keeps position buttons mutually exclusive', () => {
+    const current = state({ selectedPos: ['W'], selectedPosTypes: [] });
+    const filterState = new StatsFilterState(current);
+
+    filterState.togglePosition('C');
+
+    expect(current.selectedPos).toEqual(['C']);
+    expect(current.selectedPosTypes).toEqual([]);
+
+    filterState.togglePosition('D');
+
+    expect(current.selectedPos).toEqual([]);
+    expect(current.selectedPosTypes).toEqual(['D']);
+  });
+
+  it('clears the active position filter when toggled again', () => {
+    const current = state({ selectedPos: [], selectedPosTypes: ['SKT'] });
+
+    new StatsFilterState(current).togglePosition('SKT');
+
+    expect(current.selectedPos).toEqual([]);
+    expect(current.selectedPosTypes).toEqual([]);
+  });
+
+  it('matches winger rows when W is toggled on', () => {
+    const current = state({ selectedPos: ['W'] });
+    const rows = [
+      { name: 'Left Wing', pos: 'LW', pos_type: 'F' },
+      { name: 'Right Wing', pos: 'RW', pos_type: 'F' },
+      { name: 'Center', pos: 'C', pos_type: 'F' },
+    ];
+
+    expect(new StatsFilterState(current).filterRows(rows).map((row) => row.name)).toEqual(['Left Wing', 'Right Wing']);
   });
 
   it('matches defense rows from defenseman position variants', () => {

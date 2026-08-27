@@ -1,8 +1,9 @@
 import './bootstrap';
 import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
+import { createApp, h } from 'vue';
+import { createInertiaApp } from '@inertiajs/vue3';
 
-// import { PlayerStatsPage } from './components/PlayerStatsPage/player-stats-page.js';
 import './leagues-hub.js';
 import './community-hub.js';
 import './transactions.js';
@@ -57,6 +58,28 @@ registerToastStack(Alpine);
 if (!window.__alpineStarted) {
     Alpine.start();
     window.__alpineStarted = true;
+}
+
+const inertiaRoot = document.getElementById('app');
+
+if (inertiaRoot) {
+    createInertiaApp({
+        resolve: (name) => {
+            const pages = import.meta.glob('./pages/**/*.vue', { eager: true });
+
+            const page = pages[`./pages/${name}.vue`];
+            if (!page) {
+                throw new Error(`Inertia page not found: ${name}`);
+            }
+
+            return page.default;
+        },
+        setup({ el, App, props, plugin }) {
+            createApp({ render: () => h(App, props) })
+                .use(plugin)
+                .mount(el);
+        },
+    });
 }
 
 import('./pages/stats-page.js');

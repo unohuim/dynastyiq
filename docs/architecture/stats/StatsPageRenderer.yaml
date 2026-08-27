@@ -1,6 +1,16 @@
 name: Stats Page Renderer
 type: Frontend UI Pattern
 location:
+  - resources/js/pages/Stats/Index.vue
+  - resources/js/pages/Stats/Mobile/PlayerCardList.vue
+  - resources/js/pages/Stats/Mobile/PlayerCard.vue
+  - resources/js/pages/Stats/Desktop/PlayerRows.vue
+  - resources/js/pages/Stats/Desktop/PlayerRow.vue
+  - resources/js/pages/Stats/Desktop/PlayerAvatar.vue
+  - resources/js/pages/Stats/Desktop/LeagueOwnerRows.vue
+  - resources/js/pages/Stats/Desktop/StatCellsRow.vue
+  - resources/js/pages/Stats/Desktop/OwnerRow.vue
+  - resources/js/pages/stats-page.js
   - resources/js/components/StatsPage/stats-page.js
   - resources/js/components/StatsPage/stats-desktop.js
   - resources/js/components/StatsPage/stats-mobile.js
@@ -16,12 +26,24 @@ when_not_to_use:
   - Admin import UI.
   - Backend stat aggregation.
 rules:
-  - StatsPage owns /stats browser rendering.
+  - Stats/Index.vue owns the /stats Inertia page shell.
+  - The first Inertia migration pass may mount the existing StatsPage renderer for parity.
+  - Vue mobile card components may own mobile player-card list rendering below the existing stats shell.
+  - Vue desktop row components may own desktop row rendering below the existing stats shell.
+  - StatsPage owns remaining /stats browser rendering below the Inertia compatibility shell until migrated.
   - Shared utilities should remain inside the StatsPage module unless they become intentionally generic.
   - New or materially touched rendering must comply with docs/UI_DESIGN.md where feasible.
 public_interface:
+  - Stats/Index.vue Inertia page
+  - Stats/Mobile/PlayerCardList.vue
+  - Stats/Mobile/PlayerCard.vue
+  - Stats/Desktop/PlayerRows.vue
+  - Stats/Desktop/PlayerRow.vue
+  - Stats/Desktop/PlayerAvatar.vue
+  - Stats/Desktop/LeagueOwnerRows.vue
+  - Stats/Desktop/StatCellsRow.vue
+  - Stats/Desktop/OwnerRow.vue
   - StatsPage JavaScript module
   - StatsController::payload()
 example_usage: |
   The /stats page initializes the StatsPage renderer with server-provided payload data.
-

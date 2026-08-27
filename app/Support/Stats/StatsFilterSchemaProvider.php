@@ -336,6 +336,7 @@ final class StatsFilterSchemaProvider
                 'pts_per_60' => 'pts_p60',
                 'sog_per_60' => 'sog_p60',
                 'sat_per_60' => 'sat_p60',
+                'hdsat_per_60' => 'hdsat_p60',
                 'hits_per_60' => 'hits_p60',
                 'blocks_per_60' => 'blocks_p60',
             ],

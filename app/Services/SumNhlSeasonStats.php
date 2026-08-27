@@ -6,6 +6,7 @@ namespace App\Services;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Aggregates nhl_game_summaries into nhl_season_stats per season AND game_type.
@@ -19,11 +20,22 @@ class SumNhlSeasonStats
      */
     public function sum(string $seasonId): int
     {
+        $hasSplitHighDangerSatColumns = $this->hasSplitHighDangerSatColumns();
+        $splitHighDangerSatSelects = $hasSplitHighDangerSatColumns ? '
+                SUM(COALESCE(gs.evhdsat, 0)) as evhdsat,
+                SUM(COALESCE(gs.pphdsat, 0)) as pphdsat,
+                SUM(COALESCE(gs.pkhdsat, 0)) as pkhdsat,
+' : '
+                0 as evhdsat,
+                0 as pphdsat,
+                0 as pkhdsat,
+';
+
         // Aggregate per player + game_type
         $rows = DB::table('nhl_game_summaries as gs')
             ->join('nhl_games as g', 'g.nhl_game_id', '=', 'gs.nhl_game_id')
             ->where('g.season_id', $seasonId)
-            ->selectRaw('
+            ->selectRaw("
                 gs.nhl_player_id,
                 g.game_type as game_type,
                 MAX(gs.nhl_team_id) as nhl_team_id,
@@ -114,23 +126,25 @@ class SumNhlSeasonStats
                 SUM(gs.sm)  as sm,      SUM(gs.ppsm)  as ppsm,    SUM(gs.evsm)  as evsm,    SUM(gs.pksm)  as pksm,
                 SUM(gs.sb)  as sb,      SUM(gs.ppsb)  as ppsb,    SUM(gs.evsb)  as evsb,    SUM(gs.pksb)  as pksb,
                 SUM(gs.sat) as sat,     SUM(gs.ppsat) as ppsat,   SUM(gs.evsat) as evsat,   SUM(gs.pksat) as pksat,
+                SUM(COALESCE(gs.hdsat, 0)) as hdsat,
+                {$splitHighDangerSatSelects}
 
                 SUM(gs.sa)  as sa,      SUM(gs.evsa) as evsa,     SUM(gs.ppsa) as ppsa,     SUM(gs.pksa) as pksa,
                 SUM(gs.sv)  as sv,      SUM(gs.evsv) as evsv,     SUM(gs.ppsv) as ppsv,     SUM(gs.pksv) as pksv,
                 SUM(gs.ga)  as ga,      SUM(gs.evga) as evga,     SUM(gs.ppga) as ppga,     SUM(gs.pkga) as pkga,
                 SUM(gs.shosv) as shosv, SUM(gs.so) as so,
 
-                SUM(CASE WHEN gs.goalie_decision IN (\'W\', \'OTW\', \'SOW\') THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN gs.goalie_decision = \'L\' THEN 1 ELSE 0 END) as losses,
-                SUM(CASE WHEN gs.goalie_decision = \'OTL\' THEN 1 ELSE 0 END) as ot_losses,
-                SUM(CASE WHEN gs.goalie_decision = \'OTW\' THEN 1 ELSE 0 END) as overtime_wins,
-                SUM(CASE WHEN gs.goalie_decision = \'SOW\' THEN 1 ELSE 0 END) as shootout_wins,
-                SUM(CASE WHEN gs.goalie_decision = \'SOL\' THEN 1 ELSE 0 END) as shootout_losses,
+                SUM(CASE WHEN gs.goalie_decision IN ('W', 'OTW', 'SOW') THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN gs.goalie_decision = 'L' THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN gs.goalie_decision = 'OTL' THEN 1 ELSE 0 END) as ot_losses,
+                SUM(CASE WHEN gs.goalie_decision = 'OTW' THEN 1 ELSE 0 END) as overtime_wins,
+                SUM(CASE WHEN gs.goalie_decision = 'SOW' THEN 1 ELSE 0 END) as shootout_wins,
+                SUM(CASE WHEN gs.goalie_decision = 'SOL' THEN 1 ELSE 0 END) as shootout_losses,
                 SUM(CASE WHEN gs.goalie_started THEN 1 ELSE 0 END) as starts,
                 SUM(CASE WHEN gs.goalie_decision IS NOT NULL AND gs.toi > 0 AND NOT gs.goalie_started THEN 1 ELSE 0 END) as relief_appearances,
                 SUM(CASE WHEN gs.quality_start THEN 1 ELSE 0 END) as quality_starts,
                 SUM(CASE WHEN gs.really_bad_start THEN 1 ELSE 0 END) as really_bad_starts
-            ')
+            ")
             ->groupBy('gs.nhl_player_id', 'g.game_type')
             ->get();
 
@@ -140,7 +154,7 @@ class SumNhlSeasonStats
 
         $now = Carbon::now();
 
-        $payload = $rows->map(function ($r) use ($seasonId, $now) {
+        $payload = $rows->map(function ($r) use ($seasonId, $now, $hasSplitHighDangerSatColumns) {
             $gpRaw = (int) $r->gp;
             $gp    = max(1, $gpRaw);
             $toi   = (int) $r->toi; // seconds
@@ -176,6 +190,10 @@ class SumNhlSeasonStats
             $sm=(int)$r->sm;   $ppsm=(int)$r->ppsm;   $evsm=(int)$r->evsm;   $pksm=(int)$r->pksm;
             $sb=(int)$r->sb;   $ppsb=(int)$r->ppsb;   $evsb=(int)$r->evsb;   $pksb=(int)$r->pksb;
             $sat=(int)$r->sat; $ppsat=(int)$r->ppsat; $evsat=(int)$r->evsat; $pksat=(int)$r->pksat;
+            $hdsat = (int) $r->hdsat;
+            $evhdsat = (int) $r->evhdsat;
+            $pphdsat = (int) $r->pphdsat;
+            $pkhdsat = (int) $r->pkhdsat;
 
             $sa=(int)$r->sa; $evsa=(int)$r->evsa; $ppsa=(int)$r->ppsa; $pksa=(int)$r->pksa;
             $sv=(int)$r->sv; $evsv=(int)$r->evsv; $ppsv=(int)$r->ppsv; $pksv=(int)$r->pksv;
@@ -215,6 +233,10 @@ class SumNhlSeasonStats
             $pts_p60    = $this->per60($pts, $toi);
             $sog_p60    = $this->per60($sog, $toi);
             $sat_p60    = $this->per60($sat, $toi);
+            $hdsat_p60  = $this->per60($hdsat, $toi);
+            $evhdsat_p60 = $this->per60($evhdsat, $toi);
+            $pphdsat_p60 = $this->per60($pphdsat, $toi);
+            $pkhdsat_p60 = $this->per60($pkhdsat, $toi);
             $hits_p60   = $this->per60($h,   $toi);
             $blocks_p60 = $this->per60($b,   $toi);
 
@@ -223,7 +245,7 @@ class SumNhlSeasonStats
             $th_pg = $this->perGame($th, $gp);
 
 
-            return [
+            $row = [
                 'season_id'     => $seasonId,
                 'nhl_player_id' => (string)$r->nhl_player_id,
                 'nhl_team_id'   => (int)$r->nhl_team_id,
@@ -265,6 +287,7 @@ class SumNhlSeasonStats
                 'sm'=>$sm,'ppsm'=>$ppsm,'evsm'=>$evsm,'pksm'=>$pksm,
                 'sb'=>$sb,'ppsb'=>$ppsb,'evsb'=>$evsb,'pksb'=>$pksb,
                 'sat'=>$sat,'ppsat'=>$ppsat,'evsat'=>$evsat,'pksat'=>$pksat,
+                'hdsat'=>$hdsat,
 
                 'sa'=>$sa,'evsa'=>$evsa,'ppsa'=>$ppsa,'pksa'=>$pksa,
                 'sv'=>$sv,'evsv'=>$evsv,'ppsv'=>$ppsv,'pksv'=>$pksv,
@@ -285,7 +308,7 @@ class SumNhlSeasonStats
 
                 'g_pg'=>$g_pg,'a_pg'=>$a_pg,'pts_pg'=>$pts_pg,
                 'g_p60'=>$g_p60,'a_p60'=>$a_p60,'pts_p60'=>$pts_p60,
-                'sog_p60'=>$sog_p60,'sat_p60'=>$sat_p60,
+                'sog_p60'=>$sog_p60,'sat_p60'=>$sat_p60,'hdsat_p60'=>$hdsat_p60,
                 'hits_p60'=>$hits_p60,'blocks_p60'=>$blocks_p60,
 
                 'b_pg'=>$b_pg,'h_pg'=>$h_pg,'th_pg'=>$th_pg,
@@ -293,6 +316,17 @@ class SumNhlSeasonStats
                 'created_at'=>$now,
                 'updated_at'=>$now,
             ];
+
+            if ($hasSplitHighDangerSatColumns) {
+                $row['evhdsat'] = $evhdsat;
+                $row['pphdsat'] = $pphdsat;
+                $row['pkhdsat'] = $pkhdsat;
+                $row['evhdsat_p60'] = $evhdsat_p60;
+                $row['pphdsat_p60'] = $pphdsat_p60;
+                $row['pkhdsat_p60'] = $pkhdsat_p60;
+            }
+
+            return $row;
         });
 
 
@@ -335,5 +369,21 @@ class SumNhlSeasonStats
     private function decimal6Scale3(int|float $value): float
     {
         return max(-999.999, min(999.999, (float) $value));
+    }
+
+    /**
+     * Determine whether game and season summaries can store strength-split HDSAT.
+     */
+    private function hasSplitHighDangerSatColumns(): bool
+    {
+        return Schema::hasColumn('nhl_game_summaries', 'evhdsat')
+            && Schema::hasColumn('nhl_game_summaries', 'pphdsat')
+            && Schema::hasColumn('nhl_game_summaries', 'pkhdsat')
+            && Schema::hasColumn('nhl_season_stats', 'evhdsat')
+            && Schema::hasColumn('nhl_season_stats', 'pphdsat')
+            && Schema::hasColumn('nhl_season_stats', 'pkhdsat')
+            && Schema::hasColumn('nhl_season_stats', 'evhdsat_p60')
+            && Schema::hasColumn('nhl_season_stats', 'pphdsat_p60')
+            && Schema::hasColumn('nhl_season_stats', 'pkhdsat_p60');
     }
 }

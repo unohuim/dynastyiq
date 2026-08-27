@@ -17,6 +17,7 @@ location:
   - app/Services/NhlSatModelEntityRateComparisonBuilder.php
   - app/Services/NhlSatModelEntityRateProjectionBuilder.php
   - app/Services/NhlSatModelEntityToiProjectionBuilder.php
+  - app/Services/NhlShotAttemptModelScorer.php
   - database/migrations/2026_08_19_000001_create_nhl_model_runs_table.php
   - database/migrations/2026_08_19_000002_add_model_run_id_to_nhl_expected_goals_tables.php
   - database/migrations/2026_08_19_000003_add_confidence_to_nhl_expected_goals_model_buckets.php
@@ -29,6 +30,11 @@ location:
   - database/migrations/2026_08_21_000005_add_game_counts_to_nhl_sat_model_entity_rate_comparison_aggregates.php
   - database/migrations/2026_08_21_000006_add_variety_metrics_to_nhl_sat_model_entity_rate_comparison_aggregates.php
   - database/migrations/2026_08_23_000001_create_nhl_sat_model_entity_toi_projections_table.php
+  - database/migrations/2026_08_25_000002_add_hdsat_to_nhl_sat_model_rate_comparison_aggregates.php
+  - database/migrations/2026_08_26_000001_create_nhl_shot_attempt_model_scores_table.php
+  - database/migrations/2026_08_26_000003_create_nhl_sat_model_rate_comparison_splits_table.php
+  - database/migrations/2026_08_26_000004_add_split_hdsat_to_nhl_summary_tables.php
+  - database/migrations/2026_08_26_000005_create_nhl_sat_model_rate_projection_splits_table.php
   - resources/views/admin/nhl-sat-models/index.blade.php
   - resources/views/admin/nhl-sat-models/_model-row.blade.php
   - resources/views/admin/nhl-sat-models/buckets.blade.php
@@ -93,6 +99,18 @@ rules:
   - Build /60 must keep skater-offense SAT projections scoped to validated skater-offense inputs; peer and tendency baseline columns may remain stored for diagnostics but must not drive skater-offense SAT rates until separately validated.
   - Build /60 must use entity profile rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row as projection inputs and roll lower-volume or remaining profile rows into an explicit Other row.
   - Build /60 skater-offense projections must use the skater_offense_segmented_xsat_v2 strategy documented in NhlSatEntityRateProjection.yaml: latest-training-season bucket shape, entity targets segmented by active bucket count, position type, training goal-per-game tier, and latest-versus-prior training-season direction, then bucket scaling to the entity target.
+  - Build /60 skater-offense projections must also persist skater_offense_strength_rate_v15 split projection rows for `all`, `ev`, `pp`, and `pk` in `nhl_sat_model_entity_rate_projection_splits`, using training-season summary rows only.
+  - Build /60 skater-offense split projections must treat the final model-run training season as the latest training season for forward PP TOI/GP role signals; if the training window grows beyond two seasons, those signals must move forward with the latest training season instead of remaining hardcoded to S2.
+  - Build /60 skater-offense split projections may enhance forward PP TOI/GP with latest-training-season top-400 forward production cohorts and latest-team forward production/rate ranks; that PP TOI enhancement must not change non-PP TOI, GP, SAT/60, or HDSAT/SAT behavior.
+  - Build /60 skater-offense split projections may enhance defense PP TOI/GP only for latest-training-season top-200 defense with more than 25 games by using latest-team defense PP role rank; rank 1, rank 2 by age, rank 3, and rank 4-plus must remain distinct formula paths.
+  - Build /60 skater-offense split projections must treat PK SAT/60 as segmented by latest-training-season PK TOI rank bands for top PK forwards and defense, while lower-confidence PK SAT/60 rows remain conservative fallbacks; PK TOI/GP remains train-heavy with only secondary latest-training-season influence plus capped defense blocks context.
+  - Build /60 skater-offense split projections must use a latest-training-season D1 all-situation SAT/60 formula for defense ranked first on their team by points per game among qualifying latest-training-season defense, while keeping D2, D3, D4-plus, forward, EV, PP, PK, TOI/GP, GP, and HDSAT/SAT formulas unchanged.
+  - Build /60 skater-offense split projections may refine EV and PP SAT/60 calibration for D1, D2, and D3 cohorts from latest-training-season same-team defense points-per-game rank; PP calibration must be gated by latest-training-season PP TOI/GP, and D4-plus must stay on the conservative default path.
+  - Build /60 skater-offense split projections must define D SAT role cohorts so D1/D2/D3 are same-team latest-training-season defense points-per-game ranks among defense with at least 25 games, and D4-plus is the remaining league-wide top-200 qualifying defense after removing D1/D2/D3.
+  - Build /60 skater-offense split projections must define forward SAT role cohorts so F1-3/F4-6/F7-9 are same-team latest-training-season forward points-per-game rank buckets among forwards with at least 25 games, and F10-plus is the remaining league-wide top-400 qualifying forward points-per-game group after removing F1-9.
+  - Build /60 skater-offense split projections may suppress F10-plus all/EV SAT/60 calibration and F7-9/F10-plus PP TOI/GP only; F1-6 forward PP TOI behavior must remain on the existing role path until separately changed.
+  - Split projection rows must project SAT/60, HDSAT/60, TOI/GP, and GP, then derive SAT/GP, HDSAT/GP, SAT/season, and HDSAT/season from those projected rate and opportunity assumptions.
+  - Build /60 skater-offense entity jobs may refresh `nhl_game_summaries.hdsat`, `evhdsat`, `pphdsat`, and `pkhdsat` for the model run training seasons by scoring shot-attempt facts into `nhl_shot_attempt_model_scores` with the run-scoped latest draft goal-model buckets and counting SAT whose stored model probability is at least 0.10; existing `nhl_season_stats` HDSAT totals, split totals, and HDSAT/60 fields may be refreshed from those player-game rows in the same pass.
   - Build /60 skater-offense projections may use latest-training-season March-1-plus SAT signals only as conservative training-data modifiers; late spikes must not create upside, late drops may apply small capped downside, and the held-out test season must remain excluded.
   - Build TOI must run only after Build Profiles and must persist SAT-model scoped skater opportunity rows separately from entity profiles and /60 performance projections.
   - Build TOI must use aggregate training-season TOI per game from nhl_game_summaries as the primary baseline with nhl_season_stats only as fallback, preserve prior/latest training-season TOI context, reuse approved role and age adjustment logic from the same season source, and must not use the optional held-out test season.
@@ -100,12 +118,17 @@ rules:
   - Build TOI must persist latest-training-season pre-March and March-1-plus TOI signals in projection_inputs and may use March-1-plus TOI movement only as a bounded secondary adjustment.
   - Build TOI must queue a parent job that dispatches one child job per eligible skater entity instead of performing all opportunity SQL during the admin HTTP request.
   - Compare /60 must queue a parent job that dispatches one child job per profile entity instead of performing all comparison SQL during the admin HTTP request.
+  - Compare /60 skater-offense entity jobs may refresh target-season `nhl_game_summaries.hdsat` and derived season HDSAT totals as held-out actual labels before rebuilding that entity's comparison rows; the parent comparison job must stay lightweight and must not score or roll up an entire season before dispatching child jobs.
   - Compare /60 must be buildable only when a SAT model has both projection-rate rows and season snapshot rows for its target season.
   - Compare /60 must persist raw bucket comparison rows and aggregate entity comparison rows separately from projections and profiles.
   - Raw Compare /60 and Aggregate Compare /60 must be enabled only after persisted comparison rows exist.
   - Raw Compare /60 must show projection-first entity bucket rows split by profile_type and compare training actuals, projections, and held-out test-season rates for SAT share, xSAT/60, xSOG/60, and xG/60 without feeding test data back into training or projection builds.
   - Raw Compare /60 must aggregate held-out test profile buckets that do not match projected core buckets into the projected Other row for that entity/profile type.
-  - Aggregate Compare /60 must summarize one row per entity/profile type using summed raw comparison buckets; train and test SAT/SOG/G counts must be shown as per-game rates, /60 cells must show Train, latest training season, Proj, and Test, collection /60 summaries must be shown per entity, and projected season totals must not be shown until an opportunity model exists.
+  - Aggregate Compare /60 must summarize one row per entity/profile type using summed raw comparison buckets; train and test SAT/HDSAT/SOG/G counts must be shown as per-game rates, /60 cells must show Train, latest training season, Proj, and Test, collection /60 summaries must be shown per entity, and projected season totals must not be shown until an opportunity model exists.
+  - Aggregate Compare /60 may expose skater-offense HDSAT counts, HDSAT/GP, HDSAT/60, and HDSAT drift from `nhl_game_summaries.hdsat`; HDSAT must not be added to raw bucket comparison output until bucket-grain HDSAT is explicitly persisted or derived.
+  - Aggregate Compare /60 must persist and export normalized `all`, `ev`, `pp`, and `pk` split rows for skater-offense train/test signal analysis; split TOI must use player-game strength summaries, while split HDSAT must use persisted `nhl_game_summaries` total and split HDSAT columns.
+  - Aggregate Compare /60 exports may expose read-time split SH%, Goal/SAT%, and S1/S2/S3 strength metrics so train-to-test analysis can compare latest-training-season movement against held-out S3 results without adding another persisted comparison table.
+  - Aggregate Compare /60 exports may join split projection rows to split comparison rows so projected split SAT/HDSAT rates and opportunity assumptions can be evaluated against held-out S3 actuals without feeding S3 back into projection builds.
   - Aggregate Compare /60 skater-offense collection rows must include grand total, age groups, and position-aware training G/GP tiers; forwards use skater scoring thresholds, while defense uses defense-specific goal-scoring thresholds.
   - Aggregate Compare /60 player collection rows must include position cuts and position-type cuts where player position is available; C, L, and R are forwards, while D and G are separate position types.
   - Aggregate Compare /60 collection rows must expose xSAT/60 entity hit rates for absolute projection error under 3%, 5%, and 10% so average collection error cannot hide offsetting entity misses.
@@ -143,6 +166,7 @@ public_interface:
   - nhl_sat_model_entity_test_profile_buckets
   - nhl_sat_model_generic_bucket_stabilities
   - nhl_sat_model_entity_rate_projection_buckets
+  - nhl_sat_model_entity_rate_projection_splits
   - nhl_sat_model_entity_rate_comparison_buckets
   - nhl_sat_model_entity_rate_comparison_aggregates
   - nhl_sat_model_entity_toi_projections
@@ -155,3 +179,5 @@ example_usage: |
   Build Profiles to persist skater, goalie, team, staff offense/defense, and official entity profile rows
   for training seasons and, when present, the held-out test season in a separate table. Then Build TOI
   to persist skater opportunity assumptions for the same SAT model without reading the held-out test season.
+  Build /60 and Compare /60 currently operate only on skater-offense entities, and aggregate compare rows
+  carry summary-derived train/test SAT, HDSAT, SOG, goals, TOI/GP, and GP/season fields for signal analysis.

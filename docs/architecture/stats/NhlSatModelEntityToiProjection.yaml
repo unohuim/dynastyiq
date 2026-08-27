@@ -47,6 +47,8 @@ rules:
   - Projected games must not add automatic games bonuses for top scorers, defensemen, or high PP usage. Role and PP may stabilize the S2 anchor or apply small penalties, but they must not independently inflate games.
   - Projected games must persist the S1/S2 games delta, movement bucket, formula segment, and human-readable projection reason in projection_inputs for export review.
   - Projected season TOI must remain projected TOI per game multiplied by projected games, keeping TOI/GP error and season-volume error separately measurable.
+  - Strength-split opportunity assumptions stored by `nhl_sat_model_entity_rate_projection_splits` are part of the Build /60 split rate evaluation path and must not replace the SAT-model scoped all-situation TOI projection rows in `nhl_sat_model_entity_toi_projections`.
+  - Build TOI may be reviewed beside split projection outputs, but the standalone Build TOI workflow remains the authority for model-run scoped all-situation opportunity projection rows.
   - Confidence must describe trust in the projection formula for that entity context, not only source sample size.
   - Confidence scoring must consider both player-specific source strength and known backtest quality for the applied projection segments.
   - Confidence scoring may use current coded segment priors from backtest analysis, including TOI/GP formula segment MAE, games formula segment MAE, S1/S2 movement-bucket MAE, PP-bucket MAE, and role-change risk.

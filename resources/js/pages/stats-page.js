@@ -1,13 +1,14 @@
 import AlpineImport from 'alpinejs';
 import focus from '@alpinejs/focus';
 import { registerToastStack } from '../components/toast-stack.js';
-import { leagueRosterHeadings, sortData } from '../components/StatsPage/stats-utils.js';
+import { leagueRosterHeadings, sortData, statValueForKey } from '../components/StatsPage/stats-utils.js';
 import { renderStatsDesktop } from '../components/StatsPage/stats-desktop.js';
 import { StatsMobile } from '../components/StatsPage/stats-mobile.js';
 import { StatsColumnGroupAdapter } from './stats-column-group-adapter.js';
 import { StatsFilterState } from './stats-filter-state.js';
 import { StatsPayloadClient, normalizeStatsPayload, statsIdentityKeys } from './stats-payload-client.js';
 import { StatsSchemaAdapter } from './stats-schema-adapter.js';
+import { mountStatsSelect } from './Stats/Controls/mountStatsSelect.js';
 import '../analytics-tracker.js';
 
 const Alpine = window.Alpine ?? AlpineImport;
@@ -44,6 +45,25 @@ const createElement = (tag, className = '', text = '') => {
   return node;
 };
 
+const formatDateInputValue = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+};
+
+const defaultRangeDates = () => {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 30);
+
+  return {
+    fromDate: formatDateInputValue(from),
+    toDate: formatDateInputValue(to),
+  };
+};
+
 export class StatsPageShell {
   constructor(container, config) {
     this.container = container;
@@ -68,6 +88,8 @@ export class StatsPageShell {
     this.state = {
       perspective: this.config.selectedPerspective || this.defaultPerspective,
       period: 'season',
+      fromDate: '',
+      toDate: '',
       slice: settings.slice || 'total',
       seasonId: String(meta.season ?? ''),
       gameType: String(meta.game_type ?? '2'),
@@ -76,6 +98,7 @@ export class StatsPageShell {
       selectedPosTypes: [],
       selectedLeagues: [],
       selectedDraftYears: [],
+      rangeError: '',
       numericFilters: {},
       dirtyNumericFilters: {},
       leagueAutoSkaterFilter: false,
@@ -306,7 +329,7 @@ export class StatsPageShell {
     }
     this.state.nhleLens = Boolean(settings.nhleLens ?? meta.nhle?.active ?? this.state.nhleLens);
 
-    this.state.slice = settings.slice || this.state.slice;
+    this.state.slice = this.canSlice() ? this.state.slice : 'total';
     const preserveUserSort = this.settings?.leagueUserSortActive === true;
     const preservedSort = preserveUserSort
       ? {
@@ -486,12 +509,55 @@ export class StatsPageShell {
 
   setPeriod(value) {
     this.state.period = value;
+    if (value === 'range') {
+      this.ensureRangeDates();
+      this.state.rangeError = '';
+      this.renderControls();
+      return;
+    }
+    this.state.rangeError = '';
     this.fetchPayload();
+  }
+
+  setRangeDate(bound, value) {
+    if (bound !== 'fromDate' && bound !== 'toDate') return;
+
+    this.state[bound] = value;
+    this.state.rangeError = '';
+    this.renderControls();
+  }
+
+  rangeValidationMessage() {
+    if (this.state.period !== 'range') return '';
+    if (!this.state.fromDate || !this.state.toDate) return 'Choose start and end dates.';
+    if (this.state.fromDate > this.state.toDate) return 'Start date must be before end date.';
+
+    return '';
+  }
+
+  applyRangeDates() {
+    const message = this.rangeValidationMessage();
+    if (message) {
+      this.state.rangeError = message;
+      this.renderControls();
+      return;
+    }
+
+    this.state.rangeError = '';
+    this.fetchPayload();
+  }
+
+  ensureRangeDates() {
+    if (this.state.fromDate && this.state.toDate) return;
+
+    const defaults = defaultRangeDates();
+    this.state.fromDate = this.state.fromDate || defaults.fromDate;
+    this.state.toDate = this.state.toDate || defaults.toDate;
   }
 
   setSlice(value) {
     this.state.slice = value;
-    this.fetchPayload();
+    this.renderContent();
   }
 
   togglePosition(value) {
@@ -617,6 +683,16 @@ export class StatsPageShell {
         { label: 'Season', value: 'season' },
         { label: 'Range', value: 'range' },
       ], this.state.period, (value) => this.setPeriod(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
+      if (this.state.period === 'range') {
+        this.ensureRangeDates();
+        selects.appendChild(this.renderDateInput('fromDate', 'Start', 'h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-900 focus:ring-2 focus:ring-indigo-500'));
+        selects.appendChild(this.renderDateInput('toDate', 'End', 'h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-900 focus:ring-2 focus:ring-indigo-500'));
+        selects.appendChild(this.renderRangeApplyButton('h-9 w-full rounded-md px-3 text-sm font-semibold'));
+        if (this.state.rangeError) {
+          const error = createElement('div', 'col-span-2 text-xs font-medium text-red-600', this.state.rangeError);
+          selects.appendChild(error);
+        }
+      }
     }
     selects.appendChild(this.renderSelect(this.availableSeasons().map((season) => ({ label: season, value: season })), this.state.seasonId, (value) => this.setSeason(value), 'h-9 w-full px-3 pr-8 rounded-md border border-gray-200 text-sm bg-white focus:ring-2 focus:ring-indigo-500'));
     if (this.availableLeagues().length > 0) {
@@ -804,54 +880,107 @@ export class StatsPageShell {
   }
 
   renderDesktopControls() {
-    const outer = createElement('div', 'px-4');
-    const panel = createElement('div', 'relative z-50 overflow-visible rounded-lg bg-white/80 backdrop-blur ring-1 ring-gray-200 shadow-md mb-3 mt-2');
-    const row = createElement('div', 'flex flex-wrap justify-between items-center gap-3 p-3');
+    const outer = createElement('div', 'px-4 pt-3 sm:px-6');
+    const panel = createElement('div', 'relative z-50 mb-3 overflow-visible border border-gray-200 bg-white shadow-sm');
+    const row = createElement('div', 'flex min-h-[86px] items-stretch');
+    const iconBlock = createElement('div', 'flex w-24 shrink-0 items-center justify-center bg-indigo-600 text-white');
+    iconBlock.innerHTML = `
+      <svg viewBox="0 0 64 64" aria-hidden="true" class="h-12 w-12" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="29" cy="13" r="5"/>
+        <path d="m26 19-9 9 9 8 9-10"/>
+        <path d="m17 28-9 3"/>
+        <path d="m27 36-7 12-11 3"/>
+        <path d="m34 27 8 11 10 4"/>
+        <path d="m10 51 14 1"/>
+        <path d="m40 49 14 3"/>
+        <path d="m40 27 13 25"/>
+        <path d="m50 52 7 2"/>
+      </svg>
+    `;
+    row.appendChild(iconBlock);
 
-    row.appendChild(this.renderSelect(this.perspectiveOptions(), this.state.perspective, (value) => this.setPerspective(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
+    const controls = createElement(
+      'div',
+      this.state.period === 'range'
+        ? 'grid flex-1 grid-cols-[minmax(180px,0.95fr)_minmax(210px,1.05fr)_minmax(390px,1.8fr)_minmax(170px,0.85fr)_minmax(190px,0.9fr)] items-stretch'
+        : 'grid flex-1 grid-cols-[minmax(190px,1fr)_minmax(220px,1.12fr)_minmax(180px,0.9fr)_minmax(170px,0.85fr)_minmax(190px,0.9fr)] items-stretch',
+    );
+    const controlSelectClass = 'h-8 w-full border-0 border-b border-gray-300 bg-transparent px-0 pb-1 pt-0 text-[15px] text-gray-950 focus:border-indigo-600 focus:outline-none focus:ring-0';
+
+    controls.appendChild(this.renderDesktopControlGroup(
+      'Report',
+      this.renderDesktopSelect(this.perspectiveOptions(), this.state.perspective, (value) => this.setPerspective(value), 'Report', controlSelectClass),
+    ));
 
     if (this.supportsDateRange()) {
-      row.appendChild(this.renderSegmented([
+      const periodGroup = this.renderDesktopControlGroup('Season Mode', this.renderSegmented([
         { label: 'Season', value: 'season' },
         { label: 'Range', value: 'range' },
-      ], this.state.period, (value) => this.setPeriod(value)));
+      ], this.state.period, (value) => this.setPeriod(value), 'underline'));
+      controls.appendChild(periodGroup);
     }
-    row.appendChild(this.renderSelect(this.availableSeasons().map((season) => ({ label: season, value: season })), this.state.seasonId, (value) => this.setSeason(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
-    if (this.availableLeagues().length > 0) {
-      row.appendChild(this.renderSelect([
-        { label: 'All Leagues', value: '' },
-        ...this.availableLeagues().map((league) => ({ label: league, value: league })),
-      ], this.state.selectedLeagues[0] || '', (value) => this.setLeague(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
+    if (this.state.period === 'range') {
+      this.ensureRangeDates();
+      controls.appendChild(this.renderDesktopControlGroup('Dates', this.renderDateRangeControls()));
+    } else {
+      controls.appendChild(this.renderDesktopControlGroup(
+        'Season',
+        this.renderDesktopSelect(this.availableSeasons().map((season) => ({ label: season, value: season })), this.state.seasonId, (value) => this.setSeason(value), 'Season', controlSelectClass),
+      ));
     }
     if (this.draftYearOptions().length > 0) {
-      row.appendChild(this.renderDraftYearDropdown('h-10 rounded-full bg-white px-4 pr-9 text-sm text-gray-900 ring-1 ring-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-indigo-500'));
+      controls.appendChild(this.renderDesktopControlGroup(
+        'Drafted',
+        this.renderDraftYearDropdown('h-9 w-full border-0 border-b border-gray-300 bg-transparent px-0 pb-1 pt-0 text-base text-gray-950 hover:border-indigo-500 focus:outline-none focus:ring-0'),
+      ));
     }
 
-    if (this.canSlice()) {
-      row.appendChild(this.renderSegmented([
-        { label: 'Total', value: 'total' },
-        { label: 'P/GP', value: 'pgp' },
-        { label: 'Per 60', value: 'p60' },
-      ], this.state.slice, (value) => this.setSlice(value)));
-    }
+    controls.appendChild(this.renderDesktopControlGroup(
+      'Game Type',
+      this.renderDesktopSelect(this.availableGameTypes().map((type) => ({ label: this.gameTypeLabel(type), value: type })), this.state.gameType, (value) => this.setGameType(value), 'Game Type', controlSelectClass),
+    ));
 
-    row.appendChild(this.renderSelect(this.availableGameTypes().map((type) => ({ label: this.gameTypeLabel(type), value: type })), this.state.gameType, (value) => this.setGameType(value), 'h-10 pl-4 pr-9 rounded-full text-sm ring-1 ring-gray-200 bg-white focus:ring-2 focus:ring-indigo-500'));
-
-    const positionRow = createElement('div', 'w-full flex items-center gap-2 pb-3');
-    this.state.positionButtons.forEach((button) => {
-      positionRow.appendChild(this.renderPositionButton(button, 'h-9 w-9 rounded-full text-[11px] font-semibold ring-1 ring-indigo-100 hover:ring-indigo-200 hover:bg-indigo-100 transition-colors'));
-    });
-    row.appendChild(positionRow);
-
+    row.appendChild(controls);
     panel.appendChild(row);
     outer.appendChild(panel);
 
     return outer;
   }
 
-  renderSelect(options, selectedValue, onChange, className) {
-    const wrapper = createElement('div', 'relative z-50 -mr-px grid grow grid-cols-1');
-    const select = createElement('select', `${className} appearance-none`);
+  renderDesktopControlGroup(label, control) {
+    const group = createElement('div', 'flex min-w-0 flex-col justify-center border-r border-gray-200 px-7 py-4 last:border-r-0');
+    group.appendChild(createElement('div', 'mb-2 text-[11px] font-semibold uppercase tracking-[0.20em] text-gray-500', label));
+    group.appendChild(control);
+
+    return group;
+  }
+
+  renderDateRangeControls() {
+    const wrapper = createElement('div', 'grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2');
+    wrapper.appendChild(this.renderDateInput('fromDate', 'Start', 'h-8 min-w-0 border-0 border-b border-gray-300 bg-transparent px-0 text-[13px] text-gray-900 focus:border-indigo-600 focus:outline-none focus:ring-0'));
+    wrapper.appendChild(this.renderDateInput('toDate', 'End', 'h-8 min-w-0 border-0 border-b border-gray-300 bg-transparent px-0 text-[13px] text-gray-900 focus:border-indigo-600 focus:outline-none focus:ring-0'));
+    wrapper.appendChild(this.renderRangeApplyButton('h-8 border-b border-indigo-600 px-2 text-[11px] font-semibold uppercase tracking-[0.12em]'));
+    if (this.state.rangeError) {
+      wrapper.appendChild(createElement('div', 'col-span-3 text-xs font-medium text-red-600', this.state.rangeError));
+    }
+
+    return wrapper;
+  }
+
+  renderDesktopSelect(options, selectedValue, onChange, label, triggerClass) {
+    return mountStatsSelect({
+      options,
+      modelValue: selectedValue,
+      onChange,
+      placeholder: label,
+      ariaLabel: label,
+      triggerClass: `${triggerClass} inline-flex items-center justify-between gap-3 text-left`,
+    });
+  }
+
+  renderSelect(options, selectedValue, onChange, className, wrapperClass = 'relative z-50 -mr-px grid grow grid-cols-1') {
+    const wrapper = createElement('div', wrapperClass);
+    const select = createElement('select', `${className} stats-select-native`);
     select.value = selectedValue;
     select.addEventListener('change', (event) => onChange(event.target.value));
 
@@ -879,6 +1008,26 @@ export class StatsPageShell {
     wrapper.appendChild(icon);
 
     return wrapper;
+  }
+
+  renderDateInput(bound, label, className) {
+    const input = createElement('input', className);
+    input.type = 'date';
+    input.value = this.state[bound] || '';
+    input.setAttribute('aria-label', label);
+    input.addEventListener('change', (event) => this.setRangeDate(bound, event.target.value));
+
+    return input;
+  }
+
+  renderRangeApplyButton(className) {
+    const invalid = Boolean(this.rangeValidationMessage());
+    const button = createElement('button', `${className} ${invalid ? 'cursor-not-allowed bg-gray-100 text-gray-400' : 'bg-gray-900 text-white hover:bg-gray-800'}`, 'Apply');
+    button.type = 'button';
+    button.disabled = invalid;
+    button.addEventListener('click', () => this.applyRangeDates());
+
+    return button;
   }
 
   renderDraftYearDropdown(buttonClassName) {
@@ -960,11 +1109,25 @@ export class StatsPageShell {
     document.querySelectorAll('[data-draft-year-dropdown-portal="true"]').forEach((node) => node.remove());
   }
 
-  renderSegmented(options, selectedValue, onChange) {
-    const wrapper = createElement('div', 'inline-flex rounded-full ring-1 ring-gray-200 overflow-hidden');
+  renderSegmented(options, selectedValue, onChange, variant = 'pill') {
+    const isUnderline = variant === 'underline';
+    const wrapper = createElement('div', isUnderline
+      ? 'grid h-9 grid-flow-col items-end border-b border-gray-300'
+      : 'inline-flex overflow-hidden rounded-md border border-gray-200 bg-gray-50 p-0.5');
 
     options.forEach((option) => {
-      const button = createElement('button', option.value === selectedValue ? 'bg-indigo-600 text-white px-4 h-10 text-sm' : 'bg-white text-gray-700 hover:bg-gray-50 px-4 h-10 text-sm', option.label);
+      const active = option.value === selectedValue;
+      const button = createElement('button', isUnderline
+        ? [
+          'h-9 min-w-20 border-b-2 px-4 text-sm transition-colors',
+          active
+            ? 'border-indigo-600 font-semibold text-indigo-600'
+            : 'border-transparent font-medium text-gray-600 hover:text-gray-950',
+        ].join(' ')
+        : active
+          ? 'h-8 rounded px-3 text-sm font-semibold bg-gray-900 text-white'
+          : 'h-8 rounded px-3 text-sm font-medium text-gray-600 hover:bg-white hover:text-gray-900',
+      option.label);
       button.type = 'button';
       button.addEventListener('click', () => onChange(option.value));
       wrapper.appendChild(button);
@@ -1000,11 +1163,16 @@ export class StatsPageShell {
       leagueProspectMode: this.payload?.meta?.leagueProspectMode || '',
       resource: this.settings.resource || this.resource,
       teamAggregate: this.settings.teamAggregate === true || this.resource === 'teams',
+      canSlice: this.canSlice(),
+      positionButtons: [...this.state.positionButtons],
       selectedPos: [...this.state.selectedPos],
       selectedPosTypes: [...this.state.selectedPosTypes],
       leagueAutoSkaterFilter: this.state.leagueAutoSkaterFilter,
       teamAggregateStartersOnly: this.state.teamAggregateStartersOnly,
       nhleLens: this.state.nhleLens,
+      slice: this.canSlice() ? this.state.slice : 'total',
+      onSliceChange: (value) => this.setSlice(value),
+      onPositionToggle: (value) => this.togglePosition(value),
       onTeamAggregateStartersChange: this.onTeamAggregateStartersChange,
       onNhleLensChange: this.onNhleLensChange,
       onLeagueFantasyTeamFilterChange: this.onLeagueFantasyTeamFilterChange,
@@ -1013,7 +1181,7 @@ export class StatsPageShell {
       this.prospectHeadings(this.activeHeadings(), renderSettings),
       renderSettings,
     );
-    const rows = this.locallyFilteredRows();
+    const rows = this.locallySlicedRows(this.locallyFilteredRows(), activeHeadings);
     const sorted = renderSettings.teamAggregate === true
       ? rows
       : sortData(rows, this.settings.sortKey, this.settings.sortDirection);
@@ -1034,6 +1202,89 @@ export class StatsPageShell {
       activeRenderedColumnGroup: this.activeColumnGroup(),
       goalieFilterActive: this.state.selectedPosTypes.includes('G') || this.state.selectedPos.includes('G'),
     }, this.onSortChange);
+  }
+
+  locallySlicedRows(rows, headings) {
+    if (!this.canSlice() || this.state.slice === 'total') return rows;
+
+    const slice = this.state.slice;
+    const keys = new Set((Array.isArray(headings) ? headings : [])
+      .map((heading) => String(heading?.key ?? ''))
+      .filter((key) => key !== '' && this.shouldSliceStatKey(key)));
+
+    return (Array.isArray(rows) ? rows : []).map((row) => {
+      const totals = row?.__slice_totals && typeof row.__slice_totals === 'object' ? row.__slice_totals : {};
+      const gamesPlayed = Number(totals.gp ?? row?.gp ?? 0);
+      const toiSeconds = Number(totals.toi_total_seconds ?? row?.toi_total_seconds ?? (Number(row?.toi_seconds ?? 0) * gamesPlayed));
+      const next = {
+        ...row,
+        stats: row?.stats && typeof row.stats === 'object' ? { ...row.stats } : undefined,
+      };
+
+      keys.forEach((key) => {
+        const total = Number(totals[key] ?? statValueForKey(row, key));
+        if (!Number.isFinite(total)) return;
+
+        if (slice === 'pgp') {
+          next[key] = gamesPlayed > 0 ? Math.round((total / gamesPlayed) * 100) / 100 : 0;
+        } else if (slice === 'p60') {
+          next[key] = toiSeconds > 0 ? Math.round((total / (toiSeconds / 3600)) * 100) / 100 : 0;
+        }
+
+        if (next.stats) {
+          next.stats[key] = next[key];
+        }
+      });
+
+      return next;
+    });
+  }
+
+  shouldSliceStatKey(key) {
+    const normalized = String(key).toLowerCase();
+    if (
+      normalized.endsWith('_pg')
+      || normalized.endsWith('_p60')
+      || normalized.endsWith('_per_gp')
+      || normalized.endsWith('_per_60')
+      || normalized.endsWith('_percentage')
+      || normalized.endsWith('_pct')
+      || normalized.endsWith('_p')
+      || normalized === 'gaa'
+      || normalized === 'sv_pct'
+      || normalized === 'shooting_percentage'
+    ) {
+      return false;
+    }
+
+    return !new Set([
+      '__rk',
+      '__owner',
+      'age',
+      'team',
+      'league',
+      'pos',
+      'position',
+      'pos_type',
+      'type',
+      'player',
+      'name',
+      'gp',
+      'toi',
+      'toi_seconds',
+      'toi_total_seconds',
+      'contract',
+      'contract_value',
+      'contract_value_num',
+      'contract_last_year',
+      'contract_last_year_num',
+      'contract_term',
+      'contract_length',
+      'contract_type',
+      'drafted_overall_pick',
+      'drafted_year',
+      'drafted_label',
+    ]).has(normalized);
   }
 
   prospectHeadings(headings, settings) {

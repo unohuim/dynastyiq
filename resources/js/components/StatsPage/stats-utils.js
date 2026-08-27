@@ -44,6 +44,38 @@ export function statValueForKey(row, key) {
     return nestedValue ?? rowValue;
 }
 
+const avatarObserver = typeof window !== 'undefined' && 'IntersectionObserver' in window
+    ? new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+
+            const img = entry.target;
+            const src = img.dataset.avatarSrc;
+
+            if (src) {
+                img.src = src;
+                delete img.dataset.avatarSrc;
+            }
+
+            observer.unobserve(img);
+        });
+    }, { rootMargin: '400px 0px' })
+    : null;
+
+export function deferAvatarImageSrc(img, avatarUrl) {
+    const src = String(avatarUrl ?? '').trim();
+
+    if (!src) return;
+
+    if (!avatarObserver) {
+        img.src = src;
+        return;
+    }
+
+    img.dataset.avatarSrc = src;
+    avatarObserver.observe(img);
+}
+
 const leagueRosterPlatform = (settings = {}) => ['fantrax', 'yahoo'].includes(String(settings?.leaguePlatform ?? ''));
 
 export function leagueRosterHeadings(headings, settings = {}) {

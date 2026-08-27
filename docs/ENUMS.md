@@ -181,6 +181,121 @@ Do not introduce new enum values without updating this document.
 - `failed`: Run execution failed.
 - `archived`: Run is retained for history but hidden from normal active workflows.
 
+### NHL SAT Entity Rate Projection Formula Version
+
+**Name:** NHL SAT entity rate projection formula version
+**Storage location(s):** `nhl_sat_model_entity_rate_projection_buckets.metadata`, `nhl_sat_model_entity_rate_projection_splits.formula_version`
+**Allowed values currently emitted:**
+
+- `skater_offense_segmented_xsat_v2`
+- `skater_offense_strength_rate_v3`
+- `skater_offense_strength_rate_v4`
+- `skater_offense_strength_rate_v5`
+- `skater_offense_strength_rate_v6`
+- `skater_offense_strength_rate_v7`
+- `skater_offense_strength_rate_v8`
+- `skater_offense_strength_rate_v9`
+- `skater_offense_strength_rate_v10`
+- `skater_offense_strength_rate_v11`
+- `skater_offense_strength_rate_v12`
+- `skater_offense_strength_rate_v13`
+- `skater_offense_strength_rate_v14`
+- `skater_offense_strength_rate_v15`
+
+**Semantic meaning:**
+
+- `skater_offense_segmented_xsat_v2`: Bucket-level skater-offense SAT /60 projection strategy using latest-training-season bucket shape and entity-level target scaling.
+- `skater_offense_strength_rate_v3`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy for `all`, `ev`, `pp`, and `pk`.
+- `skater_offense_strength_rate_v4`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that anchors all-situation SAT/60 to the bucket-level `skater_offense_segmented_xsat_v2` projection, scales EV/PP/PK SAT rates from training-season split shape, and derives HDSAT from projected SAT multiplied by training-only HDSAT/SAT share.
+- `skater_offense_strength_rate_v5`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that keeps the v4 anchor and split-shape approach, then applies explicit situation-level calibration multipliers to SAT/60, HDSAT/SAT share, TOI/GP, and GP before deriving per-game and season totals.
+- `skater_offense_strength_rate_v6`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves all-situation and EV TOI/GP and GP, then applies targeted PP/PK calibration from training-only usage tiers and player projection cohorts.
+- `skater_offense_strength_rate_v7`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v6 behavior except for a capped PK TOI/GP event modifier from training-only game-summary blocks and TK+GV context.
+- `skater_offense_strength_rate_v8`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v7 behavior except for forward PP TOI/GP enhancements from latest-training-season top-400 forward cohorts, latest-team forward ranks, and outside-top-400 age/rank suppression.
+- `skater_offense_strength_rate_v9`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v8 behavior except for defense PP TOI/GP enhancements from latest-training-season top-200 defense cohorts and latest-team defense PP role rank.
+- `skater_offense_strength_rate_v10`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v9 PP TOI role behavior while making EV SAT/60 lightly regress weak offensive cohorts, PP SAT/60 train-heavy except elite/top scoring cohorts, PK SAT/60 low-confidence train-heavy, and PK TOI/GP train-heavy with capped defense blocks context.
+- `skater_offense_strength_rate_v11`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v10 except PK SAT/60 uses latest-training-season PK TOI rank bands for forwards and defense, applies researched direct formulas for forward ranks 1-100 and 101-200 plus defense ranks 1-50, caps defense ranks 51-100 as experimental, and suppresses lower-confidence fallback rows.
+- `skater_offense_strength_rate_v12`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v11 except all-situation SAT/60 for latest-training-season top-200 defense ranked first on their team by points per game uses a direct S2/train blend.
+- `skater_offense_strength_rate_v13`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v12 except EV and PP SAT/60 calibration uses latest-training-season top-200 defense team points-per-game rank for D1/D2/D3, with PP changes gated by latest-training-season PP TOI/GP.
+- `skater_offense_strength_rate_v14`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v13 except D SAT role cohorts define D1/D2/D3 as same-team latest-training-season defense points-per-game ranks among defense with at least 25 games, and D4-plus as the remaining league-wide top-200 qualifying defense after removing D1/D2/D3.
+- `skater_offense_strength_rate_v15`: Entity-level skater-offense strength-split SAT/HDSAT projection strategy that preserves v14 except forward role cohorts define F1-3, F4-6, and F7-9 as same-team latest-training-season forward points-per-game rank buckets among forwards with at least 25 games, define F10-plus as the remaining league-wide top-400 qualifying forward points-per-game group, suppress F10-plus all/EV SAT/60 calibration, and suppress/cap F7-9 and F10-plus PP TOI/GP.
+
+### NHL SAT Entity Rate Projection Situation
+
+**Name:** NHL SAT entity rate projection situation
+**Storage location(s):** `nhl_sat_model_entity_rate_projection_splits.situation`, `nhl_sat_model_entity_rate_comparison_splits.situation`
+**Allowed values currently emitted:**
+
+- `all`
+- `ev`
+- `pp`
+- `pk`
+
+**Semantic meaning:**
+
+- `all`: All non-shootout skater offense situations.
+- `ev`: Even-strength skater offense.
+- `pp`: Power-play skater offense.
+- `pk`: Penalty-kill skater offense.
+
+### NHL SAT Entity Projection Diagnostic Buckets
+
+**Name:** NHL SAT entity projection diagnostic buckets
+**Storage location(s):** `nhl_sat_model_entity_rate_projection_splits.sat_momentum_bucket`, `hdsat_momentum_bucket`, `toi_momentum_bucket`, `sh_regression_bucket`, `age_group`, `metadata->usage_tier`, `metadata->player_projection_cohort`, `metadata->pp_forward_projection_cohort`, `metadata->f_sat_role_cohort`, `metadata->d_sat_role_cohort`, `metadata->d_pp_role_cohort`, `metadata->f_pk_sat_role_cohort`, `metadata->d_pk_sat_role_cohort`
+**Allowed values currently emitted:**
+
+- `25u`
+- `26_29`
+- `30_33`
+- `34_plus`
+- `unknown`
+- `sat_momentum_unknown`
+- `sat_spike`
+- `sat_drop`
+- `sat_stable`
+- `hdsat_momentum_unknown`
+- `hdsat_spike`
+- `hdsat_drop`
+- `hdsat_stable`
+- `toi_momentum_unknown`
+- `toi_gain`
+- `toi_drop`
+- `toi_stable`
+- `sh_regression_unknown`
+- `sh_spike`
+- `sh_drop`
+- `sh_stable`
+- `primary_usage`
+- `secondary_usage`
+- `fringe_usage`
+- `no_or_low_usage`
+- `low_volume`
+- `top_forward_points`
+- `top_forward_goals`
+- `top_forward_sat`
+- `high_toi_defense`
+- `defense`
+- `forward`
+- `skater`
+- `not_forward`
+- `latest_top400_f_both`
+- `latest_top400_f_points_per_gp_only`
+- `latest_top400_f_total_points_only`
+- `outside_latest_top400_f`
+- `latest_team_f_points_rank_1_3`
+- `latest_team_f_points_rank_4_6`
+- `latest_team_f_points_rank_7_9`
+- `latest_top400_f_points_rank_10_plus`
+- `not_defense`
+- `outside_latest_top200_d`
+- `latest_top200_d_team_pp_rank_1`
+- `latest_top200_d_team_pp_rank_2`
+- `latest_top200_d_team_pp_rank_3`
+- `latest_top200_d_team_pp_rank_4_plus`
+
+**Semantic meaning:**
+
+These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opportunity movement, SH% regression context, special-teams usage tier, player projection cohort, latest-training-season forward PP cohort, and latest-training-season defense PP role cohort used for projection split diagnostics.
+
 ### Player Shoots
 
 **Name:** Player handedness / shoots
@@ -1787,7 +1902,7 @@ Do not introduce new enum values without updating this document.
 - Rush buckets distinguish direct transition attempts from rebounds that inherit rush context inside the rebound window.
 - Shooter and goalie handedness, height, weight, and age-at-game snapshots are context features; `is_off_wing_attempt` is nullable when goalie-perspective side, shooter handedness, or classified shot type is unavailable.
 - Unknown shot type rows remain valid raw facts, but predictive bucket analysis excludes `shot_type_bucket = unknown` by default.
-- Probability-derived danger labels belong to future versioned prediction outputs, not to `nhl_shot_attempts_facts`.
+- Probability-derived danger labels must not be stored on `nhl_shot_attempts_facts`; HDSAT is stored only as an aggregate summary count after a shot attempt is matched to a latest goal-model bucket.
 
 **Notes:**
 

@@ -20,6 +20,7 @@ use App\Support\FantraxViewerScope;
 use App\Support\Stats\LeagueStatsOwnershipHydrator;
 use App\Support\Stats\LeagueStatsPerspectiveFactory;
 use App\Support\Stats\LeagueStatsPlayerUniverseFilter;
+use App\Support\Stats\RangeStatsPayloadRequest;
 use App\Support\Stats\SeasonStatsPayloadRequest;
 use App\Support\Stats\StatsDerivedFilterApplier;
 use App\Support\Stats\StatsFilterSet;
@@ -31,6 +32,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
 
@@ -170,6 +172,249 @@ it('creates an empty filter set without a request', function (): void {
         ->and($filters->leagues)->toBe([])
         ->and($filters->draftYearRange)->toBe(['min' => null, 'max' => null])
         ->and($filters->numericRanges)->toBe([]);
+});
+
+it('renders the stats index through inertia with compatibility props', function (): void {
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+            ],
+            'sort' => [
+                'sortKey' => 'g',
+                'sortDirection' => 'desc',
+            ],
+            'filters' => [],
+        ],
+    ]);
+
+    $response = $this->get(route('stats.index'));
+
+    $response->assertOk()
+        ->assertInertia(fn (Assert $page): Assert => $page
+            ->component('Stats/Index')
+            ->has('initialPayload')
+            ->has('perspectives', 1)
+            ->where('selectedPerspective', 'skaters')
+            ->where('apiUrl', url('/api/stats'))
+            ->where('mobileBreakpoint', config('viewports.mobile', 640)));
+});
+
+it('rejects public range stats payloads without both date bounds', function (): void {
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+            ],
+            'sort' => ['sortKey' => 'g', 'sortDirection' => 'desc'],
+            'filters' => [],
+        ],
+    ]);
+
+    $response = $this->getJson(route('stats.payload', [
+        'perspective' => 'skaters',
+        'period' => 'range',
+        'slice' => 'total',
+        'game_type' => 2,
+    ]));
+
+    $response->assertStatus(422)
+        ->assertJsonPath('message', 'Start and end dates are required for range stats.');
+});
+
+it('rejects public range stats payloads when the start date is after the end date', function (): void {
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+            ],
+            'sort' => ['sortKey' => 'g', 'sortDirection' => 'desc'],
+            'filters' => [],
+        ],
+    ]);
+
+    $response = $this->getJson(route('stats.payload', [
+        'perspective' => 'skaters',
+        'period' => 'range',
+        'from' => '2026-02-01',
+        'to' => '2026-01-01',
+        'slice' => 'total',
+        'game_type' => 2,
+    ]));
+
+    $response->assertStatus(422)
+        ->assertJsonPath('message', 'Start date must be before end date.');
+});
+
+it('passes valid public range stats payload date bounds to the payload builder', function (): void {
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+            ],
+            'sort' => ['sortKey' => 'g', 'sortDirection' => 'desc'],
+            'filters' => [],
+        ],
+    ]);
+    $builder = new class {
+        public ?RangeStatsPayloadRequest $request = null;
+
+        public function buildRangePayload(RangeStatsPayloadRequest $request): array
+        {
+            $this->request = $request;
+
+            return [[
+                'headings' => [['key' => 'g', 'label' => 'G']],
+                'data' => [],
+                'settings' => ['sortable' => ['g']],
+                'meta' => ['period' => 'range'],
+            ], null, null, []];
+        }
+    };
+    app()->instance(StatsPayloadBuilder::class, $builder);
+
+    $response = $this->getJson(route('stats.payload', [
+        'perspective' => 'skaters',
+        'period' => 'range',
+        'from' => '2026-01-01',
+        'to' => '2026-01-31',
+        'slice' => 'total',
+        'game_type' => 2,
+    ]));
+
+    $response->assertOk()
+        ->assertJsonPath('meta.period', 'range');
+
+    expect($builder->request?->from?->toDateString())->toBe('2026-01-01')
+        ->and($builder->request?->to?->toDateString())->toBe('2026-01-31');
+});
+
+it('aggregates public range stats by player before returning payload rows', function (): void {
+    $player = Player::create([
+        'nhl_id' => 91001,
+        'first_name' => 'Range',
+        'last_name' => 'Skater',
+        'full_name' => 'Range Skater',
+        'dob' => '2000-01-01',
+        'position' => 'C',
+        'pos_type' => 'F',
+        'team_abbrev' => 'TOR',
+        'is_goalie' => false,
+        'head_shot_url' => 'https://example.test/range-skater.png',
+    ]);
+    Perspective::create([
+        'name' => 'Skaters',
+        'slug' => 'skaters',
+        'visibility' => 'public_guest',
+        'sport' => 'hockey',
+        'is_slicable' => true,
+        'settings' => [
+            'columns' => [
+                ['key' => 'g', 'label' => 'G', 'type' => 'int'],
+                ['key' => 'a', 'label' => 'A', 'type' => 'int'],
+                ['key' => 'pts', 'label' => 'PTS', 'type' => 'int'],
+                ['key' => 'sog', 'label' => 'SOG', 'type' => 'int'],
+            ],
+            'sort' => ['sortKey' => 'pts', 'sortDirection' => 'desc'],
+            'filters' => [],
+        ],
+    ]);
+
+    DB::table('nhl_games')->insert([
+        [
+            'nhl_game_id' => 2026021001,
+            'season_id' => '20262027',
+            'game_type' => 2,
+            'game_date' => '2026-03-01',
+            'game_dow' => 'Sun',
+            'game_month' => 'Mar',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026021002,
+            'season_id' => '20262027',
+            'game_type' => 2,
+            'game_date' => '2026-04-15',
+            'game_dow' => 'Wed',
+            'game_month' => 'Apr',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+    DB::table('nhl_game_summaries')->insert([
+        [
+            'nhl_game_id' => 2026021001,
+            'nhl_player_id' => 91001,
+            'nhl_team_id' => 1,
+            'g' => 1,
+            'a' => 2,
+            'pts' => 3,
+            'sog' => 4,
+            'toi' => 1200,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026021002,
+            'nhl_player_id' => 91001,
+            'nhl_team_id' => 1,
+            'g' => 2,
+            'a' => 1,
+            'pts' => 3,
+            'sog' => 5,
+            'toi' => 1500,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $response = $this->getJson(route('stats.payload', [
+        'perspective' => 'skaters',
+        'period' => 'range',
+        'from' => '2026-03-01',
+        'to' => '2026-04-15',
+        'slice' => 'total',
+        'game_type' => 2,
+    ]));
+
+    $response->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.name', 'Range Skater')
+        ->assertJsonPath('data.0.gp', 2)
+        ->assertJsonPath('data.0.g', 3)
+        ->assertJsonPath('data.0.a', 3)
+        ->assertJsonPath('data.0.pts', 6)
+        ->assertJsonPath('data.0.sog', 9)
+        ->assertJsonPath('data.0.toi', '22:30');
 });
 
 it('normalizes position filter arrays by trimming blanks', function (): void {
@@ -1143,6 +1388,20 @@ it('returns league stats payload for a connected active league member', function
         ->assertJsonPath('settings.ownerColumn', true)
         ->assertJsonPath('settings.leaguePlatform', 'fantrax')
         ->assertJsonCount(1, 'data');
+});
+
+it('rejects league range stats payloads without both date bounds', function (): void {
+    [$user, $league] = ($this->createConnectedLeagueFixture)();
+
+    $response = $this->actingAs($user)->getJson(route('leagues.stats.payload', [
+        'league_id' => $league->id,
+        'period' => 'range',
+        'slice' => 'total',
+        'game_type' => 2,
+    ]));
+
+    $response->assertStatus(422)
+        ->assertJsonPath('message', 'Start and end dates are required for range stats.');
 });
 
 it('blocks league stats payload for users without a connected fantasy provider', function (): void {

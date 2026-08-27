@@ -1,10 +1,12 @@
-const TYPE_BUTTONS = new Set(['F', 'D', 'G']);
+const TYPE_BUTTONS = new Set(['F', 'D', 'G', 'SKT']);
 
 const normalizePositionValue = (value) => {
   const normalized = String(value ?? '').trim().toUpperCase();
 
   if (normalized === 'LW') return 'L';
   if (normalized === 'RW') return 'R';
+  if (normalized === 'W') return 'W';
+  if (normalized === 'SKT') return 'SKT';
   if (['LD', 'RD', 'DEF', 'DEFENSE', 'DEFENCEMAN', 'DEFENSEMAN'].includes(normalized)) return 'D';
 
   return normalized;
@@ -80,34 +82,45 @@ export class StatsFilterState {
   togglePosition(value) {
     const normalized = String(value);
 
-    if (isStatsTypeButton(normalized)) {
-      const current = new Set(this.state.selectedPosTypes);
-      if (current.has(normalized)) current.delete(normalized);
-      else current.add(normalized);
+    if (this.isPositionActive(normalized)) {
+      this.state.selectedPos = [];
+      this.state.selectedPosTypes = [];
 
-      if (normalized === 'G' && current.has('G')) {
+      return;
+    }
+
+    if (normalized === 'W') {
+      this.state.selectedPos = ['W'];
+      this.state.selectedPosTypes = [];
+      return;
+    }
+
+    if (isStatsTypeButton(normalized)) {
+      if (normalized === 'G') {
         this.state.selectedPosTypes = ['G'];
         this.state.selectedPos = ['G'];
+      } else if (normalized === 'SKT') {
+        this.state.selectedPosTypes = ['SKT'];
+        this.state.selectedPos = [];
       } else {
-        current.delete('G');
-        this.state.selectedPosTypes = [...current];
-        this.state.selectedPos = this.state.selectedPos.filter((item) => item !== 'G');
-        if (current.has('D')) this.state.selectedPos = [];
+        this.state.selectedPosTypes = [normalized];
+        this.state.selectedPos = [];
       }
 
       return;
     }
 
-    const current = new Set(this.state.selectedPos);
-    if (current.has(normalized)) current.delete(normalized);
-    else current.add(normalized);
-
-    this.state.selectedPos = [...current].filter((item) => item !== 'G');
-    this.state.selectedPosTypes = this.state.selectedPosTypes.filter((item) => item !== 'G' && item !== 'D');
+    this.state.selectedPos = [normalized];
+    this.state.selectedPosTypes = [];
   }
 
   isPositionActive(value) {
     const normalized = String(value);
+    if (normalized === 'SKT') {
+      return this.state.selectedPosTypes.includes('SKT')
+        || (this.state.selectedPosTypes.includes('F') && this.state.selectedPosTypes.includes('D'));
+    }
+
     return isStatsTypeButton(normalized)
       ? this.state.selectedPosTypes.includes(normalized)
       : this.state.selectedPos.includes(normalized);
@@ -127,10 +140,17 @@ export class StatsFilterState {
       const rowPositions = positionTokens(row?.pos, row?.position, row?.pos_type, row?.type);
       const isGoalie = row?.is_goalie === true || row?.is_goalie === 1 || row?.is_goalie === '1';
       const typeMatch = [...selectedTypes].some((type) => rowPositions.has(type));
-      const positionMatch = [...selectedPositions].some((position) => rowPositions.has(position));
+      const positionMatch = [...selectedPositions].some((position) => {
+        if (position === 'W') {
+          return rowPositions.has('W') || rowPositions.has('L') || rowPositions.has('R') || rowPositions.has('LW') || rowPositions.has('RW');
+        }
+
+        return rowPositions.has(position);
+      });
 
       return selectedTypes.has(rowType)
         || selectedTypes.has(rowPosition)
+        || (selectedTypes.has('SKT') && (rowType === 'F' || rowType === 'D' || rowPosition === 'F' || rowPosition === 'D'))
         || selectedPositions.has(rowPosition)
         || typeMatch
         || positionMatch

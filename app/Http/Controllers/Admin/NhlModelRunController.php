@@ -1390,6 +1390,36 @@ class NhlModelRunController extends Controller
 
         $profileTypes = $this->profileTypes();
         $sorts = $this->rateProjectionComparisonSorts();
+        $hasHdsatColumns = $this->hasAggregateComparisonHdsatColumns();
+        $hasEvalColumns = $this->hasAggregateComparisonEvalColumns();
+
+        if (! $hasHdsatColumns) {
+            $sorts = array_diff_key($sorts, array_flip([
+                'train_hdsat',
+                'test_hdsat',
+                'train_hdsat_per_60',
+                'test_hdsat_per_60',
+                'hdsat_drift',
+                'hdsat_drift_rate',
+            ]));
+        }
+
+        if (! $hasEvalColumns) {
+            $sorts = array_diff_key($sorts, array_flip([
+                'train_eval_sat_per_60',
+                'test_eval_sat_per_60',
+                'train_eval_hdsat_per_60',
+                'test_eval_hdsat_per_60',
+                'train_eval_hdsat_sat_rate',
+                'test_eval_hdsat_sat_rate',
+                'train_eval_sog_per_60',
+                'test_eval_sog_per_60',
+                'train_eval_goals_per_60',
+                'test_eval_goals_per_60',
+                'train_eval_toi_per_gp',
+                'test_eval_toi_per_gp',
+            ]));
+        }
 
         if (! Schema::hasTable('nhl_sat_model_entity_rate_comparison_aggregates')) {
             $aggregates = DB::table('nhl_model_runs')->whereRaw('1 = 0')->paginate(50);
@@ -1435,6 +1465,11 @@ class NhlModelRunController extends Controller
             ->selectRaw('SUM(test_sat) as test_sat')
             ->selectRaw('SUM(projected_xsat_per_60) as projected_xsat_per_60')
             ->selectRaw('SUM(test_xsat_per_60) as test_xsat_per_60')
+            ->when($hasHdsatColumns, function ($query): void {
+                $query
+                    ->selectRaw('SUM(train_hdsat) as train_hdsat')
+                    ->selectRaw('SUM(test_hdsat) as test_hdsat');
+            })
             ->groupBy('profile_type')
             ->get()
             ->keyBy('profile_type');
@@ -1456,7 +1491,12 @@ class NhlModelRunController extends Controller
                 label: 'Grand Total',
                 context: 'Collection'
             ),
-        ])->merge($this->aggregateComparisonDemographicRows(
+        ])->merge($this->aggregateComparisonSplitCollectionRows(
+            aggregateQuery: $aggregateQuery,
+            run: $run,
+            profileType: $profileType,
+            testSeasonId: $testSeasonId
+        ))->merge($this->aggregateComparisonDemographicRows(
             aggregateQuery: $aggregateQuery,
             hasGameCounts: $hasGameCounts,
             profileType: $profileType,
@@ -1468,6 +1508,10 @@ class NhlModelRunController extends Controller
         ))->merge($this->aggregateComparisonPositionRows(
             aggregateQuery: $aggregateQuery,
             hasGameCounts: $hasGameCounts
+        ))->merge($this->aggregateComparisonTopSignalRows(
+            aggregateQuery: $aggregateQuery,
+            hasGameCounts: $hasGameCounts,
+            profileType: $profileType
         ));
 
         $aggregates = $this->aggregateComparisonRowsQuery(
@@ -1510,6 +1554,37 @@ class NhlModelRunController extends Controller
 
         $profileTypes = $this->profileTypes();
         $sorts = $this->rateProjectionComparisonSorts();
+        $hasHdsatColumns = $this->hasAggregateComparisonHdsatColumns();
+        $hasEvalColumns = $this->hasAggregateComparisonEvalColumns();
+
+        if (! $hasHdsatColumns) {
+            $sorts = array_diff_key($sorts, array_flip([
+                'train_hdsat',
+                'test_hdsat',
+                'train_hdsat_per_60',
+                'test_hdsat_per_60',
+                'hdsat_drift',
+                'hdsat_drift_rate',
+            ]));
+        }
+
+        if (! $hasEvalColumns) {
+            $sorts = array_diff_key($sorts, array_flip([
+                'train_eval_sat_per_60',
+                'test_eval_sat_per_60',
+                'train_eval_hdsat_per_60',
+                'test_eval_hdsat_per_60',
+                'train_eval_hdsat_sat_rate',
+                'test_eval_hdsat_sat_rate',
+                'train_eval_sog_per_60',
+                'test_eval_sog_per_60',
+                'train_eval_goals_per_60',
+                'test_eval_goals_per_60',
+                'train_eval_toi_per_gp',
+                'test_eval_toi_per_gp',
+            ]));
+        }
+
         $input = $request->validate([
             'profile_type' => ['nullable', Rule::in(array_keys($profileTypes))],
             'sort' => ['nullable', Rule::in(array_keys($sorts))],
@@ -1542,7 +1617,12 @@ class NhlModelRunController extends Controller
                 label: 'Grand Total',
                 context: 'Collection'
             ),
-        ])->merge($this->aggregateComparisonDemographicRows(
+        ])->merge($this->aggregateComparisonSplitCollectionRows(
+            aggregateQuery: $aggregateQuery,
+            run: $run,
+            profileType: $profileType,
+            testSeasonId: $testSeasonId
+        ))->merge($this->aggregateComparisonDemographicRows(
             aggregateQuery: $aggregateQuery,
             hasGameCounts: $hasGameCounts,
             profileType: $profileType,
@@ -1554,6 +1634,10 @@ class NhlModelRunController extends Controller
         ))->merge($this->aggregateComparisonPositionRows(
             aggregateQuery: $aggregateQuery,
             hasGameCounts: $hasGameCounts
+        ))->merge($this->aggregateComparisonTopSignalRows(
+            aggregateQuery: $aggregateQuery,
+            hasGameCounts: $hasGameCounts,
+            profileType: $profileType
         ));
         $rows = $this->aggregateComparisonRowsQuery(
             aggregateQuery: clone $aggregateQuery,
@@ -1564,10 +1648,16 @@ class NhlModelRunController extends Controller
             ->orderByDesc('train_sat')
             ->orderBy('entity_key')
             ->get();
+        $splitRows = $this->aggregateComparisonSplitRowsQuery(
+            aggregateQuery: clone $aggregateQuery,
+            run: $run,
+            profileType: $profileType,
+            testSeasonId: $testSeasonId
+        )->get();
 
         $filename = Str::slug($run->name . '-' . $profileType . '-aggregate-compare-60') . '.csv';
 
-        return response()->streamDownload(function () use ($collectionRows, $rows): void {
+        return response()->streamDownload(function () use ($collectionRows, $rows, $splitRows): void {
             $handle = fopen('php://output', 'w');
             fputcsv($handle, $this->aggregateComparisonExportHeader());
 
@@ -1577,6 +1667,10 @@ class NhlModelRunController extends Controller
 
             foreach ($rows as $row) {
                 fputcsv($handle, $this->aggregateComparisonExportRow($row, 'entity'));
+            }
+
+            foreach ($splitRows as $row) {
+                fputcsv($handle, $this->aggregateComparisonExportRow($row, 'split'));
             }
 
             fclose($handle);
@@ -1910,6 +2004,24 @@ class NhlModelRunController extends Controller
             'bucket' => 'matched_bucket_key',
             'source_sat' => 'train_sat',
             'test_sat' => 'test_sat',
+            'train_hdsat' => 'train_hdsat',
+            'test_hdsat' => 'test_hdsat',
+            'train_hdsat_per_60' => 'train_hdsat_per_60',
+            'test_hdsat_per_60' => 'test_hdsat_per_60',
+            'hdsat_drift' => 'hdsat_drift',
+            'hdsat_drift_rate' => 'hdsat_drift_rate',
+            'train_eval_sat_per_60' => 'train_eval_sat_per_60',
+            'test_eval_sat_per_60' => 'test_eval_sat_per_60',
+            'train_eval_hdsat_per_60' => 'train_eval_hdsat_per_60',
+            'test_eval_hdsat_per_60' => 'test_eval_hdsat_per_60',
+            'train_eval_hdsat_sat_rate' => 'train_eval_hdsat_sat_rate',
+            'test_eval_hdsat_sat_rate' => 'test_eval_hdsat_sat_rate',
+            'train_eval_sog_per_60' => 'train_eval_sog_per_60',
+            'test_eval_sog_per_60' => 'test_eval_sog_per_60',
+            'train_eval_goals_per_60' => 'train_eval_goals_per_60',
+            'test_eval_goals_per_60' => 'test_eval_goals_per_60',
+            'train_eval_toi_per_gp' => 'train_eval_toi_per_gp',
+            'test_eval_toi_per_gp' => 'test_eval_toi_per_gp',
             'test_sog' => 'test_sog',
             'test_goals' => 'test_goals',
             'share' => 'train_profile_share',
@@ -2381,6 +2493,469 @@ SQL;
     }
 
     /**
+     * @param \Illuminate\Database\Query\Builder $aggregateQuery
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private function aggregateComparisonTopSignalRows(
+        $aggregateQuery,
+        bool $hasGameCounts,
+        string $profileType
+    ): \Illuminate\Support\Collection {
+        $rows = collect();
+
+        if ($profileType !== 'skater_offense' || ! $this->hasAggregateComparisonEvalColumns()) {
+            return $rows;
+        }
+
+        $groups = [
+            [
+                'label' => 'Top 50 Train PTS/GP',
+                'context' => 'Training points per game',
+                'sort' => 'training_goal_rates.train_pts_gp',
+                'where' => 'training_goal_rates.train_pts_gp IS NOT NULL',
+            ],
+            [
+                'label' => 'Top 50 Train G/GP',
+                'context' => 'Training goals per game',
+                'sort' => 'train_eval_goals_per_gp',
+                'where' => 'train_eval_goals_per_gp IS NOT NULL',
+            ],
+            [
+                'label' => 'Top 50 Train TOI/GP',
+                'context' => 'Training usage',
+                'sort' => 'train_eval_toi_per_gp',
+                'where' => 'train_eval_toi_per_gp IS NOT NULL',
+            ],
+            [
+                'label' => 'Top 50 F PTS/GP',
+                'context' => 'Forwards · training points per game',
+                'sort' => 'training_goal_rates.train_pts_gp',
+                'where' => "training_goal_rates.train_pts_gp IS NOT NULL AND players.position IN ('C', 'L', 'R')",
+            ],
+            [
+                'label' => 'Top 50 D TOI/GP',
+                'context' => 'Defense · training usage',
+                'sort' => 'train_eval_toi_per_gp',
+                'where' => "train_eval_toi_per_gp IS NOT NULL AND players.position = 'D'",
+            ],
+        ];
+
+        foreach ($groups as $group) {
+            $keys = (clone $aggregateQuery)
+                ->leftJoin('players', 'players.nhl_id', '=', 'nhl_sat_model_entity_rate_comparison_aggregates.entity_id')
+                ->whereRaw($group['where'])
+                ->orderByRaw($group['sort'] . ' DESC NULLS LAST')
+                ->limit(50)
+                ->pluck('nhl_sat_model_entity_rate_comparison_aggregates.entity_key')
+                ->all();
+
+            if ($keys === []) {
+                continue;
+            }
+
+            $row = $this->aggregateComparisonCollectionRow(
+                aggregateQuery: (clone $aggregateQuery)->whereIn('nhl_sat_model_entity_rate_comparison_aggregates.entity_key', $keys),
+                hasGameCounts: $hasGameCounts,
+                label: $group['label'],
+                context: $group['context']
+            );
+
+            if ((int) ($row->entities ?? 0) > 0) {
+                $rows->push($row);
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param \Illuminate\Database\Query\Builder $aggregateQuery
+     * @return \Illuminate\Support\Collection<int, object>
+     */
+    private function aggregateComparisonSplitCollectionRows(
+        $aggregateQuery,
+        NhlModelRun $run,
+        string $profileType,
+        string $testSeasonId
+    ): \Illuminate\Support\Collection {
+        if (
+            $profileType !== 'skater_offense'
+            || ! Schema::hasTable('nhl_sat_model_entity_rate_comparison_splits')
+        ) {
+            return collect();
+        }
+
+        $latestTrainingSeasonId = $this->latestTrainingSeasonId($run);
+        $trainSeasonCount = max(1, count($this->seasonIdsFromArray($run->train_season_ids ?? [])));
+        $latestSplitMetrics = $latestTrainingSeasonId === null || ! $this->hasGameSummarySplitHdsatColumns()
+            ? null
+            : $this->aggregateComparisonSeasonSplitMetricsQuery($run, $latestTrainingSeasonId);
+        $projectionSplits = $this->aggregateComparisonProjectionSplitsQuery($run, $profileType);
+        $entityKeys = (clone $aggregateQuery)
+            ->select('nhl_sat_model_entity_rate_comparison_aggregates.entity_key');
+
+        $query = DB::table('nhl_sat_model_entity_rate_comparison_splits as splits')
+            ->where('splits.model_run_id', $run->id)
+            ->where('splits.test_season_id', $testSeasonId)
+            ->where('splits.profile_type', $profileType)
+            ->whereIn('splits.entity_key', $entityKeys)
+            ->whereIn('splits.situation', ['all', 'ev', 'pp', 'pk'])
+            ->selectRaw("UPPER(splits.situation)::varchar as collection_label")
+            ->selectRaw("'Situation Split'::varchar as collection_context")
+            ->selectRaw('COUNT(*) as entities')
+            ->selectRaw('AVG(splits.train_gp_per_season) as train_eval_gp_per_season')
+            ->selectRaw('AVG(splits.test_gp_per_season) as test_eval_gp_per_season')
+            ->selectRaw('SUM(splits.train_toi_seconds) as train_eval_toi_seconds')
+            ->selectRaw('SUM(splits.test_toi_seconds) as test_eval_toi_seconds')
+            ->selectRaw('AVG(splits.train_toi_per_gp) as train_eval_toi_per_gp')
+            ->selectRaw('AVG(splits.test_toi_per_gp) as test_eval_toi_per_gp')
+            ->selectRaw('SUM(splits.train_sat) as train_eval_sat')
+            ->selectRaw('SUM(splits.test_sat) as test_eval_sat')
+            ->selectRaw('AVG(splits.train_sat_per_gp) as train_eval_sat_per_gp')
+            ->selectRaw('AVG(splits.test_sat_per_gp) as test_eval_sat_per_gp')
+            ->selectRaw('AVG(splits.train_sat_per_60) as train_eval_sat_per_60')
+            ->selectRaw('AVG(splits.test_sat_per_60) as test_eval_sat_per_60')
+            ->selectRaw('SUM(splits.train_hdsat) as train_eval_hdsat')
+            ->selectRaw('SUM(splits.test_hdsat) as test_eval_hdsat')
+            ->selectRaw('AVG(splits.train_hdsat_per_gp) as train_eval_hdsat_per_gp')
+            ->selectRaw('AVG(splits.test_hdsat_per_gp) as test_eval_hdsat_per_gp')
+            ->selectRaw('AVG(splits.train_hdsat_per_60) as train_eval_hdsat_per_60')
+            ->selectRaw('AVG(splits.test_hdsat_per_60) as test_eval_hdsat_per_60')
+            ->selectRaw('AVG(splits.train_hdsat_sat_rate) as train_eval_hdsat_sat_rate')
+            ->selectRaw('AVG(splits.test_hdsat_sat_rate) as test_eval_hdsat_sat_rate')
+            ->selectRaw('SUM(splits.train_sog) as train_eval_sog')
+            ->selectRaw('SUM(splits.test_sog) as test_eval_sog')
+            ->selectRaw('AVG(splits.train_sog_per_gp) as train_eval_sog_per_gp')
+            ->selectRaw('AVG(splits.test_sog_per_gp) as test_eval_sog_per_gp')
+            ->selectRaw('AVG(splits.train_sog_per_60) as train_eval_sog_per_60')
+            ->selectRaw('AVG(splits.test_sog_per_60) as test_eval_sog_per_60')
+            ->selectRaw('SUM(splits.train_goals) as train_eval_goals')
+            ->selectRaw('SUM(splits.test_goals) as test_eval_goals')
+            ->selectRaw('AVG(splits.train_goals_per_gp) as train_eval_goals_per_gp')
+            ->selectRaw('AVG(splits.test_goals_per_gp) as test_eval_goals_per_gp')
+            ->selectRaw('AVG(splits.train_goals_per_60) as train_eval_goals_per_60')
+            ->selectRaw('AVG(splits.test_goals_per_60) as test_eval_goals_per_60')
+            ->selectRaw('SUM(splits.train_goals)::numeric / NULLIF(SUM(splits.train_sog), 0) as train_eval_sh_pct')
+            ->selectRaw('SUM(splits.test_goals)::numeric / NULLIF(SUM(splits.test_sog), 0) as test_eval_sh_pct')
+            ->selectRaw('SUM(splits.train_goals)::numeric / NULLIF(SUM(splits.train_sat), 0) as train_eval_goal_sat_rate')
+            ->selectRaw('SUM(splits.test_goals)::numeric / NULLIF(SUM(splits.test_sat), 0) as test_eval_goal_sat_rate')
+            ->selectRaw('GREATEST(0, SUM(splits.train_gp_per_season * ?::numeric) - SUM(COALESCE(s2_splits.gp, 0))) as s1_gp', [$trainSeasonCount])
+            ->selectRaw('SUM(COALESCE(s2_splits.gp, 0)) as s2_gp')
+            ->selectRaw('SUM(splits.test_gp_per_season) as s3_gp')
+            ->selectRaw('GREATEST(0, SUM(splits.train_toi_seconds) - SUM(COALESCE(s2_splits.toi_seconds, 0))) as s1_toi_seconds')
+            ->selectRaw('SUM(COALESCE(s2_splits.toi_seconds, 0)) as s2_toi_seconds')
+            ->selectRaw('SUM(splits.test_toi_seconds) as s3_toi_seconds')
+            ->selectRaw('GREATEST(0, SUM(splits.train_sat) - SUM(COALESCE(s2_splits.sat, 0))) as s1_sat')
+            ->selectRaw('SUM(COALESCE(s2_splits.sat, 0)) as s2_sat')
+            ->selectRaw('SUM(splits.test_sat) as s3_sat')
+            ->selectRaw('GREATEST(0, SUM(splits.train_hdsat) - SUM(COALESCE(s2_splits.hdsat, 0))) as s1_hdsat')
+            ->selectRaw('SUM(COALESCE(s2_splits.hdsat, 0)) as s2_hdsat')
+            ->selectRaw('SUM(splits.test_hdsat) as s3_hdsat')
+            ->selectRaw('GREATEST(0, SUM(splits.train_sog) - SUM(COALESCE(s2_splits.sog, 0))) as s1_sog')
+            ->selectRaw('SUM(COALESCE(s2_splits.sog, 0)) as s2_sog')
+            ->selectRaw('SUM(splits.test_sog) as s3_sog')
+            ->selectRaw('GREATEST(0, SUM(splits.train_goals) - SUM(COALESCE(s2_splits.goals, 0))) as s1_goals')
+            ->selectRaw('SUM(COALESCE(s2_splits.goals, 0)) as s2_goals')
+            ->selectRaw('SUM(splits.test_goals) as s3_goals')
+            ->selectRaw('NULL::numeric as train_xsat_per_60')
+            ->selectRaw('NULL::numeric as last_xsat_per_60')
+            ->selectRaw('NULL::numeric as projected_xsat_per_60')
+            ->selectRaw('NULL::numeric as test_xsat_per_60')
+            ->selectRaw('NULL::numeric as xsat_drift')
+            ->selectRaw('NULL::numeric as xsat_drift_rate')
+            ->selectRaw('NULL::numeric as xsat_error')
+            ->selectRaw('NULL::numeric as xsat_error_rate')
+            ->selectRaw('NULL::integer as xsat_error_entity_count')
+            ->selectRaw('NULL::integer as xsat_error_within_3_count')
+            ->selectRaw('NULL::numeric as xsat_error_within_3_rate')
+            ->selectRaw('NULL::integer as xsat_error_within_5_count')
+            ->selectRaw('NULL::numeric as xsat_error_within_5_rate')
+            ->selectRaw('NULL::integer as xsat_error_within_10_count')
+            ->selectRaw('NULL::numeric as xsat_error_within_10_rate')
+            ->selectRaw('NULL::numeric as train_xsog_per_60')
+            ->selectRaw('NULL::numeric as last_xsog_per_60')
+            ->selectRaw('NULL::numeric as projected_xsog_per_60')
+            ->selectRaw('NULL::numeric as test_xsog_per_60')
+            ->selectRaw('NULL::numeric as xsog_drift')
+            ->selectRaw('NULL::numeric as xsog_drift_rate')
+            ->selectRaw('NULL::numeric as xsog_error')
+            ->selectRaw('NULL::numeric as xsog_error_rate')
+            ->selectRaw('NULL::numeric as train_xg_per_60')
+            ->selectRaw('NULL::numeric as last_xg_per_60')
+            ->selectRaw('NULL::numeric as projected_xg_per_60')
+            ->selectRaw('NULL::numeric as test_xg_per_60')
+            ->selectRaw('NULL::numeric as xg_drift')
+            ->selectRaw('NULL::numeric as xg_drift_rate')
+            ->selectRaw('NULL::numeric as xg_error')
+            ->selectRaw('NULL::numeric as xg_error_rate')
+            ->selectRaw('AVG(projection_splits.projected_sat_per_60) as projected_split_sat_per_60')
+            ->selectRaw('AVG(projection_splits.projected_hdsat_per_60) as projected_split_hdsat_per_60')
+            ->selectRaw('AVG(projection_splits.projected_toi_per_gp) as projected_split_toi_per_gp')
+            ->selectRaw('SUM(projection_splits.projected_gp) as projected_split_gp')
+            ->selectRaw('AVG(projection_splits.projected_sat_per_gp) as projected_split_sat_per_gp')
+            ->selectRaw('AVG(projection_splits.projected_hdsat_per_gp) as projected_split_hdsat_per_gp')
+            ->selectRaw('SUM(projection_splits.projected_sat_season) as projected_split_sat_season')
+            ->selectRaw('SUM(projection_splits.projected_hdsat_season) as projected_split_hdsat_season')
+            ->selectRaw('NULL::varchar as projection_split_formula_version')
+            ->selectRaw('NULL::varchar as projection_split_formula_segment')
+            ->selectRaw('NULL::varchar as projection_split_age_group')
+            ->selectRaw('NULL::varchar as projection_split_sat_momentum_bucket')
+            ->selectRaw('NULL::varchar as projection_split_hdsat_momentum_bucket')
+            ->selectRaw('NULL::varchar as projection_split_toi_momentum_bucket')
+            ->selectRaw('NULL::varchar as projection_split_sh_regression_bucket');
+
+        $query->leftJoinSub($projectionSplits, 'projection_splits', function ($join): void {
+            $join
+                ->on('projection_splits.entity_key', '=', 'splits.entity_key')
+                ->on('projection_splits.situation', '=', 'splits.situation');
+        });
+
+        if ($latestSplitMetrics !== null) {
+            $query->leftJoinSub($latestSplitMetrics, 's2_splits', function ($join): void {
+                $join
+                    ->on('s2_splits.entity_key', '=', 'splits.entity_key')
+                    ->on('s2_splits.situation', '=', 'splits.situation');
+            });
+        } else {
+            $query->leftJoinSub(
+                DB::query()->fromRaw('(SELECT NULL::varchar as entity_key, NULL::varchar as situation, NULL::numeric as gp, NULL::numeric as toi_seconds, NULL::numeric as sat, NULL::numeric as hdsat, NULL::numeric as sog, NULL::numeric as goals) as empty_s2_splits')->whereRaw('1 = 0'),
+                's2_splits',
+                function ($join): void {
+                    $join
+                        ->on('s2_splits.entity_key', '=', 'splits.entity_key')
+                        ->on('s2_splits.situation', '=', 'splits.situation');
+                }
+            );
+        }
+
+        return $query
+            ->groupBy('splits.situation')
+            ->orderByRaw("CASE splits.situation WHEN 'all' THEN 0 WHEN 'ev' THEN 1 WHEN 'pp' THEN 2 WHEN 'pk' THEN 3 ELSE 9 END")
+            ->get();
+    }
+
+    /**
+     * @param \Illuminate\Database\Query\Builder $aggregateQuery
+     * @return \Illuminate\Database\Query\Builder
+     */
+    private function aggregateComparisonSplitRowsQuery(
+        $aggregateQuery,
+        NhlModelRun $run,
+        string $profileType,
+        string $testSeasonId
+    ) {
+        $entityKeys = (clone $aggregateQuery)
+            ->select('nhl_sat_model_entity_rate_comparison_aggregates.entity_key');
+
+        if (
+            $profileType !== 'skater_offense'
+            || ! Schema::hasTable('nhl_sat_model_entity_rate_comparison_splits')
+        ) {
+            return DB::table('nhl_model_runs')->whereRaw('1 = 0');
+        }
+
+        $latestTrainingSeasonId = $this->latestTrainingSeasonId($run);
+        $trainSeasonCount = max(1, count($this->seasonIdsFromArray($run->train_season_ids ?? [])));
+        $latestSplitMetrics = $latestTrainingSeasonId === null || ! $this->hasGameSummarySplitHdsatColumns()
+            ? null
+            : $this->aggregateComparisonSeasonSplitMetricsQuery($run, $latestTrainingSeasonId);
+        $projectionSplits = $this->aggregateComparisonProjectionSplitsQuery($run, $profileType);
+        $query = DB::table('nhl_sat_model_entity_rate_comparison_splits as splits')
+            ->leftJoin('players', 'players.nhl_id', '=', 'splits.entity_id')
+            ->where('splits.model_run_id', $run->id)
+            ->where('splits.test_season_id', $testSeasonId)
+            ->where('splits.profile_type', $profileType)
+            ->whereIn('splits.entity_key', $entityKeys)
+            ->select([
+                'splits.entity_key',
+                'splits.entity_name',
+                'splits.situation',
+                'splits.team_context',
+                'players.position as player_position',
+            ])
+            ->selectRaw('NULL::integer as player_age')
+            ->selectRaw("('split:' || splits.situation)::varchar as entity_role")
+            ->selectRaw('splits.train_gp_per_season as train_eval_gp_per_season')
+            ->selectRaw('splits.test_gp_per_season as test_eval_gp_per_season')
+            ->selectRaw('splits.train_toi_seconds as train_eval_toi_seconds')
+            ->selectRaw('splits.test_toi_seconds as test_eval_toi_seconds')
+            ->selectRaw('splits.train_toi_per_gp as train_eval_toi_per_gp')
+            ->selectRaw('splits.test_toi_per_gp as test_eval_toi_per_gp')
+            ->selectRaw('splits.train_sat as train_eval_sat')
+            ->selectRaw('splits.test_sat as test_eval_sat')
+            ->selectRaw('splits.train_sat_per_gp as train_eval_sat_per_gp')
+            ->selectRaw('splits.test_sat_per_gp as test_eval_sat_per_gp')
+            ->selectRaw('splits.train_sat_per_60 as train_eval_sat_per_60')
+            ->selectRaw('splits.test_sat_per_60 as test_eval_sat_per_60')
+            ->selectRaw('splits.train_hdsat as train_eval_hdsat')
+            ->selectRaw('splits.test_hdsat as test_eval_hdsat')
+            ->selectRaw('splits.train_hdsat_per_gp as train_eval_hdsat_per_gp')
+            ->selectRaw('splits.test_hdsat_per_gp as test_eval_hdsat_per_gp')
+            ->selectRaw('splits.train_hdsat_per_60 as train_eval_hdsat_per_60')
+            ->selectRaw('splits.test_hdsat_per_60 as test_eval_hdsat_per_60')
+            ->selectRaw('splits.train_hdsat_sat_rate as train_eval_hdsat_sat_rate')
+            ->selectRaw('splits.test_hdsat_sat_rate as test_eval_hdsat_sat_rate')
+            ->selectRaw('splits.train_sog as train_eval_sog')
+            ->selectRaw('splits.test_sog as test_eval_sog')
+            ->selectRaw('splits.train_sog_per_gp as train_eval_sog_per_gp')
+            ->selectRaw('splits.test_sog_per_gp as test_eval_sog_per_gp')
+            ->selectRaw('splits.train_sog_per_60 as train_eval_sog_per_60')
+            ->selectRaw('splits.test_sog_per_60 as test_eval_sog_per_60')
+            ->selectRaw('splits.train_goals as train_eval_goals')
+            ->selectRaw('splits.test_goals as test_eval_goals')
+            ->selectRaw('splits.train_goals_per_gp as train_eval_goals_per_gp')
+            ->selectRaw('splits.test_goals_per_gp as test_eval_goals_per_gp')
+            ->selectRaw('splits.train_goals_per_60 as train_eval_goals_per_60')
+            ->selectRaw('splits.test_goals_per_60 as test_eval_goals_per_60')
+            ->selectRaw('splits.train_goals::numeric / NULLIF(splits.train_sog, 0) as train_eval_sh_pct')
+            ->selectRaw('splits.test_goals::numeric / NULLIF(splits.test_sog, 0) as test_eval_sh_pct')
+            ->selectRaw('splits.train_goals::numeric / NULLIF(splits.train_sat, 0) as train_eval_goal_sat_rate')
+            ->selectRaw('splits.test_goals::numeric / NULLIF(splits.test_sat, 0) as test_eval_goal_sat_rate')
+            ->selectRaw('GREATEST(0, (splits.train_gp_per_season * ?::numeric) - COALESCE(s2_splits.gp, 0)) as s1_gp', [$trainSeasonCount])
+            ->selectRaw('COALESCE(s2_splits.gp, 0) as s2_gp')
+            ->selectRaw('splits.test_gp_per_season as s3_gp')
+            ->selectRaw('GREATEST(0, splits.train_toi_seconds - COALESCE(s2_splits.toi_seconds, 0)) as s1_toi_seconds')
+            ->selectRaw('COALESCE(s2_splits.toi_seconds, 0) as s2_toi_seconds')
+            ->selectRaw('splits.test_toi_seconds as s3_toi_seconds')
+            ->selectRaw('GREATEST(0, splits.train_sat - COALESCE(s2_splits.sat, 0)) as s1_sat')
+            ->selectRaw('COALESCE(s2_splits.sat, 0) as s2_sat')
+            ->selectRaw('splits.test_sat as s3_sat')
+            ->selectRaw('GREATEST(0, splits.train_hdsat - COALESCE(s2_splits.hdsat, 0)) as s1_hdsat')
+            ->selectRaw('COALESCE(s2_splits.hdsat, 0) as s2_hdsat')
+            ->selectRaw('splits.test_hdsat as s3_hdsat')
+            ->selectRaw('GREATEST(0, splits.train_sog - COALESCE(s2_splits.sog, 0)) as s1_sog')
+            ->selectRaw('COALESCE(s2_splits.sog, 0) as s2_sog')
+            ->selectRaw('splits.test_sog as s3_sog')
+            ->selectRaw('GREATEST(0, splits.train_goals - COALESCE(s2_splits.goals, 0)) as s1_goals')
+            ->selectRaw('COALESCE(s2_splits.goals, 0) as s2_goals')
+            ->selectRaw('splits.test_goals as s3_goals')
+            ->selectRaw('projection_splits.projected_sat_per_60 as projected_split_sat_per_60')
+            ->selectRaw('projection_splits.projected_hdsat_per_60 as projected_split_hdsat_per_60')
+            ->selectRaw('projection_splits.projected_toi_per_gp as projected_split_toi_per_gp')
+            ->selectRaw('projection_splits.projected_gp as projected_split_gp')
+            ->selectRaw('projection_splits.projected_sat_per_gp as projected_split_sat_per_gp')
+            ->selectRaw('projection_splits.projected_hdsat_per_gp as projected_split_hdsat_per_gp')
+            ->selectRaw('projection_splits.projected_sat_season as projected_split_sat_season')
+            ->selectRaw('projection_splits.projected_hdsat_season as projected_split_hdsat_season')
+            ->selectRaw('projection_splits.formula_version as projection_split_formula_version')
+            ->selectRaw('projection_splits.formula_segment as projection_split_formula_segment')
+            ->selectRaw('projection_splits.age_group as projection_split_age_group')
+            ->selectRaw('projection_splits.sat_momentum_bucket as projection_split_sat_momentum_bucket')
+            ->selectRaw('projection_splits.hdsat_momentum_bucket as projection_split_hdsat_momentum_bucket')
+            ->selectRaw('projection_splits.toi_momentum_bucket as projection_split_toi_momentum_bucket')
+            ->selectRaw('projection_splits.sh_regression_bucket as projection_split_sh_regression_bucket');
+
+        $query->leftJoinSub($projectionSplits, 'projection_splits', function ($join): void {
+            $join
+                ->on('projection_splits.entity_key', '=', 'splits.entity_key')
+                ->on('projection_splits.situation', '=', 'splits.situation');
+        });
+
+        if ($latestSplitMetrics !== null) {
+            $query->leftJoinSub($latestSplitMetrics, 's2_splits', function ($join): void {
+                $join
+                    ->on('s2_splits.entity_key', '=', 'splits.entity_key')
+                    ->on('s2_splits.situation', '=', 'splits.situation');
+            });
+        } else {
+            $query->leftJoinSub(
+                DB::query()->fromRaw('(SELECT NULL::varchar as entity_key, NULL::varchar as situation, NULL::numeric as gp, NULL::numeric as toi_seconds, NULL::numeric as sat, NULL::numeric as hdsat, NULL::numeric as sog, NULL::numeric as goals) as empty_s2_splits')->whereRaw('1 = 0'),
+                's2_splits',
+                function ($join): void {
+                    $join
+                        ->on('s2_splits.entity_key', '=', 'splits.entity_key')
+                        ->on('s2_splits.situation', '=', 'splits.situation');
+                }
+            );
+        }
+
+        return $query
+            ->orderBy('splits.entity_key')
+            ->orderByRaw("CASE splits.situation WHEN 'all' THEN 0 WHEN 'ev' THEN 1 WHEN 'pp' THEN 2 WHEN 'pk' THEN 3 ELSE 9 END");
+    }
+
+    /**
+     * Build per-player strength split metrics for one season from persisted summaries.
+     *
+     * @return \Illuminate\Database\Query\Builder
+     */
+    private function aggregateComparisonProjectionSplitsQuery(NhlModelRun $run, string $profileType)
+    {
+        if (
+            $profileType !== 'skater_offense'
+            || ! Schema::hasTable('nhl_sat_model_entity_rate_projection_splits')
+        ) {
+            return DB::query()->fromRaw(
+                '(SELECT NULL::varchar as entity_key, NULL::varchar as situation, NULL::numeric as projected_sat_per_60, NULL::numeric as projected_hdsat_per_60, NULL::numeric as projected_toi_per_gp, NULL::numeric as projected_gp, NULL::numeric as projected_sat_per_gp, NULL::numeric as projected_hdsat_per_gp, NULL::numeric as projected_sat_season, NULL::numeric as projected_hdsat_season, NULL::varchar as formula_version, NULL::varchar as formula_segment, NULL::varchar as age_group, NULL::varchar as sat_momentum_bucket, NULL::varchar as hdsat_momentum_bucket, NULL::varchar as toi_momentum_bucket, NULL::varchar as sh_regression_bucket) as empty_projection_splits'
+            )->whereRaw('1 = 0');
+        }
+
+        return DB::table('nhl_sat_model_entity_rate_projection_splits')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', $profileType)
+            ->select([
+                'entity_key',
+                'situation',
+                'projected_sat_per_60',
+                'projected_hdsat_per_60',
+                'projected_toi_per_gp',
+                'projected_gp',
+                'projected_sat_per_gp',
+                'projected_hdsat_per_gp',
+                'projected_sat_season',
+                'projected_hdsat_season',
+                'formula_version',
+                'formula_segment',
+                'age_group',
+                'sat_momentum_bucket',
+                'hdsat_momentum_bucket',
+                'toi_momentum_bucket',
+                'sh_regression_bucket',
+            ]);
+    }
+
+    /**
+     * Build per-player strength split metrics for one season from persisted summaries.
+     *
+     * @return \Illuminate\Database\Query\Builder
+     */
+    private function aggregateComparisonSeasonSplitMetricsQuery(NhlModelRun $run, string $seasonId)
+    {
+        $gameType = (int) ($run->game_type ?? 2);
+
+        return DB::table('nhl_game_summaries as summaries')
+            ->join('nhl_games as games', 'games.nhl_game_id', '=', 'summaries.nhl_game_id')
+            ->crossJoin(DB::raw("(VALUES
+                ('all'::varchar, NULL::varchar),
+                ('ev'::varchar, 'EV'::varchar),
+                ('pp'::varchar, 'PP'::varchar),
+                ('pk'::varchar, 'PK'::varchar)
+            ) as situations(situation, strength)"))
+            ->leftJoin('nhl_player_game_strength_summaries as strength_summaries', function ($join): void {
+                $join
+                    ->on('strength_summaries.nhl_game_id', '=', 'summaries.nhl_game_id')
+                    ->on('strength_summaries.nhl_player_id', '=', 'summaries.nhl_player_id')
+                    ->on('strength_summaries.strength', '=', 'situations.strength');
+            })
+            ->where('games.season_id', $seasonId)
+            ->where('games.game_type', $gameType)
+            ->where(function ($query): void {
+                $query
+                    ->where('situations.situation', 'all')
+                    ->orWhereRaw('COALESCE(strength_summaries.toi, 0) > 0');
+            })
+            ->selectRaw("('skater_offense:' || summaries.nhl_player_id::text)::varchar as entity_key")
+            ->selectRaw('situations.situation')
+            ->selectRaw('COUNT(DISTINCT summaries.nhl_game_id)::numeric as gp')
+            ->selectRaw('COALESCE(SUM(CASE WHEN situations.situation = \'all\' THEN summaries.toi ELSE strength_summaries.toi END), 0)::numeric as toi_seconds')
+            ->selectRaw("COALESCE(SUM(CASE situations.situation WHEN 'all' THEN summaries.sat WHEN 'ev' THEN summaries.evsat WHEN 'pp' THEN summaries.ppsat WHEN 'pk' THEN summaries.pksat ELSE 0 END), 0)::numeric as sat")
+            ->selectRaw("COALESCE(SUM(CASE situations.situation WHEN 'all' THEN summaries.hdsat WHEN 'ev' THEN summaries.evhdsat WHEN 'pp' THEN summaries.pphdsat WHEN 'pk' THEN summaries.pkhdsat ELSE 0 END), 0)::numeric as hdsat")
+            ->selectRaw("COALESCE(SUM(CASE situations.situation WHEN 'all' THEN summaries.sog WHEN 'ev' THEN summaries.evsog WHEN 'pp' THEN summaries.ppsog WHEN 'pk' THEN summaries.pksog ELSE 0 END), 0)::numeric as sog")
+            ->selectRaw("COALESCE(SUM(CASE situations.situation WHEN 'all' THEN summaries.g WHEN 'ev' THEN summaries.evg WHEN 'pp' THEN summaries.ppg WHEN 'pk' THEN summaries.pkg ELSE 0 END), 0)::numeric as goals")
+            ->groupBy('summaries.nhl_player_id', 'situations.situation');
+    }
+
+    /**
      * Build the aggregate comparison base query shared by the screen and export.
      *
      * @return \Illuminate\Database\Query\Builder
@@ -2427,6 +3002,7 @@ SQL;
             ->where('games.game_type', 2)
             ->selectRaw("'skater_offense:' || summaries.nhl_player_id::text as entity_key")
             ->selectRaw('SUM(COALESCE(summaries.g, 0))::numeric / NULLIF(COUNT(DISTINCT summaries.nhl_game_id), 0) as train_g_gp')
+            ->selectRaw('SUM(COALESCE(summaries.pts, 0))::numeric / NULLIF(COUNT(DISTINCT summaries.nhl_game_id), 0) as train_pts_gp')
             ->groupBy('summaries.nhl_player_id');
         $toiProjectionSubquery = Schema::hasTable('nhl_sat_model_entity_toi_projections')
             ? DB::table('nhl_sat_model_entity_toi_projections')
@@ -2542,6 +3118,8 @@ SQL;
                 'rate_projection_signals.late_sat_gp_delta',
                 'rate_projection_signals.late_sat_signal',
                 'rate_projection_signals.late_sat_adjustment_xsat_per_60',
+                'training_goal_rates.train_g_gp',
+                'training_goal_rates.train_pts_gp',
             ])
             ->when($profileType === 'skater_offense', function ($query) use ($ageDate): void {
                 $query
@@ -2560,6 +3138,8 @@ SQL;
         string $label,
         string $context
     ): object {
+        $hasHdsatColumns = $this->hasAggregateComparisonHdsatColumns();
+        $hasEvalColumns = $this->hasAggregateComparisonEvalColumns();
         $row = $aggregateQuery
             ->selectRaw('?::varchar as collection_label', [$label])
             ->selectRaw('?::varchar as collection_context', [$context])
@@ -2580,6 +3160,38 @@ SQL;
             ->selectRaw('AVG(test_bucket_entropy) as test_bucket_entropy')
             ->selectRaw($hasGameCounts ? 'SUM(train_games) as train_games' : 'NULL::integer as train_games')
             ->selectRaw($hasGameCounts ? 'SUM(test_games) as test_games' : 'NULL::integer as test_games')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_gp_per_season) as train_eval_gp_per_season' : 'NULL::numeric as train_eval_gp_per_season')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_gp_per_season) as test_eval_gp_per_season' : 'NULL::numeric as test_eval_gp_per_season')
+            ->selectRaw($hasEvalColumns ? 'SUM(train_eval_toi_seconds) as train_eval_toi_seconds' : 'NULL::integer as train_eval_toi_seconds')
+            ->selectRaw($hasEvalColumns ? 'SUM(test_eval_toi_seconds) as test_eval_toi_seconds' : 'NULL::integer as test_eval_toi_seconds')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_toi_per_gp) as train_eval_toi_per_gp' : 'NULL::numeric as train_eval_toi_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_toi_per_gp) as test_eval_toi_per_gp' : 'NULL::numeric as test_eval_toi_per_gp')
+            ->selectRaw($hasEvalColumns ? 'SUM(train_eval_sat) as train_eval_sat' : 'NULL::integer as train_eval_sat')
+            ->selectRaw($hasEvalColumns ? 'SUM(test_eval_sat) as test_eval_sat' : 'NULL::integer as test_eval_sat')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_sat_per_gp) as train_eval_sat_per_gp' : 'NULL::numeric as train_eval_sat_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_sat_per_gp) as test_eval_sat_per_gp' : 'NULL::numeric as test_eval_sat_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_sat_per_60) as train_eval_sat_per_60' : 'NULL::numeric as train_eval_sat_per_60')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_sat_per_60) as test_eval_sat_per_60' : 'NULL::numeric as test_eval_sat_per_60')
+            ->selectRaw($hasEvalColumns ? 'SUM(train_eval_hdsat) as train_eval_hdsat' : 'NULL::integer as train_eval_hdsat')
+            ->selectRaw($hasEvalColumns ? 'SUM(test_eval_hdsat) as test_eval_hdsat' : 'NULL::integer as test_eval_hdsat')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_hdsat_per_gp) as train_eval_hdsat_per_gp' : 'NULL::numeric as train_eval_hdsat_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_hdsat_per_gp) as test_eval_hdsat_per_gp' : 'NULL::numeric as test_eval_hdsat_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_hdsat_per_60) as train_eval_hdsat_per_60' : 'NULL::numeric as train_eval_hdsat_per_60')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_hdsat_per_60) as test_eval_hdsat_per_60' : 'NULL::numeric as test_eval_hdsat_per_60')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_hdsat_sat_rate) as train_eval_hdsat_sat_rate' : 'NULL::numeric as train_eval_hdsat_sat_rate')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_hdsat_sat_rate) as test_eval_hdsat_sat_rate' : 'NULL::numeric as test_eval_hdsat_sat_rate')
+            ->selectRaw($hasEvalColumns ? 'SUM(train_eval_sog) as train_eval_sog' : 'NULL::integer as train_eval_sog')
+            ->selectRaw($hasEvalColumns ? 'SUM(test_eval_sog) as test_eval_sog' : 'NULL::integer as test_eval_sog')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_sog_per_gp) as train_eval_sog_per_gp' : 'NULL::numeric as train_eval_sog_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_sog_per_gp) as test_eval_sog_per_gp' : 'NULL::numeric as test_eval_sog_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_sog_per_60) as train_eval_sog_per_60' : 'NULL::numeric as train_eval_sog_per_60')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_sog_per_60) as test_eval_sog_per_60' : 'NULL::numeric as test_eval_sog_per_60')
+            ->selectRaw($hasEvalColumns ? 'SUM(train_eval_goals) as train_eval_goals' : 'NULL::integer as train_eval_goals')
+            ->selectRaw($hasEvalColumns ? 'SUM(test_eval_goals) as test_eval_goals' : 'NULL::integer as test_eval_goals')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_goals_per_gp) as train_eval_goals_per_gp' : 'NULL::numeric as train_eval_goals_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_goals_per_gp) as test_eval_goals_per_gp' : 'NULL::numeric as test_eval_goals_per_gp')
+            ->selectRaw($hasEvalColumns ? 'AVG(train_eval_goals_per_60) as train_eval_goals_per_60' : 'NULL::numeric as train_eval_goals_per_60')
+            ->selectRaw($hasEvalColumns ? 'AVG(test_eval_goals_per_60) as test_eval_goals_per_60' : 'NULL::numeric as test_eval_goals_per_60')
             ->selectRaw('SUM(train_toi.train_toi_seconds) as train_toi_seconds')
             ->selectRaw('SUM(latest_comparison_rates.last_toi_seconds) as last_toi_seconds')
             ->selectRaw('SUM(latest_entity_games.games) as last_games')
@@ -2627,12 +3239,20 @@ SQL;
             ->selectRaw('AVG(rate_projection_signals.late_sat_gp_delta) as late_sat_gp_delta')
             ->selectRaw('NULL::varchar as late_sat_signal')
             ->selectRaw('AVG(rate_projection_signals.late_sat_adjustment_xsat_per_60) as late_sat_adjustment_xsat_per_60')
+            ->selectRaw('AVG(training_goal_rates.train_g_gp) as train_g_gp')
+            ->selectRaw('AVG(training_goal_rates.train_pts_gp) as train_pts_gp')
             ->selectRaw('SUM(train_sat) as train_sat')
             ->selectRaw('SUM(train_sog) as train_sog')
             ->selectRaw('SUM(train_goals) as train_goals')
             ->selectRaw('SUM(test_sat) as test_sat')
             ->selectRaw('SUM(test_sog) as test_sog')
             ->selectRaw('SUM(test_goals) as test_goals')
+            ->selectRaw($hasHdsatColumns ? 'SUM(train_hdsat) as train_hdsat' : 'NULL::integer as train_hdsat')
+            ->selectRaw($hasHdsatColumns ? 'SUM(test_hdsat) as test_hdsat' : 'NULL::integer as test_hdsat')
+            ->selectRaw($hasHdsatColumns ? 'AVG(train_hdsat_per_60) as train_hdsat_per_60' : 'NULL::numeric as train_hdsat_per_60')
+            ->selectRaw($hasHdsatColumns ? 'AVG(test_hdsat_per_60) as test_hdsat_per_60' : 'NULL::numeric as test_hdsat_per_60')
+            ->selectRaw($hasHdsatColumns ? 'AVG(test_hdsat_per_60) - AVG(train_hdsat_per_60) as hdsat_drift' : 'NULL::numeric as hdsat_drift')
+            ->selectRaw($hasHdsatColumns ? 'CASE WHEN ABS(AVG(train_hdsat_per_60)) > 0 THEN (AVG(test_hdsat_per_60) - AVG(train_hdsat_per_60)) / ABS(AVG(train_hdsat_per_60)) ELSE NULL END as hdsat_drift_rate' : 'NULL::numeric as hdsat_drift_rate')
             ->selectRaw('AVG(train_xsat_per_60) as train_xsat_per_60')
             ->selectRaw('AVG(latest_comparison_rates.last_xsat_per_60) as last_xsat_per_60')
             ->selectRaw('AVG(projected_xsat_per_60) as projected_xsat_per_60')
@@ -2734,6 +3354,8 @@ SQL;
             's3_toi_season_hours',
             'train_sat_gp',
             'test_sat_gp',
+            'train_hdsat_gp',
+            'test_hdsat_gp',
             'train_sog_gp',
             'test_sog_gp',
             'train_g_gp',
@@ -2746,6 +3368,10 @@ SQL;
             'late_sat_60_delta',
             'late_sat_signal',
             'late_sat_adjustment_xsat_60',
+            'train_hdsat_60',
+            'test_hdsat_60',
+            'hdsat_drift',
+            'hdsat_drift_pct',
             'train_xsat_60',
             'last_xsat_60',
             'projected_xsat_60',
@@ -2777,6 +3403,129 @@ SQL;
             'xg_drift_pct',
             'xg_error',
             'xg_error_pct',
+            'train_eval_gp_per_season',
+            'test_eval_gp_per_season',
+            'train_eval_toi_minutes',
+            'test_eval_toi_minutes',
+            'train_eval_toi_gp',
+            'test_eval_toi_gp',
+            'train_eval_sat',
+            'test_eval_sat',
+            'train_eval_sat_gp',
+            'test_eval_sat_gp',
+            'train_eval_sat_60',
+            'test_eval_sat_60',
+            'train_eval_hdsat',
+            'test_eval_hdsat',
+            'train_eval_hdsat_gp',
+            'test_eval_hdsat_gp',
+            'train_eval_hdsat_60',
+            'test_eval_hdsat_60',
+            'train_eval_hdsat_sat_pct',
+            'test_eval_hdsat_sat_pct',
+            'train_eval_sog',
+            'test_eval_sog',
+            'train_eval_sog_gp',
+            'test_eval_sog_gp',
+            'train_eval_sog_60',
+            'test_eval_sog_60',
+            'train_eval_goals',
+            'test_eval_goals',
+            'train_eval_goals_gp',
+            'test_eval_goals_gp',
+            'train_eval_goals_60',
+            'test_eval_goals_60',
+            'train_eval_sh_pct',
+            'test_eval_sh_pct',
+            'train_eval_goal_sat_pct',
+            'test_eval_goal_sat_pct',
+            's1_gp',
+            's2_gp',
+            's3_gp',
+            's1_toi_minutes',
+            's2_toi_minutes',
+            's3_toi_minutes',
+            's1_toi_gp',
+            's2_toi_gp',
+            's3_toi_gp',
+            's1_sat',
+            's2_sat',
+            's3_sat',
+            's1_sat_gp',
+            's2_sat_gp',
+            's3_sat_gp',
+            's1_sat_60',
+            's2_sat_60',
+            's3_sat_60',
+            's1_hdsat',
+            's2_hdsat',
+            's3_hdsat',
+            's1_hdsat_gp',
+            's2_hdsat_gp',
+            's3_hdsat_gp',
+            's1_hdsat_60',
+            's2_hdsat_60',
+            's3_hdsat_60',
+            's1_hdsat_sat_pct',
+            's2_hdsat_sat_pct',
+            's3_hdsat_sat_pct',
+            's1_sog',
+            's2_sog',
+            's3_sog',
+            's1_sog_gp',
+            's2_sog_gp',
+            's3_sog_gp',
+            's1_sog_60',
+            's2_sog_60',
+            's3_sog_60',
+            's1_goals',
+            's2_goals',
+            's3_goals',
+            's1_goals_gp',
+            's2_goals_gp',
+            's3_goals_gp',
+            's1_goals_60',
+            's2_goals_60',
+            's3_goals_60',
+            's1_sh_pct',
+            's2_sh_pct',
+            's3_sh_pct',
+            's1_goal_sat_pct',
+            's2_goal_sat_pct',
+            's3_goal_sat_pct',
+            's1_to_s2_sat_gp_delta',
+            's2_to_s3_sat_gp_delta',
+            's1_to_s2_hdsat_gp_delta',
+            's2_to_s3_hdsat_gp_delta',
+            's1_to_s2_sh_pct_delta',
+            's2_to_s3_sh_pct_delta',
+            's1_to_s2_hdsat_sat_pct_delta',
+            's2_to_s3_hdsat_sat_pct_delta',
+            'projected_split_sat_60',
+            'projected_split_hdsat_60',
+            'projected_split_toi_gp',
+            'projected_split_gp',
+            'projected_split_sat_gp',
+            'projected_split_hdsat_gp',
+            'projected_split_sat_season',
+            'projected_split_hdsat_season',
+            'projected_split_sat_60_error',
+            'projected_split_hdsat_60_error',
+            'projected_split_toi_gp_error',
+            'projected_split_gp_error',
+            'projected_split_sat_gp_error',
+            'projected_split_hdsat_gp_error',
+            'projected_split_sat_season_error',
+            'projected_split_hdsat_season_error',
+            'projection_split_formula_version',
+            'projection_split_formula_segment',
+            'projection_split_age_group',
+            'projection_split_sat_momentum_bucket',
+            'projection_split_hdsat_momentum_bucket',
+            'projection_split_toi_momentum_bucket',
+            'projection_split_sh_regression_bucket',
+            'train_pts_gp',
+            'train_g_gp',
         ];
     }
 
@@ -2795,6 +3544,12 @@ SQL;
         $perGame = fn ($value, int $games): ?float => $games > 0 && $value !== null
             ? ((float) $value) / $games
             : null;
+        $rate = fn ($num, $den): ?float => $num !== null && $den !== null && (float) $den > 0
+            ? (float) $num / (float) $den
+            : null;
+        $per60 = fn ($value, $toiSeconds): ?float => $value !== null && $toiSeconds !== null && (float) $toiSeconds > 0
+            ? ((float) $value * 3600) / (float) $toiSeconds
+            : null;
         $toiPerGame = fn ($seconds, int $games): ?float => $games > 0 && $seconds !== null
             ? (((float) $seconds) / 60) / $games
             : null;
@@ -2811,12 +3566,39 @@ SQL;
             ? $toiPerGame($row->test_toi_seconds ?? null, $testGames)
             : ((float) $row->test_toi_per_game_seconds) / 60;
         $toiInputs = $this->decodeProjectionInputs($row->projected_toi_inputs ?? null);
+        $s1Gp = (int) round((float) ($row->s1_gp ?? 0));
+        $s2Gp = (int) round((float) ($row->s2_gp ?? 0));
+        $s3Gp = (int) round((float) ($row->s3_gp ?? 0));
+        $s1Toi = $row->s1_toi_seconds ?? null;
+        $s2Toi = $row->s2_toi_seconds ?? null;
+        $s3Toi = $row->s3_toi_seconds ?? null;
+        $s1SatGp = $perGame($row->s1_sat ?? null, $s1Gp);
+        $s2SatGp = $perGame($row->s2_sat ?? null, $s2Gp);
+        $s3SatGp = $perGame($row->s3_sat ?? null, $s3Gp);
+        $s1HdsatGp = $perGame($row->s1_hdsat ?? null, $s1Gp);
+        $s2HdsatGp = $perGame($row->s2_hdsat ?? null, $s2Gp);
+        $s3HdsatGp = $perGame($row->s3_hdsat ?? null, $s3Gp);
+        $s1ShPct = $rate($row->s1_goals ?? null, $row->s1_sog ?? null);
+        $s2ShPct = $rate($row->s2_goals ?? null, $row->s2_sog ?? null);
+        $s3ShPct = $rate($row->s3_goals ?? null, $row->s3_sog ?? null);
+        $s1HdsatSatPct = $rate($row->s1_hdsat ?? null, $row->s1_sat ?? null);
+        $s2HdsatSatPct = $rate($row->s2_hdsat ?? null, $row->s2_sat ?? null);
+        $s3HdsatSatPct = $rate($row->s3_hdsat ?? null, $row->s3_sat ?? null);
+        $projectedSplitToiGpMinutes = ($row->projected_split_toi_per_gp ?? null) === null
+            ? null
+            : ((float) $row->projected_split_toi_per_gp) / 60;
+        $projectedSplitSatSeason = $row->projected_split_sat_season ?? null;
+        $projectedSplitHdsatSeason = $row->projected_split_hdsat_season ?? null;
+        $actualSplitSatSeason = $row->s3_sat ?? null;
+        $actualSplitHdsatSeason = $row->s3_hdsat ?? null;
 
         return [
             $section,
             $section === 'collection' ? ($row->collection_label ?? null) : ($row->entity_name ?? $row->entity_key ?? null),
-            $section === 'collection' ? ($row->collection_context ?? null) : ($row->entity_role ?? $row->profile_type ?? null),
-            $section === 'entity' ? ($row->entity_key ?? null) : null,
+            $section === 'collection'
+                ? ($row->collection_context ?? null)
+                : ($section === 'split' ? strtoupper((string) ($row->situation ?? '')) : ($row->entity_role ?? $row->profile_type ?? null)),
+            in_array($section, ['entity', 'split'], true) ? ($row->entity_key ?? null) : null,
             $row->player_position ?? null,
             $row->player_age ?? null,
             $row->entities ?? null,
@@ -2868,6 +3650,8 @@ SQL;
             $seasonHours($row->test_toi_seconds ?? null),
             $perGame($row->train_sat ?? null, $trainGames),
             $perGame($row->test_sat ?? null, $testGames),
+            $perGame($row->train_hdsat ?? null, $trainGames),
+            $perGame($row->test_hdsat ?? null, $testGames),
             $perGame($row->train_sog ?? null, $trainGames),
             $perGame($row->test_sog ?? null, $testGames),
             $perGame($row->train_goals ?? null, $trainGames),
@@ -2880,6 +3664,10 @@ SQL;
             $row->late_sat60_delta ?? null,
             $row->late_sat_signal ?? null,
             $row->late_sat_adjustment_xsat_per_60 ?? null,
+            $row->train_hdsat_per_60 ?? null,
+            $row->test_hdsat_per_60 ?? null,
+            $row->hdsat_drift ?? null,
+            $row->hdsat_drift_rate ?? null,
             $row->train_xsat_per_60 ?? null,
             $row->last_xsat_per_60 ?? null,
             $row->projected_xsat_per_60 ?? null,
@@ -2911,6 +3699,129 @@ SQL;
             $row->xg_drift_rate ?? null,
             $row->xg_error ?? null,
             $row->xg_error_rate ?? null,
+            $row->train_eval_gp_per_season ?? null,
+            $row->test_eval_gp_per_season ?? null,
+            ($row->train_eval_toi_seconds ?? null) === null ? null : ((float) $row->train_eval_toi_seconds) / 60,
+            ($row->test_eval_toi_seconds ?? null) === null ? null : ((float) $row->test_eval_toi_seconds) / 60,
+            ($row->train_eval_toi_per_gp ?? null) === null ? null : ((float) $row->train_eval_toi_per_gp) / 60,
+            ($row->test_eval_toi_per_gp ?? null) === null ? null : ((float) $row->test_eval_toi_per_gp) / 60,
+            $row->train_eval_sat ?? null,
+            $row->test_eval_sat ?? null,
+            $row->train_eval_sat_per_gp ?? null,
+            $row->test_eval_sat_per_gp ?? null,
+            $row->train_eval_sat_per_60 ?? null,
+            $row->test_eval_sat_per_60 ?? null,
+            $row->train_eval_hdsat ?? null,
+            $row->test_eval_hdsat ?? null,
+            $row->train_eval_hdsat_per_gp ?? null,
+            $row->test_eval_hdsat_per_gp ?? null,
+            $row->train_eval_hdsat_per_60 ?? null,
+            $row->test_eval_hdsat_per_60 ?? null,
+            $row->train_eval_hdsat_sat_rate ?? null,
+            $row->test_eval_hdsat_sat_rate ?? null,
+            $row->train_eval_sog ?? null,
+            $row->test_eval_sog ?? null,
+            $row->train_eval_sog_per_gp ?? null,
+            $row->test_eval_sog_per_gp ?? null,
+            $row->train_eval_sog_per_60 ?? null,
+            $row->test_eval_sog_per_60 ?? null,
+            $row->train_eval_goals ?? null,
+            $row->test_eval_goals ?? null,
+            $row->train_eval_goals_per_gp ?? null,
+            $row->test_eval_goals_per_gp ?? null,
+            $row->train_eval_goals_per_60 ?? null,
+            $row->test_eval_goals_per_60 ?? null,
+            $row->train_eval_sh_pct ?? $rate($row->train_eval_goals ?? null, $row->train_eval_sog ?? null),
+            $row->test_eval_sh_pct ?? $rate($row->test_eval_goals ?? null, $row->test_eval_sog ?? null),
+            $row->train_eval_goal_sat_rate ?? $rate($row->train_eval_goals ?? null, $row->train_eval_sat ?? null),
+            $row->test_eval_goal_sat_rate ?? $rate($row->test_eval_goals ?? null, $row->test_eval_sat ?? null),
+            $row->s1_gp ?? null,
+            $row->s2_gp ?? null,
+            $row->s3_gp ?? null,
+            $s1Toi === null ? null : ((float) $s1Toi) / 60,
+            $s2Toi === null ? null : ((float) $s2Toi) / 60,
+            $s3Toi === null ? null : ((float) $s3Toi) / 60,
+            $toiPerGame($s1Toi, $s1Gp),
+            $toiPerGame($s2Toi, $s2Gp),
+            $toiPerGame($s3Toi, $s3Gp),
+            $row->s1_sat ?? null,
+            $row->s2_sat ?? null,
+            $row->s3_sat ?? null,
+            $s1SatGp,
+            $s2SatGp,
+            $s3SatGp,
+            $per60($row->s1_sat ?? null, $s1Toi),
+            $per60($row->s2_sat ?? null, $s2Toi),
+            $per60($row->s3_sat ?? null, $s3Toi),
+            $row->s1_hdsat ?? null,
+            $row->s2_hdsat ?? null,
+            $row->s3_hdsat ?? null,
+            $s1HdsatGp,
+            $s2HdsatGp,
+            $s3HdsatGp,
+            $per60($row->s1_hdsat ?? null, $s1Toi),
+            $per60($row->s2_hdsat ?? null, $s2Toi),
+            $per60($row->s3_hdsat ?? null, $s3Toi),
+            $s1HdsatSatPct,
+            $s2HdsatSatPct,
+            $s3HdsatSatPct,
+            $row->s1_sog ?? null,
+            $row->s2_sog ?? null,
+            $row->s3_sog ?? null,
+            $perGame($row->s1_sog ?? null, $s1Gp),
+            $perGame($row->s2_sog ?? null, $s2Gp),
+            $perGame($row->s3_sog ?? null, $s3Gp),
+            $per60($row->s1_sog ?? null, $s1Toi),
+            $per60($row->s2_sog ?? null, $s2Toi),
+            $per60($row->s3_sog ?? null, $s3Toi),
+            $row->s1_goals ?? null,
+            $row->s2_goals ?? null,
+            $row->s3_goals ?? null,
+            $perGame($row->s1_goals ?? null, $s1Gp),
+            $perGame($row->s2_goals ?? null, $s2Gp),
+            $perGame($row->s3_goals ?? null, $s3Gp),
+            $per60($row->s1_goals ?? null, $s1Toi),
+            $per60($row->s2_goals ?? null, $s2Toi),
+            $per60($row->s3_goals ?? null, $s3Toi),
+            $s1ShPct,
+            $s2ShPct,
+            $s3ShPct,
+            $rate($row->s1_goals ?? null, $row->s1_sat ?? null),
+            $rate($row->s2_goals ?? null, $row->s2_sat ?? null),
+            $rate($row->s3_goals ?? null, $row->s3_sat ?? null),
+            $s1SatGp === null || $s2SatGp === null ? null : $s2SatGp - $s1SatGp,
+            $s2SatGp === null || $s3SatGp === null ? null : $s3SatGp - $s2SatGp,
+            $s1HdsatGp === null || $s2HdsatGp === null ? null : $s2HdsatGp - $s1HdsatGp,
+            $s2HdsatGp === null || $s3HdsatGp === null ? null : $s3HdsatGp - $s2HdsatGp,
+            $s1ShPct === null || $s2ShPct === null ? null : $s2ShPct - $s1ShPct,
+            $s2ShPct === null || $s3ShPct === null ? null : $s3ShPct - $s2ShPct,
+            $s1HdsatSatPct === null || $s2HdsatSatPct === null ? null : $s2HdsatSatPct - $s1HdsatSatPct,
+            $s2HdsatSatPct === null || $s3HdsatSatPct === null ? null : $s3HdsatSatPct - $s2HdsatSatPct,
+            $row->projected_split_sat_per_60 ?? null,
+            $row->projected_split_hdsat_per_60 ?? null,
+            $projectedSplitToiGpMinutes,
+            $row->projected_split_gp ?? null,
+            $row->projected_split_sat_per_gp ?? null,
+            $row->projected_split_hdsat_per_gp ?? null,
+            $projectedSplitSatSeason,
+            $projectedSplitHdsatSeason,
+            ($row->projected_split_sat_per_60 ?? null) === null || $s3Toi === null ? null : $per60($row->s3_sat ?? null, $s3Toi) - (float) $row->projected_split_sat_per_60,
+            ($row->projected_split_hdsat_per_60 ?? null) === null || $s3Toi === null ? null : $per60($row->s3_hdsat ?? null, $s3Toi) - (float) $row->projected_split_hdsat_per_60,
+            $projectedSplitToiGpMinutes === null || $s3Gp <= 0 || $s3Toi === null ? null : $toiPerGame($s3Toi, $s3Gp) - $projectedSplitToiGpMinutes,
+            ($row->projected_split_gp ?? null) === null || ($row->s3_gp ?? null) === null ? null : (float) $row->s3_gp - (float) $row->projected_split_gp,
+            ($row->projected_split_sat_per_gp ?? null) === null || $s3SatGp === null ? null : $s3SatGp - (float) $row->projected_split_sat_per_gp,
+            ($row->projected_split_hdsat_per_gp ?? null) === null || $s3HdsatGp === null ? null : $s3HdsatGp - (float) $row->projected_split_hdsat_per_gp,
+            $projectedSplitSatSeason === null || $actualSplitSatSeason === null ? null : (float) $actualSplitSatSeason - (float) $projectedSplitSatSeason,
+            $projectedSplitHdsatSeason === null || $actualSplitHdsatSeason === null ? null : (float) $actualSplitHdsatSeason - (float) $projectedSplitHdsatSeason,
+            $row->projection_split_formula_version ?? null,
+            $row->projection_split_formula_segment ?? null,
+            $row->projection_split_age_group ?? null,
+            $row->projection_split_sat_momentum_bucket ?? null,
+            $row->projection_split_hdsat_momentum_bucket ?? null,
+            $row->projection_split_toi_momentum_bucket ?? null,
+            $row->projection_split_sh_regression_bucket ?? null,
+            $row->train_pts_gp ?? null,
+            $row->train_g_gp ?? null,
         ];
     }
 
@@ -2934,6 +3845,62 @@ SQL;
         $decoded = json_decode($inputs, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function hasAggregateComparisonHdsatColumns(): bool
+    {
+        return Schema::hasTable('nhl_sat_model_entity_rate_comparison_aggregates')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_hdsat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_hdsat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_hdsat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_hdsat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'hdsat_drift')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'hdsat_drift_rate');
+    }
+
+    private function hasGameSummarySplitHdsatColumns(): bool
+    {
+        return Schema::hasColumn('nhl_game_summaries', 'hdsat')
+            && Schema::hasColumn('nhl_game_summaries', 'evhdsat')
+            && Schema::hasColumn('nhl_game_summaries', 'pphdsat')
+            && Schema::hasColumn('nhl_game_summaries', 'pkhdsat');
+    }
+
+    private function hasAggregateComparisonEvalColumns(): bool
+    {
+        return Schema::hasTable('nhl_sat_model_entity_rate_comparison_aggregates')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_gp_per_season')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_gp_per_season')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_toi_seconds')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_toi_seconds')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_toi_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_toi_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sat_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sat_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_hdsat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_hdsat')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_hdsat_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_hdsat_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_hdsat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_hdsat_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_hdsat_sat_rate')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_hdsat_sat_rate')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sog')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sog')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sog_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sog_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_sog_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_sog_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_goals')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_goals')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_goals_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_goals_per_gp')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'train_eval_goals_per_60')
+            && Schema::hasColumn('nhl_sat_model_entity_rate_comparison_aggregates', 'test_eval_goals_per_60');
     }
 
     /**

@@ -6,9 +6,11 @@ namespace App\Support\Stats;
 
 use App\Models\NhlGameSummary;
 use App\Models\NhlSeasonStat;
+use App\Models\Player;
 use App\Models\Stat;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Coordinates extracted stats payload services behind the controller boundary.
@@ -251,9 +253,7 @@ final class StatsPayloadBuilder
         $buildMark('setup_ms');
 
         $base = NhlGameSummary::query()
-            ->with(['player.contracts.seasons'])
-            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id')
-            ->select('nhl_game_summaries.*');
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 'nhl_game_summaries.nhl_game_id');
 
         if ($payloadRequest->from) {
             $base->whereDate('g.game_date', '>=', $payloadRequest->from->toDateString());
@@ -283,7 +283,7 @@ final class StatsPayloadBuilder
         );
         $buildMark('schema_filters_ms');
 
-        $results = $base->get();
+        $results = $this->aggregateRangeStatsByPlayer($base);
         $buildMark('stats_query_ms');
 
         $rangeFilters = [
@@ -353,6 +353,83 @@ final class StatsPayloadBuilder
         $buildMark('format_ms');
 
         return [$formatted, [], null, $buildTimings];
+    }
+
+    /**
+     * Collapse matching game-summary rows before hydrating player metadata.
+     *
+     * @return Collection<int,object>
+     */
+    private function aggregateRangeStatsByPlayer($base): Collection
+    {
+        $aggregate = clone $base;
+        $selects = [
+            'MIN(nhl_game_summaries.id) as id',
+            'nhl_game_summaries.nhl_player_id',
+            'MAX(nhl_game_summaries.nhl_team_id) as nhl_team_id',
+            'COUNT(DISTINCT nhl_game_summaries.nhl_game_id) as gp',
+            'SUM(COALESCE(nhl_game_summaries.toi, 0)) as toi_seconds',
+        ];
+
+        foreach ($this->rangeAggregateColumns() as $column) {
+            if ($column === 'toi') {
+                $selects[] = 'SUM(COALESCE(nhl_game_summaries.toi, 0)) as toi';
+                continue;
+            }
+
+            $selects[] = sprintf(
+                'SUM(COALESCE(nhl_game_summaries.%1$s, 0)) as %1$s',
+                $column,
+            );
+        }
+
+        $rows = $aggregate
+            ->selectRaw(implode(', ', $selects))
+            ->groupBy('nhl_game_summaries.nhl_player_id')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return $rows;
+        }
+
+        $players = Player::query()
+            ->with(['contracts.seasons'])
+            ->whereIn('nhl_id', $rows->pluck('nhl_player_id')->filter()->values()->all())
+            ->get()
+            ->keyBy('nhl_id');
+
+        return $rows
+            ->map(function (object $row) use ($players): object {
+                $row->player = $players->get((int) $row->nhl_player_id);
+
+                return $row;
+            })
+            ->filter(static fn (object $row): bool => $row->player !== null)
+            ->values();
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    private function rangeAggregateColumns(): array
+    {
+        $excludedColumns = [
+            'id',
+            'nhl_game_id',
+            'nhl_player_id',
+            'nhl_team_id',
+            'created_at',
+            'updated_at',
+            'goalie_decision',
+            'goalie_started',
+            'quality_start',
+            'really_bad_start',
+        ];
+
+        return collect(Schema::getColumnListing('nhl_game_summaries'))
+            ->reject(static fn (string $column): bool => in_array($column, $excludedColumns, true))
+            ->values()
+            ->all();
     }
 
     /**

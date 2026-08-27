@@ -61,10 +61,14 @@ export class StatsPayloadClient {
     params.set('perspective', state.perspective);
     params.set('resource', this.resource);
     params.set('period', period);
-    params.set('slice', canSlice ? state.slice : 'total');
+    params.set('slice', 'total');
 
     if (period === 'season' && state.seasonId) {
       params.set('season_id', state.seasonId);
+    }
+    if (period === 'range') {
+      if (state.fromDate) params.set('from', state.fromDate);
+      if (state.toDate) params.set('to', state.toDate);
     }
 
     params.set('game_type', state.gameType);

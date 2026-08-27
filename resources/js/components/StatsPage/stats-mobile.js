@@ -1,12 +1,7 @@
 // stats-mobile.js
-import { teamBg, formatStatValue, groupRowsByProspectPosition, isLeagueProspectMode, sortData, statValueForKey } from './stats-utils.js';
+import { createApp } from 'vue';
 import { UI } from './ui/UIComponent.js';
-
-const SORT_ALIASES = {
-  contract_value_num: ['contract_value_num', 'contract_value'],
-  contract_last_year_num: ['contract_last_year_num', 'contract_last_year'],
-  gp: ['gp', 'games_played'],
-};
+import PlayerCardList from '../../pages/Stats/Mobile/PlayerCardList.vue';
 
 const MOBILE_IDENTITY_KEYS = new Set([
   'player',
@@ -45,16 +40,13 @@ const NEVER_DISPLAY_KEYS = new Set([
 
 let mobileEscapeHandler = null;
 const containerListeners = new WeakMap();
-
-const aliasSet = (key) => new Set(SORT_ALIASES[String(key)] || [String(key)]);
+const containerApps = new WeakMap();
 
 const mobileMetricKeys = (headings) => (Array.isArray(headings) ? headings : [])
   .map((heading) => String(heading?.key ?? ''))
   .filter((key) => key && !MOBILE_IDENTITY_KEYS.has(key));
 
 const firstMobileMetricKey = (headings, fallback = 'gp') => mobileMetricKeys(headings)[0] || fallback;
-
-const displayValue = (row, key) => statValueForKey(row, key);
 
 const headingLabel = (headings, key) => (
   (Array.isArray(headings) ? headings : []).find((heading) => heading?.key === key)?.label || key
@@ -78,74 +70,6 @@ function emptyState(message) {
   return node;
 }
 
-const playerInitials = (name = '') => String(name)
-  .trim()
-  .split(/\s+/)
-  .slice(0, 2)
-  .map((part) => part.charAt(0).toUpperCase())
-  .join('') || '?';
-
-function buildMobileAvatar(player) {
-  const name = player?.name ?? 'Unknown';
-  const avatarUrl = player?.avatar_url || player?.head_shot_url;
-  const wrap = document.createElement('span');
-  wrap.className = 'inline-flex h-7 w-7 shrink-0 items-center justify-center self-center rounded-full bg-gray-100 text-[10px] font-semibold text-gray-500 ring-1 ring-gray-200';
-
-  if (!avatarUrl) {
-    wrap.textContent = playerInitials(name);
-    return wrap;
-  }
-
-  const img = document.createElement('img');
-  img.src = avatarUrl;
-  img.alt = '';
-  img.loading = 'lazy';
-  img.className = 'h-7 w-7 rounded-full object-cover';
-  img.addEventListener('error', () => {
-    img.remove();
-    wrap.textContent = playerInitials(name);
-  });
-  wrap.appendChild(img);
-
-  return wrap;
-}
-
-function buildMobilePosShape(raw, rawType) {
-  const value = displayPosition(raw);
-  const shapeType = displayPosition(rawType);
-  const wrap = document.createElement('span');
-  wrap.className = 'inline-flex h-6 w-6 shrink-0 items-center justify-center self-center';
-
-  const marker = document.createElement('span');
-  marker.className = 'inline-flex h-6 w-6 items-center justify-center text-[9px] font-bold leading-none text-gray-600';
-
-  if (shapeType === 'F') {
-    marker.classList.add('rounded-[3px]', 'border');
-    marker.style.borderColor = '#7CCCF2';
-    marker.textContent = value || 'F';
-  } else if (shapeType === 'D') {
-    marker.classList.add('rounded-[3px]', 'border');
-    marker.style.borderColor = '#FAE919';
-    marker.textContent = value || 'D';
-  } else if (shapeType === 'G') {
-    marker.classList.add('rounded-full', 'border-2');
-    marker.style.borderColor = '#fecaca';
-    marker.textContent = value || 'G';
-  } else {
-    marker.classList.add('rounded-[3px]', 'border-2', 'border-gray-200');
-    marker.textContent = value || '-';
-  }
-
-  wrap.appendChild(marker);
-  return wrap;
-}
-
-function displayPosition(raw) {
-  const first = String(raw ?? '').split(/[,\s/]+/).find(Boolean)?.trim().toUpperCase() || '';
-
-  return first;
-}
-
 function getOrCreateElement(id) {
   const found = document.getElementById(id);
 
@@ -162,7 +86,6 @@ function getOrCreateElement(id) {
 export function StatsMobile({ container, data, headings, settings, onSortChange }) {
   let searchTerm = '';
   const rows = Array.isArray(data) ? data : [];
-  const isDefaultProspectSort = () => isLeagueProspectMode(settings) && settings.leagueUserSortActive !== true;
 
   ensureDisplayKey(settings, headings);
 
@@ -172,6 +95,8 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
     container.removeEventListener('ui:open-sort-sheet', previous.openSort);
   }
 
+  containerApps.get(container)?.unmount();
+  containerApps.delete(container);
   container.innerHTML = '';
 
   const listWrapper = document.createElement('div');
@@ -180,177 +105,18 @@ export function StatsMobile({ container, data, headings, settings, onSortChange 
 
   const renderList = () => {
     try {
-      const sortedData = sortData(rows, settings.sortKey, settings.sortDirection);
-      const filteredData = sortedData.filter((row) => String(row?.name ?? '').toLowerCase().includes(searchTerm));
-      const fragment = document.createDocumentFragment();
+      containerApps.get(container)?.unmount();
+      listWrapper.innerHTML = '';
 
-      if (filteredData.length === 0) {
-        fragment.appendChild(emptyState('No players match the current view.'));
-      }
+      const app = createApp(PlayerCardList, {
+        rows,
+        headings,
+        settings,
+        searchTerm,
+      });
 
-      const appendPlayerCard = (player) => {
-        const card = document.createElement('div');
-        card.className = 'player-stats-card-mobile';
-
-        const teamDivWrapper = document.createElement('div');
-        teamDivWrapper.className = 'player-stats-team-strip-mobile';
-        teamDivWrapper.style.background = teamBg(player?.team);
-
-        const teamDiv = document.createElement('div');
-        teamDiv.className = 'player-stats-team-text-mobile';
-        teamDiv.textContent = player?.team ?? '-';
-        teamDivWrapper.appendChild(teamDiv);
-
-        const contentWrapper = document.createElement('div');
-        contentWrapper.className = 'player-stats-content-mobile';
-
-        const iconRail = document.createElement('span');
-        iconRail.className = 'player-stats-icon-rail-mobile';
-        iconRail.appendChild(buildMobilePosShape(player?.pos ?? player?.position ?? player?.pos_type, player?.pos_type));
-        iconRail.appendChild(buildMobileAvatar(player));
-        contentWrapper.appendChild(iconRail);
-
-        const topRow = document.createElement('div');
-        topRow.className = 'player-stats-top-row-mobile';
-
-        const leftSide = document.createElement('div');
-        leftSide.className = 'min-w-0 flex flex-1 self-stretch';
-
-        const leftInner = document.createElement('div');
-        leftInner.className = 'player-stats-identity-mobile';
-
-        const name = document.createElement('span');
-        name.className = 'player-stats-name-mobile';
-        name.textContent = player?.name ?? 'Unknown';
-
-        const nameLine = document.createElement('span');
-        nameLine.className = 'player-stats-name-line-mobile';
-        nameLine.appendChild(name);
-
-        const ageStat = document.createElement('div');
-        ageStat.className = 'player-stats-age-mobile';
-        ageStat.textContent = player?.age ? `Age ${player.age}` : '';
-
-        const cap = document.createElement('span');
-        cap.className = 'player-stats-aav-mobile';
-        const rawCap = player?.contract_value;
-        let millions = null;
-        if (typeof rawCap === 'number') {
-          millions = rawCap / 1e6;
-        } else if (typeof rawCap === 'string') {
-          const parsed = parseFloat(rawCap.replace(/[^0-9.]/g, ''));
-          millions = Number.isFinite(parsed) ? (parsed <= 100 ? parsed : parsed / 1e6) : null;
-        }
-        const lastYear = String(player?.contract_last_year ?? '').trim();
-        cap.textContent = `$${(millions ?? 0).toFixed(2)}M${lastYear ? ` | ${lastYear}` : ''}`;
-
-        const meta = document.createElement('span');
-        meta.className = 'player-stats-meta-mobile';
-        meta.appendChild(ageStat);
-        meta.appendChild(cap);
-
-        const nameBlock = document.createElement('span');
-        nameBlock.className = 'player-stats-name-stack-mobile';
-        nameBlock.appendChild(nameLine);
-
-        const detailLine = document.createElement('span');
-        detailLine.className = 'player-stats-detail-line-mobile';
-
-        const leagueName = formatStatValue('league', player?.league);
-        if (leagueName) {
-          const league = document.createElement('span');
-          league.className = 'player-stats-league-mobile';
-          league.textContent = leagueName;
-          detailLine.appendChild(league);
-        }
-        detailLine.appendChild(meta);
-        nameBlock.appendChild(detailLine);
-
-        leftInner.appendChild(nameBlock);
-        leftSide.appendChild(leftInner);
-
-        const rightSide = document.createElement('div');
-        rightSide.className = 'shrink-0 max-w-[5.5rem] overflow-hidden';
-
-        const rightInner = document.createElement('div');
-        rightInner.className = 'flex min-w-0 shrink-0 items-center gap-1';
-
-        const displayKey = settings.displayKey || settings.sortKey || firstMobileMetricKey(headings, 'gp');
-
-        const statLabel = document.createElement('span');
-        statLabel.className = 'player-stats-sorted-label-mobile truncate';
-        statLabel.textContent = headingLabel(headings, displayKey);
-
-        const statValue = document.createElement('span');
-        statValue.className = 'player-stats-sorted-value-mobile shrink-0';
-        statValue.textContent = formatStatValue(displayKey, displayValue(player, displayKey));
-
-        rightInner.appendChild(statLabel);
-        rightInner.appendChild(statValue);
-        rightSide.appendChild(rightInner);
-
-        topRow.appendChild(leftSide);
-        topRow.appendChild(rightSide);
-
-        const bottomRow = document.createElement('div');
-        bottomRow.className = 'player-stats-bottom-row-mobile';
-
-        const statGroup = document.createElement('div');
-        statGroup.className = 'player-stats-stat-group-mobile';
-
-        let statKeys = mobileMetricKeys(headings).filter((key) => statValueForKey(player, key) !== undefined);
-
-        if (statValueForKey(player, 'gp') !== undefined && String(settings.sortKey) !== 'gp') {
-          statKeys = ['gp', ...statKeys.filter((key) => key !== 'gp')];
-        }
-
-        const hiddenAliases = aliasSet(settings.sortKey);
-        const selectedKeys = [];
-
-        statKeys.forEach((key) => {
-          if (!key || selectedKeys.includes(key)) return;
-          if (hiddenAliases.has(String(key))) return;
-          if (String(key) === String(settings.sortKey)) return;
-          selectedKeys.push(key);
-        });
-
-        selectedKeys.slice(0, 6).forEach((key) => {
-          const value = statValueForKey(player, key);
-          if (value === undefined) return;
-
-          const stat = document.createElement('div');
-          stat.className = 'player-stats-stat-mobile';
-
-          const statKey = document.createElement('span');
-          statKey.className = 'player-stats-stat-key-mobile';
-          statKey.textContent = headingLabel(headings, key);
-
-          const statVal = document.createElement('span');
-          statVal.className = 'player-stats-stat-val-mobile';
-          statVal.textContent = formatStatValue(key, value);
-
-          stat.appendChild(statKey);
-          stat.appendChild(statVal);
-          statGroup.appendChild(stat);
-        });
-
-        bottomRow.appendChild(statGroup);
-        contentWrapper.appendChild(topRow);
-        contentWrapper.appendChild(bottomRow);
-        card.appendChild(teamDivWrapper);
-        card.appendChild(contentWrapper);
-        fragment.appendChild(card);
-      };
-
-      if (isDefaultProspectSort()) {
-        groupRowsByProspectPosition(filteredData).forEach((group) => {
-          group.rows.forEach(appendPlayerCard);
-        });
-      } else {
-        filteredData.forEach(appendPlayerCard);
-      }
-
-      listWrapper.replaceChildren(fragment);
+      app.mount(listWrapper);
+      containerApps.set(container, app);
     } catch (error) {
       console.error('[stats-mobile] render failed', error);
       listWrapper.replaceChildren(emptyState('Unable to render this stats view.'));

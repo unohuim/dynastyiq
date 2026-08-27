@@ -15,6 +15,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
 
@@ -1280,12 +1281,10 @@ it('defaults the stats page to skaters instead of the first visible perspective 
     $response = $this->get(route('stats.index'));
 
     $response->assertOk()
-        ->assertViewHas('selectedSlug', 'skaters')
-        ->assertViewHas('payload', function (array $payload): bool {
-            $names = collect($payload['data'])->pluck('name')->all();
-
-            return $names === ['Season Skater'];
-        });
+        ->assertInertia(fn (Assert $page): Assert => $page
+            ->component('Stats/Index')
+            ->where('selectedPerspective', 'skaters')
+            ->where('initialPayload.data.0.name', 'Season Skater'));
 });
 
 it('uses official boxscore toi for stats page per-60 rate calculations', function (): void {

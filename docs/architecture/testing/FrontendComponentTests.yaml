@@ -1,11 +1,13 @@
 name: Frontend Component Tests
 type: JavaScript Test Pattern
 location:
+  - resources/js/pages/**/*.vue
   - resources/js/components/toast-stack.test.js
   - resources/js/components/__tests__/community-members-store.test.js
   - resources/js/admin/admin-hub.test.js
 purpose: Test reusable frontend modules independently from Blade rendering.
 when_to_use:
+  - New Vue/Inertia page components with reusable state or exposed DOM/payload contracts.
   - New reusable JavaScript modules.
   - Changes to existing page-state helpers.
   - Changes to frontend utility behavior.
@@ -13,6 +15,7 @@ when_not_to_use:
   - Backend domain behavior.
   - Browser-level end-to-end assertions.
 rules:
+  - Vue/Inertia page wrappers may be covered by Laravel Inertia response tests when they only pass backend props into an existing renderer.
   - Reusable frontend behavior should have direct JavaScript tests.
   - Tests should assert behavior rather than incidental implementation structure.
   - UI constraints still come from docs/UI_DESIGN.md.
@@ -22,4 +25,3 @@ public_interface:
   - resources/js/admin/admin-hub.test.js
 example_usage: |
   expect(store.members.length).toBe(1);
-
