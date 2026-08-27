@@ -16,9 +16,6 @@ import './components/community-members-store';
 import './components/draft-round-scrollbar';
 import './pages/discord-bot-installed';
 import { registerToastStack } from './components/toast-stack';
-import adminHub from './admin/admin-hub';
-window.adminHub = adminHub;
-
 
 // import "./components/RangeSlider/range-slider.css";
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";

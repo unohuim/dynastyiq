@@ -8,6 +8,7 @@ use App\Models\AnalyticsSession;
 use App\Models\AnalyticsVisitor;
 use App\Models\FantraxPlayer;
 use App\Models\ImportRun;
+use App\Models\NhlGameValidation;
 use App\Models\Player;
 use App\Models\User;
 use App\Services\AdminImports;
@@ -18,6 +19,8 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Inertia\Inertia;
+use Inertia\Response as InertiaResponse;
 
 class DashboardController extends Controller
 {
@@ -26,7 +29,7 @@ class DashboardController extends Controller
     ) {
     }
 
-    public function index(Request $request)
+    public function index(Request $request): InertiaResponse|JsonResponse
     {
         if ($request->wantsJson() && $request->query('section') === 'players') {
             return $this->players($request);
@@ -57,13 +60,49 @@ class DashboardController extends Controller
         $hasPlayers = Player::query()->exists();
         $hasFantraxPlayers = FantraxPlayer::query()->exists();
 
-        return view('admin.dashboard', [
+        return Inertia::render('Admin/Dashboard', [
             'imports' => $imports,
             'hasPlayers' => $hasPlayers,
             'hasFantraxPlayers' => $hasFantraxPlayers,
             'users' => $this->usersPayload(),
             'activity' => $this->activityPayload(),
+            'urls' => $this->adminDashboardUrls(),
         ]);
+    }
+
+    /**
+     * Build route URLs consumed by the Inertia admin dashboard.
+     *
+     * @return array<string, string>
+     */
+    private function adminDashboardUrls(): array
+    {
+        return [
+            'triageUrl' => route('admin.player-triage', ['admin_panel' => 1, 'fragment' => 1]),
+            'validationsUrl' => route('admin.nhl-validations.index', ['admin_panel' => 1]),
+            'shiftMismatchesUrl' => route('admin.nhl-validations.index', [
+                'admin_panel' => 1,
+                'status' => NhlGameValidation::STATUS_SHIFTCHART_MISMATCH,
+            ]),
+            'gameImportStatusUrl' => route('admin.nhl-game-imports.status'),
+            'gameImportSourceGapsUrl' => route('admin.nhl-game-imports.source-gaps'),
+            'gameImportGameRerunUrl' => url('/admin/nhl-game-imports/games'),
+            'gameImportDiscoverUrl' => route('admin.nhl-game-imports.discover'),
+            'gameImportScheduleRefreshUrl' => route('admin.nhl-game-imports.schedule-refresh'),
+            'gameImportProcessUrl' => route('admin.nhl-game-imports.process'),
+            'gameImportProcessShotsUrl' => route('admin.nhl-game-imports.process-shots'),
+            'gameImportProcessFaceoffsUrl' => route('admin.nhl-game-imports.process-faceoffs'),
+            'gameImportProcessRefsStaffUrl' => route('admin.nhl-game-imports.process-refs-staff'),
+            'gameImportRerunFailedUrl' => route('admin.nhl-game-imports.rerun-failed'),
+            'gameImportDeleteUrl' => url('/admin/nhl-game-imports'),
+            'gameImportDuplicatePbpScanUrl' => route('admin.nhl-game-imports.duplicate-pbp.scan'),
+            'gameImportDuplicatePbpDedupeUrl' => url('/admin/nhl-game-imports/duplicate-pbp'),
+            'gameImportDuplicatePbpRebuildUrl' => url('/admin/nhl-game-imports/duplicate-pbp'),
+            'gameImportSeasonSyncUrl' => route('admin.nhl-game-imports.season-sync'),
+            'gameImportEmptyGamesUrl' => route('admin.nhl-game-imports.empty-games'),
+            'apiKeysUrl' => route('admin.api-keys.index'),
+            'leagueRefreshUrl' => route('leagues.resync'),
+        ];
     }
 
     protected function players(Request $request): JsonResponse

@@ -26,7 +26,11 @@
     </head>
     <body class="font-sans antialiased">
         <div class="min-h-screen bg-gray-100 pb-16 md:pb-0">
-            @include('nav.stats')
+            @if(request()->routeIs('admin.*'))
+                @include('nav.main')
+            @else
+                @include('nav.stats')
+            @endif
 
             <main>
                 @inertia
