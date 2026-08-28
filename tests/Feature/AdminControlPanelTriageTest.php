@@ -4195,6 +4195,7 @@ it('redirects authenticated users to Yahoo authorization with the user callback 
         ->and($query['response_type'] ?? null)->toBe('code')
         ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
         ->and($query['redirect_uri'] ?? null)->toBe(route('integrations.yahoo.callback'))
+        ->and($query['scope'] ?? null)->toBe('fspt-w')
         ->and($query['state'] ?? '')->not->toBe('');
 });
 
@@ -4577,7 +4578,27 @@ it('redirects super admins to Yahoo authorization with configured OAuth fields',
         ->and($query['response_type'] ?? null)->toBe('code')
         ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
         ->and($query['redirect_uri'] ?? null)->toBe('https://dynastyiq.com/auth/yahoo/callback')
+        ->and($query['scope'] ?? null)->toBe('fspt-w')
         ->and($query['state'] ?? '')->not->toBe('');
+});
+
+it('sends configured Yahoo OAuth scopes during authorization redirects', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'yahoo.oauth.authorize' => 'https://api.login.yahoo.com/oauth2/request_auth',
+        'yahoo.oauth.scopes' => 'openid email fspt-w',
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->get(route('admin.yahoo.oauth.redirect'));
+
+    $response->assertRedirect();
+
+    $location = $response->headers->get('Location');
+    $parts = parse_url((string) $location);
+    parse_str($parts['query'] ?? '', $query);
+
+    expect($query['scope'] ?? null)->toBe('openid email fspt-w');
 });
 
 it('blocks guests from the Yahoo OAuth proof callback', function () {
@@ -4729,6 +4750,49 @@ XML),
 
     Http::assertSent(fn ($request): bool => $request->url() === 'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl/players;start=0;count=5'
         && $request->hasHeader('Authorization', 'Bearer access-token-value'));
+});
+
+it('marks Yahoo OAuth callbacks offline when Fantasy API access is forbidden', function () {
+    config([
+        'services.yahoo.client_id' => 'yahoo-client-id',
+        'services.yahoo.client_secret' => 'yahoo-client-secret',
+        'services.yahoo.redirect' => 'https://dynastyiq.com/auth/yahoo/callback',
+        'yahoo.oauth.token' => 'https://api.login.yahoo.com/oauth2/get_token',
+        'yahoo.base_url' => 'https://fantasysports.yahooapis.com/fantasy/v2',
+        'yahoo.fantasy.game_code' => 'nhl',
+    ]);
+
+    Http::fake([
+        'https://api.login.yahoo.com/oauth2/get_token' => Http::response([
+            'access_token' => 'access-token-value',
+            'refresh_token' => 'refresh-token-value',
+            'expires_in' => 3600,
+        ]),
+        'https://fantasysports.yahooapis.com/fantasy/v2/game/nhl' => Http::response(<<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<error xml:lang="en-us">
+  <description>Forbidden</description>
+</error>
+XML, 403),
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->withSession(['yahoo_oauth_state' => 'expected-state'])
+        ->getJson(route('admin.yahoo.oauth.callback', [
+            'state' => 'expected-state',
+            'code' => 'auth-code',
+        ]));
+
+    $response->assertForbidden()
+        ->assertJsonPath('ok', false)
+        ->assertJsonPath('message', 'Yahoo Fantasy Sports authorization failed. Reconnect Yahoo and approve Fantasy Sports access.')
+        ->assertJsonPath('connection.status', 'offline')
+        ->assertJsonMissing(['description' => 'Forbidden']);
+
+    $connection = YahooFantasyConnection::query()->firstOrFail();
+
+    expect($connection->status)->toBe('offline')
+        ->and($connection->last_error)->toBe('Yahoo Fantasy Sports authorization failed. Reconnect Yahoo and approve Fantasy Sports access.');
 });
 
 it('blocks guests from importing Yahoo players', function () {

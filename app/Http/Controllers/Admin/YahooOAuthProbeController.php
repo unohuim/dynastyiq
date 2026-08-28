@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use RuntimeException;
 use SimpleXMLElement;
+use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
 /**
@@ -39,8 +40,9 @@ class YahooOAuthProbeController extends Controller
             'response_type' => 'code',
             'client_id' => config('services.yahoo.client_id'),
             'redirect_uri' => $redirectUri,
+            'scope' => $this->oauthScopes(),
             'state' => $state,
-        ]);
+        ], '', '&', PHP_QUERY_RFC3986);
 
         return redirect()->away(rtrim((string) config('yahoo.oauth.authorize'), '?').'?'.$query);
     }
@@ -93,11 +95,34 @@ class YahooOAuthProbeController extends Controller
             'expires_at' => now()->addSeconds((int) ($token['expires_in'] ?? 3600))->toIso8601String(),
         ]);
 
-        $gameXml = $client->fantasyXml($accessToken, 'game/'.config('yahoo.fantasy.game_code', 'nhl'));
-        $playersXml = $client->fantasyXml(
-            $accessToken,
-            'game/'.config('yahoo.fantasy.game_code', 'nhl').'/players;start=0;count=5',
-        );
+        try {
+            $gameXml = $client->fantasyXmlForConnection($connection, 'game/'.config('yahoo.fantasy.game_code', 'nhl'));
+            $playersXml = $client->fantasyXmlForConnection(
+                $connection,
+                'game/'.config('yahoo.fantasy.game_code', 'nhl').'/players;start=0;count=5',
+            );
+        } catch (Throwable $throwable) {
+            $connection->forceFill([
+                'status' => 'offline',
+                'last_error' => $throwable->getMessage(),
+            ])->save();
+
+            if ($request->routeIs('integrations.yahoo.callback')) {
+                return redirect($this->connectedReturnUrl($request))
+                    ->with('error', $throwable->getMessage());
+            }
+
+            return response()->json([
+                'ok' => false,
+                'message' => $throwable->getMessage(),
+                'connection' => [
+                    'id' => $connection->id,
+                    'status' => 'offline',
+                    'token_expires_at' => $connection->token_expires_at?->toIso8601String(),
+                ],
+            ], Response::HTTP_FORBIDDEN);
+        }
+
         $game = $this->gamePayload($gameXml);
 
         $connection->forceFill([
@@ -174,6 +199,19 @@ class YahooOAuthProbeController extends Controller
         }
 
         return (string) (config('services.yahoo.redirect') ?: route('admin.yahoo.oauth.callback'));
+    }
+
+    /**
+     * Return the configured Yahoo OAuth scopes for Fantasy Sports access.
+     */
+    private function oauthScopes(): string
+    {
+        return collect(explode(' ', (string) config('yahoo.oauth.scopes', 'fspt-w')))
+            ->map(static fn (string $scope): string => trim($scope))
+            ->filter(static fn (string $scope): bool => $scope !== '')
+            ->unique()
+            ->values()
+            ->implode(' ');
     }
 
     /**

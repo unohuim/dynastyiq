@@ -17,6 +17,8 @@ use Throwable;
  */
 class YahooFantasyClient
 {
+    private const FANTASY_AUTHORIZATION_MESSAGE = 'Yahoo Fantasy Sports authorization failed. Reconnect Yahoo and approve Fantasy Sports access.';
+
     /**
      * Exchange an OAuth authorization code for Yahoo tokens.
      *
@@ -63,6 +65,12 @@ class YahooFantasyClient
         try {
             return $this->fantasyXml($this->accessTokenFor($connection), $path);
         } catch (RequestException $exception) {
+            if ($exception->response->status() === 403) {
+                $this->markFantasyAuthorizationFailed($connection);
+
+                throw new RuntimeException(self::FANTASY_AUTHORIZATION_MESSAGE, 0, $exception);
+            }
+
             if ($exception->response->status() !== 401 || ! $connection->refresh_token) {
                 throw $exception;
             }
@@ -170,5 +178,17 @@ class YahooFantasyClient
             (string) config('services.yahoo.client_id'),
             (string) config('services.yahoo.client_secret'),
         )->acceptJson();
+    }
+
+    /**
+     * Persist a reconnect-oriented state when Yahoo rejects Fantasy API access.
+     */
+    private function markFantasyAuthorizationFailed(YahooFantasyConnection $connection): void
+    {
+        $connection->forceFill([
+            'status' => 'offline',
+            'last_error' => self::FANTASY_AUTHORIZATION_MESSAGE,
+            'last_used_at' => now(),
+        ])->save();
     }
 }
