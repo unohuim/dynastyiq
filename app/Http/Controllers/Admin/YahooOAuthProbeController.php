@@ -64,9 +64,16 @@ class YahooOAuthProbeController extends Controller
             abort(403, 'Invalid Yahoo authorization state.');
         }
 
+        if ($request->filled('error')) {
+            return $this->failedAuthorizationResponse(
+                $request,
+                $this->yahooAuthorizationErrorMessage($request)
+            );
+        }
+
         $code = $request->string('code')->value();
         if ($code === '') {
-            abort(422, 'Yahoo authorization code is required.');
+            return $this->failedAuthorizationResponse($request, 'Yahoo authorization code is required.');
         }
 
         $token = $client->exchangeCode($code, $redirectUri);
@@ -212,6 +219,39 @@ class YahooOAuthProbeController extends Controller
             ->unique()
             ->values()
             ->implode(' ');
+    }
+
+    /**
+     * Return a route-appropriate failed OAuth response without exposing raw provider markup.
+     */
+    private function failedAuthorizationResponse(Request $request, string $message): JsonResponse|RedirectResponse
+    {
+        if ($request->routeIs('integrations.yahoo.callback')) {
+            return redirect($this->connectedReturnUrl($request))
+                ->with('error', $message);
+        }
+
+        return response()->json([
+            'ok' => false,
+            'message' => $message,
+        ], Response::HTTP_UNPROCESSABLE_ENTITY);
+    }
+
+    /**
+     * Build a sanitized Yahoo OAuth error message from callback query parameters.
+     */
+    private function yahooAuthorizationErrorMessage(Request $request): string
+    {
+        $error = $request->string('error')->trim()->toString();
+        $description = $request->string('error_description')->trim()->toString();
+
+        if ($description !== '') {
+            return 'Yahoo authorization failed: '.$description;
+        }
+
+        return $error !== ''
+            ? 'Yahoo authorization failed: '.$error
+            : 'Yahoo authorization failed.';
     }
 
     /**

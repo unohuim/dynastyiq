@@ -4687,10 +4687,25 @@ it('rejects Yahoo OAuth proof callbacks with invalid state', function () {
 it('rejects Yahoo OAuth proof callbacks without an authorization code', function () {
     $this->actingAs(($this->makeSuperAdmin)())
         ->withSession(['yahoo_oauth_state' => 'expected-state'])
-        ->get(route('admin.yahoo.oauth.callback', [
+        ->getJson(route('admin.yahoo.oauth.callback', [
             'state' => 'expected-state',
         ]))
-        ->assertUnprocessable();
+        ->assertUnprocessable()
+        ->assertJsonPath('ok', false)
+        ->assertJsonPath('message', 'Yahoo authorization code is required.');
+});
+
+it('returns Yahoo OAuth provider errors before requiring an authorization code', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->withSession(['yahoo_oauth_state' => 'expected-state'])
+        ->getJson(route('admin.yahoo.oauth.callback', [
+            'state' => 'expected-state',
+            'error' => 'invalid_request',
+            'error_description' => 'The requested scope is invalid.',
+        ]))
+        ->assertUnprocessable()
+        ->assertJsonPath('ok', false)
+        ->assertJsonPath('message', 'Yahoo authorization failed: The requested scope is invalid.');
 });
 
 it('exchanges a Yahoo OAuth code and returns sanitized game and player diagnostics', function () {
