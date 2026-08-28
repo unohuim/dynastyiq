@@ -36,13 +36,19 @@ class YahooOAuthProbeController extends Controller
             $request->session()->put('yahoo_oauth_return_url', $this->returnUrl($request));
         }
 
-        $query = http_build_query([
+        $queryParams = [
             'response_type' => 'code',
             'client_id' => config('services.yahoo.client_id'),
             'redirect_uri' => $redirectUri,
-            'scope' => $this->oauthScopes(),
             'state' => $state,
-        ], '', '&', PHP_QUERY_RFC3986);
+        ];
+        $scopes = $this->oauthScopes();
+
+        if ($scopes !== '') {
+            $queryParams['scope'] = $scopes;
+        }
+
+        $query = http_build_query($queryParams, '', '&', PHP_QUERY_RFC3986);
 
         return redirect()->away(rtrim((string) config('yahoo.oauth.authorize'), '?').'?'.$query);
     }
@@ -213,7 +219,7 @@ class YahooOAuthProbeController extends Controller
      */
     private function oauthScopes(): string
     {
-        return collect(explode(' ', (string) config('yahoo.oauth.scopes', 'fspt-r')))
+        return collect(explode(' ', (string) config('yahoo.oauth.scopes', '')))
             ->map(static fn (string $scope): string => trim($scope))
             ->filter(static fn (string $scope): bool => $scope !== '')
             ->unique()

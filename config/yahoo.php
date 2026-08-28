@@ -6,7 +6,7 @@ return [
     'oauth' => [
         'authorize' => env('YAHOO_AUTHORIZE_URL', 'https://api.login.yahoo.com/oauth2/request_auth'),
         'token' => env('YAHOO_TOKEN_URL', 'https://api.login.yahoo.com/oauth2/get_token'),
-        'scopes' => env('YAHOO_SCOPES', 'fspt-r'),
+        'scopes' => env('YAHOO_SCOPES', ''),
     ],
 
     'fantasy' => [
