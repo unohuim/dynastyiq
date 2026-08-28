@@ -206,7 +206,7 @@ class YahooOAuthProbeController extends Controller
      */
     private function oauthScopes(): string
     {
-        return collect(explode(' ', (string) config('yahoo.oauth.scopes', 'fspt-w')))
+        return collect(explode(' ', (string) config('yahoo.oauth.scopes', 'fspt-r')))
             ->map(static fn (string $scope): string => trim($scope))
             ->filter(static fn (string $scope): bool => $scope !== '')
             ->unique()

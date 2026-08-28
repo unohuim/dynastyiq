@@ -4256,7 +4256,7 @@ it('redirects authenticated users to Yahoo authorization with the user callback 
         ->and($query['response_type'] ?? null)->toBe('code')
         ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
         ->and($query['redirect_uri'] ?? null)->toBe(route('integrations.yahoo.callback'))
-        ->and($query['scope'] ?? null)->toBe('fspt-w')
+        ->and($query['scope'] ?? null)->toBe('fspt-r')
         ->and($query['state'] ?? '')->not->toBe('');
 });
 
@@ -4639,7 +4639,7 @@ it('redirects super admins to Yahoo authorization with configured OAuth fields',
         ->and($query['response_type'] ?? null)->toBe('code')
         ->and($query['client_id'] ?? null)->toBe('yahoo-client-id')
         ->and($query['redirect_uri'] ?? null)->toBe('https://dynastyiq.com/auth/yahoo/callback')
-        ->and($query['scope'] ?? null)->toBe('fspt-w')
+        ->and($query['scope'] ?? null)->toBe('fspt-r')
         ->and($query['state'] ?? '')->not->toBe('');
 });
 
