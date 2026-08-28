@@ -72,6 +72,7 @@ class NhlImportOrchestrator
 
         try {
             $slots = max(1, (int) config('apiImportNhl.active_game_import_slots', 8));
+            $this->sweepStale();
             $activeGames = $this->repo->activeGameCountForRun($runId);
             $availableSlots = max(0, $slots - $activeGames);
             $dispatched = 0;

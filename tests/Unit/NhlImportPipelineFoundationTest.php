@@ -279,6 +279,63 @@ it('does not dispatch a duplicate job after the row has already been claimed', f
     Bus::assertDispatchedTimes(ImportPbpNhlJob::class, 1);
 });
 
+it('marks NHL import progress failed when the queue records a terminal job failure', function (): void {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    ($this->insertProgress)(2026020001, NhlImportStages::PBP, 'running');
+
+    (new ImportPbpNhlJob(2026020001))->failed(new RuntimeException('PBP exhausted attempts'));
+
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'error',
+        'last_error' => 'PBP exhausted attempts',
+    ]);
+});
+
+it('sweeps stale running rows before counting active run slots', function (): void {
+    Bus::fake();
+    config([
+        'apiImportNhl.active_game_import_slots' => 1,
+        'apiImportNhl.max_pbp_seconds' => 120,
+    ]);
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-10-01',
+        'end_date' => '2026-10-02',
+        'date_count' => 2,
+        'queued_jobs' => 2,
+        'payload' => [],
+    ]);
+    ($this->insertProgress)(2026020001, NhlImportStages::PBP, 'running', [
+        'run_id' => $run->id,
+        'updated_at' => now()->subSeconds(180),
+    ]);
+    ($this->insertProgress)(2026020002, NhlImportStages::PBP, 'scheduled', [
+        'run_id' => $run->id,
+        'game_date' => '2026-10-02',
+    ]);
+
+    $dispatched = app(NhlImportOrchestrator::class)->fillActiveGameSlotsForRun($run->id);
+
+    expect($dispatched)->toBe(1);
+    Bus::assertDispatched(ImportPbpNhlJob::class);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020001',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'error',
+        'last_error' => 'stale',
+    ]);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'game_id' => '2026020002',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'running',
+    ]);
+});
+
 it('deletes stale game troubleshooting directories when a processing stage succeeds', function (): void {
     Bus::fake();
     ($this->insertPipeline)(2026020001, [

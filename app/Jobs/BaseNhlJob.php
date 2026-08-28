@@ -41,6 +41,9 @@ abstract class BaseNhlJob implements ShouldQueue
     /** @var int */
     public int $timeout = 600;
 
+    /** @var bool */
+    private bool $failureRecorded = false;
+
     public function __construct(int $gameId, ?int $runId = null)
     {
         $this->gameId = $gameId;
@@ -109,32 +112,52 @@ abstract class BaseNhlJob implements ShouldQueue
 
             return;
         } catch (Throwable $e) {
-            $this->exportTroubleshootingPayloads($e);
-            $failure = app(NhlImportFailureReporter::class)->capture(
-                $e,
-                $this->gameId,
-                $this->stageName(),
-                $this->runId,
-                [
-                    'job_class' => static::class,
-                    'attempt' => $this->attempts(),
-                    'queue' => $this->queue,
-                ]
-            );
-
-            app(NhlImportOrchestrator::class)->onFailure(
-                $this->gameId,
-                $this->stageName(),
-                $e->getMessage(),
-                $e->getCode(),
-                $this->runId,
-                $failure['sentry_event_id'],
-                $failure['failure_category'],
-                $failure['retryable']
-            );
-
+            $this->recordImportFailure($e);
             $this->fail($e);
         }
+    }
+
+    /**
+     * Record terminal queue failures that can happen before handle() executes.
+     */
+    public function failed(Throwable $throwable): void
+    {
+        $this->recordImportFailure($throwable);
+    }
+
+    /**
+     * Centralize failure reporting so handle() failures and max-attempt failures release import progress.
+     */
+    private function recordImportFailure(Throwable $throwable): void
+    {
+        if ($this->failureRecorded) {
+            return;
+        }
+
+        $this->failureRecorded = true;
+        $this->exportTroubleshootingPayloads($throwable);
+        $failure = app(NhlImportFailureReporter::class)->capture(
+            $throwable,
+            $this->gameId,
+            $this->stageName(),
+            $this->runId,
+            [
+                'job_class' => static::class,
+                'attempt' => $this->attempts(),
+                'queue' => $this->queue,
+            ]
+        );
+
+        app(NhlImportOrchestrator::class)->onFailure(
+            $this->gameId,
+            $this->stageName(),
+            $throwable->getMessage(),
+            $throwable->getCode(),
+            $this->runId,
+            $failure['sentry_event_id'],
+            $failure['failure_category'],
+            $failure['retryable']
+        );
     }
 
     /**
