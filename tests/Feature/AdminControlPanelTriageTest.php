@@ -3530,6 +3530,67 @@ it('queues NHL game processing from a discovery run without creating a second ru
     });
 });
 
+it('recreates missing run-scoped NHL import progress rows when processing a discovered run replay', function () {
+    Bus::fake();
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    $now = now();
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_RANGE,
+        'status' => NhlGameImportRun::STATUS_COMPLETED,
+        'start_date' => '2026-01-17',
+        'end_date' => '2026-01-15',
+        'date_count' => 3,
+        'queued_jobs' => 1,
+        'payload' => ['start' => '2026-01-17', 'end' => '2026-01-15'],
+    ]);
+
+    foreach ([
+        ['id' => 2025020001, 'date' => '2026-01-15'],
+        ['id' => 2025020002, 'date' => '2026-01-16'],
+    ] as $game) {
+        DB::table('nhl_games')->insert([
+            'nhl_game_id' => $game['id'],
+            'season_id' => '20252026',
+            'game_type' => 2,
+            'game_date' => $game['date'],
+            'game_dow' => 'Thu',
+            'game_month' => 'Jan',
+            'home_team_id' => 1,
+            'home_team_abbrev' => 'TOR',
+            'away_team_id' => 2,
+            'away_team_abbrev' => 'MTL',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    $orchestrator = Mockery::mock(NhlImportOrchestrator::class);
+    $orchestrator->shouldReceive('fillActiveGameSlotsForRun')
+        ->once()
+        ->with($run->id);
+    app()->instance(NhlImportOrchestrator::class, $orchestrator);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.nhl-game-imports.process'), [
+            'run_id' => $run->id,
+            'reprocess_existing' => true,
+        ])
+        ->assertAccepted()
+        ->assertJsonPath('run.id', $run->id)
+        ->assertJsonPath('run.action', NhlGameImportRun::ACTION_DISCOVER)
+        ->assertJsonPath('run.processing_started', true);
+
+    expect(DB::table('nhl_import_progress')->where('run_id', $run->id)->count())
+        ->toBe(2 * count(NhlImportStages::ordered()));
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'run_id' => $run->id,
+        'game_id' => '2025020001',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'scheduled',
+    ]);
+});
+
 it('defaults NHL game processing to today when no date option is provided', function () {
     Bus::fake();
     $this->travelTo('2026-01-15 12:00:00');

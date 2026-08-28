@@ -22,6 +22,7 @@ use App\Models\NhlGameSourceStatus;
 use App\Models\NhlGameValidation;
 use App\Repositories\NhlImportProgressRepo;
 use App\Services\AdminImports;
+use App\Services\NhlGameImportEligibility;
 use App\Services\NhlGameSourcePreflight;
 use App\Services\NhlImportOrchestrator;
 use App\Services\NhlPbpEventNormalizer;
@@ -548,9 +549,13 @@ class NhlGameImportController extends Controller
                 );
 
                 if ($reprocessCount === 0) {
-                    throw ValidationException::withMessages([
-                        'run_id' => 'No existing NHL import stages were found for this run range.',
-                    ]);
+                    $reprocessCount = $this->seedMissingRunProgressRowsFromGames($discoveryRun, $progress);
+
+                    if ($reprocessCount === 0) {
+                        throw ValidationException::withMessages([
+                            'run_id' => 'No existing NHL games were found for this run range.',
+                        ]);
+                    }
                 }
             }
 
@@ -1886,6 +1891,50 @@ class NhlGameImportController extends Controller
             ->pluck('nhl_game_id')
             ->map(fn ($gameId): int => (int) $gameId)
             ->all();
+    }
+
+    /**
+     * Seed canonical import progress rows when a retained discovery run lost its run-scoped backend rows.
+     */
+    private function seedMissingRunProgressRowsFromGames(
+        NhlGameImportRun $run,
+        NhlImportProgressRepo $progress
+    ): int {
+        $range = $this->rangeFromRun($run);
+        $now = now();
+        $rows = DB::table('nhl_games')
+            ->whereBetween('game_date', [
+                $range['end']->toDateString(),
+                $range['start']->toDateString(),
+            ])
+            ->whereIn('game_type', NhlGameImportEligibility::ALLOWED_GAME_TYPES)
+            ->orderBy('game_date')
+            ->orderBy('nhl_game_id')
+            ->get(['season_id', 'game_date', 'nhl_game_id', 'game_type'])
+            ->flatMap(fn ($game): array => collect(NhlImportStages::ordered())
+                ->map(fn (string $stage): array => [
+                    'run_id' => (int) $run->id,
+                    'season_id' => (string) $game->season_id,
+                    'game_date' => Carbon::parse((string) $game->game_date)->toDateString(),
+                    'game_id' => (string) $game->nhl_game_id,
+                    'game_type' => $game->game_type,
+                    'import_type' => $stage,
+                    'items_count' => 0,
+                    'status' => 'scheduled',
+                    'discovered_at' => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])
+                ->all())
+            ->all();
+
+        if ($rows === []) {
+            return 0;
+        }
+
+        $progress->insertScheduledRows($rows);
+
+        return count($rows);
     }
 
     /**
