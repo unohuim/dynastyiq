@@ -4416,7 +4416,9 @@ XML),
             'code' => 'auth-code',
         ]))
         ->assertRedirect(url('/admin?tab=triage&drawer=account&yahoo_connected=1'))
-        ->assertSessionHas('success', 'Yahoo connected');
+        ->assertSessionHas('success', 'Yahoo connected')
+        ->assertSessionMissing('yahoo_oauth_state')
+        ->assertSessionMissing('yahoo_oauth_redirect_uri');
 
     $connection = YahooFantasyConnection::query()->where('user_id', $user->id)->firstOrFail();
 
@@ -4696,16 +4698,19 @@ it('rejects Yahoo OAuth proof callbacks without an authorization code', function
 });
 
 it('returns Yahoo OAuth provider errors before requiring an authorization code', function () {
-    $this->actingAs(($this->makeSuperAdmin)())
+    $response = $this->actingAs(($this->makeSuperAdmin)())
         ->withSession(['yahoo_oauth_state' => 'expected-state'])
         ->getJson(route('admin.yahoo.oauth.callback', [
             'state' => 'expected-state',
             'error' => 'invalid_request',
             'error_description' => 'The requested scope is invalid.',
-        ]))
+        ]));
+
+    $response
         ->assertUnprocessable()
         ->assertJsonPath('ok', false)
-        ->assertJsonPath('message', 'Yahoo authorization failed: The requested scope is invalid.');
+        ->assertJsonPath('message', 'Yahoo authorization failed: The requested scope is invalid.')
+        ->assertSessionHas('yahoo_oauth_state', 'expected-state');
 });
 
 it('exchanges a Yahoo OAuth code and returns sanitized game and player diagnostics', function () {
@@ -4806,7 +4811,9 @@ XML),
         ->assertJsonPath('players.0.full_name', 'Nathan MacKinnon')
         ->assertJsonPath('players.0.editorial_team_abbr', 'COL')
         ->assertJsonMissing(['access_token' => 'access-token-value'])
-        ->assertJsonMissing(['refresh_token' => 'refresh-token-value']);
+        ->assertJsonMissing(['refresh_token' => 'refresh-token-value'])
+        ->assertSessionMissing('yahoo_oauth_state')
+        ->assertSessionMissing('yahoo_oauth_redirect_uri');
 
     expect(session('yahoo_oauth_probe_token.access_token'))->toBe('access-token-value');
 

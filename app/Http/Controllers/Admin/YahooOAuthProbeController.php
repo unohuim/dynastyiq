@@ -62,8 +62,8 @@ class YahooOAuthProbeController extends Controller
         YahooFantasyLeagueService $leagueService,
     ): JsonResponse|RedirectResponse
     {
-        $expectedState = (string) $request->session()->pull('yahoo_oauth_state', '');
-        $redirectUri = (string) $request->session()->pull('yahoo_oauth_redirect_uri', $this->redirectUri($request));
+        $expectedState = (string) $request->session()->get('yahoo_oauth_state', '');
+        $redirectUri = (string) $request->session()->get('yahoo_oauth_redirect_uri', $this->redirectUri($request));
         $state = $request->string('state')->value();
 
         if ($expectedState === '' || ! hash_equals($expectedState, $state)) {
@@ -88,6 +88,11 @@ class YahooOAuthProbeController extends Controller
         if ($accessToken === '') {
             throw new RuntimeException('Yahoo token response did not include an access token.');
         }
+
+        $request->session()->forget([
+            'yahoo_oauth_state',
+            'yahoo_oauth_redirect_uri',
+        ]);
 
         $connection = YahooFantasyConnection::updateOrCreate(
             ['user_id' => $request->user()->id],
