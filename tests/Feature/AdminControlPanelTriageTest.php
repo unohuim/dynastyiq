@@ -4835,7 +4835,7 @@ XML),
         && $request->hasHeader('Authorization', 'Bearer access-token-value'));
 });
 
-it('marks Yahoo OAuth callbacks offline when Fantasy API access is forbidden', function () {
+it('keeps Yahoo OAuth callbacks connected when the Fantasy API probe is forbidden', function () {
     config([
         'services.yahoo.client_id' => 'yahoo-client-id',
         'services.yahoo.client_secret' => 'yahoo-client-secret',
@@ -4868,14 +4868,22 @@ XML, 403),
 
     $response->assertForbidden()
         ->assertJsonPath('ok', false)
-        ->assertJsonPath('message', 'Yahoo Fantasy Sports authorization failed. Reconnect Yahoo and approve Fantasy Sports access.')
-        ->assertJsonPath('connection.status', 'offline')
-        ->assertJsonMissing(['description' => 'Forbidden']);
+        ->assertJsonPath(
+            'message',
+            'Yahoo connected, but Fantasy API probe failed on game/nhl. Yahoo response: Forbidden',
+        )
+        ->assertJsonPath('connection.status', 'connected')
+        ->assertJsonMissing(['access_token' => 'access-token-value'])
+        ->assertJsonMissing(['refresh_token' => 'refresh-token-value']);
 
     $connection = YahooFantasyConnection::query()->firstOrFail();
 
-    expect($connection->status)->toBe('offline')
-        ->and($connection->last_error)->toBe('Yahoo Fantasy Sports authorization failed. Reconnect Yahoo and approve Fantasy Sports access.');
+    expect($connection->status)->toBe('connected')
+        ->and($connection->last_error)->toBe('Yahoo connected, but Fantasy API probe failed on game/nhl. Yahoo response: Forbidden')
+        ->and($connection->meta['oauth_probe']['status'] ?? null)->toBe('failed')
+        ->and($connection->meta['oauth_probe']['path'] ?? null)->toBe('game/nhl')
+        ->and($connection->meta['oauth_probe']['http_status'] ?? null)->toBe(403)
+        ->and($connection->meta['oauth_probe']['description'] ?? null)->toBe('Forbidden');
 });
 
 it('blocks guests from importing Yahoo players', function () {

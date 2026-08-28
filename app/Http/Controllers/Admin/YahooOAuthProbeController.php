@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Models\YahooFantasyConnection;
 use App\Services\YahooFantasyClient;
 use App\Services\YahooFantasyLeagueService;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -113,32 +114,44 @@ class YahooOAuthProbeController extends Controller
             'expires_at' => now()->addSeconds((int) ($token['expires_in'] ?? 3600))->toIso8601String(),
         ]);
 
+        $gamePath = 'game/'.config('yahoo.fantasy.game_code', 'nhl');
+        $playersPath = $gamePath.'/players;start=0;count=5';
+        $probePath = $gamePath;
+
         try {
-            $gameXml = $client->fantasyXmlForConnection($connection, 'game/'.config('yahoo.fantasy.game_code', 'nhl'));
-            $playersXml = $client->fantasyXmlForConnection(
-                $connection,
-                'game/'.config('yahoo.fantasy.game_code', 'nhl').'/players;start=0;count=5',
-            );
+            $gameXml = $client->fantasyXml($accessToken, $probePath);
+            $probePath = $playersPath;
+            $playersXml = $client->fantasyXml($accessToken, $probePath);
         } catch (Throwable $throwable) {
+            $message = $this->fantasyProbeFailureMessage($probePath, $throwable);
+
             $connection->forceFill([
-                'status' => 'offline',
-                'last_error' => $throwable->getMessage(),
+                'last_error' => $message,
+                'meta' => array_merge($connection->meta ?? [], [
+                    'oauth_probe' => array_filter([
+                        'status' => 'failed',
+                        'path' => $probePath,
+                        'http_status' => $this->yahooResponseStatus($throwable),
+                        'description' => $this->yahooResponseDescription($throwable),
+                        'failed_at' => now()->toIso8601String(),
+                    ]),
+                ]),
             ])->save();
 
             if ($request->routeIs('integrations.yahoo.callback')) {
                 return redirect($this->connectedReturnUrl($request))
-                    ->with('error', $throwable->getMessage());
+                    ->with('error', $message);
             }
 
             return response()->json([
                 'ok' => false,
-                'message' => $throwable->getMessage(),
+                'message' => $message,
                 'connection' => [
                     'id' => $connection->id,
-                    'status' => 'offline',
+                    'status' => $connection->status,
                     'token_expires_at' => $connection->token_expires_at?->toIso8601String(),
                 ],
-            ], Response::HTTP_FORBIDDEN);
+            ], $this->yahooResponseStatus($throwable) ?? Response::HTTP_BAD_GATEWAY);
         }
 
         $game = $this->gamePayload($gameXml);
@@ -263,6 +276,61 @@ class YahooOAuthProbeController extends Controller
         return $error !== ''
             ? 'Yahoo authorization failed: '.$error
             : 'Yahoo authorization failed.';
+    }
+
+    /**
+     * Return a clear probe failure message without exposing token data.
+     */
+    private function fantasyProbeFailureMessage(string $path, Throwable $throwable): string
+    {
+        $message = 'Yahoo connected, but Fantasy API probe failed on '.$path.'.';
+        $description = $this->yahooResponseDescription($throwable);
+
+        return $description === null
+            ? $message
+            : $message.' Yahoo response: '.$description;
+    }
+
+    /**
+     * Return the HTTP status from a Yahoo response exception when available.
+     */
+    private function yahooResponseStatus(Throwable $throwable): ?int
+    {
+        return $throwable instanceof RequestException
+            ? $throwable->response->status()
+            : null;
+    }
+
+    /**
+     * Extract a sanitized Yahoo response description when available.
+     */
+    private function yahooResponseDescription(Throwable $throwable): ?string
+    {
+        if (! $throwable instanceof RequestException) {
+            return null;
+        }
+
+        $body = trim($throwable->response->body());
+        if ($body === '') {
+            return null;
+        }
+
+        $useInternalErrors = libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($body);
+        libxml_clear_errors();
+        libxml_use_internal_errors($useInternalErrors);
+
+        $description = $xml instanceof SimpleXMLElement
+            ? trim((string) ($xml->description ?? ''))
+            : '';
+
+        if ($description === '') {
+            $description = trim((string) preg_replace('/\s+/', ' ', strip_tags($body)));
+        }
+
+        return $description === ''
+            ? null
+            : Str::limit($description, 240, '');
     }
 
     /**
