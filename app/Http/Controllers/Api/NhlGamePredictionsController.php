@@ -25,6 +25,14 @@ class NhlGamePredictionsController extends Controller
             'goalie_projection_version' => ['nullable', 'string', 'max:80'],
             'away_goalie_id' => ['nullable', 'integer'],
             'home_goalie_id' => ['nullable', 'integer'],
+            'markets' => ['nullable', 'array'],
+            'markets.*' => ['string', 'in:moneyline,puckline,total'],
+            'puckline' => ['nullable', 'numeric', 'not_in:0'],
+            'puckline_spreads' => ['nullable', 'array'],
+            'puckline_spreads.*' => ['numeric', 'not_in:0'],
+            'total' => ['nullable', 'numeric', 'gt:0'],
+            'total_lines' => ['nullable', 'array'],
+            'total_lines.*' => ['numeric', 'gt:0'],
         ]);
 
         return response()->json($payload->build(

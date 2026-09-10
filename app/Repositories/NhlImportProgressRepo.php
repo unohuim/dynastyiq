@@ -12,6 +12,12 @@ class NhlImportProgressRepo
     /** Insert-if-missing tracker rows in chunks (idempotent). */
     public function insertScheduledRows(array $rows, int $chunk = 1000): void
     {
+        $rows = $this->rowsWithExistingRuns($rows);
+
+        if ($rows === []) {
+            return;
+        }
+
         $inserted = 0;
 
         foreach (array_chunk($rows, $chunk) as $part) {
@@ -464,6 +470,42 @@ class NhlImportProgressRepo
         if ($updated > 0) {
             broadcast(new NhlGameImportStatusUpdated('stale-stage-error', stage: $type));
         }
+    }
+
+    /**
+     * Drop rows attached to a deleted run before PostgreSQL can reject the batch.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function rowsWithExistingRuns(array $rows): array
+    {
+        $runIds = collect($rows)
+            ->pluck('run_id')
+            ->filter(fn ($runId): bool => $runId !== null && $runId !== '')
+            ->map(fn ($runId): int => (int) $runId)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($runIds === []) {
+            return $rows;
+        }
+
+        $existingRunIds = DB::table('nhl_game_import_runs')
+            ->whereIn('id', $runIds)
+            ->pluck('id')
+            ->map(fn ($runId): int => (int) $runId)
+            ->all();
+
+        $existingRunIds = array_flip($existingRunIds);
+
+        return array_values(array_filter(
+            $rows,
+            fn (array $row): bool => ! array_key_exists('run_id', $row)
+                || $row['run_id'] === null
+                || isset($existingRunIds[(int) $row['run_id']])
+        ));
     }
 
     /**

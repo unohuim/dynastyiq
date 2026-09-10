@@ -39,6 +39,7 @@ rules:
   - Results must expose high-level per-game rates and rolled bucket-level data explaining offensive generation, defensive chances allowed, and goalie response.
   - Partner-facing game prediction payloads must resolve nhl_game_id through nhl_games, derive missing starters from goalie performance projections or workload projections, and fail when a usable projected starter cannot be resolved for both teams.
   - Partner-facing game prediction payloads must expose model-owned full-game moneyline probabilities under market_probabilities[] using moneyline, full_game, and away/home selection keys.
+  - Partner-facing game prediction payloads may accept requested market keys, puckline spreads, and total lines, and must expose line-dependent puckline and total probabilities from the DynastyIQ projected score distribution instead of requiring consumers to invent distribution assumptions.
   - Partner-facing goalie edge must be expressed in goals saved per game edge, include selected starter objects for both teams, and include the edge scale metadata.
   - Per-game rates must use projected games from projection rows and fall back to the current 84-game NHL regular-season length only when projected games are unavailable.
   - Roster comparison rows must sort by projected xGF and show compact per-game player impact context without projected TOI.

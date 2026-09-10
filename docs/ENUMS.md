@@ -30,6 +30,33 @@ Do not introduce new enum values without updating this document.
 
 ## API Clients
 
+### NHL Game Prediction Market Probability Values
+
+**Name:** NHL game prediction market probability values
+**Storage location(s):** `/api/nhl-game-predictions` response `market_probabilities[]`; request `markets[]`
+**Allowed market_key values currently emitted:**
+
+- `moneyline`
+- `puckline`
+- `total`
+
+**Allowed period_key values currently emitted:**
+
+- `full_game`
+
+**Allowed selection_key values currently emitted:**
+
+- `away`
+- `home`
+- `over`
+- `under`
+
+**Semantic meaning:**
+
+- `moneyline`: Full-game away/home win probability from DynastyIQ projected score distribution.
+- `puckline`: Full-game away/home spread cover probability tied to a specific goal line.
+- `total`: Full-game over/under probability tied to a specific total goal line.
+
 ### API Client Scopes
 
 **Name:** API client scopes

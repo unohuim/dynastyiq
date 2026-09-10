@@ -343,11 +343,30 @@ nhl-stats:read
 | `goalie_projection_version` | No | Override goalie performance projection version. |
 | `away_goalie_id` | No | Override away starting goalie NHL player id. |
 | `home_goalie_id` | No | Override home starting goalie NHL player id. |
+| `markets[]` | No | Optional market filter. Supported values are `moneyline`, `puckline`, and `total`. |
+| `puckline` | No | Single puckline spread to price. Must be nonzero. DynastyIQ normalizes sign from the projected favorite. |
+| `puckline_spreads[]` | No | Multiple puckline spreads to price. Each value must be nonzero. |
+| `total` | No | Single full-game total line to price. Must be greater than `0`. |
+| `total_lines[]` | No | Multiple full-game total lines to price. Each value must be greater than `0`. |
 
 If goalie ids are omitted, DynastyIQ derives starters from projected goalie
 starts. If either starter cannot be resolved to a usable goalie performance
 projection, the endpoint returns a validation error and does not emit a
 prediction.
+
+If no market parameters are provided, DynastyIQ emits full-game moneyline rows
+only. If `puckline`, `puckline_spreads[]`, `total`, or `total_lines[]` are
+provided without `markets[]`, moneyline remains included and the requested
+line-based markets are added. If `markets[]` is provided, only those requested
+markets are emitted.
+
+Default line values are used only when the market is requested without an
+explicit line:
+
+| Market | Default |
+| --- | --- |
+| `puckline` | `1.5` goals |
+| `total` | `6.0` goals |
 
 ### Headline Payload
 
@@ -381,33 +400,97 @@ single-game observed value.
 ### Market Probabilities
 
 The `market_probabilities[]` block contains model-owned betting market
-probabilities. Each row is one market selection. The first supported market is
-full-game moneyline.
+probabilities. Each row is one market selection for one full-game market.
+Supported market keys are `moneyline`, `puckline`, and `total`.
 
-GNER8 should read moneyline probabilities from:
+GNER8 should read market probabilities from:
 
 ```text
 market_probabilities[]
-  where market_key = moneyline
   and period_key = full_game
-  and selection_key in [away, home]
 ```
 
-Moneyline row shape:
+Selection keys:
+
+| Market | Selection keys |
+| --- | --- |
+| `moneyline` | `away`, `home` |
+| `puckline` | `away`, `home` |
+| `total` | `over`, `under` |
+
+Common row shape:
 
 | Field | Meaning |
 | --- | --- |
-| `market_key` | `moneyline`. |
+| `market_key` | `moneyline`, `puckline`, or `total`. |
 | `period_key` | `full_game`. |
-| `selection_key` | `away` or `home`. |
-| `team_abbrev` | Team represented by the selection. |
-| `probability` | DynastyIQ fair win probability from `0` to `1`. |
+| `selection_key` | Market selection: `away`, `home`, `over`, or `under`. |
+| `team_abbrev` | Team represented by the selection. Present for `moneyline` and `puckline`; omitted for `total`. |
+| `line` | Priced line. Present for `puckline` and `total`; omitted for `moneyline`. |
+| `line_unit` | `goals`. Present for `puckline` and `total`; omitted for `moneyline`. |
+| `probability` | DynastyIQ fair win probability from `0` to `1`. Same as `win_probability`. |
+| `win_probability` | Probability the selection wins. |
+| `push_probability` | Probability the selection pushes. Always `0` for moneyline. Usually `0` for half-goal lines. |
+| `loss_probability` | Probability the selection loses. |
 | `fair_odds_american` | American fair odds derived from probability. |
 | `fair_odds_decimal` | Decimal fair odds derived from probability. |
 | `confidence_score` | Prediction confidence from `1` to `100`. |
-| `model.method` | Probability method, currently `poisson_projected_score_moneyline`. |
+| `model.method` | Probability method. See method values below. |
 | `model.source` | Source input path, currently `prediction.predicted_score`. |
-| `model.includes_overtime` | Whether the probability resolves tied regulation states into a final moneyline winner. |
+| `model.includes_overtime` | Whether the probability includes overtime resolution in the score distribution. |
+| `model.max_score` | Highest score included in the finite Poisson score grid. |
+
+Method values:
+
+| Market | `model.method` |
+| --- | --- |
+| `moneyline` | `poisson_projected_score_moneyline` |
+| `puckline` | `projected_margin_distribution` |
+| `total` | `projected_total_distribution` |
+
+Moneyline rows resolve tied score states into away/home winners according to
+projected goal share. Line markets evaluate the projected score distribution
+against the requested spread or total; whole-number lines can produce nonzero
+`push_probability`.
+
+### Market Request Examples
+
+Default moneyline request:
+
+```http
+GET /api/nhl-game-predictions?nhl_game_id=2026020001
+```
+
+Moneyline plus one puckline:
+
+```http
+GET /api/nhl-game-predictions?nhl_game_id=2026020001&puckline=1.5
+```
+
+Only puckline and total rows, using default lines:
+
+```http
+GET /api/nhl-game-predictions?nhl_game_id=2026020001&markets[]=puckline&markets[]=total
+```
+
+Multiple pucklines and totals:
+
+```text
+GET /api/nhl-game-predictions
+  ?nhl_game_id=2026020001
+  &markets[]=moneyline
+  &markets[]=puckline
+  &markets[]=total
+  &puckline_spreads[]=1.5
+  &puckline_spreads[]=2.5
+  &total_lines[]=5.5
+  &total_lines[]=6.0
+```
+
+Puckline signs are assigned from the projected favorite. The projected favorite
+receives the negative spread and the projected underdog receives the positive
+spread, regardless of whether the request used a positive or negative input
+value.
 
 Example:
 
@@ -420,6 +503,9 @@ Example:
       "selection_key": "away",
       "team_abbrev": "FLA",
       "probability": 0.4218,
+      "win_probability": 0.4218,
+      "push_probability": 0.0,
+      "loss_probability": 0.5782,
       "fair_odds_american": 137,
       "fair_odds_decimal": 2.371,
       "confidence_score": 62,
@@ -428,6 +514,47 @@ Example:
         "source": "prediction.predicted_score",
         "includes_overtime": true,
         "tie_resolution": "projected_goal_share",
+        "max_score": 15
+      }
+    },
+    {
+      "market_key": "puckline",
+      "period_key": "full_game",
+      "selection_key": "away",
+      "line": 1.5,
+      "line_unit": "goals",
+      "probability": 0.6421,
+      "win_probability": 0.6421,
+      "push_probability": 0.0,
+      "loss_probability": 0.3579,
+      "fair_odds_american": -179,
+      "fair_odds_decimal": 1.557,
+      "confidence_score": 62,
+      "model": {
+        "method": "projected_margin_distribution",
+        "source": "prediction.predicted_score",
+        "includes_overtime": true,
+        "max_score": 15
+      },
+      "team_abbrev": "FLA"
+    },
+    {
+      "market_key": "total",
+      "period_key": "full_game",
+      "selection_key": "over",
+      "line": 6.0,
+      "line_unit": "goals",
+      "probability": 0.3854,
+      "win_probability": 0.3854,
+      "push_probability": 0.1602,
+      "loss_probability": 0.4544,
+      "fair_odds_american": 159,
+      "fair_odds_decimal": 2.595,
+      "confidence_score": 62,
+      "model": {
+        "method": "projected_total_distribution",
+        "source": "prediction.predicted_score",
+        "includes_overtime": true,
         "max_score": 15
       }
     }

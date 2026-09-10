@@ -37,6 +37,10 @@ class NhlDiscoverDayJob implements ShouldQueue
 
     public function handle(NhlDiscoverGames $service): void
     {
+        if ($this->runId !== null && ! NhlGameImportRun::query()->whereKey($this->runId)->exists()) {
+            return;
+        }
+
         try {
             \Log::warning('Start discovering the day:', ['date'=>$this->date]);
             $service->discoverDay($this->date, $this->runId);

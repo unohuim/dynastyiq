@@ -6,6 +6,7 @@ use App\Events\NhlGameImportStatusUpdated;
 use App\Jobs\ImportPbpNhlJob;
 use App\Jobs\ImportShiftsNhlJob;
 use App\Jobs\MakeShiftUnitsNhlJob;
+use App\Jobs\NhlDiscoverDayJob;
 use App\Jobs\NhlDiscoveryJob;
 use App\Jobs\SumNhlGameUnitsJob;
 use App\Jobs\SummarizePbpNhlJob;
@@ -879,6 +880,80 @@ it('seeds discovered completed games with every canonical import stage', functio
             'status' => 'scheduled',
         ]);
     }
+});
+
+it('skips stale discovery day jobs whose parent run was removed', function (): void {
+    $service = new class(app(NhlImportProgressRepo::class)) extends NhlDiscoverGames {
+        public bool $called = false;
+
+        public function discoverDay(string $yyyy_mm_dd, ?int $runId = null): void
+        {
+            $this->called = true;
+
+            throw new RuntimeException('Stale discovery job should not discover games.');
+        }
+    };
+
+    (new NhlDiscoverDayJob('2026-10-01', 36))->handle($service);
+
+    expect($service->called)->toBeFalse()
+        ->and(DB::table('nhl_import_progress')->count())->toBe(0);
+});
+
+it('filters deleted run ids before inserting scheduled progress rows', function (): void {
+    Event::fake([NhlGameImportStatusUpdated::class]);
+    $run = NhlGameImportRun::create([
+        'action' => NhlGameImportRun::ACTION_DISCOVER,
+        'mode' => NhlGameImportRun::MODE_SEASON,
+        'status' => NhlGameImportRun::STATUS_RUNNING,
+        'start_date' => '2026-10-01',
+        'end_date' => '2026-10-01',
+        'date_count' => 1,
+        'queued_jobs' => 1,
+        'payload' => [],
+    ]);
+    $now = now();
+
+    app(NhlImportProgressRepo::class)->insertScheduledRows([
+        [
+            'run_id' => 36,
+            'season_id' => '20262027',
+            'game_date' => '2026-10-01',
+            'game_id' => '2026020001',
+            'game_type' => 2,
+            'import_type' => NhlImportStages::PBP,
+            'items_count' => 0,
+            'status' => 'scheduled',
+            'discovered_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+        [
+            'run_id' => $run->id,
+            'season_id' => '20262027',
+            'game_date' => '2026-10-01',
+            'game_id' => '2026020002',
+            'game_type' => 2,
+            'import_type' => NhlImportStages::PBP,
+            'items_count' => 0,
+            'status' => 'scheduled',
+            'discovered_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ],
+    ]);
+
+    expect(DB::table('nhl_import_progress')->count())->toBe(1);
+    $this->assertDatabaseHas('nhl_import_progress', [
+        'run_id' => $run->id,
+        'game_id' => '2026020002',
+        'import_type' => NhlImportStages::PBP,
+        'status' => 'scheduled',
+    ]);
+    $this->assertDatabaseMissing('nhl_import_progress', [
+        'run_id' => 36,
+        'game_id' => '2026020001',
+    ]);
 });
 
 it('does not seed unfinished discovered games', function (): void {
