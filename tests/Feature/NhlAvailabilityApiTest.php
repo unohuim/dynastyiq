@@ -265,6 +265,65 @@ it('deduplicates reversed provider matchups and uses the nhl schedule for goalie
         ->assertSeeInOrder(['Away · MTL', 'Jacob Fowler', 'Home · TOR', 'Sergei Bobrovsky']);
 });
 
+it('keeps split squad matchups as separate nhl games', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010001,
+        'season_id' => '20262027',
+        'game_type' => 1,
+        'game_date' => '2026-09-19',
+        'game_dow' => 'Saturday',
+        'game_month' => 'September',
+        'start_time_utc' => '2026-09-19 18:00:00',
+        'away_team_abbrev' => 'MTL',
+        'home_team_abbrev' => 'TOR',
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010002,
+        'season_id' => '20262027',
+        'game_type' => 1,
+        'game_date' => '2026-09-19',
+        'game_dow' => 'Saturday',
+        'game_month' => 'September',
+        'start_time_utc' => '2026-09-19 23:00:00',
+        'away_team_abbrev' => 'TOR',
+        'home_team_abbrev' => 'MTL',
+    ]);
+    Http::fake([
+        'www.rotowire.com/hockey/tables/projected-goalies.php*' => Http::response([
+            [
+                'hometeam' => 'TOR', 'homePlayer' => 'Toronto Goalie One', 'homeStatus' => 'Expected',
+                'visitteam' => 'MTL', 'visitPlayer' => 'Montreal Goalie One', 'visitStatus' => 'Expected',
+            ],
+            [
+                'hometeam' => 'MTL', 'homePlayer' => 'Montreal Goalie Two', 'homeStatus' => 'Expected',
+                'visitteam' => 'TOR', 'visitPlayer' => 'Toronto Goalie Two', 'visitStatus' => 'Expected',
+            ],
+        ]),
+    ]);
+
+    $result = app(NhlStartingGoalieImporter::class)->import(Carbon::parse('2026-09-19'));
+
+    expect($result)->toMatchArray(['observed' => 4, 'unresolved' => 4]);
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
+        'nhl_game_id' => 2026010001,
+        'team_abbrev' => 'TOR',
+        'player_name' => 'Toronto Goalie One',
+        'is_home' => true,
+    ]);
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
+        'nhl_game_id' => 2026010002,
+        'team_abbrev' => 'TOR',
+        'player_name' => 'Toronto Goalie Two',
+        'is_home' => false,
+    ]);
+    $this->getJson('/starting-goalies/payload?date=2026-09-19')
+        ->assertOk()
+        ->assertJsonCount(4, 'starting_goalies')
+        ->assertJsonCount(2, 'games')
+        ->assertJsonPath('games.0.nhl_game_id', 2026010001)
+        ->assertJsonPath('games.1.nhl_game_id', 2026010002);
+});
+
 it('resolves an nhl owned preseason goalie with a current ahl league assignment', function (): void {
     NhlGame::query()->create([
         'nhl_game_id' => 2026010005,

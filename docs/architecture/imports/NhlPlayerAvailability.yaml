@@ -25,6 +25,7 @@ rules:
   - Questionable, unknown, and suspected players remain eligible for projected rosters.
   - Starting-goalie observations are append only and latest evidence drives reads.
   - Starting-goalie provider rows must resolve against the complete scheduled team matchup, not either team in isolation.
+  - Provider home and away orientation must resolve an exact NHL game before any inverse fallback; inverse fallback is allowed only when the date and team pair identify exactly one NHL game so split-squad games retain distinct NHL game ids.
   - When provider matchup orientation conflicts with a resolved NHL game, the NHL schedule is authoritative for home and away assignment.
   - Duplicate or inverse representations of the same provider matchup must produce at most one observation per game and team within an import run.
   - Starting-goalie reads preserve the existing flat observation collection and may additionally group those observations by NHL game for matchup-oriented consumers.

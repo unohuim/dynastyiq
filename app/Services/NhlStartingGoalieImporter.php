@@ -30,6 +30,10 @@ class NhlStartingGoalieImporter
         $seen = [];
 
         foreach ($rows as $matchup) {
+            $providerHomeTeam = $this->team(data_get($matchup, 'hometeam'));
+            $providerAwayTeam = $this->team(data_get($matchup, 'visitteam'));
+            $game = $this->resolveGame($date, $providerHomeTeam, $providerAwayTeam);
+
             foreach ([['home', true, 'visit'], ['visit', false, 'home']] as [$side, $isHome, $opponentSide]) {
                 $team = $this->team(data_get($matchup, $side . 'team'));
                 $opponent = $this->team(data_get($matchup, $opponentSide . 'team'));
@@ -37,23 +41,13 @@ class NhlStartingGoalieImporter
                 if ($team === null || $name === '') {
                     continue;
                 }
-                $game = DB::table('nhl_games')
-                    ->whereDate('game_date', $date->toDateString())
-                    ->where(function ($query) use ($team, $opponent): void {
-                        $query->where(function ($matchupQuery) use ($team, $opponent): void {
-                            $matchupQuery->where('home_team_abbrev', $team)
-                                ->where('away_team_abbrev', $opponent);
-                        })->orWhere(function ($matchupQuery) use ($team, $opponent): void {
-                            $matchupQuery->where('away_team_abbrev', $team)
-                                ->where('home_team_abbrev', $opponent);
-                        });
-                    })
-                    ->first(['nhl_game_id', 'home_team_abbrev']);
                 $gameId = $game?->nhl_game_id;
                 $isHome = $game ? $game->home_team_abbrev === $team : $isHome;
+                $teams = array_filter([$team, $opponent]);
+                sort($teams);
                 $matchupKey = $gameId
                     ? 'game:' . $gameId
-                    : 'matchup:' . $date->toDateString() . ':' . implode(':', array_filter([$team, $opponent]));
+                    : 'matchup:' . $date->toDateString() . ':' . implode(':', $teams);
                 $observationKey = $matchupKey . ':team:' . $team;
 
                 if (isset($seen[$observationKey])) {
@@ -77,6 +71,36 @@ class NhlStartingGoalieImporter
             }
         }
         return ['observed' => $observed, 'unresolved' => $unresolved];
+    }
+
+    private function resolveGame(Carbon $date, ?string $homeTeam, ?string $awayTeam): ?object
+    {
+        if ($homeTeam === null || $awayTeam === null) {
+            return null;
+        }
+
+        $games = DB::table('nhl_games')
+            ->whereDate('game_date', $date->toDateString())
+            ->where(function ($query) use ($homeTeam, $awayTeam): void {
+                $query->where(function ($matchupQuery) use ($homeTeam, $awayTeam): void {
+                    $matchupQuery->where('home_team_abbrev', $homeTeam)
+                        ->where('away_team_abbrev', $awayTeam);
+                })->orWhere(function ($matchupQuery) use ($homeTeam, $awayTeam): void {
+                    $matchupQuery->where('home_team_abbrev', $awayTeam)
+                        ->where('away_team_abbrev', $homeTeam);
+                });
+            })
+            ->orderBy('nhl_game_id')
+            ->get(['nhl_game_id', 'home_team_abbrev', 'away_team_abbrev']);
+
+        $exact = $games->filter(fn (object $game): bool => $game->home_team_abbrev === $homeTeam
+            && $game->away_team_abbrev === $awayTeam);
+
+        if ($exact->count() === 1) {
+            return $exact->first();
+        }
+
+        return $games->count() === 1 ? $games->first() : null;
     }
 
     private function team(mixed $value): ?string
