@@ -14,6 +14,7 @@ class NhlLineupObservationPlayer extends Model
 
     /** @var array<string,string> */
     protected $casts = [
+        'team_id' => 'integer',
         'player_id' => 'integer',
         'nhl_player_id' => 'integer',
         'slot_index' => 'integer',

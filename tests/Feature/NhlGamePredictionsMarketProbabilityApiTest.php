@@ -381,6 +381,8 @@ it('uses a fully resolved corroborated anticipated lineup for prediction simulat
         $lineSize = $isForward ? 3 : 2;
         $players[] = [
             'nhl_lineup_observation_id' => $observationId,
+            'team_id' => 1,
+            'team_abbrev' => 'AWY',
             'nhl_player_id' => 8480000 + $index,
             'player_name' => "Resolved Skater {$index}",
             'lineup_role' => $isForward ? 'forward' : 'defense',

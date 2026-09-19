@@ -21,6 +21,7 @@ rules:
   - Only text-attributed lineup evidence is eligible; image-only posts are skipped.
   - Observations retain source, post URL, post text, publication and observation times, engagement, game, team, normalized slots, and unresolved names.
   - Canonical team identity uses nhl_teams.nhl_id and also retains team abbreviation.
+  - Each normalized observation-player row repeats canonical team id and abbreviation so direct table inspection remains understandable without a parent join.
   - Split-squad evidence is keyed by NHL game id and must not collapse by team and date.
   - Twelve ordered forwards map sequentially into four groups of three and six ordered defensemen map into three pairs.
   - A complete lineup contains twelve forwards, six defensemen, and two goalies; scratches are optional.

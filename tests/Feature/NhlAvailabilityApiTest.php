@@ -720,6 +720,7 @@ it('retains unresolved lineup names instead of dropping player slots', function 
 
     $this->assertDatabaseCount('nhl_lineup_observation_players', 20)
         ->assertDatabaseHas('nhl_lineup_observation_players', [
+            'team_id' => 10, 'team_abbrev' => 'TOR',
             'player_name' => 'Forward 1', 'line_key' => 'F1', 'slot_index' => 1,
             'resolution_status' => 'unresolved',
         ]);

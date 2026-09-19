@@ -41,7 +41,7 @@ class NhlAnticipatedLineupImporter
             DB::transaction(function () use ($candidate, $game, $teamAbbrev, $teamId, &$observed): void {
                 $source = $this->source($candidate, $teamId, $teamAbbrev);
                 $this->recordEngagement($source, $candidate);
-                $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamAbbrev);
+                $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
                 if ($normalized === []) {
                     return;
                 }
@@ -154,7 +154,7 @@ class NhlAnticipatedLineupImporter
     }
 
     /** @param array<int,mixed> $players @return array<int,array<string,mixed>> */
-    private function normalizePlayers(array $players, string $teamAbbrev): array
+    private function normalizePlayers(array $players, int $teamId, string $teamAbbrev): array
     {
         $allowed = ['F1', 'F2', 'F3', 'F4', 'D1', 'D2', 'D3', 'G', 'SCR'];
 
@@ -164,10 +164,12 @@ class NhlAnticipatedLineupImporter
                 && in_array($row['line_key'] ?? null, $allowed, true)
                 && (int) ($row['slot_index'] ?? 0) > 0;
         })->unique(fn (array $row): string => $row['line_key'] . ':' . $row['slot_index'])
-            ->map(function (array $row) use ($teamAbbrev): array {
+            ->map(function (array $row) use ($teamId, $teamAbbrev): array {
                 $player = $this->players->resolve((string) $row['name'], $teamAbbrev);
 
                 return [
+                    'team_id' => $teamId,
+                    'team_abbrev' => $teamAbbrev,
                     'player_id' => $player?->id,
                     'nhl_player_id' => $player?->nhl_id,
                     'player_name' => (string) $row['name'],

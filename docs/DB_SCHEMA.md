@@ -4852,7 +4852,7 @@ Cross-sport public publisher identities, sport/league/team coverage, append-only
 
 ## nhl_lineup_observations, nhl_lineup_observation_players
 
-Immutable text-based anticipated-lineup evidence keyed by NHL game, canonical NHL team id, and post URL. Player rows retain normalized line slots and unresolved names alongside canonical player identifiers when resolution succeeds.
+Immutable text-based anticipated-lineup evidence keyed by NHL game, canonical NHL team id, and post URL. Player rows repeat `team_id` and `team_abbrev` for direct inspection and retain normalized line slots and unresolved names alongside canonical player identifiers when resolution succeeds.
 
 ## nhl_current_lineups
 
