@@ -264,6 +264,47 @@ it('deduplicates reversed provider matchups and uses the nhl schedule for goalie
         ->assertSeeInOrder(['Away · MTL', 'Jacob Fowler', 'Home · TOR', 'Sergei Bobrovsky']);
 });
 
+it('resolves an nhl owned preseason goalie with a current ahl league assignment', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010005,
+        'season_id' => '20262027',
+        'game_type' => 1,
+        'game_date' => '2026-09-19',
+        'game_dow' => 'Saturday',
+        'game_month' => 'September',
+        'away_team_abbrev' => 'EDM',
+        'home_team_abbrev' => 'WPG',
+    ]);
+    Player::query()->create([
+        'nhl_id' => 8483114,
+        'full_name' => 'Thomas Milic',
+        'first_name' => 'Thomas',
+        'last_name' => 'Milic',
+        'position' => 'G',
+        'is_goalie' => true,
+        'team_abbrev' => 'WPG',
+        'current_league_abbrev' => 'AHL',
+    ]);
+    Http::fake([
+        'www.rotowire.com/hockey/tables/projected-goalies.php*' => Http::response([
+            [
+                'hometeam' => 'WPG', 'homePlayer' => 'Thomas Milic', 'homeStatus' => 'Expected',
+                'visitteam' => 'EDM', 'visitPlayer' => '', 'visitStatus' => 'Unknown',
+            ],
+        ]),
+    ]);
+
+    $result = app(NhlStartingGoalieImporter::class)->import(Carbon::parse('2026-09-19'));
+
+    expect($result)->toMatchArray(['observed' => 1, 'unresolved' => 0]);
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
+        'nhl_game_id' => 2026010005,
+        'team_abbrev' => 'WPG',
+        'player_name' => 'Thomas Milic',
+        'nhl_player_id' => 8483114,
+    ]);
+});
+
 it('uses prior regular season goalie stats for preseason cards', function (): void {
     Player::query()->create([
         'nhl_id' => 8479001, 'full_name' => 'Preseason Goalie', 'first_name' => 'Preseason',

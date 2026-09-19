@@ -487,6 +487,7 @@ game's current season regular-season results.
 - Use `games[]` when processing a scheduled matchup or preparing a prediction.
 - Use `starting_goalies[]` when performing team-oriented or row-oriented upserts.
 - Resolve goalies by `nhl_player_id`; do not use `player_name` as a durable identity key.
+- A resolved goalie may currently be assigned outside the NHL, particularly during preseason; the canonical `nhl_player_id` remains authoritative.
 - Treat `expected` as projected evidence and `confirmed` as stronger third-party evidence.
 - Treat a null goalie or null `nhl_player_id` as unresolved rather than guessing an identity.
 - Store and compare `observed_at` so older observations do not overwrite newer state.

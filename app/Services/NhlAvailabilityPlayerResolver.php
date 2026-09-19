@@ -12,7 +12,13 @@ class NhlAvailabilityPlayerResolver
     public function resolve(string $name, ?string $teamAbbrev = null, ?bool $goalie = null): ?Player
     {
         $normalized = Str::slug($name);
-        $query = Player::query()->where('current_league_abbrev', 'NHL');
+        $query = Player::query();
+
+        if ($goalie !== true) {
+            $query->where('current_league_abbrev', 'NHL');
+        } else {
+            $query->whereNotNull('nhl_id');
+        }
 
         if ($teamAbbrev !== null && $teamAbbrev !== '') {
             $query->where('team_abbrev', mb_strtoupper($teamAbbrev));
