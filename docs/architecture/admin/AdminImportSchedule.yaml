@@ -1,0 +1,28 @@
+name: Admin Import Schedule
+type: Persisted Scheduler Dispatch Pattern
+location:
+  - app/Models/AdminImportSchedule.php
+  - app/Services/AdminImportSchedules.php
+  - app/Console/Commands/DispatchScheduledAdminImportsCommand.php
+  - database/migrations/2026_09_19_000001_create_admin_import_schedules_table.php
+  - routes/console.php
+purpose: Persist opt-in admin import cadences and let the main Laravel scheduler queue due imports through the existing admin import workflow.
+when_to_use:
+  - Scheduling an AdminImportRegistry source with an operator-controlled cadence.
+when_not_to_use:
+  - Running provider work directly inside the scheduler process.
+  - Scheduling sources not explicitly registered as scheduleable.
+rules:
+  - Schedules are disabled by default.
+  - Interval values are stored as base seconds and constrained from 60 through 86400 seconds.
+  - Due schedules must dispatch through AdminImports and create normal ImportRun records.
+  - A due source must not dispatch while that source has a working ImportRun.
+  - Starting-goalie today and future lanes track independent cadence and due state.
+  - The future goalie lane scans tomorrow through at most seven days ahead and stops at the first blank provider date.
+  - Injury scheduling represents current game-independent state.
+public_interface:
+  - PUT /admin/imports/{key}/schedule
+  - admin:dispatch-scheduled-imports
+  - admin_import_schedules
+example_usage: |
+  php artisan admin:dispatch-scheduled-imports

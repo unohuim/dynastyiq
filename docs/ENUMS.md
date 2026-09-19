@@ -845,6 +845,8 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl-empty-games`
 - `yahoo`
 - `contracts`
+- `nhl-starting-goalies`
+- `nhl-injuries`
 
 **Semantic meaning:**
 
@@ -856,6 +858,18 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl-empty-games`: NHL game-derived import reset queued from the admin game import UI.
 - `yahoo`: Yahoo fantasy hockey player import.
 - `contracts`: CapWages contract import.
+- `nhl-starting-goalies`: RotoWire starting-goalie observation import.
+- `nhl-injuries`: CBS/RotoWire current injury import.
+
+### Admin Import Schedule Lane
+
+**Storage location(s):** `admin_import_schedules.lane_key`
+
+- `today`
+- `future`
+- `current`
+
+`today` and `future` apply to starting goalies. `current` applies to game-independent injuries.
 
 **Notes:**
 

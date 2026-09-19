@@ -102,6 +102,22 @@ class AdminImports
     {
         $source = $this->sourceForAction($key, $action);
 
+        return $this->dispatchSource($source, 'manual');
+    }
+
+    /** @param array<string,mixed> $options */
+    public function dispatchScheduled(string $key, array $options = []): Batch
+    {
+        $source = $this->source($key);
+        $source['options'] = $options;
+
+        return $this->dispatchSource($source, 'scheduled');
+    }
+
+    /** @param array<string,mixed> $source */
+    private function dispatchSource(array $source, string $mode): Batch
+    {
+
         abort_unless(isset($source['command']), 409, 'This import source is not backed by an Artisan command.');
 
         $startedAt = now();
@@ -117,7 +133,7 @@ class AdminImports
         try {
             $batch = Bus::batch([
                 new RunImportCommandJob($source['command'], $source['options'] ?? [], $source['key'], $importRun->id),
-            ])->name("manual-{$source['key']}-import")
+            ])->name("{$mode}-{$source['key']}-import")
                 ->allowFailures()
                 ->onQueue('default')
                 ->dispatch();

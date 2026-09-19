@@ -38,3 +38,7 @@ Schedule::command('leagues:refresh-connected')
 Schedule::command('fantrax:drafts:poll')
     ->everyTwoMinutes()
     ->timezone('America/Toronto');
+Schedule::command('admin:dispatch-scheduled-imports')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->timezone('America/Toronto');

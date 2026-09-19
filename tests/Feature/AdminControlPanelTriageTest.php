@@ -18,8 +18,10 @@ use App\Jobs\ScanDuplicateNhlPlayByPlayRepairJob;
 use App\Jobs\SeasonSumJob;
 use App\Jobs\SyncYahooTeamRosterJob;
 use App\Models\ApiClient;
+use App\Models\AdminImportSchedule;
 use App\Models\CapWagesPlayer;
 use App\Models\Contract;
+use App\Models\ImportRun;
 use App\Models\NhlGameImportRun;
 use App\Models\NhlGameValidation;
 use App\Models\NhlModelRun;
@@ -37,6 +39,7 @@ use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -7556,6 +7559,74 @@ it('shows current import workflow buttons to super admins', function () {
         ->assertSeeInOrder(['NHL Players', 'Resolve NHL Players', 'Fantrax Players', 'Yahoo Players', 'Contracts'])
         ->assertSee('Run Now')
         ->assertSee('Retry failed');
+});
+
+it('blocks guests from updating admin import schedules', function () {
+    $this->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-injuries']), [
+        'enabled' => true,
+        'intervals' => ['current' => 900],
+    ])->assertUnauthorized();
+});
+
+it('blocks non-admin users from updating admin import schedules', function () {
+    $this->actingAs(User::factory()->create())->putJson(
+        route('admin.imports.schedule.update', ['key' => 'nhl-injuries']),
+        ['enabled' => true, 'intervals' => ['current' => 900]]
+    )->assertForbidden();
+});
+
+it('allows super admins to enable and configure availability import schedules', function () {
+    $this->actingAs(($this->makeSuperAdmin)())->putJson(
+        route('admin.imports.schedule.update', ['key' => 'nhl-starting-goalies']),
+        ['enabled' => true, 'intervals' => ['today' => 900, 'future' => 3600]]
+    )->assertOk()
+        ->assertJsonPath('schedule.enabled', true)
+        ->assertJsonPath('schedule.lanes.today.interval_seconds', 900)
+        ->assertJsonPath('schedule.lanes.future.interval_seconds', 3600);
+
+    expect(AdminImportSchedule::query()->where('source_key', 'nhl-starting-goalies')->count())->toBe(2);
+});
+
+it('does not dispatch disabled admin import schedules', function () {
+    Bus::fake();
+    AdminImportSchedule::query()->create([
+        'source_key' => 'nhl-injuries', 'lane_key' => 'current',
+        'enabled' => false, 'interval_seconds' => 900, 'next_due_at' => now(),
+    ]);
+
+    Artisan::call('admin:dispatch-scheduled-imports');
+
+    Bus::assertNothingBatched();
+});
+
+it('dispatches due admin import schedules through the import registry', function () {
+    Bus::fake();
+    $schedule = AdminImportSchedule::query()->create([
+        'source_key' => 'nhl-injuries', 'lane_key' => 'current',
+        'enabled' => true, 'interval_seconds' => 900, 'next_due_at' => now()->subSecond(),
+    ]);
+
+    Artisan::call('admin:dispatch-scheduled-imports');
+
+    Bus::assertBatched(fn ($batch): bool => $batch->name === 'scheduled-nhl-injuries-import');
+    expect($schedule->refresh()->last_dispatched_at)->not->toBeNull()
+        ->and($schedule->next_due_at)->not->toBeNull();
+});
+
+it('does not overlap a working import for the same scheduled source', function () {
+    Bus::fake();
+    AdminImportSchedule::query()->create([
+        'source_key' => 'nhl-injuries', 'lane_key' => 'current',
+        'enabled' => true, 'interval_seconds' => 900, 'next_due_at' => now()->subSecond(),
+    ]);
+    ImportRun::query()->create([
+        'source' => 'nhl-injuries', 'status' => 'working', 'command' => 'nhl:import-injuries',
+        'options' => [], 'ran_at' => now(), 'started_at' => now(),
+    ]);
+
+    Artisan::call('admin:dispatch-scheduled-imports');
+
+    Bus::assertNothingBatched();
 });
 
 it('shows the admin player imports card list in registry order', function () {

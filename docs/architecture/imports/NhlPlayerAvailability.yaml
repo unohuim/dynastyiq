@@ -36,7 +36,8 @@ rules:
   - Provider player names that cannot be resolved must be retained as unresolved observations.
   - Goalie identity resolution must accept canonical NHL players identified by either players.is_goalie or a G value in players.position or players.pos_type.
   - Starting-goalie identity resolution may resolve a team-matched canonical player with an NHL id regardless of current league assignment because NHL-owned preseason goalies may currently be assigned outside the NHL.
-  - Provider imports are manually initiated through Player Imports until scheduling is separately approved.
+  - Provider imports may be manually initiated through Player Imports or dispatched by an explicitly enabled AdminImportSchedule.
+  - Scheduled starting-goalie imports refresh today independently from the bounded future-date scan; scheduled injuries refresh current game-independent state.
 public_interface:
   - nhl:import-injuries
   - nhl:import-starting-goalies

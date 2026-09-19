@@ -12,6 +12,7 @@ use App\Models\NhlGameValidation;
 use App\Models\Player;
 use App\Models\User;
 use App\Services\AdminImports;
+use App\Services\AdminImportSchedules;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,7 @@ class DashboardController extends Controller
 {
     public function __construct(
         private AdminImports $imports,
+        private AdminImportSchedules $importSchedules,
     ) {
     }
 
@@ -54,6 +56,12 @@ class DashboardController extends Controller
                 'status_url' => route('admin.imports.status', ['key' => $source['key']]),
                 'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
                 'actions' => $source['actions'] ?? [],
+                'schedule' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
+                    ? $this->importSchedules->payload($source['key'])
+                    : null,
+                'schedule_url' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
+                    ? route('admin.imports.schedule.update', ['key' => $source['key']])
+                    : null,
             ];
         });
 

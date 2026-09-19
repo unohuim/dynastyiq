@@ -31,6 +31,7 @@ rules:
   - Empty commands for provider-owned imports must delete only provider-owned imported records and must preserve canonical players.
   - Imports with dynamic discovery may increase total_records during the run as records become known.
   - Import keys must remain aligned with docs/ENUMS.md when enum-like.
+  - Scheduled admin imports must use AdminImportSchedule and dispatch through the same queued AdminImports path as manual runs.
 public_interface:
   - AdminImports::sources()
   - AdminImports::dispatch()

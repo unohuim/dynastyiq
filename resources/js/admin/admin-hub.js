@@ -23,6 +23,21 @@ function writeDismissedSeasonSyncRunIds(ids) {
     }
 }
 
+function hydrateImportSchedules(items) {
+    return (items ?? []).map((item) => {
+        if (!item.schedule?.lanes) return item;
+        Object.values(item.schedule.lanes).forEach((lane) => {
+            const seconds = Number(lane.interval_seconds || 0);
+            lane.hours = Math.floor(seconds / 3600);
+            lane.minutes = Math.floor((seconds % 3600) / 60);
+            lane.seconds = seconds % 60;
+        });
+        item.schedule.saving = false;
+        item.schedule.error = '';
+        return item;
+    });
+}
+
 export default function adminHub(options = {}) {
     const nhlAvailable = Boolean(options.hasPlayers);
     const fantraxAvailable = Boolean(options.hasFantrax);
@@ -36,7 +51,7 @@ export default function adminHub(options = {}) {
 
     return {
         activeTab: initialTab,
-        importItems: options.imports ?? [],
+        importItems: hydrateImportSchedules(options.imports),
         adminUsers: options.users ?? [],
         activityData: options.activity ?? {},
         activeSource: initialSource,
@@ -150,6 +165,12 @@ export default function adminHub(options = {}) {
         gameImportPoller: null,
         fantraxLeagueRefresh: {
             running: false,
+        },
+        scheduleSettings: {
+            open: false,
+            importKey: null,
+            importLabel: '',
+            lanes: {},
         },
 
         roster: {
@@ -2672,6 +2693,98 @@ export default function adminHub(options = {}) {
         toggleStream(key) {
             this.ensureStream(key);
             this.streams[key].open = !this.streams[key].open;
+        },
+
+        importScheduleSeconds(lane) {
+            return Math.max(60, Math.min(86400, Math.floor(
+                Number(lane.hours || 0) * 3600
+                + Number(lane.minutes || 0) * 60
+                + Number(lane.seconds || 0)
+            )));
+        },
+
+        importScheduleLaneLabel(laneKey) {
+            return {
+                current: 'Current injuries',
+                today: "Today's games",
+                future: 'Future dates',
+            }[laneKey] ?? laneKey;
+        },
+
+        openImportScheduleSettings(importItem) {
+            if (!importItem?.schedule?.lanes) return;
+
+            this.scheduleSettings = {
+                open: true,
+                importKey: importItem.key,
+                importLabel: importItem.label,
+                lanes: Object.fromEntries(Object.entries(importItem.schedule.lanes).map(
+                    ([laneKey, lane]) => [laneKey, {
+                        hours: Number(lane.hours || 0),
+                        minutes: Number(lane.minutes || 0),
+                        seconds: Number(lane.seconds || 0),
+                    }]
+                )),
+            };
+        },
+
+        closeImportScheduleSettings() {
+            this.scheduleSettings = {
+                open: false,
+                importKey: null,
+                importLabel: '',
+                lanes: {},
+            };
+        },
+
+        scheduleSettingsImport() {
+            return this.importItems.find((item) => item.key === this.scheduleSettings.importKey) ?? null;
+        },
+
+        async saveImportScheduleSettings() {
+            const importItem = this.scheduleSettingsImport();
+            if (!importItem) return;
+
+            const saved = await this.saveImportSchedule(
+                importItem,
+                importItem.schedule.enabled,
+                this.scheduleSettings.lanes
+            );
+            if (saved) this.closeImportScheduleSettings();
+        },
+
+        async saveImportSchedule(importItem, enabled = importItem.schedule?.enabled, lanes = importItem.schedule?.lanes) {
+            if (!importItem.schedule_url || !importItem.schedule || importItem.schedule.saving) return;
+            const previousEnabled = importItem.schedule.enabled;
+            importItem.schedule.enabled = Boolean(enabled);
+            importItem.schedule.saving = true;
+            importItem.schedule.error = '';
+
+            try {
+                const intervals = Object.fromEntries(Object.entries(lanes).map(
+                    ([key, lane]) => [key, this.importScheduleSeconds(lane)]
+                ));
+                const response = await fetch(importItem.schedule_url, {
+                    method: 'PUT',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                    },
+                    body: JSON.stringify({ enabled: Boolean(enabled), intervals }),
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message || 'Could not save import schedule.');
+                const hydratedSchedule = hydrateImportSchedules([{ schedule: payload.schedule }])[0].schedule;
+                Object.assign(importItem.schedule, hydratedSchedule);
+                return true;
+            } catch (error) {
+                importItem.schedule.enabled = previousEnabled;
+                importItem.schedule.error = error.message || 'Could not save import schedule.';
+                return false;
+            } finally {
+                importItem.schedule.saving = false;
+            }
         },
 
         async startImport(key, action = null) {

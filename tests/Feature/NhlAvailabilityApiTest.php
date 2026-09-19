@@ -12,6 +12,7 @@ use App\Services\NhlStartingGoalieImporter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 
 uses(RefreshDatabase::class);
@@ -303,6 +304,33 @@ it('resolves an nhl owned preseason goalie with a current ahl league assignment'
         'player_name' => 'Thomas Milic',
         'nhl_player_id' => 8483114,
     ]);
+});
+
+it('stops the scheduled future goalie scan at the first blank provider date', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-19 10:00:00'));
+    $responses = [[[
+        'hometeam' => 'WPG', 'homePlayer' => 'Thomas Milic', 'homeStatus' => 'Expected',
+        'visitteam' => 'EDM', 'visitPlayer' => '', 'visitStatus' => 'Unknown',
+    ]], []];
+    Http::fake(fn () => Http::response(array_shift($responses) ?? []));
+
+    Artisan::call('nhl:import-starting-goalies', ['--future-window' => true]);
+
+    Http::assertSentCount(2);
+    $this->travelBack();
+});
+
+it('caps the scheduled future goalie scan at seven dates', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-19 10:00:00'));
+    Http::fake(fn () => Http::response([[
+        'hometeam' => 'WPG', 'homePlayer' => 'Thomas Milic', 'homeStatus' => 'Expected',
+        'visitteam' => 'EDM', 'visitPlayer' => '', 'visitStatus' => 'Unknown',
+    ]]));
+
+    Artisan::call('nhl:import-starting-goalies', ['--future-window' => true]);
+
+    Http::assertSentCount(7);
+    $this->travelBack();
 });
 
 it('uses prior regular season goalie stats for preseason cards', function (): void {

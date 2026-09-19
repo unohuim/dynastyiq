@@ -150,6 +150,20 @@ export default {
                                     </div>
                                 </div>
                                 <div class="flex shrink-0 flex-wrap items-center gap-2">
+                                    <button
+                                        v-if="importItem.schedule"
+                                        type="button"
+                                        class="inline-flex size-8 items-center justify-center rounded-full border bg-white shadow-sm transition-colors hover:bg-gray-50"
+                                        :class="importItem.schedule.enabled ? 'border-green-400 text-green-400' : 'border-gray-300 text-gray-500'"
+                                        :aria-pressed="importItem.schedule.enabled ? 'true' : 'false'"
+                                        :aria-label="`${importItem.schedule.enabled ? 'Disable' : 'Enable'} ${importItem.label} automatic refresh`"
+                                        :title="`${importItem.schedule.enabled ? 'Disable' : 'Enable'} automatic refresh`"
+                                        @click="saveImportSchedule(importItem, !importItem.schedule.enabled)"
+                                    >
+                                        <svg class="size-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.5 7.25A6.5 6.5 0 0 1 14.7 4.8L16.5 6.5m0 0V2.75m0 3.75h-3.75M16.5 12.75A6.5 6.5 0 0 1 5.3 15.2L3.5 13.5m0 0v3.75m0-3.75h3.75" />
+                                        </svg>
+                                    </button>
                                     <template v-if="importItem.key === 'fantrax'">
                                         <button type="button" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60" @click="refreshFantraxLeagues()"
                                             :disabled="fantraxLeagueRefresh.running === true || streams['fantrax']?.running === true"
@@ -191,6 +205,20 @@ export default {
                                             {{ importItem.key === 'fantrax' ? 'Import' : 'Run Now' }}
                                         </button>
                                     </template>
+                                    <button
+                                        v-if="importItem.schedule"
+                                        type="button"
+                                        class="inline-flex size-10 items-center justify-center rounded-md border border-gray-300 bg-white text-gray-500 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                        :aria-label="`Configure ${importItem.label} automatic refresh`"
+                                        :title="`Configure ${importItem.label} automatic refresh`"
+                                        :disabled="importItem.schedule.saving"
+                                        @click="openImportScheduleSettings(importItem)"
+                                    >
+                                        <svg class="size-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 2.75h3l.45 1.7c.35.13.69.27 1.01.44l1.52-.88 2.12 2.12-.88 1.52c.17.32.31.66.44 1.01l1.7.45v3l-1.7.45c-.13.35-.27.69-.44 1.01l.88 1.52-2.12 2.12-1.52-.88c-.32.17-.66.31-1.01.44l-.45 1.7h-3l-.45-1.7a7.5 7.5 0 0 1-1.01-.44l-1.52.88-2.12-2.12.88-1.52a7.5 7.5 0 0 1-.44-1.01l-1.7-.45v-3l1.7-.45c.13-.35.27-.69.44-1.01L3.4 6.13l2.12-2.12 1.52.88c.32-.17.66-.31 1.01-.44l.45-1.7Z" />
+                                            <circle cx="10" cy="10.6" r="2.5" />
+                                        </svg>
+                                    </button>
                                 </div>
                             </div>
 
@@ -1408,7 +1436,61 @@ export default {
 
         </div>
     </div>
-</div>
+    </div>
 
+        <Teleport to="body">
+            <div
+                v-if="scheduleSettings.open"
+                class="fixed inset-0 z-[70] flex items-center justify-center p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="import-schedule-settings-title"
+                @keydown.esc="closeImportScheduleSettings()"
+            >
+                <div class="absolute inset-0 bg-gray-900/50" @click="closeImportScheduleSettings()"></div>
+                <form
+                    class="relative w-full max-w-lg rounded-xl bg-white shadow-xl"
+                    @submit.prevent="saveImportScheduleSettings()"
+                >
+                    <div class="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4">
+                        <div>
+                            <h3 id="import-schedule-settings-title" class="text-base font-semibold text-gray-900">
+                                {{ scheduleSettings.importLabel }} sync settings
+                            </h3>
+                            <p class="mt-1 text-sm text-gray-600">Set how often this import checks its sources.</p>
+                        </div>
+                        <button
+                            type="button"
+                            class="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                            aria-label="Close sync settings"
+                            @click="closeImportScheduleSettings()"
+                        >
+                            <svg class="size-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 0 1 1.414 0L10 8.586l4.293-4.293a1 1 0 1 1 1.414 1.414L11.414 10l4.293 4.293a1 1 0 0 1-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 0 1-1.414-1.414L8.586 10 4.293 5.707a1 1 0 0 1 0-1.414Z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="space-y-5 px-5 py-5">
+                        <div v-for="(lane, laneKey) in scheduleSettings.lanes" :key="laneKey">
+                            <div class="text-sm font-semibold text-gray-800">{{ importScheduleLaneLabel(laneKey) }}</div>
+                            <div class="mt-2 grid grid-cols-3 gap-3">
+                                <label class="text-xs font-medium text-gray-600">Hours<input v-model.number="lane.hours" type="number" min="0" max="24" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                <label class="text-xs font-medium text-gray-600">Minutes<input v-model.number="lane.minutes" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="lane.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                            </div>
+                        </div>
+                        <p v-if="scheduleSettingsImport()?.schedule.error" class="text-sm text-red-600" v-text="scheduleSettingsImport().schedule.error"></p>
+                    </div>
+
+                    <div class="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">
+                        <button type="button" class="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50" @click="closeImportScheduleSettings()">Cancel</button>
+                        <button type="submit" class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60" :disabled="scheduleSettingsImport()?.schedule.saving">
+                            {{ scheduleSettingsImport()?.schedule.saving ? 'Saving...' : 'Save settings' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </Teleport>
     </div>
 </template>

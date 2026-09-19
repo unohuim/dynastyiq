@@ -304,6 +304,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.imports.status');
                 Route::post('/imports/{key}/retry', [\App\Http\Controllers\Admin\ImportsController::class, 'retry'])
                     ->name('admin.imports.retry');
+                Route::put('/imports/{key}/schedule', [\App\Http\Controllers\Admin\ImportsController::class, 'updateSchedule'])
+                    ->name('admin.imports.schedule.update');
 
                 // Yahoo OAuth proof
                 Route::get('/yahoo/oauth/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])

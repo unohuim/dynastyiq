@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ImportRun;
 use App\Services\AdminImports;
+use App\Services\AdminImportSchedules;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\URL;
 
 class ImportsController extends Controller
 {
-    public function __construct(private AdminImports $imports)
+    public function __construct(private AdminImports $imports, private AdminImportSchedules $schedules)
     {
     }
 
@@ -82,6 +83,25 @@ class ImportsController extends Controller
 
         return response()->json([
             'import_run' => $importRun ? $this->importRunPayload($importRun) : null,
+        ]);
+    }
+
+    public function updateSchedule(Request $request, string $key): JsonResponse
+    {
+        $definitions = AdminImportSchedules::DEFINITIONS[$key] ?? null;
+        abort_unless($definitions, 404);
+
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'intervals' => ['nullable', 'array'],
+            'intervals.*' => ['integer', 'min:60', 'max:86400'],
+        ]);
+        $intervals = collect($data['intervals'] ?? [])->only(array_keys($definitions))->map(
+            fn (mixed $seconds): int => (int) $seconds
+        )->all();
+
+        return response()->json([
+            'schedule' => $this->schedules->update($key, (bool) $data['enabled'], $intervals),
         ]);
     }
 

@@ -10,6 +10,7 @@ use App\Console\Commands\AuditNhleLeagueMappingsCommand;
 use App\Console\Commands\BackfillShotGeometryCommand;
 use App\Console\Commands\BackfillLeagueCommissionersCommand;
 use App\Console\Commands\CreateApiClientCommand;
+use App\Console\Commands\DispatchScheduledAdminImportsCommand;
 use App\Console\Commands\EmptyNhlImportProgressCommand;
 use App\Console\Commands\EmptyNhlShotAttemptFactsCommand;
 use App\Console\Commands\NhlApiCommand;
@@ -45,6 +46,7 @@ return Application::configure(basePath: dirname(__DIR__))
         BackfillLeagueCommissionersCommand::class,
         AuditNhleLeagueMappingsCommand::class,
         CreateApiClientCommand::class,
+        DispatchScheduledAdminImportsCommand::class,
         EmptyNhlImportProgressCommand::class,
         EmptyNhlShotAttemptFactsCommand::class,
         FantraxDraftsPollCommand::class,

@@ -4842,4 +4842,8 @@ Current game-independent injury projection keyed by canonical player when resolv
 
 Append-only starting-goalie evidence keyed by game date, team, provider, and observation time. Rows may link an NHL game and canonical/NHL player while retaining unresolved provider names and raw evidence.
 
+## admin_import_schedules
+
+Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores the base-second interval and last/next dispatch timestamps. Starting goalies use `today` and `future` lanes; injuries use `current`.
+
 **End of DB_SCHEMA**

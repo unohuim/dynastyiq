@@ -2077,4 +2077,111 @@ describe('admin-hub import listeners', () => {
             '789 imported, 2 failed, 40 skipped · elapsed 5m 12s'
         );
     });
+
+    it('hydrates base-second import schedules into timer fields', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ imports: [{ key: 'nhl-injuries', schedule: { enabled: true, lanes: { current: { interval_seconds: 3661 } } } }] });
+        const lane = instance.importItems[0].schedule.lanes.current;
+
+        expect(lane).toMatchObject({ hours: 1, minutes: 1, seconds: 1 });
+    });
+
+    it('normalizes import schedule timer fields back to bounded base seconds', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+
+        expect(instance.importScheduleSeconds({ hours: 0, minutes: 15, seconds: 0 })).toBe(900);
+        expect(instance.importScheduleSeconds({ hours: 0, minutes: 0, seconds: 1 })).toBe(60);
+    });
+
+    it('opens import schedule settings with an isolated frequency draft', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({
+            imports: [{
+                key: 'nhl-starting-goalies',
+                label: 'Starting Goalies',
+                schedule: {
+                    enabled: true,
+                    lanes: { today: { interval_seconds: 900 }, future: { interval_seconds: 3600 } },
+                },
+            }],
+        });
+
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        instance.scheduleSettings.lanes.today.minutes = 20;
+
+        expect(instance.scheduleSettings).toMatchObject({
+            open: true,
+            importKey: 'nhl-starting-goalies',
+            importLabel: 'Starting Goalies',
+        });
+        expect(instance.importItems[0].schedule.lanes.today.minutes).toBe(15);
+
+        instance.closeImportScheduleSettings();
+
+        expect(instance.scheduleSettings.open).toBe(false);
+        expect(instance.scheduleSettings.importKey).toBeNull();
+    });
+
+    it('saves modal frequency settings without changing sync enablement', async () => {
+        const adminHub = await loadAdminHub();
+        const schedule = {
+            enabled: true,
+            lanes: { current: { interval_seconds: 1200 } },
+        };
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ schedule }),
+        }));
+        const instance = adminHub({
+            imports: [{
+                key: 'nhl-injuries',
+                label: 'Injuries',
+                schedule_url: '/admin/imports/nhl-injuries/schedule',
+                schedule: { enabled: true, lanes: { current: { interval_seconds: 900 } } },
+            }],
+        });
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        instance.scheduleSettings.lanes.current.minutes = 20;
+
+        await instance.saveImportScheduleSettings();
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/admin/imports/nhl-injuries/schedule',
+            expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({ enabled: true, intervals: { current: 1200 } }),
+            })
+        );
+        expect(instance.importItems[0].schedule.enabled).toBe(true);
+        expect(instance.scheduleSettings.open).toBe(false);
+    });
+
+    it('preserves the reactive schedule object when toggling automatic sync', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+                schedule: {
+                    enabled: true,
+                    lanes: { current: { interval_seconds: 900 } },
+                },
+            }),
+        }));
+        const instance = adminHub({
+            imports: [{
+                key: 'nhl-injuries',
+                label: 'Injuries',
+                schedule_url: '/admin/imports/nhl-injuries/schedule',
+                schedule: { enabled: false, lanes: { current: { interval_seconds: 900 } } },
+            }],
+        });
+        const scheduleReference = instance.importItems[0].schedule;
+
+        await instance.saveImportSchedule(instance.importItems[0], true);
+
+        expect(instance.importItems[0].schedule).toBe(scheduleReference);
+        expect(instance.importItems[0].schedule.enabled).toBe(true);
+        expect(instance.importItems[0].schedule.saving).toBe(false);
+    });
 });

@@ -2844,6 +2844,18 @@ $batch = app(AdminImports::class)->dispatch('fantrax');
 
 ---
 
+### Admin Import Schedule
+
+**Name:** Admin Import Schedule
+**Type:** Persisted Scheduler Dispatch Pattern
+**Location:** `app/Services/AdminImportSchedules.php`, `app/Console/Commands/DispatchScheduledAdminImportsCommand.php`, `routes/console.php`
+
+**Purpose:** Persist opt-in intervals in seconds and queue due admin imports through the existing registry without running provider work in the scheduler.
+
+**Public Interface:** `PUT /admin/imports/{key}/schedule`, `admin:dispatch-scheduled-imports`, `admin_import_schedules`.
+
+---
+
 ### Import Broadcast Stream
 
 **Name:** Import Broadcast Stream
