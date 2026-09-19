@@ -23,7 +23,9 @@
         </script>
 
         <!-- Styles -->
-        @livewireStyles
+        @if ($livewire)
+            @livewireStyles
+        @endif
     </head>
     <body class="font-sans antialiased">
         <x-banner />
@@ -50,6 +52,10 @@
 
         @include('partials.toast-container')
 
-        @stack('modals') @livewireScripts @stack('scripts')
+        @stack('modals')
+        @if ($livewire)
+            @livewireScripts
+        @endif
+        @stack('scripts')
     </body>
 </html>

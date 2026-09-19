@@ -1800,7 +1800,7 @@ describe('admin-hub import listeners', () => {
 
         instance.handlePlayersAvailable('nhl');
 
-        expect(instance.hasPlayers).toBe(true);
+        expect(instance.hasPlayerData).toBe(true);
         expect(instance.activeTab).toBe('triage');
         expect(instance.loadPlayers).not.toHaveBeenCalled();
     });
@@ -1853,7 +1853,7 @@ describe('admin-hub import listeners', () => {
 
         instance.refreshImportMeta('contracts');
 
-        expect(instance.imports[0].last_run).toBe('2026-06-27T17:45:00+00:00');
+        expect(instance.importItems[0].last_run).toBe('2026-06-27T17:45:00+00:00');
     });
 
     it('keeps polling when a command finishes but the import run is still working', async () => {
@@ -2030,7 +2030,7 @@ describe('admin-hub import listeners', () => {
         expect(global.fetch).toHaveBeenCalledTimes(2);
         expect(instance.streams.yahoo.running).toBe(false);
         expect(instance.streams.yahoo.progress.processed_records).toBe(75);
-        expect(instance.imports[0].last_run).toBe('2026-06-28T12:05:01+00:00');
+        expect(instance.importItems[0].last_run).toBe('2026-06-28T12:05:01+00:00');
         expect(instance.streams.yahoo.messages).toHaveLength(1);
         expect(instance.streams.yahoo.messages[0].message).toBe('Yahoo Players imported 75 records');
     });

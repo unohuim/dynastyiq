@@ -222,6 +222,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('buckets.target_season_id', $targetSeasonId)
             ->where('buckets.projection_version', $projectionVersion)
             ->where('toi.target_team_abbrev', $team)
+            ->whereNotIn('buckets.player_id', $this->unavailablePlayerIds($team))
             ->selectRaw('buckets.matched_bucket_key')
             ->selectRaw('MAX(buckets.shot_type_group) as shot_type_group')
             ->selectRaw('MAX(buckets.distance_group) as distance_group')
@@ -257,6 +258,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('profiles.game_type', self::REGULAR_SEASON_GAME_TYPE)
             ->where('profiles.fallback_level', 1)
             ->where('toi.target_team_abbrev', $team)
+            ->whereNotIn('profiles.player_id', $this->unavailablePlayerIds($team))
             ->selectRaw('profiles.matched_bucket_key')
             ->selectRaw('MAX(profiles.shot_type_group) as shot_type_group')
             ->selectRaw('MAX(profiles.distance_group) as distance_group')
@@ -1067,6 +1069,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('buckets.target_season_id', $targetSeasonId)
             ->where('buckets.projection_version', $projectionVersion)
             ->where('toi.target_team_abbrev', $team)
+            ->whereNotIn('buckets.player_id', $this->unavailablePlayerIds($team))
             ->selectRaw('buckets.player_id')
             ->selectRaw("MAX(COALESCE(players.full_name, buckets.player_id::text)) as player_name")
             ->selectRaw("MAX(COALESCE(buckets.position, projections.position, toi.position)) as position")
@@ -1143,6 +1146,23 @@ class NhlProjectedTeamMatchupSimulator
             && Schema::hasColumn('nhl_goalie_season_projections', 'projected_pk_xga')
             && Schema::hasColumn('nhl_goalie_season_projections', 'projected_pk_ga')
             && Schema::hasColumn('nhl_goalie_projection_chance_buckets', 'projection_strength');
+    }
+
+    /** @return array<int,int> */
+    private function unavailablePlayerIds(string $team): array
+    {
+        if (! Schema::hasTable('nhl_player_injuries')) {
+            return [];
+        }
+
+        return DB::table('nhl_player_injuries')
+            ->where('team_abbrev', $team)
+            ->where('availability', 'out')
+            ->whereIn('evidence_level', ['reported', 'corroborated', 'confirmed_unavailable'])
+            ->whereNotNull('nhl_player_id')
+            ->pluck('nhl_player_id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
     }
 
     private function projectedGoalsAgainstAverage(mixed $goalsAgainst, mixed $toiSeconds): ?float

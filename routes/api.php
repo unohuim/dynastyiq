@@ -5,6 +5,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\Api\DiscordWebhookController;
 use App\Http\Controllers\Api\NhlGamePredictionsController;
+use App\Http\Controllers\Api\NhlInjuriesController;
+use App\Http\Controllers\Api\NhlStartingGoaliesController;
 use App\Http\Controllers\Api\NhlReferenceController;
 use App\Http\Controllers\Api\NhlSeasonStatsController;
 use App\Http\Controllers\StatsController;
@@ -58,6 +60,10 @@ Route::middleware('api.client:nhl-stats:read')->group(function (): void {
         ->name('api.nhl-season-stats.index');
     Route::get('/nhl-game-predictions', NhlGamePredictionsController::class)
         ->name('api.nhl-game-predictions.show');
+    Route::get('/nhl-starting-goalies', NhlStartingGoaliesController::class)
+        ->name('api.nhl-starting-goalies.index');
+    Route::get('/nhl-injuries', NhlInjuriesController::class)
+        ->name('api.nhl-injuries.index');
 });
 
 

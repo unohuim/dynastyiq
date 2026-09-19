@@ -13,7 +13,7 @@
             rel="stylesheet"
         />
 
-        @vite(['resources/css/app.css', 'resources/js/pages/stats-page.js'])
+        @vite(['resources/css/app.css', 'resources/js/app.js'])
 
         <script>
             window.DIQ = { userId: {{ auth()->id() ?? 'null' }} };

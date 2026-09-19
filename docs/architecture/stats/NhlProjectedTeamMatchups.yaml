@@ -19,13 +19,13 @@ when_not_to_use:
   - Guessing target-season goalie workloads or starter assignments from historical source-team profile rows.
   - Replacing player-level offensive projections, TOI projections, or historical skater defensive profiles.
 rules:
-  - Projected rosters must come from nhl_player_toi_projections target-team assignments.
+  - Projected rosters must come from nhl_player_toi_projections target-team assignments after excluding current out players backed by reported or stronger injury evidence.
   - Offensive output must start from versioned skater offensive projection bucket rows.
   - Defensive profiles are descriptive composed roster chance-allowed context in the current simulator and must not subtract from offensive baseline.
   - The goalie-facing EV environment must blend attacking offense bucket shape with defending roster chance-allowed bucket shape at the approved 70/30 weighting, while preserving the attacking team's projected total xSAT, xSOG, and xGF.
   - Defensive weakness must not create automatic offensive bonuses in the current simulator version.
   - Defensive suppression requires a later approved abstraction and must not be inferred from chance-allowed bucket share alone.
-  - Goalie selectors should default to the highest projected-start goalie from valid nhl_goalie_season_projections rows for the selected goalie projection version; manual override remains allowed.
+  - Goalie selectors must prefer manual overrides, then current confirmed or expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows.
   - Matchup goalie projection versions must be valid finished goalie performance projections with matching EV bucket rows in nhl_goalie_projection_chance_buckets; workload-only versions must not be selectable as matchup goalie versions.
   - Goalie option filtering must use the current goalie roster from players.team_abbrev, infer goalie eligibility from players.is_goalie or G position fields, and must not include historical source-team-only matches.
   - Goalie option labels must expose current team and historical source team context so traded goalies are not mistaken for projected team assignments.

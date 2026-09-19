@@ -1,6 +1,3 @@
-import AlpineImport from 'alpinejs';
-import focus from '@alpinejs/focus';
-import { registerToastStack } from '../components/toast-stack.js';
 import { leagueRosterHeadings, sortData, statValueForKey } from '../components/StatsPage/stats-utils.js';
 import { renderStatsDesktop } from '../components/StatsPage/stats-desktop.js';
 import { StatsMobile } from '../components/StatsPage/stats-mobile.js';
@@ -10,21 +7,6 @@ import { StatsPayloadClient, normalizeStatsPayload, statsIdentityKeys } from './
 import { StatsSchemaAdapter } from './stats-schema-adapter.js';
 import { mountStatsSelect } from './Stats/Controls/mountStatsSelect.js';
 import '../analytics-tracker.js';
-
-const Alpine = window.Alpine ?? AlpineImport;
-
-if (!Alpine.__hasFocusPlugin) {
-  Alpine.plugin(focus);
-  Alpine.__hasFocusPlugin = true;
-}
-
-window.Alpine = Alpine;
-registerToastStack(Alpine);
-
-if (!window.__alpineStarted) {
-  Alpine.start();
-  window.__alpineStarted = true;
-}
 
 const IDENTITY_KEYS = statsIdentityKeys;
 const PROSPECT_HIDDEN_HEADING_KEYS = new Set([

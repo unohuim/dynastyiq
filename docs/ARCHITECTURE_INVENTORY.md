@@ -3524,6 +3524,7 @@ WHERE target_season_id = '20262027';
 - `app/Http/Controllers/Api/NhlGamePredictionsController.php`
 - `app/Services/NhlGamePredictionPayload.php`
 - `docs/architecture/stats/NhlProjectedTeamMatchups.yaml`
+- `docs/architecture/imports/NhlPlayerAvailability.yaml` — Normalizes manual CBS/RotoWire injury imports and RotoWire starting-goalie observations for public, API, and prediction consumers, including matchup-grouped goalie presentation with browser-local game times.
 - `resources/views/admin/nhl-shot-attempts/index.blade.php`
 
 **Purpose:**

@@ -4,7 +4,7 @@
     $activeCommunity = $activeCommunity ?? $communities->first();
 @endphp
 
-<x-app-layout>
+<x-app-layout :livewire="false">
     <div class="px-4 py-6 sm:px-6 lg:px-8">
         @if ($communities->isEmpty())
             <section class="rounded-lg border border-slate-200 bg-white p-10 text-center text-slate-700">

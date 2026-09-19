@@ -8,6 +8,7 @@ import {
     initialCommunityTab,
     openDiscordServerDetachModal,
     refreshDiscordBotStatus,
+    registerCommunityMembersStore,
     setCommunityMembersRefreshLoading,
     updateDiscordServerEmptyStates,
 } from '../community-members-store';
@@ -28,6 +29,7 @@ describe('community members store', () => {
         document.head.innerHTML = '';
         document.body.innerHTML = '';
         delete window.toast;
+        delete window.Alpine;
     });
 
     it('blocks opening the add member modal when no tiers exist', () => {
@@ -123,6 +125,25 @@ describe('community members store', () => {
 
     it('falls back to home for unknown community URL tabs', () => {
         expect(initialCommunityTab('?active=7&tab=unknown')).toBe('home');
+    });
+
+    it('registers the community hub provider on the active Alpine instance', () => {
+        const stores = {};
+        window.Alpine = {
+            store: vi.fn((name, value) => {
+                if (value !== undefined) stores[name] = value;
+                return stores[name];
+            }),
+            data: vi.fn(),
+        };
+
+        registerCommunityMembersStore();
+
+        expect(window.Alpine.data).toHaveBeenCalledWith(
+            'communityMembersHub',
+            expect.any(Function)
+        );
+        expect(stores.communityMembers).toBeDefined();
     });
 
     it('formats a combined discord and patreon refresh message', () => {

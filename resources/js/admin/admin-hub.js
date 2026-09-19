@@ -36,11 +36,11 @@ export default function adminHub(options = {}) {
 
     return {
         activeTab: initialTab,
-        imports: options.imports ?? [],
-        users: options.users ?? [],
-        activity: options.activity ?? {},
+        importItems: options.imports ?? [],
+        adminUsers: options.users ?? [],
+        activityData: options.activity ?? {},
         activeSource: initialSource,
-        hasPlayers: nhlAvailable,
+        hasPlayerData: nhlAvailable,
         hasFantrax: fantraxAvailable,
         triageUrl: options.triageUrl ?? '/admin/player-triage?admin_panel=1',
         validationsUrl: options.validationsUrl ?? '/admin/nhl-validations?admin_panel=1',
@@ -198,7 +198,7 @@ export default function adminHub(options = {}) {
          * --------------------------- */
 
         async setTab(tab, options = {}) {
-            if (tab === 'nhl' && !this.hasPlayers) {
+            if (tab === 'nhl' && !this.hasPlayerData) {
                 return;
             }
 
@@ -218,7 +218,7 @@ export default function adminHub(options = {}) {
             }
 
             if (
-                (tab === 'nhl' && this.hasPlayers) ||
+                (tab === 'nhl' && this.hasPlayerData) ||
                 (tab === 'fantrax' && this.hasFantrax)
             ) {
                 this.loadPlayers();
@@ -2490,7 +2490,7 @@ export default function adminHub(options = {}) {
             const state = this.roster[source];
 
             if (
-                (source === 'nhl' && !this.hasPlayers) ||
+                (source === 'nhl' && !this.hasPlayerData) ||
                 (source === 'fantrax' && !this.hasFantrax)
             ) {
                 state.items = [];
@@ -2652,7 +2652,7 @@ export default function adminHub(options = {}) {
         },
 
         initializeImportStreams() {
-            this.imports.forEach((item) => {
+            this.importItems.forEach((item) => {
                 this.ensureStream(item.key);
                 this.streams[item.key].progress = item.progress ?? null;
                 this.streams[item.key].running = item.status === 'working';
@@ -2675,7 +2675,7 @@ export default function adminHub(options = {}) {
         },
 
         async startImport(key, action = null) {
-            const config = this.imports.find((i) => i.key === key);
+            const config = this.importItems.find((i) => i.key === key);
             if (!config?.run_url) {
                 return;
             }
@@ -2789,7 +2789,7 @@ export default function adminHub(options = {}) {
         },
 
         async refreshImportProgress(key, shouldContinue = true) {
-            const config = this.imports.find((i) => i.key === key);
+            const config = this.importItems.find((i) => i.key === key);
             if (!config?.status_url) {
                 return;
             }
@@ -2859,7 +2859,7 @@ export default function adminHub(options = {}) {
             this.streams[key].progress = progress;
             this.streams[key].running = importRun.status === 'working';
 
-            this.imports = this.imports.map((item) =>
+            this.importItems = this.importItems.map((item) =>
                 item.key === key
                     ? {
                           ...item,
@@ -2892,7 +2892,7 @@ export default function adminHub(options = {}) {
 
             if (progress?.dynamic_total) {
                 const status = this.streams[key]?.importRun?.status
-                    ?? this.imports.find((importConfig) => importConfig.key === key)?.status;
+                    ?? this.importItems.find((importConfig) => importConfig.key === key)?.status;
                 const processed = Number(progress.processed_records) || 0;
                 const estimate = this.importProgressEstimatedTotal(key);
 
@@ -2921,7 +2921,7 @@ export default function adminHub(options = {}) {
 
             if (progress?.dynamic_total) {
                 const status = this.streams[key]?.importRun?.status
-                    ?? this.imports.find((importConfig) => importConfig.key === key)?.status;
+                    ?? this.importItems.find((importConfig) => importConfig.key === key)?.status;
                 const estimate = this.importProgressEstimatedTotal(key);
 
                 if (status === 'completed' && total) {
@@ -2947,7 +2947,7 @@ export default function adminHub(options = {}) {
             const discovered = Number(progress?.total_records) || 0;
             const processed = Number(progress?.processed_records) || 0;
             const status = this.streams[key]?.importRun?.status
-                ?? this.imports.find((importConfig) => importConfig.key === key)?.status;
+                ?? this.importItems.find((importConfig) => importConfig.key === key)?.status;
 
             if (status === 'completed') {
                 return Math.max(discovered, processed);
@@ -2981,7 +2981,7 @@ export default function adminHub(options = {}) {
         },
 
         activitySummaryItems() {
-            const summary = this.activity?.summary ?? {};
+            const summary = this.activityData?.summary ?? {};
 
             return [
                 { key: 'events_24h', label: 'Events 24h', value: summary.events_24h },
@@ -2994,7 +2994,7 @@ export default function adminHub(options = {}) {
         },
 
         activityEventMix() {
-            return Object.entries(this.activity?.events_by_name ?? {})
+            return Object.entries(this.activityData?.events_by_name ?? {})
                 .map(([name, count]) => ({ name, count: Number(count) || 0 }));
         },
 
@@ -3085,7 +3085,7 @@ export default function adminHub(options = {}) {
         },
 
         formatLastRun(key) {
-            const item = this.imports.find((importConfig) => importConfig.key === key);
+            const item = this.importItems.find((importConfig) => importConfig.key === key);
             const date = this.parseDate(item?.last_run);
 
             if (!date) {
@@ -3097,7 +3097,7 @@ export default function adminHub(options = {}) {
 
         importElapsedText(key) {
             const importRun = this.streams[key]?.importRun
-                ?? this.imports.find((importConfig) => importConfig.key === key);
+                ?? this.importItems.find((importConfig) => importConfig.key === key);
 
             if (!importRun) {
                 return null;
@@ -3182,7 +3182,7 @@ export default function adminHub(options = {}) {
             const importRun = this.streams[key]?.importRun;
             const lastRun = importRun?.finished_at ?? importRun?.started_at ?? null;
 
-            this.imports = this.imports.map((item) =>
+            this.importItems = this.importItems.map((item) =>
                 item.key === key && lastRun ? { ...item, last_run: lastRun } : item
             );
         },
@@ -3192,11 +3192,11 @@ export default function adminHub(options = {}) {
                 return;
             }
 
-            const wasNhlAvailable = this.hasPlayers;
+            const wasNhlAvailable = this.hasPlayerData;
             const wasFantraxAvailable = this.hasFantrax;
 
             if (source === 'nhl') {
-                this.hasPlayers = true;
+                this.hasPlayerData = true;
             }
 
             if (source === 'fantrax') {
@@ -3204,7 +3204,7 @@ export default function adminHub(options = {}) {
             }
 
             const tabUnavailable =
-                (this.activeTab === 'nhl' && !this.hasPlayers) ||
+                (this.activeTab === 'nhl' && !this.hasPlayerData) ||
                 (this.activeTab === 'fantrax' && !this.hasFantrax);
 
             if (tabUnavailable) {

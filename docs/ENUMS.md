@@ -2568,6 +2568,13 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 ## Conflicts / Ambiguities Report
 
+### NHL Player Availability
+
+- `nhl_player_injuries.availability` and `nhl_player_injury_observations.availability`: `available`, `out`, `questionable`, `unknown`.
+- Injury evidence levels: `suspected`, `reported`, `corroborated`, `confirmed_unavailable`, `confirmed_available`.
+- Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
+- Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
+
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 
 - `players.status` is a string with default `active`; migration comments mention possible future values but no code-level validation currently canonicalizes them.

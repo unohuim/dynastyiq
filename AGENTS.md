@@ -213,6 +213,10 @@ Codex must never self-certify completion.
 
 ### Integrations
 
+- CapWages changes must respect:
+    - `docs/integrations/CAPWAGES_API.md`
+    - `docs/architecture/imports/CapWagesPlayerProfiles.yaml`
+- If observed CapWages API behavior conflicts with the documented provider contract, work must pause and be escalated to the human.
 - Fantrax changes must respect:
     - `docs/architecture/integrations/FantraxUserConnection.yaml`
     - `docs/architecture/integrations/FantraxLeagueSync.yaml`

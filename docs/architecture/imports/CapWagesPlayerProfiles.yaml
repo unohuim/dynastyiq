@@ -5,6 +5,7 @@ location:
   - app/Console/Commands/EmptyCapWagesCommand.php
   - app/Services/ImportCapWagesPlayer.php
   - database/migrations/*_create_capwages_players_table.php
+  - docs/integrations/CAPWAGES_API.md
 purpose: Store CapWages-owned player profile details separately from provider identity matching and canonical player contracts.
 when_to_use:
   - Persisting CapWages player detail payload fields before a canonical player link exists.
@@ -15,6 +16,8 @@ when_not_to_use:
   - Storing match status, confidence, or unresolved reasons that belong on player_external_identities.
   - Materializing contract rows before a CapWages identity has a player_id.
 rules:
+  - CapWages endpoint paths, authentication, request parameters, response envelopes, and provider field shapes must follow docs/integrations/CAPWAGES_API.md.
+  - Work must pause for human review when observed CapWages API behavior conflicts with the documented provider contract.
   - CapWages player profile rows must only be created when the same detail payload is eligible for a CapWages provider identity.
   - CapWages provider identities are eligible only when the payload has a payable non-buyout contract season at least as recent as the current calendar-year season key.
   - CapWages buyout and dead-cap-only rows must not qualify retired or inactive players for identity, profile, canonical player, or contract materialization.

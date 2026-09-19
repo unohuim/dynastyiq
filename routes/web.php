@@ -6,6 +6,7 @@ use App\Http\Controllers\PlayerStatsController;
 use App\Http\Controllers\PlayByPlayController;
 use App\Http\Controllers\PlayerImportController;
 use App\Http\Controllers\NhlPlayerTransactionController;
+use App\Http\Controllers\NhlAvailabilityController;
 use App\Http\Controllers\PlayerRankingController;
 use App\Http\Controllers\SeasonStatController;
 use App\Http\Controllers\LeagueController;
@@ -59,6 +60,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
 
     Route::get('/transactions/payload', [NhlPlayerTransactionController::class, 'payload'])
         ->name('transactions.payload');
+    Route::get('/starting-goalies', [NhlAvailabilityController::class, 'goalies'])->name('starting-goalies.index');
+    Route::get('/starting-goalies/payload', [NhlAvailabilityController::class, 'goaliesPayload'])->name('starting-goalies.payload');
+    Route::get('/injuries', [NhlAvailabilityController::class, 'injuries'])->name('injuries.index');
+    Route::get('/injuries/payload', [NhlAvailabilityController::class, 'injuriesPayload'])->name('injuries.payload');
 
     // Discord Server joins
     Route::middleware('auth')

@@ -13,6 +13,7 @@ import './admin/player-triage.js';
 import './admin/nhl-shot-attempts.js';
 import './admin/nhl-sat-models.js';
 import './components/community-members-store';
+import { registerCommunityMembersStore } from './components/community-members-store';
 import './components/draft-round-scrollbar';
 import './pages/discord-bot-installed';
 import { registerToastStack } from './components/toast-stack';
@@ -49,6 +50,7 @@ if (!Alpine.__hasFocusPlugin) {
 
 window.Alpine = Alpine;
 
+registerCommunityMembersStore();
 registerToastStack(Alpine);
 
 // Only start Alpine once per page load.
@@ -80,3 +82,7 @@ if (inertiaRoot) {
 }
 
 import('./pages/stats-page.js');
+
+if (document.querySelector('[data-starting-goalies-page]')) {
+    import('./pages/starting-goalies.js');
+}

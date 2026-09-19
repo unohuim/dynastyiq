@@ -2623,8 +2623,4 @@ function communityMembersHub(config) {
     };
 }
 
-// Also expose the factory globally so x-data can resolve it even before Alpine
-// processes named data providers.
-window.communityMembersHub = communityMembersHub;
-
 export { registerCommunityMembersStore };

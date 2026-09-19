@@ -7,6 +7,8 @@ location:
   - app/Http/Controllers/Api/NhlReferenceController.php
   - app/Http/Controllers/Api/NhlSeasonStatsController.php
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
+  - app/Http/Controllers/Api/NhlInjuriesController.php
+  - app/Http/Controllers/Api/NhlStartingGoaliesController.php
   - app/Services/NhlSeasonStatsPayload.php
   - app/Services/NhlGamePredictionPayload.php
   - database/migrations/2026_07_27_000002_create_api_clients_table.php
@@ -36,6 +38,9 @@ rules:
   - NHL season stats player_stats rows must expose consistent supported windows across basic, on_ice, and expected stat groups: season, last_5, last_10, and last_20 when qualifying data exists.
   - NHL season stats payloads must include goalie-specific player_stats rows for basic and expected goalie data when qualifying goalie source data exists.
   - NHL game prediction endpoints must require the explicit nhl-stats:read scope and must fail when both starting goalies cannot be resolved to usable goalie performance projections.
+  - NHL injury and starting-goalie endpoints must require the explicit nhl-stats:read scope.
+  - NHL starting-goalie requests default to today; date and nhl_game_id filters are mutually exclusive.
+  - NHL injury requests without filters return all current injuries and may filter by team_abbrev and nhl_player_id together.
 public_interface:
   - api-client:create
   - api.client middleware
@@ -44,5 +49,7 @@ public_interface:
   - GET /api/nhl-players
   - GET /api/nhl-season-stats
   - GET /api/nhl-game-predictions
+  - GET /api/nhl-starting-goalies
+  - GET /api/nhl-injuries
 example_usage: |
   php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read

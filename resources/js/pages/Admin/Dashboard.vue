@@ -23,10 +23,10 @@ export default {
     },
     computed: {
         playerImports() {
-            return (this.imports ?? []).filter((item) => item.group === 'player');
+            return (this.importItems ?? []).filter((item) => item.group === 'player');
         },
         platformImports() {
-            return (this.imports ?? []).filter((item) => item.group === 'platform');
+            return (this.importItems ?? []).filter((item) => item.group === 'platform');
         },
     },
     mounted() {
@@ -306,13 +306,13 @@ export default {
                             <p class="mt-0.5 text-xs text-gray-500">DynastyIQ accounts with local session presence.</p>
                         </div>
                         <div class="text-xs text-gray-500">
-                            <span v-text="formatNumber(users.length)"></span>
-                            <span v-text="users.length === 1 ? 'user' : 'users'"></span>
+                            <span v-text="formatNumber(adminUsers.length)"></span>
+                            <span v-text="adminUsers.length === 1 ? 'user' : 'users'"></span>
                         </div>
                     </div>
 
                     <div class="divide-y divide-gray-200">
-                        <template v-for="user in users" :key="user.id">
+                        <template v-for="user in adminUsers" :key="user.id">
                             <div class="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_10rem_9rem] sm:items-center">
                                 <div class="flex min-w-0 items-center gap-3">
                                     <template v-if="user.avatar_url">
@@ -373,7 +373,7 @@ export default {
                             </div>
                         </template>
 
-                        <div v-show="users.length === 0" class="px-4 py-8 text-sm text-gray-500">
+                        <div v-show="adminUsers.length === 0" class="px-4 py-8 text-sm text-gray-500">
                             No users found.
                         </div>
                     </div>
@@ -402,7 +402,7 @@ export default {
                                 <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Events</h4>
                             </div>
                             <div class="divide-y divide-gray-200">
-                                <template v-for="event in activity.recent_events ?? []" :key="event.id">
+                                <template v-for="event in activityData.recent_events ?? []" :key="event.id">
                                     <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)_11rem] sm:items-center">
                                         <div>
                                             <span class="inline-flex rounded-md bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700" v-text="event.event_name"></span>
@@ -414,7 +414,7 @@ export default {
                                         <div class="text-xs text-gray-500 sm:text-right" v-text="formatDateTime(event.occurred_at)"></div>
                                     </div>
                                 </template>
-                                <div v-show="(activity.recent_events ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
+                                <div v-show="(activityData.recent_events ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
                                     No activity events recorded yet.
                                 </div>
                             </div>
@@ -443,7 +443,7 @@ export default {
                             <h4 class="text-xs font-semibold uppercase text-gray-500">Recent Sessions</h4>
                         </div>
                         <div class="divide-y divide-gray-200">
-                            <template v-for="session in activity.recent_sessions ?? []" :key="session.id">
+                            <template v-for="session in activityData.recent_sessions ?? []" :key="session.id">
                                 <div class="grid gap-2 px-4 py-3 text-sm md:grid-cols-[minmax(0,1fr)_8rem_11rem] md:items-center">
                                     <div class="min-w-0">
                                         <div class="truncate font-medium text-gray-900" v-text="activityActor(session)"></div>
@@ -453,7 +453,7 @@ export default {
                                     <div class="text-xs text-gray-500 md:text-right" v-text="formatDateTime(session.last_seen_at)"></div>
                                 </div>
                             </template>
-                            <div v-show="(activity.recent_sessions ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
+                            <div v-show="(activityData.recent_sessions ?? []).length === 0" class="px-4 py-8 text-sm text-gray-500">
                                 No sessions recorded yet.
                             </div>
                         </div>

@@ -20,6 +20,7 @@ Endpoint scopes:
 | `GET /api/nhl-teams` | `nhl-reference:read` |
 | `GET /api/nhl-players` | `nhl-reference:read` |
 | `GET /api/nhl-season-stats` | `nhl-stats:read` |
+| `GET /api/nhl-starting-goalies` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
 
 GNER8 usually needs a token with both `nhl-reference:read` and
@@ -313,6 +314,192 @@ foreach ($statGroups as $statGroup) {
 - Goalie expected stats require shot-attempt facts with `goalie_player_id` and scored xG/xSOG predictions.
 - Feature rows currently compare recent `last_10` expected-rate values against the season baseline.
 - GNER8 should normalize received numeric values according to `stat_types[].value_type`; JSON decoding may not preserve a float type for whole-number decimal values.
+
+## NHL Starting Goalies Endpoint
+
+This endpoint returns the latest projected or confirmed starting-goalie
+observation for each team and game on the requested date. It exposes both flat
+goalie rows and matchup-grouped game rows from the same underlying observations.
+
+```http
+GET /api/nhl-starting-goalies?date=2026-09-19
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
+
+Production URL:
+
+```http
+https://dynastyiq.com/api/nhl-starting-goalies?date=2026-09-19
+```
+
+Local URL:
+
+```http
+http://dynastyiq.test/api/nhl-starting-goalies?date=2026-09-19
+```
+
+Required scope:
+
+```text
+nhl-stats:read
+```
+
+### Query Parameters
+
+| Parameter | Required | Example | Meaning |
+| --- | --- | --- | --- |
+| `date` | No | `2026-09-19` | NHL game date in `YYYY-MM-DD` format. Defaults to today when neither filter is supplied. |
+| `nhl_game_id` | No | `2026020001` | Return observations for one DynastyIQ NHL game and derive the date from that game. |
+
+`date` and `nhl_game_id` are mutually exclusive. Supplying both returns a
+validation error.
+
+### Response Shape
+
+```json
+{
+  "starting_goalies": [
+    {
+      "nhl_game_id": 2026020001,
+      "game_date": "2026-09-19",
+      "start_time_utc": "2026-09-19T23:00:00+00:00",
+      "team_abbrev": "MTL",
+      "opponent_abbrev": "TOR",
+      "is_home": false,
+      "nhl_player_id": 8484165,
+      "player_name": "Jacob Fowler",
+      "status": "expected",
+      "provider": "rotowire",
+      "observed_at": "2026-09-18T20:29:00+00:00",
+      "season_stats": {
+        "season_key": "20252026",
+        "games_played": 30,
+        "goals_against_average": 3.01,
+        "save_percentage": 0.901
+      }
+    },
+    {
+      "nhl_game_id": 2026020001,
+      "game_date": "2026-09-19",
+      "start_time_utc": "2026-09-19T23:00:00+00:00",
+      "team_abbrev": "TOR",
+      "opponent_abbrev": "MTL",
+      "is_home": true,
+      "nhl_player_id": 8475683,
+      "player_name": "Sergei Bobrovsky",
+      "status": "confirmed",
+      "provider": "rotowire",
+      "observed_at": "2026-09-18T20:29:00+00:00",
+      "season_stats": {
+        "season_key": "20252026",
+        "games_played": 54,
+        "goals_against_average": 2.77,
+        "save_percentage": 0.912
+      }
+    }
+  ],
+  "games": [
+    {
+      "nhl_game_id": 2026020001,
+      "game_date": "2026-09-19",
+      "start_time_utc": "2026-09-19T23:00:00+00:00",
+      "away_team_abbrev": "MTL",
+      "home_team_abbrev": "TOR",
+      "away_team_logo": "https://assets.nhle.com/logos/nhl/svg/MTL_light.svg",
+      "home_team_logo": "https://assets.nhle.com/logos/nhl/svg/TOR_light.svg",
+      "away_goalie": {
+        "nhl_game_id": 2026020001,
+        "game_date": "2026-09-19",
+        "start_time_utc": "2026-09-19T23:00:00+00:00",
+        "team_abbrev": "MTL",
+        "opponent_abbrev": "TOR",
+        "is_home": false,
+        "nhl_player_id": 8484165,
+        "player_name": "Jacob Fowler",
+        "status": "expected",
+        "provider": "rotowire",
+        "observed_at": "2026-09-18T20:29:00+00:00",
+        "season_stats": {
+          "season_key": "20252026",
+          "games_played": 30,
+          "goals_against_average": 3.01,
+          "save_percentage": 0.901
+        }
+      },
+      "home_goalie": {
+        "nhl_game_id": 2026020001,
+        "game_date": "2026-09-19",
+        "start_time_utc": "2026-09-19T23:00:00+00:00",
+        "team_abbrev": "TOR",
+        "opponent_abbrev": "MTL",
+        "is_home": true,
+        "nhl_player_id": 8475683,
+        "player_name": "Sergei Bobrovsky",
+        "status": "confirmed",
+        "provider": "rotowire",
+        "observed_at": "2026-09-18T20:29:00+00:00",
+        "season_stats": {
+          "season_key": "20252026",
+          "games_played": 54,
+          "goals_against_average": 2.77,
+          "save_percentage": 0.912
+        }
+      }
+    }
+  ],
+  "meta": {
+    "date": "2026-09-19",
+    "count": 2,
+    "generated_at": "2026-09-18T20:30:00+00:00"
+  }
+}
+```
+
+`games[].away_goalie` and `games[].home_goalie` contain the complete
+corresponding object from `starting_goalies[]`. Either goalie may be `null`
+when no observation is available for that side.
+
+### Goalie Fields
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `nhl_game_id` | integer|null | Canonical NHL game identifier when the observation resolved to a scheduled game. |
+| `game_date` | string | NHL schedule date in `YYYY-MM-DD` format. |
+| `start_time_utc` | string|null | Canonical game start as an ISO 8601 UTC timestamp. |
+| `team_abbrev` | string | NHL team abbreviation represented by this goalie row. |
+| `opponent_abbrev` | string|null | Opposing NHL team abbreviation. |
+| `is_home` | boolean|null | Whether this goalie belongs to the scheduled home team. |
+| `nhl_player_id` | integer|null | Canonical NHL player identifier; null when player identity is unresolved. |
+| `player_name` | string | Provider-reported goalie name retained even when identity resolution fails. |
+| `status` | string | Current observation status: `confirmed`, `expected`, or `unknown`. |
+| `provider` | string | Source provider for the observation. |
+| `observed_at` | string|null | ISO 8601 timestamp when DynastyIQ fetched the observation. |
+| `season_stats` | object|null | Regular-season goalie baseline selected for the game context; null when qualifying summaries are unavailable. |
+
+`season_stats` contains `season_key`, `games_played`,
+`goals_against_average`, and `save_percentage`. Preseason games use the prior
+season's regular-season results. Regular-season and playoff games use the
+game's current season regular-season results.
+
+### gner8 Consumption Guidance
+
+- Use `games[]` when processing a scheduled matchup or preparing a prediction.
+- Use `starting_goalies[]` when performing team-oriented or row-oriented upserts.
+- Resolve goalies by `nhl_player_id`; do not use `player_name` as a durable identity key.
+- Treat `expected` as projected evidence and `confirmed` as stronger third-party evidence.
+- Treat a null goalie or null `nhl_player_id` as unresolved rather than guessing an identity.
+- Store and compare `observed_at` so older observations do not overwrite newer state.
+- All timestamps are ISO 8601. `start_time_utc` is canonical UTC; timezone localization is presentation-only.
+- An empty response for a date means DynastyIQ has no imported goalie observations for that date. It does not prove that no NHL games are scheduled.
+
+Example game-specific request before generating a prediction:
+
+```http
+GET /api/nhl-starting-goalies?nhl_game_id=2026020001
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
 
 ## NHL Game Predictions Endpoint
 

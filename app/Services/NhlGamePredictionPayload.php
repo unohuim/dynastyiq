@@ -55,13 +55,15 @@ class NhlGamePredictionPayload
             $targetSeasonId,
             $goalieProjectionVersion,
             $awayTeam,
-            $overrides['away_goalie_id'] ?? null
+            $overrides['away_goalie_id'] ?? null,
+            $nhlGameId
         );
         $homeGoalie = $this->resolveGoalie(
             $targetSeasonId,
             $goalieProjectionVersion,
             $homeTeam,
-            $overrides['home_goalie_id'] ?? null
+            $overrides['home_goalie_id'] ?? null,
+            $nhlGameId
         );
 
         $result = $this->simulator->simulate(
@@ -236,12 +238,33 @@ class NhlGamePredictionPayload
     /**
      * @return array<string, mixed>
      */
-    private function resolveGoalie(string $targetSeasonId, string $goalieProjectionVersion, string $team, mixed $providedGoalieId): array
+    private function resolveGoalie(
+        string $targetSeasonId,
+        string $goalieProjectionVersion,
+        string $team,
+        mixed $providedGoalieId,
+        int $nhlGameId
+    ): array
     {
         $selectionSource = 'goalie_projection';
         $goalieId = $providedGoalieId === null || $providedGoalieId === ''
-            ? $this->defaultGoalieFromSeasonProjection($targetSeasonId, $goalieProjectionVersion, $team)
+            ? $this->officialStartingGoalie($nhlGameId, $team)
             : (int) $providedGoalieId;
+
+        if ($goalieId !== null && ($providedGoalieId === null || $providedGoalieId === '')) {
+            $selectionSource = 'nhl_boxscore';
+        }
+
+        if ($goalieId === null) {
+            $goalieId = $this->observedStartingGoalie($nhlGameId, $team);
+            if ($goalieId !== null) {
+                $selectionSource = 'starting_goalie_observation';
+            }
+        }
+
+        if ($goalieId === null) {
+            $goalieId = $this->defaultGoalieFromSeasonProjection($targetSeasonId, $goalieProjectionVersion, $team);
+        }
 
         if ($goalieId === null) {
             $goalieId = $this->defaultGoalieFromWorkloadProjection($targetSeasonId, $team);
@@ -267,6 +290,42 @@ class NhlGamePredictionPayload
         $goalie['selection_source'] = $selectionSource;
 
         return $goalie;
+    }
+
+    private function observedStartingGoalie(int $nhlGameId, string $team): ?int
+    {
+        if (! Schema::hasTable('nhl_starting_goalie_observations')) {
+            return null;
+        }
+
+        $goalieId = DB::table('nhl_starting_goalie_observations')
+            ->where('nhl_game_id', $nhlGameId)
+            ->where('team_abbrev', $team)
+            ->whereIn('status', ['confirmed', 'expected'])
+            ->whereNotNull('nhl_player_id')
+            ->orderByDesc('fetched_at')
+            ->orderByRaw("CASE WHEN status = 'confirmed' THEN 0 ELSE 1 END")
+            ->value('nhl_player_id');
+
+        return $goalieId === null ? null : (int) $goalieId;
+    }
+
+    private function officialStartingGoalie(int $nhlGameId, string $team): ?int
+    {
+        if (Schema::hasTable('nhl_game_summaries') && Schema::hasColumn('nhl_game_summaries', 'goalie_started')) {
+            $teamIdColumn = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)
+                ->where('home_team_abbrev', $team)->exists() ? 'home_team_id' : 'away_team_id';
+            $teamId = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->value($teamIdColumn);
+            $official = DB::table('nhl_game_summaries')
+                ->where('nhl_game_id', $nhlGameId)
+                ->where('nhl_team_id', $teamId)
+                ->where('goalie_started', true)
+                ->value('nhl_player_id');
+            if ($official !== null) {
+                return (int) $official;
+            }
+        }
+        return null;
     }
 
     private function defaultGoalieFromSeasonProjection(string $targetSeasonId, string $goalieProjectionVersion, string $team): ?int

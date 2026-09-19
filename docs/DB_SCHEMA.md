@@ -4830,4 +4830,16 @@ Migrations remain the **sole source of truth**.
 
 ---
 
+## nhl_player_injury_observations
+
+Append-only, provider-specific injury observations retained only when normalized meaning changes. Rows preserve player resolution, provider/fetch timestamps, availability, evidence, anticipated-return fields, source URL, and raw evidence.
+
+## nhl_player_injuries
+
+Current game-independent injury projection keyed by canonical player when resolved. Rows expose normalized availability/evidence, anticipated return, contributing sources, and first/last observation and seen timestamps.
+
+## nhl_starting_goalie_observations
+
+Append-only starting-goalie evidence keyed by game date, team, provider, and observation time. Rows may link an NHL game and canonical/NHL player while retaining unresolved provider names and raw evidence.
+
 **End of DB_SCHEMA**
