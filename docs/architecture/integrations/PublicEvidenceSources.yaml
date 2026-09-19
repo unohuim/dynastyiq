@@ -1,0 +1,27 @@
+name: Public Evidence Sources
+type: Cross-Sport Source Identity And Metrics Registry
+location:
+  - app/Models/EvidenceSource.php
+  - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
+purpose: Reuse publisher identity, sport and league scope, and time-varying public metrics without assigning implicit trust.
+when_to_use:
+  - Persisting a public account or publisher that supplied sports evidence.
+  - Recording team coverage or observed follower and publishing metrics.
+when_not_to_use:
+  - Treating separate posts from one account as independent corroborating sources.
+  - Assigning source trust or accuracy scores without an approved evaluation model.
+rules:
+  - Source identity is platform scoped and reusable across sports and leagues.
+  - Sport, league, and optional team coverage belongs to source scopes rather than the source identity.
+  - Mutable account metrics are append-only snapshots with observation timestamps.
+  - Mutable engagement values for evidence URLs are append-only snapshots with observation timestamps.
+  - Reposts and multiple posts from one source count as one source for corroboration.
+  - Source records capture attribution and provenance but do not imply trust.
+public_interface:
+  - sources
+  - source_scopes
+  - source_metric_snapshots
+  - source_engagement_snapshots
+  - EvidenceSource
+example_usage: |
+  EvidenceSource::query()->where('platform', 'x')->where('handle', 'reporter')->first();

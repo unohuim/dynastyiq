@@ -59,6 +59,7 @@ class AdminImports
             ['key' => 'contracts', 'label' => 'Contracts', 'group' => 'player', 'command' => 'cap:import', 'options' => ['--per-page' => 100, '--all' => true]],
             ['key' => 'nhl-starting-goalies', 'label' => 'Starting Goalies', 'group' => 'player', 'command' => 'nhl:import-starting-goalies', 'options' => []],
             ['key' => 'nhl-injuries', 'label' => 'Injuries', 'group' => 'player', 'command' => 'nhl:import-injuries', 'options' => []],
+            ['key' => 'nhl-anticipated-lineups', 'label' => 'Anticipated Lineups', 'group' => 'player', 'command' => 'nhl:import-anticipated-lineups', 'options' => []],
             [
                 'key' => 'fantrax-category-definitions',
                 'label' => 'Fantrax Categories Definitions',

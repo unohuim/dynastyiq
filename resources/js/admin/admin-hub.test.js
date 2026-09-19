@@ -2184,4 +2184,56 @@ describe('admin-hub import listeners', () => {
         expect(instance.importItems[0].schedule.enabled).toBe(true);
         expect(instance.importItems[0].schedule.saving).toBe(false);
     });
+
+    it('labels both anticipated lineup schedule windows', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+
+        expect(instance.importScheduleLaneLabel('within_two_hours')).toBe('Within 2 hours of puck drop');
+        expect(instance.importScheduleLaneLabel('outside_two_hours')).toBe('Outside 2 hours of puck drop');
+    });
+
+    it('saves anticipated lineup near and outside puck drop frequencies', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+                schedule: {
+                    enabled: true,
+                    lanes: {
+                        within_two_hours: { interval_seconds: 900 },
+                        outside_two_hours: { interval_seconds: 3600 },
+                    },
+                },
+            }),
+        }));
+        const instance = adminHub({
+            imports: [{
+                key: 'nhl-anticipated-lineups',
+                label: 'Anticipated Lineups',
+                schedule_url: '/admin/imports/nhl-anticipated-lineups/schedule',
+                schedule: {
+                    enabled: false,
+                    lanes: {
+                        within_two_hours: { interval_seconds: 900 },
+                        outside_two_hours: { interval_seconds: 3600 },
+                    },
+                },
+            }],
+        });
+
+        await instance.saveImportSchedule(instance.importItems[0], true);
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/admin/imports/nhl-anticipated-lineups/schedule',
+            expect.objectContaining({
+                method: 'PUT',
+                body: JSON.stringify({
+                    enabled: true,
+                    intervals: { within_two_hours: 900, outside_two_hours: 3600 },
+                }),
+            })
+        );
+        expect(instance.importItems[0].schedule.enabled).toBe(true);
+    });
 });

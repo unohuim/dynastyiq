@@ -3708,4 +3708,12 @@ it('returns stats payload rows', function () {
 
 ---
 
+## Public Evidence Sources
+
+Reusable cross-sport publisher identity, scope, and time-varying metrics without implicit trust. Multiple posts from one account remain one corroborating source. Authority: `docs/architecture/integrations/PublicEvidenceSources.yaml`.
+
+## NHL Anticipated Lineups
+
+Bounded text-only OpenAI web discovery feeding immutable game/team observations and a recency-aware current consensus. Predictions use only corroborated lineups with all eighteen skaters resolved; otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
 **End of ARCHITECTURE_INVENTORY**

@@ -21,6 +21,7 @@ Endpoint scopes:
 | `GET /api/nhl-players` | `nhl-reference:read` |
 | `GET /api/nhl-season-stats` | `nhl-stats:read` |
 | `GET /api/nhl-starting-goalies` | `nhl-stats:read` |
+| `GET /api/nhl-anticipated-lineups` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
 
 GNER8 usually needs a token with both `nhl-reference:read` and
@@ -501,6 +502,65 @@ GET /api/nhl-starting-goalies?nhl_game_id=2026020001
 Accept: application/json
 Authorization: Bearer <DYNASTYIQ_API_TOKEN>
 ```
+
+## NHL Anticipated Lineups Endpoint
+
+Returns the latest source-consensus lineup for each team. With no parameters it defaults to today. Supply either `date=YYYY-MM-DD` or `nhl_game_id`, never both.
+
+```http
+GET /api/nhl-anticipated-lineups?nhl_game_id=2026020001
+Accept: application/json
+Authorization: Bearer <DYNASTYIQ_API_TOKEN>
+```
+
+```json
+{
+  "anticipated_lineups": [
+    {
+      "nhl_game_id": 2026020001,
+      "team_id": 10,
+      "team_abbrev": "TOR",
+      "evidence_status": "corroborated",
+      "source_count": 2,
+      "first_observed_at": "2026-09-19T13:10:00+00:00",
+      "last_observed_at": "2026-09-19T13:22:00+00:00",
+      "players": [
+        {
+          "player_id": 123,
+          "nhl_player_id": 8470001,
+          "player_name": "Example Player",
+          "lineup_role": "forward",
+          "line_key": "F1",
+          "slot_index": 1,
+          "resolution_status": "resolved"
+        }
+      ],
+      "sources": [
+        {
+          "source_id": 4,
+          "name": "Example Reporter",
+          "handle": "example",
+          "platform": "x",
+          "post_url": "https://x.com/example/status/1",
+          "published_at": "2026-09-19T13:05:00+00:00",
+          "observed_at": "2026-09-19T13:10:00+00:00",
+          "engagement": { "likes": 25, "replies": 2, "reposts": 4, "views": 3200 }
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "date": "2026-09-19",
+    "nhl_game_id": 2026020001,
+    "count": 2,
+    "generated_at": "2026-09-19T13:25:00+00:00"
+  }
+}
+```
+
+`team_id` is the canonical `nhl_teams.nhl_id`. Use `nhl_game_id + team_id` as the current-lineup upsert key and `nhl_player_id` as the durable player identity. `reported` means one source, `corroborated` means two distinct sources, and `strongly_corroborated` means at least three. Unresolved names remain in the payload and must not be silently substituted.
+
+The prediction endpoint uses a lineup only when it is corroborated and all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Official NHL roster evidence remains higher authority.
 
 ## NHL Game Predictions Endpoint
 

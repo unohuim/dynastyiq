@@ -12,6 +12,7 @@ class AdminImportSchedules
     public const DEFINITIONS = [
         'nhl-starting-goalies' => ['today' => 900, 'future' => 3600],
         'nhl-injuries' => ['current' => 900],
+        'nhl-anticipated-lineups' => ['within_two_hours' => 900, 'outside_two_hours' => 3600],
     ];
 
     /** @return Collection<int, AdminImportSchedule> */

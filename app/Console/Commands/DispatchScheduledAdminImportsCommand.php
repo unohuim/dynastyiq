@@ -30,7 +30,7 @@ class DispatchScheduledAdminImportsCommand extends Command
             }
 
             try {
-            $imports->dispatchScheduled($schedule->source_key, $this->commandOptions($schedule));
+                $imports->dispatchScheduled($schedule->source_key, $this->commandOptions($schedule));
                 $schedule->update([
                     'last_dispatched_at' => now(),
                     'next_due_at' => now()->addSeconds($schedule->interval_seconds),
@@ -46,6 +46,12 @@ class DispatchScheduledAdminImportsCommand extends Command
     /** @return array<string,mixed> */
     private function commandOptions(AdminImportSchedule $schedule): array
     {
+        if ($schedule->source_key === 'nhl-anticipated-lineups') {
+            return ['--window' => $schedule->lane_key === 'within_two_hours'
+                ? 'within-two-hours'
+                : 'outside-two-hours'];
+        }
+
         if ($schedule->source_key !== 'nhl-starting-goalies') {
             return [];
         }

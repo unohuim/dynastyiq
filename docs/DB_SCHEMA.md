@@ -4844,6 +4844,22 @@ Append-only starting-goalie evidence keyed by game date, team, provider, and obs
 
 ## admin_import_schedules
 
-Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores the base-second interval and last/next dispatch timestamps. Starting goalies use `today` and `future` lanes; injuries use `current`.
+Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores the base-second interval and last/next dispatch timestamps. Starting goalies use `today` and `future` lanes; injuries use `current`; anticipated lineups use `within_two_hours` and `outside_two_hours`.
+
+## sources, source_scopes, source_metric_snapshots, source_engagement_snapshots
+
+Cross-sport public publisher identities, sport/league/team coverage, append-only mutable account metric snapshots, and append-only engagement snapshots for evidence URLs. These tables retain provenance and do not assign source trust.
+
+## nhl_lineup_observations, nhl_lineup_observation_players
+
+Immutable text-based anticipated-lineup evidence keyed by NHL game, canonical NHL team id, and post URL. Player rows retain normalized line slots and unresolved names alongside canonical player identifiers when resolution succeeds.
+
+## nhl_current_lineups
+
+Current game/team anticipated-lineup projection. Each row points to the newest representative observation for its normalized structure and records distinct-source corroboration and first/last observation times.
+
+## integration_api_usage_logs
+
+Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery uses it to enforce the configured daily OpenAI web-search limit.
 
 **End of DB_SCHEMA**

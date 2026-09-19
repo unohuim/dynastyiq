@@ -42,10 +42,41 @@ class NhlProjectedTeamMatchupSimulator
         ?int $teamAGoalieId = null,
         ?int $teamBGoalieId = null
     ): array {
+        return $this->simulateWithRosters(
+            $sourceSeasonId,
+            $targetSeasonId,
+            $projectionVersion,
+            $toiProjectionVersion,
+            $goalieProjectionVersion,
+            $teamA,
+            $teamB,
+            $teamAGoalieId,
+            $teamBGoalieId,
+        );
+    }
+
+    /**
+     * @param array<int,int>|null $teamARosterIds
+     * @param array<int,int>|null $teamBRosterIds
+     * @return array<string,mixed>
+     */
+    public function simulateWithRosters(
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion,
+        string $goalieProjectionVersion,
+        string $teamA,
+        string $teamB,
+        ?int $teamAGoalieId = null,
+        ?int $teamBGoalieId = null,
+        ?array $teamARosterIds = null,
+        ?array $teamBRosterIds = null
+    ): array {
         $teamA = mb_strtoupper($teamA);
         $teamB = mb_strtoupper($teamB);
 
-        if (!$this->tablesExist()) {
+        if (! $this->tablesExist()) {
             return [
                 'is_available' => false,
                 'error' => 'Build TOI projections, skater projections, skater O profiles, and skater D profiles before simulating matchups.',
@@ -67,8 +98,30 @@ class NhlProjectedTeamMatchupSimulator
                 'method' => 'projected_ev_offense_with_composed_defensive_chance_context_and_projected_goalie_ev_pk_buckets',
             ],
             'sides' => [
-                $this->simulateSide($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion, $teamA, $teamB, $teamBGoalieId),
-                $this->simulateSide($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion, $teamB, $teamA, $teamAGoalieId),
+                $this->simulateSide(
+                    $sourceSeasonId,
+                    $targetSeasonId,
+                    $projectionVersion,
+                    $toiProjectionVersion,
+                    $goalieProjectionVersion,
+                    $teamA,
+                    $teamB,
+                    $teamBGoalieId,
+                    $teamARosterIds,
+                    $teamBRosterIds
+                ),
+                $this->simulateSide(
+                    $sourceSeasonId,
+                    $targetSeasonId,
+                    $projectionVersion,
+                    $toiProjectionVersion,
+                    $goalieProjectionVersion,
+                    $teamB,
+                    $teamA,
+                    $teamAGoalieId,
+                    $teamBRosterIds,
+                    $teamARosterIds
+                ),
             ],
         ];
     }
@@ -84,11 +137,13 @@ class NhlProjectedTeamMatchupSimulator
         string $goalieProjectionVersion,
         string $offenseTeam,
         string $defenseTeam,
-        ?int $goalieId
+        ?int $goalieId,
+        ?array $offenseRosterIds,
+        ?array $defenseRosterIds
     ): array {
-        $offenseBuckets = $this->offenseBuckets($targetSeasonId, $projectionVersion, $toiProjectionVersion, $offenseTeam);
-        $teamDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $offenseTeam);
-        $opponentDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $defenseTeam);
+        $offenseBuckets = $this->offenseBuckets($targetSeasonId, $projectionVersion, $toiProjectionVersion, $offenseTeam, $offenseRosterIds);
+        $teamDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $offenseTeam, $offenseRosterIds);
+        $opponentDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $defenseTeam, $defenseRosterIds);
         $baseline = $this->summary($offenseBuckets, 'baseline_');
         $projectedGames = $this->projectedGames($offenseBuckets);
         $baselineXsat = max(0.01, $baseline['baseline_xsat']);
@@ -193,7 +248,8 @@ class NhlProjectedTeamMatchupSimulator
                 $offenseTeam,
                 $adjusted['adjusted_xgf'],
                 $projectedGames,
-                $penaltiesByBucket
+                $penaltiesByBucket,
+                $offenseRosterIds
             ),
             'buckets' => $rows->take(40)->values(),
         ];
@@ -206,7 +262,8 @@ class NhlProjectedTeamMatchupSimulator
         string $targetSeasonId,
         string $projectionVersion,
         string $toiProjectionVersion,
-        string $team
+        string $team,
+        ?array $rosterIds = null
     ): Collection {
         return DB::table('nhl_player_projection_profile_buckets as buckets')
             ->join('nhl_player_season_projections as projections', function ($join) use ($targetSeasonId, $projectionVersion): void {
@@ -223,6 +280,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('buckets.projection_version', $projectionVersion)
             ->where('toi.target_team_abbrev', $team)
             ->whereNotIn('buckets.player_id', $this->unavailablePlayerIds($team))
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('buckets.player_id', $rosterIds))
             ->selectRaw('buckets.matched_bucket_key')
             ->selectRaw('MAX(buckets.shot_type_group) as shot_type_group')
             ->selectRaw('MAX(buckets.distance_group) as distance_group')
@@ -245,7 +303,8 @@ class NhlProjectedTeamMatchupSimulator
         string $sourceSeasonId,
         string $targetSeasonId,
         string $toiProjectionVersion,
-        string $team
+        string $team,
+        ?array $rosterIds = null
     ): Collection {
         $rows = DB::table('nhl_skater_defensive_chance_profile_buckets as profiles')
             ->join('nhl_player_toi_projections as toi', function ($join) use ($sourceSeasonId, $targetSeasonId, $toiProjectionVersion): void {
@@ -259,6 +318,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('profiles.fallback_level', 1)
             ->where('toi.target_team_abbrev', $team)
             ->whereNotIn('profiles.player_id', $this->unavailablePlayerIds($team))
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('profiles.player_id', $rosterIds))
             ->selectRaw('profiles.matched_bucket_key')
             ->selectRaw('MAX(profiles.shot_type_group) as shot_type_group')
             ->selectRaw('MAX(profiles.distance_group) as distance_group')
@@ -1049,7 +1109,8 @@ class NhlProjectedTeamMatchupSimulator
         string $team,
         float $teamAdjustedXgf,
         float $projectedGames,
-        Collection $penaltiesByBucket
+        Collection $penaltiesByBucket,
+        ?array $rosterIds = null
     ): Collection {
         $projectedGames = $projectedGames > 0 ? $projectedGames : self::TARGET_SEASON_GAMES;
         $teamAdjustedXgf = max(0.01, $teamAdjustedXgf);
@@ -1070,6 +1131,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('buckets.projection_version', $projectionVersion)
             ->where('toi.target_team_abbrev', $team)
             ->whereNotIn('buckets.player_id', $this->unavailablePlayerIds($team))
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('buckets.player_id', $rosterIds))
             ->selectRaw('buckets.player_id')
             ->selectRaw("MAX(COALESCE(players.full_name, buckets.player_id::text)) as player_name")
             ->selectRaw("MAX(COALESCE(buckets.position, projections.position, toi.position)) as position")

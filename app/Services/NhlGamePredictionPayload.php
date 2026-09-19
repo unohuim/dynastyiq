@@ -23,7 +23,8 @@ class NhlGamePredictionPayload
     private const SKATER_CONFIDENCE_COVERAGE_TARGET = 0.99;
 
     public function __construct(
-        private readonly NhlProjectedTeamMatchupSimulator $simulator
+        private readonly NhlProjectedTeamMatchupSimulator $simulator,
+        private readonly NhlAnticipatedLineupPayload $anticipatedLineups,
     ) {
     }
 
@@ -66,7 +67,14 @@ class NhlGamePredictionPayload
             $nhlGameId
         );
 
-        $result = $this->simulator->simulate(
+        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam);
+        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam);
+        $awayOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $awayTeam);
+        $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
+        $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
+        $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+
+        $simulationArguments = [
             $sourceSeasonId,
             $targetSeasonId,
             $projectionVersion,
@@ -75,8 +83,15 @@ class NhlGamePredictionPayload
             $awayTeam,
             $homeTeam,
             (int) $awayGoalie['nhl_player_id'],
-            (int) $homeGoalie['nhl_player_id']
-        );
+            (int) $homeGoalie['nhl_player_id'],
+        ];
+        $result = $awayRosterIds === null && $homeRosterIds === null
+            ? $this->simulator->simulate(...$simulationArguments)
+            : $this->simulator->simulateWithRosters(...[
+                ...$simulationArguments,
+                $awayRosterIds,
+                $homeRosterIds,
+            ]);
 
         if (($result['is_available'] ?? false) !== true) {
             throw ValidationException::withMessages([
@@ -115,6 +130,12 @@ class NhlGamePredictionPayload
                 'goalie_projection_version' => $goalieProjectionVersion,
                 'away_goalie_id' => $awayGoalie['nhl_player_id'],
                 'home_goalie_id' => $homeGoalie['nhl_player_id'],
+                'away_lineup_source' => $awayOfficialRosterIds !== null
+                    ? 'nhl_boxscore'
+                    : ($awayRosterIds === null ? 'projected_roster' : 'anticipated_lineup'),
+                'home_lineup_source' => $homeOfficialRosterIds !== null
+                    ? 'nhl_boxscore'
+                    : ($homeRosterIds === null ? 'projected_roster' : 'anticipated_lineup'),
             ],
             'prediction' => $prediction,
             'market_probabilities' => $this->marketProbabilities(
@@ -129,6 +150,10 @@ class NhlGamePredictionPayload
                 'away' => $awayGoalie,
                 'home' => $homeGoalie,
             ],
+            'anticipated_lineups' => [
+                'away' => $awayLineup,
+                'home' => $homeLineup,
+            ],
             'teams' => [
                 'away' => $this->teamPayload($awaySide),
                 'home' => $this->teamPayload($homeSide),
@@ -142,6 +167,44 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /**
+     * Use anticipated evidence only when all eighteen skaters resolve canonically.
+     *
+     * @param array<string,mixed>|null $lineup
+     * @return array<int,int>|null
+     */
+    private function resolvedSkaterIds(?array $lineup): ?array
+    {
+        if ($lineup === null) {
+            return null;
+        }
+
+        $skaters = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense']);
+        $ids = $skaters->pluck('nhl_player_id')->filter()
+            ->map(fn (mixed $id): int => (int) $id)->unique()->values();
+
+        return $skaters->count() === 18 && $ids->count() === 18 ? $ids->all() : null;
+    }
+
+    /** @return array<int,int>|null */
+    private function officialSkaterIds(int $nhlGameId, string $teamAbbrev): ?array
+    {
+        if (! Schema::hasTable('nhl_boxscores')) {
+            return null;
+        }
+
+        $teamId = DB::table('nhl_teams')->where('abbrev', $teamAbbrev)->value('nhl_id');
+        if ($teamId === null) {
+            return null;
+        }
+        $ids = DB::table('nhl_boxscores')->where('nhl_game_id', $nhlGameId)
+            ->where('nhl_team_id', $teamId)->whereNotNull('nhl_player_id')
+            ->whereRaw("UPPER(COALESCE(position, '')) <> 'G'")
+            ->pluck('nhl_player_id')->map(fn (mixed $id): int => (int) $id)->unique()->values();
+
+        return $ids->count() >= 18 ? $ids->all() : null;
     }
 
     private function game(int $nhlGameId): object

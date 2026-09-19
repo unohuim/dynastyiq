@@ -2708,6 +2708,8 @@ export default function adminHub(options = {}) {
                 current: 'Current injuries',
                 today: "Today's games",
                 future: 'Future dates',
+                within_two_hours: 'Within 2 hours of puck drop',
+                outside_two_hours: 'Outside 2 hours of puck drop',
             }[laneKey] ?? laneKey;
         },
 

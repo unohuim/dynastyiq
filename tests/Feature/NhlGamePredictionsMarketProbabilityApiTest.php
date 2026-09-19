@@ -359,3 +359,73 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
             ->etc()
         );
 });
+
+it('uses a fully resolved corroborated anticipated lineup for prediction simulation', function (): void {
+    $token = ($this->seedPredictionInputs)(2.4, 3.2);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Practice Reporter', 'handle' => 'practice_reporter',
+        'canonical_url' => 'https://x.com/practice_reporter',
+        'first_seen_at' => now(), 'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $observationId = DB::table('nhl_lineup_observations')->insertGetId([
+        'nhl_game_id' => 2026020001, 'team_id' => 1, 'team_abbrev' => 'AWY',
+        'source_id' => $sourceId, 'post_url' => 'https://x.com/practice_reporter/status/1',
+        'post_text' => 'Full practice lineup', 'provider_published_at' => now(), 'observed_at' => now(),
+        'completeness' => 'full', 'structure_hash' => str_repeat('b', 64),
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $players = [];
+    foreach (range(1, 18) as $index) {
+        $isForward = $index <= 12;
+        $positionIndex = $isForward ? $index : $index - 12;
+        $lineSize = $isForward ? 3 : 2;
+        $players[] = [
+            'nhl_lineup_observation_id' => $observationId,
+            'nhl_player_id' => 8480000 + $index,
+            'player_name' => "Resolved Skater {$index}",
+            'lineup_role' => $isForward ? 'forward' : 'defense',
+            'line_key' => ($isForward ? 'F' : 'D') . (int) ceil($positionIndex / $lineSize),
+            'slot_index' => (($positionIndex - 1) % $lineSize) + 1,
+            'resolution_status' => 'resolved', 'created_at' => now(), 'updated_at' => now(),
+        ];
+    }
+    DB::table('nhl_lineup_observation_players')->insert($players);
+    DB::table('nhl_current_lineups')->insert([
+        'nhl_game_id' => 2026020001, 'team_id' => 1, 'team_abbrev' => 'AWY',
+        'nhl_lineup_observation_id' => $observationId, 'structure_hash' => str_repeat('b', 64),
+        'evidence_status' => 'corroborated', 'source_count' => 2,
+        'first_observed_at' => now(), 'last_observed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    $simulator->shouldReceive('simulateWithRosters')->once()
+        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && $arguments[10] === null)
+        ->andReturn([
+            'is_available' => true,
+            'sides' => [
+                [
+                    'offense_team' => 'AWY', 'defense_team' => 'HOM',
+                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0],
+                    'roster' => [['adjusted_xgf_per_game' => 2.4, 'confidence_score' => 0.8]],
+                ],
+                [
+                    'offense_team' => 'HOM', 'defense_team' => 'AWY',
+                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0],
+                    'roster' => [['adjusted_xgf_per_game' => 3.2, 'confidence_score' => 0.8]],
+                ],
+            ],
+        ]);
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
+        ->assertJsonPath('inputs.home_lineup_source', 'projected_roster')
+        ->assertJsonCount(18, 'anticipated_lineups.away.players');
+});
