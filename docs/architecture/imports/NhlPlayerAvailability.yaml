@@ -34,6 +34,7 @@ rules:
   - Missing qualifying goalie summaries must render as unavailable and must not be replaced with fabricated zero values.
   - Starting-goalie import defaults to today and tomorrow only when no explicit command dates are supplied.
   - Provider player names that cannot be resolved must be retained as unresolved observations.
+  - Goalie identity resolution must accept canonical NHL players identified by either players.is_goalie or a G value in players.position or players.pos_type.
   - Provider imports are manually initiated through Player Imports until scheduling is separately approved.
 public_interface:
   - nhl:import-injuries

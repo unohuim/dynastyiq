@@ -18,8 +18,16 @@ class NhlAvailabilityPlayerResolver
             $query->where('team_abbrev', mb_strtoupper($teamAbbrev));
         }
 
-        if ($goalie !== null) {
-            $query->where('is_goalie', $goalie);
+        if ($goalie === true) {
+            $query->where(function ($goalieQuery): void {
+                $goalieQuery->where('is_goalie', true)
+                    ->orWhereRaw("UPPER(COALESCE(position, '')) = 'G'")
+                    ->orWhereRaw("UPPER(COALESCE(pos_type, '')) = 'G'");
+            });
+        } elseif ($goalie === false) {
+            $query->where('is_goalie', false)
+                ->whereRaw("UPPER(COALESCE(position, '')) <> 'G'")
+                ->whereRaw("UPPER(COALESCE(pos_type, '')) <> 'G'");
         }
 
         return $query->get()->first(

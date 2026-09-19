@@ -82,6 +82,7 @@ class ImportNHLPlayer
         $player->country_code          = $data['birthCountry'] ?? null;
         $player->position              = $data['position'] ?? null;
         $player->pos_type              = in_array($player->position, ['L', 'R', 'C'], true) ? 'F' : $player->position;
+        $player->is_goalie             = mb_strtoupper((string) $player->position) === 'G';
         $player->shoots                = $this->normalizeShootsCatches($data['shootsCatches'] ?? null);
         $player->height                = $this->formatHeightFromInches($data['heightInInches'] ?? null);
         $player->weight                = $this->nullableIntValue($data['weightInPounds'] ?? null);

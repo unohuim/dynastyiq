@@ -219,12 +219,12 @@ it('deduplicates reversed provider matchups and uses the nhl schedule for goalie
         'current_league_abbrev' => 'NHL',
     ]);
     Player::query()->create([
-        'nhl_id' => 8484165,
+        'nhl_id' => 8484170,
         'full_name' => 'Jacob Fowler',
         'first_name' => 'Jacob',
         'last_name' => 'Fowler',
         'position' => 'G',
-        'is_goalie' => true,
+        'is_goalie' => false,
         'team_abbrev' => 'MTL',
         'current_league_abbrev' => 'NHL',
     ]);
@@ -249,6 +249,7 @@ it('deduplicates reversed provider matchups and uses the nhl schedule for goalie
         'nhl_game_id' => 2026020001,
         'team_abbrev' => 'MTL',
         'player_name' => 'Jacob Fowler',
+        'nhl_player_id' => 8484170,
         'is_home' => false,
     ]);
     $this->assertDatabaseHas('nhl_starting_goalie_observations', [
