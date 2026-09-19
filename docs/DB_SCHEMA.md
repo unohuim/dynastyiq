@@ -4844,7 +4844,7 @@ Append-only starting-goalie evidence keyed by game date, team, provider, and obs
 
 ## admin_import_schedules
 
-Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores the base-second interval and last/next dispatch timestamps. Starting goalies use `today` and `future` lanes; injuries use `current`; anticipated lineups use `within_two_hours` and `outside_two_hours`.
+Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores global and lane enablement, the base-second interval, recurrence mode, optional local daily start time and IANA timezone, and last/next dispatch timestamps. Starting goalies use `today` and `future` lanes; injuries use `current`; anticipated lineups use `within_two_hours` and `outside_two_hours`.
 
 ## sources, source_scopes, source_metric_snapshots, source_engagement_snapshots
 

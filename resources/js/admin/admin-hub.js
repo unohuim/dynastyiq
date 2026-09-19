@@ -171,6 +171,7 @@ export default function adminHub(options = {}) {
             importKey: null,
             importLabel: '',
             lanes: {},
+            timing: {},
         },
 
         roster: {
@@ -2716,6 +2717,8 @@ export default function adminHub(options = {}) {
         openImportScheduleSettings(importItem) {
             if (!importItem?.schedule?.lanes) return;
 
+            const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
             this.scheduleSettings = {
                 open: true,
                 importKey: importItem.key,
@@ -2727,6 +2730,12 @@ export default function adminHub(options = {}) {
                         seconds: Number(lane.seconds || 0),
                     }]
                 )),
+                timing: {
+                    daily_start_time: importItem.schedule.timing?.daily_start_time ?? '11:00',
+                    timezone: browserTimezone,
+                    outside_mode: importItem.schedule.timing?.outside_mode ?? 'recurring',
+                    within_two_hours_enabled: importItem.schedule.timing?.within_two_hours_enabled ?? true,
+                },
             };
         },
 
@@ -2736,6 +2745,7 @@ export default function adminHub(options = {}) {
                 importKey: null,
                 importLabel: '',
                 lanes: {},
+                timing: {},
             };
         },
 
@@ -2750,12 +2760,18 @@ export default function adminHub(options = {}) {
             const saved = await this.saveImportSchedule(
                 importItem,
                 importItem.schedule.enabled,
-                this.scheduleSettings.lanes
+                this.scheduleSettings.lanes,
+                this.scheduleSettings.timing
             );
             if (saved) this.closeImportScheduleSettings();
         },
 
-        async saveImportSchedule(importItem, enabled = importItem.schedule?.enabled, lanes = importItem.schedule?.lanes) {
+        async saveImportSchedule(
+            importItem,
+            enabled = importItem.schedule?.enabled,
+            lanes = importItem.schedule?.lanes,
+            timing = importItem.schedule?.timing
+        ) {
             if (!importItem.schedule_url || !importItem.schedule || importItem.schedule.saving) return;
             const previousEnabled = importItem.schedule.enabled;
             importItem.schedule.enabled = Boolean(enabled);
@@ -2766,6 +2782,15 @@ export default function adminHub(options = {}) {
                 const intervals = Object.fromEntries(Object.entries(lanes).map(
                     ([key, lane]) => [key, this.importScheduleSeconds(lane)]
                 ));
+                const body = { enabled: Boolean(enabled), intervals };
+                if (importItem.key === 'nhl-anticipated-lineups') {
+                    body.timing = {
+                        daily_start_time: timing?.daily_start_time ?? '11:00',
+                        timezone: timing?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC',
+                        outside_mode: timing?.outside_mode ?? 'recurring',
+                        within_two_hours_enabled: Boolean(timing?.within_two_hours_enabled ?? true),
+                    };
+                }
                 const response = await fetch(importItem.schedule_url, {
                     method: 'PUT',
                     headers: {
@@ -2773,7 +2798,7 @@ export default function adminHub(options = {}) {
                         'Content-Type': 'application/json',
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
                     },
-                    body: JSON.stringify({ enabled: Boolean(enabled), intervals }),
+                    body: JSON.stringify(body),
                 });
                 const payload = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(payload.message || 'Could not save import schedule.');

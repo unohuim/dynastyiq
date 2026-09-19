@@ -35,6 +35,7 @@ use App\Models\YahooFantasyConnection;
 use App\Models\YahooPlayer;
 use App\Services\YahooFantasyPlayerImporter;
 use App\Services\YahooFantasyRosterService;
+use App\Services\AdminImportSchedules;
 use App\Services\NhlImportOrchestrator;
 use App\Support\NhlImportStages;
 use Illuminate\Support\Carbon;
@@ -7585,6 +7586,110 @@ it('allows super admins to enable and configure availability import schedules', 
         ->assertJsonPath('schedule.lanes.future.interval_seconds', 3600);
 
     expect(AdminImportSchedule::query()->where('source_key', 'nhl-starting-goalies')->count())->toBe(2);
+});
+
+it('stores anticipated lineup daily and conditional recurrence settings', function () {
+    $this->actingAs(($this->makeSuperAdmin)())->putJson(
+        route('admin.imports.schedule.update', ['key' => 'nhl-anticipated-lineups']),
+        [
+            'enabled' => true,
+            'intervals' => ['within_two_hours' => 600, 'outside_two_hours' => 10800],
+            'timing' => [
+                'daily_start_time' => '11:00',
+                'timezone' => 'America/Toronto',
+                'outside_mode' => 'once',
+                'within_two_hours_enabled' => false,
+            ],
+        ]
+    )->assertOk()
+        ->assertJsonPath('schedule.timing.daily_start_time', '11:00')
+        ->assertJsonPath('schedule.timing.timezone', 'America/Toronto')
+        ->assertJsonPath('schedule.timing.outside_mode', 'once')
+        ->assertJsonPath('schedule.timing.within_two_hours_enabled', false);
+
+    $outside = AdminImportSchedule::query()
+        ->where('source_key', 'nhl-anticipated-lineups')
+        ->where('lane_key', 'outside_two_hours')
+        ->firstOrFail();
+    $within = AdminImportSchedule::query()
+        ->where('source_key', 'nhl-anticipated-lineups')
+        ->where('lane_key', 'within_two_hours')
+        ->firstOrFail();
+
+    expect($outside->recurrence_mode)->toBe('once')
+        ->and($outside->interval_seconds)->toBe(10800)
+        ->and($within->lane_enabled)->toBeFalse()
+        ->and($within->interval_seconds)->toBe(600);
+});
+
+it('rejects invalid anticipated lineup schedule timezones', function () {
+    $this->actingAs(($this->makeSuperAdmin)())->putJson(
+        route('admin.imports.schedule.update', ['key' => 'nhl-anticipated-lineups']),
+        [
+            'enabled' => true,
+            'intervals' => ['within_two_hours' => 900, 'outside_two_hours' => 3600],
+            'timing' => [
+                'daily_start_time' => '11:00',
+                'timezone' => 'Toronto-ish',
+                'outside_mode' => 'recurring',
+                'within_two_hours_enabled' => true,
+            ],
+        ]
+    )->assertUnprocessable()->assertJsonValidationErrors('timing.timezone');
+});
+
+it('does not dispatch anticipated lineups before the local daily start time', function () {
+    Bus::fake();
+    $this->travelTo(Carbon::parse('2026-09-19 14:00:00', 'UTC'));
+    AdminImportSchedule::query()->create([
+        'source_key' => 'nhl-anticipated-lineups',
+        'lane_key' => 'outside_two_hours',
+        'enabled' => true,
+        'lane_enabled' => true,
+        'interval_seconds' => 10800,
+        'recurrence_mode' => 'recurring',
+        'daily_start_time' => '11:00:00',
+        'timezone' => 'America/Toronto',
+        'next_due_at' => now()->subMinute(),
+    ]);
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026010001,
+        'season_id' => '20262027',
+        'game_type' => 1,
+        'game_date' => '2026-09-19',
+        'game_dow' => 'SAT',
+        'game_month' => 'SEP',
+        'start_time_utc' => '2026-09-19 23:00:00',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    Artisan::call('admin:dispatch-scheduled-imports');
+
+    Bus::assertNothingBatched();
+    $this->travelBack();
+});
+
+it('anchors recurring anticipated lineup dispatches to the configured daily start', function () {
+    $schedule = AdminImportSchedule::query()->create([
+        'source_key' => 'nhl-anticipated-lineups',
+        'lane_key' => 'outside_two_hours',
+        'enabled' => true,
+        'lane_enabled' => true,
+        'interval_seconds' => 10800,
+        'recurrence_mode' => 'recurring',
+        'daily_start_time' => '11:00:00',
+        'timezone' => 'America/Toronto',
+        'next_due_at' => now(),
+    ]);
+
+    app(AdminImportSchedules::class)->markDispatched(
+        $schedule,
+        Carbon::parse('2026-09-19 16:00:00', 'UTC')->toImmutable()
+    );
+
+    expect($schedule->refresh()->next_due_at->utc()->format('Y-m-d H:i:s'))
+        ->toBe('2026-09-19 18:00:00');
 });
 
 it('does not dispatch disabled admin import schedules', function () {

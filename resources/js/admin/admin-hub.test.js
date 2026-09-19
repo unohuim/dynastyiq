@@ -2231,9 +2231,82 @@ describe('admin-hub import listeners', () => {
                 body: JSON.stringify({
                     enabled: true,
                     intervals: { within_two_hours: 900, outside_two_hours: 3600 },
+                    timing: {
+                        daily_start_time: '11:00',
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        outside_mode: 'recurring',
+                        within_two_hours_enabled: true,
+                    },
                 }),
             })
         );
         expect(instance.importItems[0].schedule.enabled).toBe(true);
+    });
+
+    it('saves conditional anticipated lineup timing settings', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+                schedule: {
+                    enabled: true,
+                    timing: {
+                        daily_start_time: '10:30',
+                        timezone: 'America/Toronto',
+                        outside_mode: 'once',
+                        within_two_hours_enabled: false,
+                    },
+                    lanes: {
+                        within_two_hours: { interval_seconds: 600 },
+                        outside_two_hours: { interval_seconds: 10800 },
+                    },
+                },
+            }),
+        }));
+        const instance = adminHub({
+            imports: [{
+                key: 'nhl-anticipated-lineups',
+                label: 'Anticipated Lineups',
+                schedule_url: '/admin/imports/nhl-anticipated-lineups/schedule',
+                schedule: {
+                    enabled: true,
+                    timing: {
+                        daily_start_time: '11:00',
+                        timezone: 'America/Toronto',
+                        outside_mode: 'recurring',
+                        within_two_hours_enabled: true,
+                    },
+                    lanes: {
+                        within_two_hours: { interval_seconds: 900 },
+                        outside_two_hours: { interval_seconds: 3600 },
+                    },
+                },
+            }],
+        });
+
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        instance.scheduleSettings.timing.daily_start_time = '10:30';
+        instance.scheduleSettings.timing.timezone = 'America/Toronto';
+        instance.scheduleSettings.timing.outside_mode = 'once';
+        instance.scheduleSettings.timing.within_two_hours_enabled = false;
+        instance.scheduleSettings.lanes.within_two_hours.minutes = 10;
+        instance.scheduleSettings.lanes.outside_two_hours.hours = 3;
+        await instance.saveImportScheduleSettings();
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            '/admin/imports/nhl-anticipated-lineups/schedule',
+            expect.objectContaining({
+                body: JSON.stringify({
+                    enabled: true,
+                    intervals: { within_two_hours: 600, outside_two_hours: 10800 },
+                    timing: {
+                        daily_start_time: '10:30',
+                        timezone: 'America/Toronto',
+                        outside_mode: 'once',
+                        within_two_hours_enabled: false,
+                    },
+                }),
+            })
+        );
     });
 });

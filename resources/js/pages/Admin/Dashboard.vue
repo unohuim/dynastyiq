@@ -1472,14 +1472,49 @@ export default {
                     </div>
 
                     <div class="space-y-5 px-5 py-5">
-                        <div v-for="(lane, laneKey) in scheduleSettings.lanes" :key="laneKey">
-                            <div class="text-sm font-semibold text-gray-800">{{ importScheduleLaneLabel(laneKey) }}</div>
-                            <div class="mt-2 grid grid-cols-3 gap-3">
-                                <label class="text-xs font-medium text-gray-600">Hours<input v-model.number="lane.hours" type="number" min="0" max="24" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
-                                <label class="text-xs font-medium text-gray-600">Minutes<input v-model.number="lane.minutes" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
-                                <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="lane.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                        <template v-if="scheduleSettings.importKey === 'nhl-anticipated-lineups'">
+                            <label class="block text-sm font-semibold text-gray-800">
+                                First daily sync
+                                <input v-model="scheduleSettings.timing.daily_start_time" type="time" required class="mt-2 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </label>
+                            <p class="-mt-3 text-xs text-gray-500">Times use {{ scheduleSettings.timing.timezone }} and follow daylight-saving changes.</p>
+
+                            <fieldset>
+                                <legend class="text-sm font-semibold text-gray-800">Outside 2 hours of puck drop</legend>
+                                <div class="mt-2 flex gap-5 text-sm text-gray-700">
+                                    <label class="inline-flex items-center gap-2"><input v-model="scheduleSettings.timing.outside_mode" type="radio" value="once" class="border-gray-300 text-indigo-600 focus:ring-indigo-500">Run once</label>
+                                    <label class="inline-flex items-center gap-2"><input v-model="scheduleSettings.timing.outside_mode" type="radio" value="recurring" class="border-gray-300 text-indigo-600 focus:ring-indigo-500">Run more than once</label>
+                                </div>
+                                <div v-if="scheduleSettings.timing.outside_mode === 'recurring'" class="mt-3 grid grid-cols-3 gap-3">
+                                    <label class="text-xs font-medium text-gray-600">Hours<input v-model.number="scheduleSettings.lanes.outside_two_hours.hours" type="number" min="0" max="24" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Minutes<input v-model.number="scheduleSettings.lanes.outside_two_hours.minutes" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="scheduleSettings.lanes.outside_two_hours.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                </div>
+                            </fieldset>
+
+                            <fieldset>
+                                <legend class="text-sm font-semibold text-gray-800">Do you want to run within 2 hours leading up to puck drop?</legend>
+                                <div class="mt-2 flex gap-5 text-sm text-gray-700">
+                                    <label class="inline-flex items-center gap-2"><input v-model="scheduleSettings.timing.within_two_hours_enabled" type="radio" :value="true" class="border-gray-300 text-indigo-600 focus:ring-indigo-500">Yes</label>
+                                    <label class="inline-flex items-center gap-2"><input v-model="scheduleSettings.timing.within_two_hours_enabled" type="radio" :value="false" class="border-gray-300 text-indigo-600 focus:ring-indigo-500">No</label>
+                                </div>
+                                <div v-if="scheduleSettings.timing.within_two_hours_enabled" class="mt-3 grid grid-cols-3 gap-3">
+                                    <label class="text-xs font-medium text-gray-600">Hours<input v-model.number="scheduleSettings.lanes.within_two_hours.hours" type="number" min="0" max="24" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Minutes<input v-model.number="scheduleSettings.lanes.within_two_hours.minutes" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="scheduleSettings.lanes.within_two_hours.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                </div>
+                            </fieldset>
+                        </template>
+                        <template v-else>
+                            <div v-for="(lane, laneKey) in scheduleSettings.lanes" :key="laneKey">
+                                <div class="text-sm font-semibold text-gray-800">{{ importScheduleLaneLabel(laneKey) }}</div>
+                                <div class="mt-2 grid grid-cols-3 gap-3">
+                                    <label class="text-xs font-medium text-gray-600">Hours<input v-model.number="lane.hours" type="number" min="0" max="24" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Minutes<input v-model.number="lane.minutes" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                    <label class="text-xs font-medium text-gray-600">Seconds<input v-model.number="lane.seconds" type="number" min="0" max="59" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></label>
+                                </div>
                             </div>
-                        </div>
+                        </template>
                         <p v-if="scheduleSettingsImport()?.schedule.error" class="text-sm text-red-600" v-text="scheduleSettingsImport().schedule.error"></p>
                     </div>
 

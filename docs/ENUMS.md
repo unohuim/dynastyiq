@@ -875,6 +875,15 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 `today` and `future` apply to starting goalies. `current` applies to game-independent injuries. `within_two_hours` and `outside_two_hours` apply to today's anticipated lineups relative to puck drop.
 
+### Admin Import Schedule Recurrence Mode
+
+**Storage location(s):** `admin_import_schedules.recurrence_mode`
+
+- `once`
+- `recurring`
+
+`once` limits the anticipated-lineup outside-two-hours lane to one dispatch per configured local day. `recurring` repeats from the configured daily start anchor using `interval_seconds`. Other import lanes remain recurring.
+
 ### Anticipated NHL Lineup Values
 
 - `nhl_lineup_observations.completeness`: `full`, `partial`.

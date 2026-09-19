@@ -2850,7 +2850,7 @@ $batch = app(AdminImports::class)->dispatch('fantrax');
 **Type:** Persisted Scheduler Dispatch Pattern
 **Location:** `app/Services/AdminImportSchedules.php`, `app/Console/Commands/DispatchScheduledAdminImportsCommand.php`, `routes/console.php`
 
-**Purpose:** Persist opt-in intervals in seconds and queue due admin imports through the existing registry without running provider work in the scheduler.
+**Purpose:** Persist opt-in intervals in seconds and queue due admin imports through the existing registry without running provider work in the scheduler. Anticipated lineups support a timezone-aware daily anchor, once-or-recurring outside-window execution, and an optional recurring two-hour pregame window.
 
 **Public Interface:** `PUT /admin/imports/{key}/schedule`, `admin:dispatch-scheduled-imports`, `admin_import_schedules`.
 

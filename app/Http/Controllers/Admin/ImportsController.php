@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Validation\Rule;
 
 class ImportsController extends Controller
 {
@@ -95,13 +96,27 @@ class ImportsController extends Controller
             'enabled' => ['required', 'boolean'],
             'intervals' => ['nullable', 'array'],
             'intervals.*' => ['integer', 'min:60', 'max:86400'],
+            'timing' => ['nullable', 'array'],
+            'timing.daily_start_time' => ['nullable', 'date_format:H:i'],
+            'timing.timezone' => ['nullable', 'string', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! in_array($value, timezone_identifiers_list(), true)) {
+                    $fail("The {$attribute} field must be a valid IANA timezone.");
+                }
+            }],
+            'timing.outside_mode' => ['nullable', Rule::in(['once', 'recurring'])],
+            'timing.within_two_hours_enabled' => ['nullable', 'boolean'],
         ]);
         $intervals = collect($data['intervals'] ?? [])->only(array_keys($definitions))->map(
             fn (mixed $seconds): int => (int) $seconds
         )->all();
 
         return response()->json([
-            'schedule' => $this->schedules->update($key, (bool) $data['enabled'], $intervals),
+            'schedule' => $this->schedules->update(
+                $key,
+                (bool) $data['enabled'],
+                $intervals,
+                $key === AdminImportSchedules::ANTICIPATED_LINEUPS ? ($data['timing'] ?? []) : []
+            ),
         ]);
     }
 
