@@ -71,7 +71,7 @@ class NhlAnticipatedLineupPayload
     {
         $row = NhlCurrentLineup::query()->with(['observation.players', 'observation.source'])
             ->where('nhl_game_id', $nhlGameId)->where('team_abbrev', mb_strtoupper($teamAbbrev))
-            ->when($requireCorroboration, fn ($query) => $query->whereIn('evidence_status', ['corroborated', 'strongly_corroborated']))
+            ->when($requireCorroboration, fn ($query) => $query->whereIn('evidence_status', ['official', 'corroborated', 'strongly_corroborated']))
             ->first();
 
         return $row ? $this->lineup($row) : null;

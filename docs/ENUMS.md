@@ -873,7 +873,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `contracts`: CapWages contract import.
 - `nhl-starting-goalies`: RotoWire starting-goalie observation import.
 - `nhl-injuries`: CBS/RotoWire current injury import.
-- `nhl-anticipated-lineups`: OpenAI web-search discovery of text-based anticipated NHL lineups.
+- `nhl-anticipated-lineups`: Direct X recent-search discovery of text-based anticipated NHL lineups.
 
 ### Admin Import Schedule Lane
 
@@ -904,7 +904,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl_lineup_observation_players.resolution_status`: `resolved`, `unresolved`.
 - `nhl_lineup_observation_players.power_play_unit`: nullable `1`, `2`.
 - `nhl_lineup_observation_players.penalty_kill_unit`: nullable `1`, `2`.
-- `nhl_current_lineups.evidence_status`: `reported`, `corroborated`, `strongly_corroborated`.
+- `nhl_current_lineups.evidence_status`: `official`, `reported`, `corroborated`, `strongly_corroborated`.
 
 **Notes:**
 
@@ -2623,7 +2623,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - Injury evidence levels: `suspected`, `reported`, `corroborated`, `confirmed_unavailable`, `confirmed_available`.
 - Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
 - Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
-- Starting-goalie observation provider: `rotowire`, `public_lineup`.
+- Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`.
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 

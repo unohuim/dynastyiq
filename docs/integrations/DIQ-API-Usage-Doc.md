@@ -561,9 +561,11 @@ Authorization: Bearer <DYNASTYIQ_API_TOKEN>
 }
 ```
 
-`team_id` is the canonical `nhl_teams.nhl_id`. Use `nhl_game_id + team_id` as the current-lineup upsert key and `nhl_player_id` as the durable player identity. `reported` means one source, `corroborated` means two distinct sources, and `strongly_corroborated` means at least three. Unresolved names remain in the payload and must not be silently substituted.
+`team_id` is the canonical `nhl_teams.nhl_id`. Use `nhl_game_id + team_id` as the current-lineup upsert key and `nhl_player_id` as the durable player identity. `official` means the NHL gamecenter boxscore supplied a complete game roster, `reported` means one public source, `corroborated` means two distinct public sources, and `strongly_corroborated` means at least three. Unresolved names remain in the payload and must not be silently substituted.
 
-The prediction endpoint accepts a `reported`, `corroborated`, or `strongly_corroborated` lineup when all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Official NHL roster evidence remains higher authority. Explicitly reported PP/PK units are returned as `power_play_unit` and `penalty_kill_unit`; null means the source did not report the unit.
+Before searching X, DynastyIQ checks `GET https://api-web.nhle.com/v1/gamecenter/{game-id}/boxscore` for each queued team. A complete official roster of twelve forwards and six defensemen is persisted as `official` and suppresses X discovery for that game/team. A goalie carrying the NHL `starter: true` flag is recorded as confirmed starting-goalie evidence. The X fallback runs only when that official roster is absent or incomplete.
+
+The prediction endpoint accepts an `official`, `reported`, `corroborated`, or `strongly_corroborated` lineup when all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Explicitly reported PP/PK units are returned as `power_play_unit` and `penalty_kill_unit`; null means the source did not report the unit.
 
 ## NHL Game Predictions Endpoint
 

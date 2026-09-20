@@ -45,7 +45,7 @@
                             'border-gray-200 bg-gray-50 text-gray-600' => $status === 'not_reported',
                             'border-amber-200 bg-amber-50 text-amber-700' => $status === 'reported',
                             'border-sky-200 bg-sky-50 text-sky-700' => $status === 'corroborated',
-                            'border-emerald-200 bg-emerald-50 text-emerald-700' => $status === 'strongly_corroborated',
+                            'border-emerald-200 bg-emerald-50 text-emerald-700' => in_array($status, ['official', 'strongly_corroborated'], true),
                         ])>{{ str($status)->replace('_', ' ')->headline() }}</span>
                     </header>
 

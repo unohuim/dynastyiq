@@ -65,8 +65,10 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             }
 
             return array_values(array_filter([
-                (int) $awayCurrent->source_count < 2 ? [$game, $awayTeam, $awayTeamId] : null,
-                (int) $homeCurrent->source_count < 2 ? [$game, $homeTeam, $homeTeamId] : null,
+                $awayCurrent->evidence_status !== 'official' && (int) $awayCurrent->source_count < 2
+                    ? [$game, $awayTeam, $awayTeamId] : null,
+                $homeCurrent->evidence_status !== 'official' && (int) $homeCurrent->source_count < 2
+                    ? [$game, $homeTeam, $homeTeamId] : null,
             ]));
         })->values();
 

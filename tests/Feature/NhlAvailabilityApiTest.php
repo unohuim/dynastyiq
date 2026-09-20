@@ -88,18 +88,68 @@ function createCurrentAnticipatedLineup(array $overrides = []): NhlCurrentLineup
     ], $overrides));
 }
 
-function openAiLineupResponse(array $observations): array
+function xLineupResponse(array $observations): array
 {
+    \App\Models\NhlTeam::query()->updateOrCreate(
+        ['abbrev' => 'TOR'],
+        ['nhl_id' => 10, 'common_name' => 'Maple Leafs']
+    );
+    $posts = [];
+    $users = [];
+    foreach ($observations as $index => $observation) {
+        $handle = (string) $observation['source_handle'];
+        $postId = (string) ($index + 1);
+        if (preg_match('/status\/(\d+)/', (string) $observation['post_url'], $match) === 1) {
+            $postId = $match[1];
+        }
+        foreach ($observation['players'] as $player) {
+            Player::query()->firstOrCreate(['full_name' => $player['name']], [
+                'nhl_id' => 8490000 + abs(crc32((string) $player['name'])) % 9000,
+                'first_name' => str($player['name'])->beforeLast(' ')->toString(),
+                'last_name' => str($player['name'])->afterLast(' ')->toString(),
+                'position' => $player['lineup_role'] === 'goalie' ? 'G' : ($player['lineup_role'] === 'defense' ? 'D' : 'C'),
+                'team_abbrev' => 'TOR',
+                'current_league_abbrev' => 'NHL',
+            ]);
+        }
+        $grouped = collect($observation['players'])->groupBy('line_key');
+        $lineupText = collect(['F1', 'F2', 'F3', 'F4'])->map(
+            fn (string $key): string => $grouped->get($key, collect())->pluck('name')->implode(' - ')
+        )->prepend('Forwards')->merge(
+            collect(['D1', 'D2', 'D3'])->map(
+                fn (string $key): string => $grouped->get($key, collect())->pluck('name')->implode(' - ')
+            )->prepend('Defense')
+        )->merge([
+            'Goalies',
+            $grouped->get('G', collect())->pluck('name')->implode(' - '),
+        ])->filter()->implode("\n");
+        $posts[] = [
+            'id' => $postId,
+            'text' => $observation['post_text'] === '' ? '' : $lineupText,
+            'author_id' => 'author-' . $index,
+            'created_at' => $observation['published_at'],
+            'public_metrics' => [
+                'like_count' => 10,
+                'reply_count' => 2,
+                'retweet_count' => 3,
+                'impression_count' => 400,
+            ],
+        ];
+        $users[] = [
+            'id' => 'author-' . $index,
+            'name' => $observation['source_name'],
+            'username' => $handle,
+            'public_metrics' => [
+                'followers_count' => 1000,
+                'following_count' => 100,
+                'tweet_count' => 5000,
+            ],
+        ];
+    }
+
     return [
-        'id' => 'resp_test',
-        'usage' => ['input_tokens' => 100, 'output_tokens' => 50],
-        'output' => [
-            ['type' => 'web_search_call', 'id' => 'search_test'],
-            ['type' => 'message', 'content' => [[
-                'type' => 'output_text',
-                'text' => json_encode(['observations' => $observations], JSON_THROW_ON_ERROR),
-            ]]],
-        ],
+        'data' => $posts,
+        'includes' => ['users' => $users, 'media' => []],
     ];
 }
 
@@ -681,16 +731,19 @@ it('advances status updated time only when normalized injury meaning changes', f
 });
 
 it('stores two matching lineup sources as corroborated current truth', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020100, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
         'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ]);
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([
-        lineupCandidate('reporter_one', 'https://x.com/reporter_one/status/1'),
-        lineupCandidate('reporter_two', 'https://x.com/reporter_two/status/2'),
-    ]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([
+            lineupCandidate('reporter_one', 'https://x.com/reporter_one/status/1'),
+            lineupCandidate('reporter_two', 'https://x.com/reporter_two/status/2'),
+        ])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
 
@@ -705,11 +758,11 @@ it('stores two matching lineup sources as corroborated current truth', function 
         ->assertJsonPath('anticipated_lineups.0.source_count', 2)
         ->assertJsonCount(20, 'anticipated_lineups.0.players')
         ->assertJsonCount(2, 'anticipated_lineups.0.sources');
-    Http::assertSentCount(1);
+    Http::assertSentCount(2);
 });
 
 it('treats twelve forwards and six defensemen as reported without goalies', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020198, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
@@ -720,7 +773,10 @@ it('treats twelve forwards and six defensemen as reported without goalies', func
         $candidate['players'],
         fn (array $player): bool => $player['lineup_role'] !== 'goalie'
     ));
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([$candidate]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([$candidate])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10, false);
 
@@ -736,57 +792,29 @@ it('treats twelve forwards and six defensemen as reported without goalies', func
     ]);
 });
 
-it('uses an x-only follow-up when the general search does not corroborate the lineup', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
-    $game = NhlGame::query()->create([
-        'nhl_game_id' => 2026020197, 'season_id' => '20262027', 'game_type' => 2,
-        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
-        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
-    ]);
-    Http::fake([
-        'api.openai.com/*' => Http::sequence()
-            ->push(openAiLineupResponse([
-                lineupCandidate('general_reporter', 'https://example.test/general-lineup'),
-            ]))
-            ->push(openAiLineupResponse([
-                lineupCandidate('x_reporter', 'https://x.com/x_reporter/status/2'),
-            ])),
-    ]);
-
-    app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
-
-    $requests = Http::recorded();
-    expect($requests)->toHaveCount(2)
-        ->and(data_get($requests[0][0]->data(), 'tools.0.filters'))->toBeNull()
-        ->and(data_get($requests[1][0]->data(), 'tools.0.filters.allowed_domains'))->toBe(['x.com']);
-    $this->assertDatabaseHas('nhl_current_lineups', [
-        'nhl_game_id' => 2026020197,
-        'team_id' => 10,
-        'evidence_status' => 'corroborated',
-        'source_count' => 2,
-    ]);
-});
-
-it('uses the x-only fallback when the general search finds no lineup', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+it('searches X directly once using the configured team query', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020196, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
         'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ]);
     Http::fake([
-        'api.openai.com/*' => Http::sequence()
-            ->push(openAiLineupResponse([]))
-            ->push(openAiLineupResponse([
-                lineupCandidate('x_fallback', 'https://x.com/x_fallback/status/1'),
-            ])),
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([
+            lineupCandidate('x_reporter', 'https://x.com/x_reporter/status/1'),
+        ])),
     ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10, false);
 
-    $requests = Http::recorded();
-    expect($requests)->toHaveCount(2)
-        ->and(data_get($requests[1][0]->data(), 'tools.0.filters.allowed_domains'))->toBe(['x.com']);
+    $requests = Http::recorded()->filter(
+        fn (array $record): bool => str_contains($record[0]->url(), 'api.x.com')
+    )->values();
+    expect($requests)->toHaveCount(1)
+        ->and($requests[0][0]->url())->toContain('/2/tweets/search/recent')
+        ->and($requests[0][0]['query'])->toBe('TOR Maple Leafs starting lineup')
+        ->and((int) $requests[0][0]['max_results'])->toBe(10);
     $this->assertDatabaseHas('nhl_current_lineups', [
         'nhl_game_id' => 2026020196,
         'team_id' => 10,
@@ -795,8 +823,91 @@ it('uses the x-only fallback when the general search finds no lineup', function 
     ]);
 });
 
-it('stores and returns explicitly reported lineup special teams units', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+it('keeps split squad X evidence with the game whose opponent is named', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    \App\Models\NhlTeam::query()->create([
+        'nhl_id' => 8, 'abbrev' => 'MTL', 'common_name' => 'Canadiens',
+    ]);
+    \App\Models\NhlTeam::query()->create([
+        'nhl_id' => 9, 'abbrev' => 'OTT', 'common_name' => 'Senators',
+    ]);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020194, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026020195, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(5), 'away_team_abbrev' => 'TOR', 'home_team_abbrev' => 'OTT',
+    ]);
+    $response = xLineupResponse([
+        lineupCandidate('montreal_reporter', 'https://x.com/montreal_reporter/status/11'),
+        lineupCandidate('ottawa_reporter', 'https://x.com/ottawa_reporter/status/12'),
+    ]);
+    $response['data'][0]['text'] .= "\nvs MTL";
+    $response['data'][1]['text'] .= "\nvs OTT";
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    expect($candidates)->toHaveCount(1)
+        ->and($candidates[0]['source_handle'])->toBe('montreal_reporter');
+});
+
+it('uses a complete NHL boxscore roster and does not search X', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020193, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(2), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $forwards = collect(range(1, 12))->map(fn (int $index): array => [
+        'playerId' => 8481000 + $index,
+        'name' => ['default' => "F. {$index}"],
+        'position' => 'C',
+    ])->all();
+    $defense = collect(range(1, 6))->map(fn (int $index): array => [
+        'playerId' => 8482000 + $index,
+        'name' => ['default' => "D. {$index}"],
+        'position' => 'D',
+    ])->all();
+    $goalies = [
+        ['playerId' => 8483001, 'name' => ['default' => 'G. Starter'], 'position' => 'G', 'starter' => true],
+        ['playerId' => 8483002, 'name' => ['default' => 'G. Backup'], 'position' => 'G', 'starter' => false],
+    ];
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([
+            'awayTeam' => ['abbrev' => 'MTL'],
+            'homeTeam' => ['abbrev' => 'TOR'],
+            'playerByGameStats' => [
+                'homeTeam' => compact('forwards', 'defense', 'goalies'),
+            ],
+        ]),
+        'api.x.com/*' => Http::response(xLineupResponse([
+            lineupCandidate('should_not_run', 'https://x.com/should_not_run/status/1'),
+        ])),
+    ]);
+
+    app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
+
+    $this->assertDatabaseHas('nhl_current_lineups', [
+        'nhl_game_id' => 2026020193,
+        'team_id' => 10,
+        'evidence_status' => 'official',
+        'source_count' => 1,
+    ])->assertDatabaseCount('nhl_lineup_observation_players', 20)
+        ->assertDatabaseHas('nhl_starting_goalie_observations', [
+            'nhl_game_id' => 2026020193,
+            'nhl_player_id' => 8483001,
+            'provider' => 'nhl_boxscore',
+            'status' => 'confirmed',
+        ]);
+    Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
+});
+
+it('does not infer special teams units from an X lineup post', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020199, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
@@ -805,29 +916,35 @@ it('stores and returns explicitly reported lineup special teams units', function
     $candidate = lineupCandidate('special_teams', 'https://x.com/special_teams/status/1');
     $candidate['players'][0]['power_play_unit'] = 1;
     $candidate['players'][0]['penalty_kill_unit'] = 2;
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([$candidate]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([$candidate])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
 
     $this->assertDatabaseHas('nhl_lineup_observation_players', [
-        'player_name' => 'Forward 1', 'power_play_unit' => 1, 'penalty_kill_unit' => 2,
+        'player_name' => 'Forward 1', 'power_play_unit' => null, 'penalty_kill_unit' => null,
     ]);
     $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020199')
         ->assertOk()
-        ->assertJsonPath('anticipated_lineups.0.players.0.power_play_unit', 1)
-        ->assertJsonPath('anticipated_lineups.0.players.0.penalty_kill_unit', 2);
+        ->assertJsonPath('anticipated_lineups.0.players.0.power_play_unit', null)
+        ->assertJsonPath('anticipated_lineups.0.players.0.penalty_kill_unit', null);
 });
 
-it('retains unresolved lineup names instead of dropping player slots', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+it('resolves locally parsed X lineup names to canonical players', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020101, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
         'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ]);
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([
-        lineupCandidate('reporter_three', 'https://x.com/reporter_three/status/3'),
-    ]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([
+            lineupCandidate('reporter_three', 'https://x.com/reporter_three/status/3'),
+        ])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
 
@@ -835,30 +952,69 @@ it('retains unresolved lineup names instead of dropping player slots', function 
         ->assertDatabaseHas('nhl_lineup_observation_players', [
             'team_id' => 10, 'team_abbrev' => 'TOR',
             'player_name' => 'Forward 1', 'line_key' => 'F1', 'slot_index' => 1,
-            'resolution_status' => 'unresolved',
+            'resolution_status' => 'resolved',
         ]);
 });
 
 it('skips image-only lineup search results', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020102, 'season_id' => '20262027', 'game_type' => 2,
         'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
         'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ]);
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([
-        lineupCandidate('image_only', 'https://x.com/image_only/status/4', ''),
-    ]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([
+            lineupCandidate('image_only', 'https://x.com/image_only/status/4', ''),
+        ])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
 
     $this->assertDatabaseCount('nhl_lineup_observations', 0);
 });
 
+it('retains an unparseable X text post as partial evidence without reporting a lineup', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020104, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $response = xLineupResponse([]);
+    $response['data'] = [[
+        'id' => '44', 'text' => 'TOR Maple Leafs starting lineup will be posted soon.',
+        'author_id' => 'author-44', 'created_at' => now()->toIso8601String(),
+        'public_metrics' => [],
+    ]];
+    $response['includes']['users'] = [[
+        'id' => 'author-44', 'name' => 'Toronto Reporter', 'username' => 'torreporter',
+        'public_metrics' => [],
+    ]];
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response($response),
+    ]);
+
+    $result = app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
+
+    expect($result['observed'])->toBe(0);
+    $this->assertDatabaseHas('nhl_lineup_observations', [
+        'nhl_game_id' => 2026020104,
+        'team_id' => 10,
+        'post_url' => 'https://x.com/torreporter/status/44',
+        'completeness' => 'partial',
+    ])->assertDatabaseMissing('nhl_current_lineups', [
+        'nhl_game_id' => 2026020104,
+        'team_id' => 10,
+    ]);
+});
+
 it('does not impose an application daily lineup search limit', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     DB::table('integration_api_usage_logs')->insert([
-        'provider' => 'openai', 'operation' => 'nhl_lineup_discovery',
+        'provider' => 'x', 'operation' => 'nhl_lineup_discovery',
         'input_tokens' => 0, 'output_tokens' => 0, 'tool_calls' => 10000,
         'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
     ]);
@@ -866,9 +1022,12 @@ it('does not impose an application daily lineup search limit', function (): void
         'nhl_game_id' => 2026020103, 'game_date' => today()->toDateString(),
         'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ];
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([])),
+    ]);
 
-    app(\App\Services\OpenAiNhlLineupDiscovery::class)->discover($game, 'TOR');
+    app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
 
     Http::assertSentCount(1);
 });
@@ -973,8 +1132,8 @@ it('queues only the missing opponent while one team already has a reported lineu
         && $job->teamAbbrev === 'MTL');
 });
 
-it('rechecks current truth before a queued lineup job calls OpenAI', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+it('checks the NHL boxscore but skips X when current truth needs no search', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
         ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
@@ -985,11 +1144,12 @@ it('rechecks current truth before a queued lineup job calls OpenAI', function ()
     $job = new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10);
     $job->handle(app(NhlAnticipatedLineupImporter::class));
 
-    Http::assertNothingSent();
+    Http::assertSent(fn ($request): bool => str_contains($request->url(), 'api-web.nhle.com'));
+    Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
 });
 
 it('counts an empty lineup search as skipped instead of imported', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
         ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
@@ -1010,7 +1170,10 @@ it('counts an empty lineup search as skipped instead of imported', function (): 
         'skipped_records' => 0,
         'started_at' => now(),
     ]);
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([])),
+    ]);
 
     $job = new ImportNhlAnticipatedLineupTeamJob(2026020098, 'TOR', 10, $run->id);
     $job->handle(app(NhlAnticipatedLineupImporter::class));
@@ -1021,8 +1184,39 @@ it('counts an empty lineup search as skipped instead of imported', function (): 
         ->and($run->skipped_records)->toBe(1);
 });
 
-it('does not corroborate one reported team while its opponent remains missing', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+it('records an actionable X credit failure on the import run', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 8, 'abbrev' => 'MTL', 'common_name' => 'Canadiens', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 10, 'abbrev' => 'TOR', 'common_name' => 'Maple Leafs', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026020097, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHour(), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $run = \App\Models\ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'command' => 'nhl:import-anticipated-lineups', 'total_records' => 1,
+        'processed_records' => 0, 'successful_records' => 0,
+        'failed_records' => 0, 'skipped_records' => 0, 'started_at' => now(),
+    ]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response([], 402),
+    ]);
+
+    $job = new ImportNhlAnticipatedLineupTeamJob(2026020097, 'TOR', 10, $run->id);
+    $job->handle(app(NhlAnticipatedLineupImporter::class));
+
+    $run->refresh();
+    expect($run->status)->toBe('failed')
+        ->and($run->failed_records)->toBe(1)
+        ->and($run->error_message)->toContain('credits');
+});
+
+it('checks the NHL boxscore without searching X while the opponent remains missing', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
         ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
@@ -1036,7 +1230,8 @@ it('does not corroborate one reported team while its opponent remains missing', 
     $job = new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10);
     $job->handle(app(NhlAnticipatedLineupImporter::class));
 
-    Http::assertNothingSent();
+    Http::assertSent(fn ($request): bool => str_contains($request->url(), 'api-web.nhle.com'));
+    Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
 });
 
 it('queues tomorrow while excluding a near-puck-drop game from the outside window', function (): void {
@@ -1109,23 +1304,23 @@ it('keeps the within two hour schedule lane eligible after todays puck drop', fu
     expect(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeTrue();
 });
 
-it('asks lineup discovery for the game date and preceding calendar date', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([]))]);
+it('requests the minimum X result page for the team nickname query', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    Http::fake(['api.x.com/*' => Http::response(xLineupResponse([]))]);
     $game = (object) [
         'nhl_game_id' => 2026010114, 'game_date' => '2026-09-20',
         'start_time_utc' => '2026-09-20 23:00:00',
         'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ];
 
-    app(\App\Services\OpenAiNhlLineupDiscovery::class)->discover($game, 'TOR');
+    app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
 
-    Http::assertSent(fn ($request): bool => str_contains((string) $request['input'], '2026-09-19')
-        && str_contains((string) $request['input'], '2026-09-20'));
+    Http::assertSent(fn ($request): bool => $request['query'] === 'TOR Maple Leafs starting lineup'
+        && (int) $request['max_results'] === 10);
 });
 
 it('derives an expected starting goalie observation from a newly observed G1', function (): void {
-    config(['services.openai.api_key' => 'test-key']);
+    config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026010115, 'season_id' => '20262027', 'game_type' => 1,
         'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
@@ -1139,7 +1334,10 @@ it('derives an expected starting goalie observation from a newly observed G1', f
     ]);
     $candidate = lineupCandidate('goalie_reporter', 'https://x.com/goalie_reporter/status/1');
     $candidate['published_at'] = '2026-09-19T19:00:00-04:00';
-    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([$candidate]))]);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response(xLineupResponse([$candidate])),
+    ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);

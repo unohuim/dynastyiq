@@ -36,7 +36,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping('nhl-lineup-openai-search'))
+            (new WithoutOverlapping('nhl-lineup-x-search'))
                 ->releaseAfter(5)
                 ->expireAfter(300),
         ];
@@ -45,22 +45,23 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
     public function handle(NhlAnticipatedLineupImporter $importer): void
     {
         $result = 'successful';
+        $errorMessage = null;
         try {
             $game = DB::table('nhl_games')->where('nhl_game_id', $this->nhlGameId)->first();
             if ($game === null) {
                 $result = 'skipped';
             } else {
-                $search = $this->searchDecision($game);
-                if (! $search['needed']) {
-                    $result = 'skipped';
+                $official = $importer->importOfficial($game, $this->teamAbbrev, $this->teamId);
+                if ($official['available']) {
+                    $result = $official['observed'] > 0 ? 'successful' : 'skipped';
                 } else {
-                    $imported = $importer->import(
-                        $game,
-                        $this->teamAbbrev,
-                        $this->teamId,
-                        $search['opponent_reported']
-                    );
-                    $result = $imported['observed'] > 0 ? 'successful' : 'skipped';
+                    $search = $this->searchDecision($game);
+                    if (! $search['needed']) {
+                        $result = 'skipped';
+                    } else {
+                        $imported = $importer->importFromX($game, $this->teamAbbrev, $this->teamId);
+                        $result = $imported['observed'] > 0 ? 'successful' : 'skipped';
+                    }
                 }
             }
         } catch (RequestException $exception) {
@@ -71,18 +72,24 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
             report($exception);
             $result = 'failed';
+            $errorMessage = $this->xFailureMessage($exception);
         } catch (Throwable $throwable) {
             report($throwable);
             $result = 'failed';
+            $errorMessage = $throwable->getMessage();
         }
 
         $run = $this->importRun();
         $run?->recordProcessed($result);
         if ($run !== null) {
+            if ($errorMessage !== null) {
+                $run->update(['error_message' => $errorMessage]);
+            }
             $run->refresh();
             if (($run->processed_records ?? 0) >= ($run->total_records ?? 0)) {
                 if (($run->failed_records ?? 0) > 0) {
-                    $run->markFailed('One or more anticipated-lineup team searches failed.');
+                    $run->markFailed((string) ($run->error_message
+                        ?: 'One or more anticipated-lineup team searches failed.'));
                 } else {
                     $run->markCompleted();
                 }
@@ -98,10 +105,14 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
     /** @return array{needed:bool,opponent_reported:bool} */
     private function searchDecision(object $game): array
     {
-        $ownSourceCount = (int) (DB::table('nhl_current_lineups')
+        $ownCurrent = DB::table('nhl_current_lineups')
             ->where('nhl_game_id', $this->nhlGameId)
             ->where('team_id', $this->teamId)
-            ->value('source_count') ?? 0);
+            ->first(['source_count', 'evidence_status']);
+        if (($ownCurrent->evidence_status ?? null) === 'official') {
+            return ['needed' => false, 'opponent_reported' => false];
+        }
+        $ownSourceCount = (int) ($ownCurrent->source_count ?? 0);
         if ($ownSourceCount >= 2) {
             return ['needed' => false, 'opponent_reported' => false];
         }
@@ -138,5 +149,16 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         }
 
         return min(300, 5 * (2 ** max(0, $this->attempts() - 1)));
+    }
+
+    private function xFailureMessage(RequestException $exception): string
+    {
+        return match ($exception->response->status()) {
+            401 => 'X rejected the bearer token. Verify X_BEARER_TOKEN.',
+            402 => 'X API credits are unavailable or the project spending limit was reached.',
+            403 => 'The X developer app cannot access recent post search.',
+            429 => 'X rate-limited the lineup search after all retries were exhausted.',
+            default => sprintf('X lineup search failed with HTTP %d.', $exception->response->status()),
+        };
     }
 }

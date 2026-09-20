@@ -16,7 +16,8 @@ use Illuminate\Support\Str;
 class NhlAnticipatedLineupImporter
 {
     public function __construct(
-        private readonly OpenAiNhlLineupDiscovery $discovery,
+        private readonly NhlOfficialGameRosterDiscovery $officialRosters,
+        private readonly XNhlLineupDiscovery $discovery,
         private readonly NhlLineupPlayerResolver $players,
     ) {
     }
@@ -29,30 +30,42 @@ class NhlAnticipatedLineupImporter
         bool $opponentReported = true
     ): array
     {
-        $known = $this->knownSources($teamId);
+        $official = $this->importOfficial($game, $teamAbbrev, $teamId);
+        if ($official['available']) {
+            return ['observed' => $official['observed'], 'skipped' => 0];
+        }
+
+        return $this->importFromX($game, $teamAbbrev, $teamId);
+    }
+
+    /** @return array{available:bool,observed:int} */
+    public function importOfficial(object $game, string $teamAbbrev, int $teamId): array
+    {
+        $candidate = $this->officialRosters->discover($game, $teamAbbrev);
+        if ($candidate === null) {
+            return ['available' => false, 'observed' => 0];
+        }
 
         $observed = 0;
         $skipped = 0;
+        $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
+
+        return ['available' => true, 'observed' => $observed];
+    }
+
+    /** @return array{observed:int,skipped:int} */
+    public function importFromX(object $game, string $teamAbbrev, int $teamId): array
+    {
+        $observed = 0;
+        $skipped = 0;
         $this->persistCandidates(
-            $this->discovery->discover($game, $teamAbbrev, $known),
+            $this->discovery->discover($game, $teamAbbrev),
             $game,
             $teamAbbrev,
             $teamId,
             $observed,
             $skipped
         );
-
-        $sourceCount = $this->currentSourceCount((int) $game->nhl_game_id, $teamId);
-        if ($sourceCount === 0 || ($opponentReported && $sourceCount < 2)) {
-            $this->persistCandidates(
-                $this->discovery->discover($game, $teamAbbrev, $this->knownSources($teamId), true),
-                $game,
-                $teamAbbrev,
-                $teamId,
-                $observed,
-                $skipped
-            );
-        }
 
         return compact('observed', 'skipped');
     }
@@ -78,9 +91,6 @@ class NhlAnticipatedLineupImporter
                 $source = $this->source($candidate, $teamId, $teamAbbrev);
                 $this->recordEngagement($source, $candidate);
                 $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
-                if ($normalized === []) {
-                    return;
-                }
                 $structureHash = hash('sha256', json_encode(array_map(
                     fn (array $player): array => [
                         $player['line_key'],
@@ -119,33 +129,12 @@ class NhlAnticipatedLineupImporter
                 }
                 $observation->players()->createMany($normalized);
                 $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
-                $observed++;
+                if ($normalized !== []) {
+                    $observed++;
+                }
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
             });
         }
-    }
-
-    private function currentSourceCount(int $gameId, int $teamId): int
-    {
-        return (int) (NhlCurrentLineup::query()
-            ->where('nhl_game_id', $gameId)
-            ->where('team_id', $teamId)
-            ->value('source_count') ?? 0);
-    }
-
-    /** @return array<int, array<string, mixed>> */
-    private function knownSources(int $teamId): array
-    {
-        return DB::table('source_scopes as scopes')
-            ->join('sources', 'sources.id', '=', 'scopes.source_id')
-            ->where('scopes.sport', 'hockey')
-            ->where('scopes.league', 'NHL')
-            ->where(fn ($query) => $query->where('scopes.team_id', $teamId)->orWhereNull('scopes.team_id'))
-            ->orderByDesc('sources.last_seen_at')
-            ->limit(10)
-            ->get(['sources.name', 'sources.handle', 'sources.canonical_url'])
-            ->map(fn (object $source): array => (array) $source)
-            ->all();
     }
 
     /** @param array<string,mixed> $candidate */
@@ -223,14 +212,19 @@ class NhlAnticipatedLineupImporter
                 && (int) ($row['slot_index'] ?? 0) > 0;
         })->unique(fn (array $row): string => $row['line_key'] . ':' . $row['slot_index'])
             ->map(function (array $row) use ($teamId, $teamAbbrev): array {
-                $player = $this->players->resolve((string) $row['name'], $teamAbbrev);
+                $player = isset($row['nhl_player_id'])
+                    ? \App\Models\Player::query()->where('nhl_id', (int) $row['nhl_player_id'])->first()
+                    : $this->players->resolve((string) $row['name'], $teamAbbrev);
+                $nhlPlayerId = isset($row['nhl_player_id'])
+                    ? (int) $row['nhl_player_id']
+                    : $player?->nhl_id;
 
                 return [
                     'team_id' => $teamId,
                     'team_abbrev' => $teamAbbrev,
                     'player_id' => $player?->id,
-                    'nhl_player_id' => $player?->nhl_id,
-                    'player_name' => (string) $row['name'],
+                    'nhl_player_id' => $nhlPlayerId,
+                    'player_name' => (string) ($player?->full_name ?: $row['name']),
                     'lineup_role' => (string) $row['lineup_role'],
                     'line_key' => (string) $row['line_key'],
                     'slot_index' => (int) $row['slot_index'],
@@ -238,7 +232,7 @@ class NhlAnticipatedLineupImporter
                         ? (int) $row['power_play_unit'] : null,
                     'penalty_kill_unit' => in_array((int) ($row['penalty_kill_unit'] ?? 0), [1, 2], true)
                         ? (int) $row['penalty_kill_unit'] : null,
-                    'resolution_status' => $player ? 'resolved' : 'unresolved',
+                    'resolution_status' => $nhlPlayerId ? 'resolved' : 'unresolved',
                 ];
             })->sortBy(fn (array $row): string => sprintf('%s:%02d', $row['line_key'], $row['slot_index']))
             ->values()->all();
@@ -257,8 +251,7 @@ class NhlAnticipatedLineupImporter
     /** @param array<string,mixed> $candidate */
     private function hasLineupText(array $candidate): bool
     {
-        return trim((string) ($candidate['post_text'] ?? '')) !== ''
-            && count($candidate['players'] ?? []) >= 6;
+        return trim((string) ($candidate['post_text'] ?? '')) !== '';
     }
 
     /**
@@ -286,6 +279,7 @@ class NhlAnticipatedLineupImporter
             && $player['slot_index'] === 2);
         $isHome = mb_strtoupper((string) $game->home_team_abbrev) === $teamAbbrev;
         $opponent = $isHome ? $game->away_team_abbrev : $game->home_team_abbrev;
+        $isOfficial = (bool) ($candidate['official'] ?? false);
 
         NhlStartingGoalieObservation::query()->create([
             'nhl_game_id' => (int) $game->nhl_game_id,
@@ -296,9 +290,9 @@ class NhlAnticipatedLineupImporter
             'player_id' => $starter['player_id'],
             'nhl_player_id' => $starter['nhl_player_id'],
             'player_name' => $starter['player_name'],
-            'provider' => 'public_lineup',
+            'provider' => $isOfficial ? 'nhl_boxscore' : 'public_lineup',
             'provider_player_key' => null,
-            'status' => 'expected',
+            'status' => $isOfficial ? 'confirmed' : 'expected',
             'provider_published_at' => $observation->provider_published_at,
             'fetched_at' => $observation->observed_at,
             'source_url' => (string) $candidate['post_url'],
@@ -331,7 +325,10 @@ class NhlAnticipatedLineupImporter
                 ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')->where('observed_at', '>=', $cutoff)))
             ->get();
         $sourceCount = $matching->pluck('source_id')->unique()->count();
-        $status = $sourceCount >= 3 ? 'strongly_corroborated' : ($sourceCount >= 2 ? 'corroborated' : 'reported');
+        $isOfficial = (bool) data_get($latest->raw_evidence, 'official', false);
+        $status = $isOfficial
+            ? 'official'
+            : ($sourceCount >= 3 ? 'strongly_corroborated' : ($sourceCount >= 2 ? 'corroborated' : 'reported'));
 
         NhlCurrentLineup::query()->updateOrCreate(
             ['nhl_game_id' => $gameId, 'team_id' => $teamId],

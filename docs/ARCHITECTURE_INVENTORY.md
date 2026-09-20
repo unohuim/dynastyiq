@@ -3723,6 +3723,6 @@ Reusable cross-sport publisher identity, scope, and time-varying metrics without
 
 ## NHL Anticipated Lineups
 
-Bounded text-only OpenAI web discovery for today and tomorrow feeding immutable game/team observations and a recency-aware current consensus. Relevant prior-day posts remain eligible, and an ordered G1 contributes expected starting-goalie evidence. Public `/lineups` pages show every scheduled matchup with independent team evidence statuses and current lineup detail. Predictions use only corroborated lineups with all eighteen skaters resolved; otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+NHL gamecenter boxscore rosters are checked first for each queued game/team; a complete official roster becomes authoritative current truth and suppresses paid X discovery. Otherwise, bounded direct X recent-search discovery for today and tomorrow feeds immutable observations through a conservative local text parser and recency-aware consensus. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/lineups` pages show every scheduled matchup with independent team evidence statuses and current lineup detail. Predictions may use an official or reported lineup with all eighteen skaters resolved; otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
 **End of ARCHITECTURE_INVENTORY**

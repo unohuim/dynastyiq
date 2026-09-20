@@ -20,6 +20,11 @@ class NhlLineupPlayerResolver
                 fn (Player $player): bool => Str::slug((string) $player->full_name) === $slug
             );
         }
+        if ($matches->isEmpty() && ! str_contains(trim($name), ' ')) {
+            $matches = Player::query()->whereNotNull('nhl_id')
+                ->whereRaw('LOWER(last_name) = ?', [mb_strtolower(trim($name))])
+                ->get();
+        }
 
         return $matches->first(fn (Player $player): bool => mb_strtoupper((string) $player->team_abbrev) === $teamAbbrev)
             ?? ($matches->count() === 1 ? $matches->first() : null);

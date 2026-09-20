@@ -26,6 +26,7 @@ rules:
   - Questionable, unknown, and suspected players remain eligible for projected rosters.
   - Starting-goalie observations are append only; confirmed evidence outranks expected and unknown evidence, then the latest evidence within that status drives reads.
   - An anticipated-lineup G1 may create an expected public_lineup starting-goalie observation with the source post and publication timestamp; G2 remains backup context.
+  - An NHL boxscore goalie with `starter: true` creates confirmed nhl_boxscore starting-goalie evidence; another listed goalie remains backup context.
   - Starting-goalie provider rows must resolve against the complete scheduled team matchup, not either team in isolation.
   - Provider home and away orientation must resolve an exact NHL game before any inverse fallback; inverse fallback is allowed only when the date and team pair identify exactly one NHL game so split-squad games retain distinct NHL game ids.
   - When provider matchup orientation conflicts with a resolved NHL game, the NHL schedule is authoritative for home and away assignment.

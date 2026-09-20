@@ -71,12 +71,9 @@ return [
         'redirect'      => env('YAHOO_REDIRECT_URI'),
     ],
 
-    'openai' => [
-        'api_key' => env('OPENAI_API_KEY'),
-        'model' => env('OPENAI_LINEUP_MODEL', 'gpt-5.6-terra'),
-        'lineup_max_tool_calls' => (int) env('OPENAI_LINEUP_MAX_TOOL_CALLS', 6),
-        'lineup_max_output_tokens' => (int) env('OPENAI_LINEUP_MAX_OUTPUT_TOKENS', 6000),
-        'timeout_seconds' => (int) env('OPENAI_TIMEOUT_SECONDS', 120),
+    'x' => [
+        'bearer_token' => env('X_BEARER_TOKEN'),
+        'timeout_seconds' => (int) env('X_TIMEOUT_SECONDS', 30),
     ],
 
 
