@@ -25,6 +25,7 @@ rules:
   - The anticipated-lineup outside-two-hours lane may run once per local day or recur from the daily anchor at its configured base-seconds interval and considers games today and tomorrow.
   - The anticipated-lineup within-two-hours lane is independently optional and, when enabled, recurs at its configured base-seconds interval only while a same-day game is within two hours of puck drop.
   - Automatic anticipated-lineup dispatches do not run before the configured local daily start time; manual Run Now actions are unaffected.
+  - The main scheduler evaluates enabled import schedules every second; persisted due times and lane rules prevent searches from running more frequently than configured.
 public_interface:
   - PUT /admin/imports/{key}/schedule
   - admin:dispatch-scheduled-imports

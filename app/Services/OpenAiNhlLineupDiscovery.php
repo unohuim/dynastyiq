@@ -13,7 +13,12 @@ use RuntimeException;
 class OpenAiNhlLineupDiscovery
 {
     /** @return array<int,array<string,mixed>> */
-    public function discover(object $game, string $teamAbbrev, array $knownSources = []): array
+    public function discover(
+        object $game,
+        string $teamAbbrev,
+        array $knownSources = [],
+        bool $xOnly = false
+    ): array
     {
         $apiKey = (string) config('services.openai.api_key');
         if ($apiKey === '') {
@@ -21,13 +26,9 @@ class OpenAiNhlLineupDiscovery
         }
 
         $maxToolCalls = max(1, (int) config('services.openai.lineup_max_tool_calls', 6));
-        $usedToday = (int) DB::table('integration_api_usage_logs')
-            ->where('provider', 'openai')
-            ->where('operation', 'nhl_lineup_discovery')
-            ->where('occurred_at', '>=', today())
-            ->sum('tool_calls');
-        if ($usedToday + $maxToolCalls > (int) config('services.openai.lineup_daily_search_limit', 200)) {
-            throw new RuntimeException('The daily OpenAI lineup web-search limit has been reached.');
+        $webSearch = ['type' => 'web_search'];
+        if ($xOnly) {
+            $webSearch['filters'] = ['allowed_domains' => ['x.com']];
         }
 
         $response = Http::withToken($apiKey)
@@ -36,8 +37,8 @@ class OpenAiNhlLineupDiscovery
             ->post('https://api.openai.com/v1/responses', [
                 'model' => config('services.openai.model', 'gpt-5.6-terra'),
                 'instructions' => $this->instructions(),
-                'input' => $this->prompt($game, $teamAbbrev, $knownSources),
-                'tools' => [['type' => 'web_search']],
+                'input' => $this->prompt($game, $teamAbbrev, $knownSources, $xOnly),
+                'tools' => [$webSearch],
                 'max_tool_calls' => $maxToolCalls,
                 'max_output_tokens' => (int) config('services.openai.lineup_max_output_tokens', 6000),
                 'text' => ['format' => $this->responseFormat()],
@@ -54,7 +55,11 @@ class OpenAiNhlLineupDiscovery
             'input_tokens' => (int) data_get($payload, 'usage.input_tokens', 0),
             'output_tokens' => (int) data_get($payload, 'usage.output_tokens', 0),
             'tool_calls' => $toolCalls,
-            'metadata' => json_encode(['nhl_game_id' => $game->nhl_game_id, 'team_abbrev' => $teamAbbrev]),
+            'metadata' => json_encode([
+                'nhl_game_id' => $game->nhl_game_id,
+                'team_abbrev' => $teamAbbrev,
+                'search_scope' => $xOnly ? 'x_only' : 'general',
+            ]),
             'occurred_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
@@ -76,7 +81,12 @@ PROMPT;
     }
 
     /** @param array<int,array<string,mixed>> $knownSources */
-    private function prompt(object $game, string $teamAbbrev, array $knownSources): string
+    private function prompt(
+        object $game,
+        string $teamAbbrev,
+        array $knownSources,
+        bool $xOnly
+    ): string
     {
         $gameDate = Carbon::parse((string) $game->game_date);
         $precedingDate = $gameDate->copy()->subDay()->toDateString();
@@ -85,7 +95,10 @@ PROMPT;
             : mb_strtoupper((string) $game->home_team_abbrev);
 
         return sprintf(
-            'Find text-based anticipated lineup posts for %s for NHL game %s versus %s on %s. Accept relevant posts published on %s or %s. Scheduled start UTC: %s. Previously useful sources: %s.',
+            '%s Find text-based anticipated lineup posts for %s for NHL game %s versus %s on %s. Accept relevant posts published on %s or %s. Scheduled start UTC: %s. Previously useful sources: %s.',
+            $xOnly
+                ? 'Search X posts only. Return direct x.com post URLs.'
+                : 'Search the public web, including official NHL and team sites as well as public social posts.',
             $teamAbbrev,
             $game->nhl_game_id,
             $opponent,

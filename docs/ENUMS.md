@@ -57,6 +57,18 @@ Do not introduce new enum values without updating this document.
 - `puckline`: Full-game away/home spread cover probability tied to a specific goal line.
 - `total`: Full-game over/under probability tied to a specific total goal line.
 
+### NHL Game Prediction Availability Reason Values
+
+**Name:** NHL game prediction availability reason values
+**Storage location(s):** `/api/nhl-game-predictions` response `reason`
+**Allowed values currently emitted:**
+
+- `preseason_lineup_unresolved`
+
+**Semantic meaning:**
+
+- `preseason_lineup_unresolved`: DynastyIQ intentionally withheld a preseason prediction because at least one team lacked a complete official or canonically resolved reported lineup.
+
 ### API Client Scopes
 
 **Name:** API client scopes

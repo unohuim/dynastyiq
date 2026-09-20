@@ -39,6 +39,6 @@ Schedule::command('fantrax:drafts:poll')
     ->everyTwoMinutes()
     ->timezone('America/Toronto');
 Schedule::command('admin:dispatch-scheduled-imports')
-    ->everyMinute()
+    ->everySecond()
     ->withoutOverlapping()
     ->timezone('America/Toronto');

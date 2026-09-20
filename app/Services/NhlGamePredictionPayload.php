@@ -13,6 +13,7 @@ use Illuminate\Validation\ValidationException;
  */
 class NhlGamePredictionPayload
 {
+    private const PRESEASON_GAME_TYPE = 1;
     private const GOALIE_GSAX_WEIGHT = 0.70;
     private const GOALIE_MATCHUP_WEIGHT = 0.30;
     private const MONEYLINE_SCORE_DISTRIBUTION_MAX_GOALS = 15;
@@ -53,6 +54,43 @@ class NhlGamePredictionPayload
 
         $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
 
+        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
+        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
+        $awayOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $awayTeam);
+        $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
+        $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
+        $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+        $awayGamePlayers = $awayOfficialRosterIds === null && $awayRosterIds !== null
+            ? $this->lineupProjections->build($awayLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+            : null;
+        $homeGamePlayers = $homeOfficialRosterIds === null && $homeRosterIds !== null
+            ? $this->lineupProjections->build($homeLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+            : null;
+
+        if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
+            && ($awayRosterIds === null || $homeRosterIds === null)) {
+            return $this->unpredictablePreseasonPayload(
+                $game,
+                $awayTeam,
+                $homeTeam,
+                $nhlGameId,
+                $sourceSeasonId,
+                $targetSeasonId,
+                $projectionVersion,
+                $toiProjectionVersion,
+                $goalieProjectionVersion,
+                $awayLineup,
+                $homeLineup,
+                $awayRosterIds,
+                $homeRosterIds,
+                $awayGamePlayers,
+                $homeGamePlayers,
+                $awayOfficialRosterIds,
+                $homeOfficialRosterIds,
+                $overrides
+            );
+        }
+
         $awayGoalie = $this->resolveGoalie(
             $targetSeasonId,
             $goalieProjectionVersion,
@@ -67,19 +105,6 @@ class NhlGamePredictionPayload
             $overrides['home_goalie_id'] ?? null,
             $nhlGameId
         );
-
-        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
-        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
-        $awayOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $awayTeam);
-        $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
-        $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
-        $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
-        $awayGamePlayers = $awayOfficialRosterIds === null && $awayRosterIds !== null
-            ? $this->lineupProjections->build($awayLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
-            : null;
-        $homeGamePlayers = $homeOfficialRosterIds === null && $homeRosterIds !== null
-            ? $this->lineupProjections->build($homeLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
-            : null;
 
         $simulationArguments = [
             $sourceSeasonId,
@@ -130,6 +155,7 @@ class NhlGamePredictionPayload
         );
 
         return [
+            'prediction_available' => true,
             'game' => $this->gamePayload($game),
             'inputs' => [
                 'source_season_id' => $sourceSeasonId,
@@ -176,6 +202,183 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /**
+     * Return evidence and roster previews without publishing a preseason prediction.
+     *
+     * @param array<string, mixed>|null $awayLineup
+     * @param array<string, mixed>|null $homeLineup
+     * @param array<int, int>|null $awayRosterIds
+     * @param array<int, int>|null $homeRosterIds
+     * @param array<int, array<string, mixed>>|null $awayGamePlayers
+     * @param array<int, array<string, mixed>>|null $homeGamePlayers
+     * @param array<int, int>|null $awayOfficialRosterIds
+     * @param array<int, int>|null $homeOfficialRosterIds
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function unpredictablePreseasonPayload(
+        object $game,
+        string $awayTeam,
+        string $homeTeam,
+        int $nhlGameId,
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion,
+        string $goalieProjectionVersion,
+        ?array $awayLineup,
+        ?array $homeLineup,
+        ?array $awayRosterIds,
+        ?array $homeRosterIds,
+        ?array $awayGamePlayers,
+        ?array $homeGamePlayers,
+        ?array $awayOfficialRosterIds,
+        ?array $homeOfficialRosterIds,
+        array $overrides
+    ): array {
+        $awaySource = $this->lineupSource($awayOfficialRosterIds, $awayRosterIds);
+        $homeSource = $this->lineupSource($homeOfficialRosterIds, $homeRosterIds);
+        $awayRoster = $awayGamePlayers ?? $this->projectedRosterPreview(
+            $targetSeasonId,
+            $toiProjectionVersion,
+            $awayTeam,
+            $awayRosterIds
+        );
+        $homeRoster = $homeGamePlayers ?? $this->projectedRosterPreview(
+            $targetSeasonId,
+            $toiProjectionVersion,
+            $homeTeam,
+            $homeRosterIds
+        );
+
+        return [
+            'prediction_available' => false,
+            'reason' => 'preseason_lineup_unresolved',
+            'missing_lineups' => collect([
+                $awayRosterIds === null ? $awayTeam : null,
+                $homeRosterIds === null ? $homeTeam : null,
+            ])->filter()->values()->all(),
+            'game' => $this->gamePayload($game),
+            'inputs' => [
+                'source_season_id' => $sourceSeasonId,
+                'target_season_id' => $targetSeasonId,
+                'projection_version' => $projectionVersion,
+                'toi_projection_version' => $toiProjectionVersion,
+                'goalie_projection_version' => $goalieProjectionVersion,
+                'away_lineup_source' => $awaySource,
+                'home_lineup_source' => $homeSource,
+            ],
+            'prediction' => null,
+            'market_probabilities' => [],
+            'goalies' => [
+                'away' => $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $awayTeam, $overrides['away_goalie_id'] ?? null, $nhlGameId),
+                'home' => $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $homeTeam, $overrides['home_goalie_id'] ?? null, $nhlGameId),
+            ],
+            'anticipated_lineups' => ['away' => $awayLineup, 'home' => $homeLineup],
+            'teams' => [
+                'away' => [
+                    'team_abbrev' => $awayTeam,
+                    'opponent_team_abbrev' => $homeTeam,
+                    'lineup_source' => $awaySource,
+                    'roster' => $awayRoster,
+                ],
+                'home' => [
+                    'team_abbrev' => $homeTeam,
+                    'opponent_team_abbrev' => $awayTeam,
+                    'lineup_source' => $homeSource,
+                    'roster' => $homeRoster,
+                ],
+            ],
+            'reasons' => [],
+            'meta' => [
+                'source_system' => 'dynastyiq',
+                'source_fetched_at' => now()->toIso8601String(),
+            ],
+        ];
+    }
+
+    /** @param array<int, int>|null $officialIds @param array<int, int>|null $rosterIds */
+    private function lineupSource(?array $officialIds, ?array $rosterIds): string
+    {
+        return $officialIds !== null
+            ? 'nhl_boxscore'
+            : ($rosterIds === null ? 'projected_roster' : 'anticipated_lineup');
+    }
+
+    /**
+     * @param array<int, int>|null $rosterIds
+     * @return array<int, array<string, mixed>>
+     */
+    private function projectedRosterPreview(
+        string $targetSeasonId,
+        string $toiProjectionVersion,
+        string $team,
+        ?array $rosterIds
+    ): array {
+        $rows = DB::table('nhl_player_toi_projections as toi')
+            ->leftJoin('players', 'players.nhl_id', '=', 'toi.player_id')
+            ->where('toi.target_season_id', $targetSeasonId)
+            ->where('toi.projection_version', $toiProjectionVersion)
+            ->where('toi.target_team_abbrev', $team)
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('toi.player_id', $rosterIds))
+            ->when($rosterIds === null, fn ($query) => $query->whereNotIn('toi.player_id', $this->unavailablePlayerIds($team)))
+            ->whereRaw("UPPER(COALESCE(toi.position, '')) <> 'G'")
+            ->orderByDesc('toi.projected_toi_per_game_seconds')
+            ->get([
+                'toi.player_id',
+                'players.id as dynasty_player_id',
+                'players.full_name as player_name',
+                'toi.position',
+                'toi.projected_toi_per_game_seconds',
+                'toi.confidence_score',
+                'toi.confidence_bucket',
+            ]);
+        $forwards = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) !== 'D')->take(12);
+        $defense = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) === 'D')->take(6);
+
+        return $forwards->concat($defense)->map(fn (object $row): array => [
+            'player_id' => $row->dynasty_player_id === null ? null : (int) $row->dynasty_player_id,
+            'nhl_player_id' => (int) $row->player_id,
+            'player_name' => $row->player_name ?? (string) $row->player_id,
+            'position' => $row->position,
+            'projection_source' => $rosterIds === null ? 'projected_roster' : 'nhl_boxscore',
+            'baseline_toi_seconds' => $row->projected_toi_per_game_seconds === null
+                ? null : round((float) $row->projected_toi_per_game_seconds, 2),
+            'confidence_score' => $row->confidence_score === null ? null : round((float) $row->confidence_score, 4),
+            'confidence' => $row->confidence_bucket,
+        ])->values()->all();
+    }
+
+    /** @return array<string, mixed>|null */
+    private function tryResolveGoalie(
+        string $targetSeasonId,
+        string $goalieProjectionVersion,
+        string $team,
+        mixed $providedGoalieId,
+        int $nhlGameId
+    ): ?array {
+        try {
+            return $this->resolveGoalie($targetSeasonId, $goalieProjectionVersion, $team, $providedGoalieId, $nhlGameId);
+        } catch (ValidationException) {
+            return null;
+        }
+    }
+
+    /** @return array<int, int> */
+    private function unavailablePlayerIds(string $team): array
+    {
+        if (! Schema::hasTable('nhl_player_injuries')) {
+            return [];
+        }
+
+        return DB::table('nhl_player_injuries')
+            ->where('team_abbrev', $team)
+            ->where('availability', 'out')
+            ->whereIn('evidence_level', ['reported', 'corroborated', 'confirmed_unavailable'])
+            ->whereNotNull('nhl_player_id')
+            ->pluck('nhl_player_id')->map(fn (mixed $id): int => (int) $id)->all();
     }
 
     /**

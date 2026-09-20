@@ -22,7 +22,12 @@ class NhlAnticipatedLineupImporter
     }
 
     /** @return array{observed:int,skipped:int} */
-    public function import(object $game, string $teamAbbrev, int $teamId): array
+    public function import(
+        object $game,
+        string $teamAbbrev,
+        int $teamId,
+        bool $seekCorroboration = true
+    ): array
     {
         $known = DB::table('source_scopes as scopes')
             ->join('sources', 'sources.id', '=', 'scopes.source_id')
@@ -33,7 +38,41 @@ class NhlAnticipatedLineupImporter
 
         $observed = 0;
         $skipped = 0;
-        foreach ($this->discovery->discover($game, $teamAbbrev, $known) as $candidate) {
+        $this->persistCandidates(
+            $this->discovery->discover($game, $teamAbbrev, $known),
+            $game,
+            $teamAbbrev,
+            $teamId,
+            $observed,
+            $skipped
+        );
+
+        if ($seekCorroboration && $this->currentSourceCount((int) $game->nhl_game_id, $teamId) < 2) {
+            $this->persistCandidates(
+                $this->discovery->discover($game, $teamAbbrev, $known, true),
+                $game,
+                $teamAbbrev,
+                $teamId,
+                $observed,
+                $skipped
+            );
+        }
+
+        return compact('observed', 'skipped');
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $candidates
+     */
+    private function persistCandidates(
+        array $candidates,
+        object $game,
+        string $teamAbbrev,
+        int $teamId,
+        int &$observed,
+        int &$skipped
+    ): void {
+        foreach ($candidates as $candidate) {
             if (! $this->hasLineupText($candidate)) {
                 $skipped++;
                 continue;
@@ -88,8 +127,14 @@ class NhlAnticipatedLineupImporter
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
             });
         }
+    }
 
-        return compact('observed', 'skipped');
+    private function currentSourceCount(int $gameId, int $teamId): int
+    {
+        return (int) (NhlCurrentLineup::query()
+            ->where('nhl_game_id', $gameId)
+            ->where('team_id', $teamId)
+            ->value('source_count') ?? 0);
     }
 
     /** @param array<string,mixed> $candidate */
@@ -193,7 +238,7 @@ class NhlAnticipatedLineupImporter
     {
         $counts = collect($players)->countBy('lineup_role');
 
-        return ($counts['forward'] ?? 0) >= 12 && ($counts['defense'] ?? 0) >= 6 && ($counts['goalie'] ?? 0) >= 2
+        return ($counts['forward'] ?? 0) >= 12 && ($counts['defense'] ?? 0) >= 6
             ? 'full'
             : 'partial';
     }

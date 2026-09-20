@@ -139,6 +139,74 @@ beforeEach(function (): void {
                 'home_goalie_id' => 9002,
             ], $params)));
     };
+
+    $this->insertReportedLineup = function (
+        string $teamAbbrev,
+        int $teamId,
+        int $firstNhlPlayerId,
+        string $suffix
+    ): void {
+        $sourceId = DB::table('sources')->insertGetId([
+            'platform' => 'x',
+            'name' => "{$teamAbbrev} Reporter",
+            'handle' => mb_strtolower($teamAbbrev) . "_reporter_{$suffix}",
+            'canonical_url' => "https://x.com/{$teamAbbrev}_reporter_{$suffix}",
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $structureHash = hash('sha256', "{$teamAbbrev}-{$suffix}");
+        $observationId = DB::table('nhl_lineup_observations')->insertGetId([
+            'nhl_game_id' => 2026020001,
+            'team_id' => $teamId,
+            'team_abbrev' => $teamAbbrev,
+            'source_id' => $sourceId,
+            'post_url' => "https://x.com/{$teamAbbrev}_reporter_{$suffix}/status/1",
+            'post_text' => "Full {$teamAbbrev} lineup",
+            'provider_published_at' => now(),
+            'observed_at' => now(),
+            'completeness' => 'full',
+            'structure_hash' => $structureHash,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $players = [];
+
+        foreach (range(1, 18) as $index) {
+            $isForward = $index <= 12;
+            $positionIndex = $isForward ? $index : $index - 12;
+            $lineSize = $isForward ? 3 : 2;
+            $players[] = [
+                'nhl_lineup_observation_id' => $observationId,
+                'team_id' => $teamId,
+                'team_abbrev' => $teamAbbrev,
+                'nhl_player_id' => $firstNhlPlayerId + $index - 1,
+                'player_name' => "{$teamAbbrev} Skater {$index}",
+                'lineup_role' => $isForward ? 'forward' : 'defense',
+                'line_key' => ($isForward ? 'F' : 'D') . (int) ceil($positionIndex / $lineSize),
+                'slot_index' => (($positionIndex - 1) % $lineSize) + 1,
+                'resolution_status' => 'resolved',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        DB::table('nhl_lineup_observation_players')->insert($players);
+        DB::table('nhl_current_lineups')->insert([
+            'nhl_game_id' => 2026020001,
+            'team_id' => $teamId,
+            'team_abbrev' => $teamAbbrev,
+            'nhl_lineup_observation_id' => $observationId,
+            'structure_hash' => $structureHash,
+            'evidence_status' => 'reported',
+            'source_count' => 1,
+            'first_observed_at' => now(),
+            'last_observed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    };
 });
 
 it('requires a scoped API client for game prediction market probabilities', function (): void {
@@ -196,6 +264,7 @@ it('rejects scalar total line lists', function (): void {
 it('keeps the default game prediction response limited to moneyline probabilities', function (): void {
     ($this->predictionRequest)()
         ->assertOk()
+        ->assertJsonPath('prediction_available', true)
         ->assertJsonCount(2, 'market_probabilities')
         ->assertJsonPath('market_probabilities.0.market_key', 'moneyline')
         ->assertJsonPath('market_probabilities.1.market_key', 'moneyline');
@@ -360,8 +429,62 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
         );
 });
 
-it('uses a fully resolved single-source reported lineup for prediction simulation', function (): void {
+it('returns evidence without a prediction when one preseason lineup is unresolved', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-only');
+
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    $simulator->shouldNotReceive('simulate');
+    $simulator->shouldNotReceive('simulateWithRosters');
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('reason', 'preseason_lineup_unresolved')
+        ->assertJsonPath('missing_lineups.0', 'HOM')
+        ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
+        ->assertJsonPath('inputs.home_lineup_source', 'projected_roster')
+        ->assertJsonPath('prediction', null)
+        ->assertJsonCount(0, 'market_probabilities')
+        ->assertJsonCount(18, 'teams.away.roster');
+});
+
+it('returns both missing teams when neither preseason lineup is resolved', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    $simulator->shouldNotReceive('simulate');
+    $simulator->shouldNotReceive('simulateWithRosters');
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('missing_lineups.0', 'AWY')
+        ->assertJsonPath('missing_lineups.1', 'HOM')
+        ->assertJsonPath('teams.away.lineup_source', 'projected_roster')
+        ->assertJsonPath('teams.home.lineup_source', 'projected_roster')
+        ->assertJsonCount(0, 'market_probabilities');
+});
+
+it('uses complete reported lineups for both teams in a preseason prediction', function (): void {
     $token = ($this->seedPredictionInputs)(2.4, 3.2);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
     $sourceId = DB::table('sources')->insertGetId([
         'platform' => 'x', 'name' => 'Practice Reporter', 'handle' => 'practice_reporter',
         'canonical_url' => 'https://x.com/practice_reporter',
@@ -398,10 +521,11 @@ it('uses a fully resolved single-source reported lineup for prediction simulatio
         'evidence_status' => 'reported', 'source_count' => 1,
         'first_observed_at' => now(), 'last_observed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
     ]);
+    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home');
 
     $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
     $simulator->shouldReceive('simulateWithRosters')->once()
-        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && $arguments[10] === null)
+        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && count($arguments[10]) === 18)
         ->andReturn([
             'is_available' => true,
             'sides' => [
@@ -427,9 +551,11 @@ it('uses a fully resolved single-source reported lineup for prediction simulatio
             'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
         ]))
         ->assertOk()
+        ->assertJsonPath('prediction_available', true)
         ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
-        ->assertJsonPath('inputs.home_lineup_source', 'projected_roster')
+        ->assertJsonPath('inputs.home_lineup_source', 'anticipated_lineup')
         ->assertJsonCount(18, 'anticipated_lineups.away.players')
+        ->assertJsonCount(18, 'anticipated_lineups.home.players')
         ->assertJsonCount(18, 'teams.away.roster')
         ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
 });

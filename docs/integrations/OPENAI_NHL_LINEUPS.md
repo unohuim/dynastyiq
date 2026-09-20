@@ -11,7 +11,6 @@ OPENAI_API_KEY=
 OPENAI_LINEUP_MODEL=gpt-5.6-terra
 OPENAI_LINEUP_MAX_TOOL_CALLS=6
 OPENAI_LINEUP_MAX_OUTPUT_TOKENS=6000
-OPENAI_LINEUP_DAILY_SEARCH_LIMIT=200
 OPENAI_TIMEOUT_SECONDS=120
 ```
 
@@ -28,7 +27,7 @@ Authorization: Bearer OPENAI_API_KEY
 Content-Type: application/json
 ```
 
-DynastyIQ supplies:
+DynastyIQ first sends an unrestricted web-search request and supplies:
 
 - A configurable model.
 - The built-in `web_search` tool.
@@ -37,25 +36,42 @@ DynastyIQ supplies:
 - `store: false`.
 - Previously successful sources for the team plus instructions to try another source.
 
+If that pass does not produce a second matching independent source, DynastyIQ
+may send a second request whose web-search tool uses
+`filters.allowed_domains: ["x.com"]`. That X-only pass runs only after both teams
+in the game have at least one reportable lineup. A single request may return two
+or more matching sources, in which case no follow-up request is needed.
+
 The importer accepts only observations with attributable post text and normalized player rows. Image-only posts are skipped. Returned URLs and post text remain evidence rather than trusted facts until local consensus evaluation.
 
-## Cost controls
+## Usage tracking
 
-Each response writes token and web-search counts to `integration_api_usage_logs`. Before a request, DynastyIQ sums the current day's lineup search calls and refuses work that would exceed `OPENAI_LINEUP_DAILY_SEARCH_LIMIT`.
-
-The default maximum of 200 searches per day corresponds to at most $2.00 per day in web-search tool charges at a price of $10 per 1,000 calls, excluding model tokens. Confirm current pricing in the official OpenAI documentation before changing limits.
+Each response writes token and web-search counts to `integration_api_usage_logs`.
+DynastyIQ does not impose its own daily search ceiling; OpenAI project billing
+and rate limits remain the external safeguards.
 
 - Responses API: <https://developers.openai.com/api/reference/cli/resources/responses/methods/create>
 - API pricing: <https://developers.openai.com/api/docs/pricing>
 
 ## Scheduling
 
-The Admin Player Imports panel exposes Anticipated Lineups with two independent base-second intervals:
+When sync is enabled, the main scheduler evaluates eligibility every second.
+The Admin Player Imports panel exposes Anticipated Lineups with two independent
+base-second intervals that determine when actual searches are due:
 
 - `within_two_hours`: defaults to 900 seconds.
 - `outside_two_hours`: defaults to 3600 seconds.
 
-Only today's future games are eligible. Processing stops for a game at puck drop. Manual Run Now uses all remaining games today.
+Today's and tomorrow's future games are eligible outside two hours. The
+within-two-hours lane applies independently to each same-day game's puck-drop
+time. Processing stops for a game at puck drop. The earliest upcoming game is
+queued first.
+
+Searches prioritize coverage. A team is reported once twelve forwards and six
+defensemen are present; goalies are optional supplemental starting-goalie
+evidence. While either team is missing, only missing teams are searched. After
+both teams are reported, teams with only one matching source may be searched
+again. A team with two matching independent sources is no longer searched.
 
 ## Failure behavior
 

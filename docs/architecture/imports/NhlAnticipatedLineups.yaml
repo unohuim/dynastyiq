@@ -11,7 +11,7 @@ location:
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
 purpose: Discover text-based public NHL lineup reports, preserve immutable observations, and expose a recency-aware current consensus to predictions and partner APIs.
 when_to_use:
-  - Searching for anticipated lineups for NHL teams playing today.
+  - Searching for anticipated lineups for NHL teams playing today or tomorrow.
   - Resolving public lineup reports to canonical players and game-specific current truth.
   - Selecting a corroborated game roster for prediction inputs.
 when_not_to_use:
@@ -28,16 +28,19 @@ rules:
   - Each normalized observation-player row repeats canonical team id and abbreviation so direct table inspection remains understandable without a parent join.
   - Split-squad evidence is keyed by NHL game id and must not collapse by team and date.
   - Twelve ordered forwards map sequentially into four groups of three and six ordered defensemen map into three pairs.
-  - A complete lineup contains twelve forwards, six defensemen, and two goalies; scratches are optional.
+  - A reportable lineup contains twelve forwards and six defensemen; goalies and scratches are optional supplemental evidence.
   - One distinct source is reported, two are corroborated, and three or more are strongly corroborated.
   - Consensus compares normalized player slots and only time-relevant matching observations.
   - Newer evidence may supersede current truth without deleting older observations.
-  - Predictions may use a corroborated lineup only when all eighteen skaters resolve to unique NHL player ids.
+  - Predictions may use a reported lineup when all eighteen skaters resolve to unique NHL player ids; corroboration remains higher-confidence evidence rather than a prediction prerequisite.
   - Official NHL lineup evidence remains authoritative over anticipated public evidence.
   - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
-  - OpenAI requests enforce per-request tool limits and a persisted daily web-search limit.
+  - The unrestricted web search runs first; an x.com-only domain-filtered search runs only when the team still needs a second matching source and both teams in the game already have reportable lineups.
+  - Search priority follows the earliest upcoming puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
+  - Scheduler eligibility is evaluated every second for enabled schedules, while configured lane intervals control when searches become due.
+  - OpenAI requests enforce per-request tool limits and persist actual usage without an application-owned daily search ceiling.
 public_interface:
   - nhl:import-anticipated-lineups
   - GET /api/nhl-anticipated-lineups

@@ -4860,6 +4860,6 @@ Current game/team anticipated-lineup projection. Each row points to the newest r
 
 ## integration_api_usage_logs
 
-Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery uses it to enforce the configured daily OpenAI web-search limit.
+Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records general and X-only search usage here for operational and cost visibility.
 
 **End of DB_SCHEMA**

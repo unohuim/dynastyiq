@@ -582,6 +582,64 @@ Required scope:
 nhl-stats:read
 ```
 
+Every successful prediction payload includes `prediction_available`. Consumers
+must check this field before reading prediction or market output.
+
+During preseason (`game_type: 1`), DynastyIQ publishes a prediction only when
+both teams have a complete official NHL roster or a complete reported lineup
+whose 18 skaters resolve canonically. A missing lineup does not turn the request
+into an API error: the endpoint returns HTTP `200` with
+`prediction_available: false`, `reason: preseason_lineup_unresolved`, and the
+affected abbreviations in `missing_lineups`.
+
+That evidence-only response preserves any available reported lineup and goalie
+evidence. For each missing side, `teams.*.roster` contains the ordinary fallback
+roster only as a preview and `teams.*.lineup_source` is `projected_roster`.
+`prediction` is null and `market_probabilities` and `reasons` are empty, so a
+consumer must not publish a predicted score, probability, bet, or value index.
+Regular-season roster fallback behavior is unchanged.
+
+```json
+{
+  "prediction_available": false,
+  "reason": "preseason_lineup_unresolved",
+  "missing_lineups": ["NYI"],
+  "game": {
+    "nhl_game_id": 2026010001,
+    "game_type": 1,
+    "away_team_abbrev": "NYI",
+    "home_team_abbrev": "NJD"
+  },
+  "inputs": {
+    "away_lineup_source": "projected_roster",
+    "home_lineup_source": "anticipated_lineup"
+  },
+  "prediction": null,
+  "market_probabilities": [],
+  "goalies": {
+    "away": null,
+    "home": { "nhl_player_id": 8476433 }
+  },
+  "anticipated_lineups": {
+    "away": null,
+    "home": { "players": [] }
+  },
+  "teams": {
+    "away": {
+      "team_abbrev": "NYI",
+      "lineup_source": "projected_roster",
+      "roster": []
+    },
+    "home": {
+      "team_abbrev": "NJD",
+      "lineup_source": "anticipated_lineup",
+      "roster": []
+    }
+  },
+  "reasons": []
+}
+```
+
 ### Query Parameters
 
 | Parameter | Required | Meaning |

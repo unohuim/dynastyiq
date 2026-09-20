@@ -28,6 +28,7 @@ rules:
   - Defensive suppression requires a later approved abstraction and must not be inferred from chance-allowed bucket share alone.
   - Goalie selectors must prefer manual overrides, then official NHL starters, then confirmed before expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows, then workload projections.
   - Partner predictions must prefer complete official NHL skater rosters, then complete canonically resolved reported lineups regardless of corroboration count, then projected rosters.
+  - Preseason partner predictions must not publish scores, probabilities, or betting output unless both teams have complete official or complete canonically resolved reported lineups; an unresolved preseason game must instead return successful evidence-only output identifying each missing team and clearly label any fallback roster preview as projected_roster.
   - A complete official or reported game roster is newer game-specific availability evidence than the current injury table and must not have listed skaters removed by the generic injury exclusion.
   - Reported-lineup prediction inputs must retain all eighteen skaters and expose line, special-teams units, game-specific projected TOI, projection source, NHLe factor, and confidence.
   - Game-specific skater TOI must blend reported line and explicitly reported PP/PK deployment with the season TOI baseline and must lower a player's game rate when the reported role is smaller.

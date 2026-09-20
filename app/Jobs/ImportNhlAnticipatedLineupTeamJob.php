@@ -37,7 +37,17 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
             if ($game === null) {
                 $result = 'skipped';
             } else {
-                $importer->import($game, $this->teamAbbrev, $this->teamId);
+                $search = $this->searchDecision($game);
+                if (! $search['needed']) {
+                    $result = 'skipped';
+                } else {
+                    $importer->import(
+                        $game,
+                        $this->teamAbbrev,
+                        $this->teamId,
+                        $search['seek_corroboration']
+                    );
+                }
             }
         } catch (Throwable $throwable) {
             report($throwable);
@@ -61,5 +71,31 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
     private function importRun(): ?ImportRun
     {
         return $this->importRunId ? ImportRun::query()->find($this->importRunId) : null;
+    }
+
+    /** @return array{needed:bool,seek_corroboration:bool} */
+    private function searchDecision(object $game): array
+    {
+        $ownSourceCount = (int) (DB::table('nhl_current_lineups')
+            ->where('nhl_game_id', $this->nhlGameId)
+            ->where('team_id', $this->teamId)
+            ->value('source_count') ?? 0);
+        if ($ownSourceCount >= 2) {
+            return ['needed' => false, 'seek_corroboration' => false];
+        }
+
+        $opponentAbbrev = $this->teamAbbrev === mb_strtoupper((string) $game->home_team_abbrev)
+            ? mb_strtoupper((string) $game->away_team_abbrev)
+            : mb_strtoupper((string) $game->home_team_abbrev);
+        $opponentTeamId = DB::table('nhl_teams')->where('abbrev', $opponentAbbrev)->value('nhl_id');
+        $opponentSourceCount = $opponentTeamId === null ? 0 : (int) (DB::table('nhl_current_lineups')
+            ->where('nhl_game_id', $this->nhlGameId)
+            ->where('team_id', $opponentTeamId)
+            ->value('source_count') ?? 0);
+
+        return [
+            'needed' => $ownSourceCount === 0 || $opponentSourceCount > 0,
+            'seek_corroboration' => $opponentSourceCount > 0,
+        ];
     }
 }

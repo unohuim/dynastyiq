@@ -38,12 +38,37 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             ->when($window === 'outside-two-hours', fn ($query) => $query->where('start_time_utc', '>', now()->addHours(2)))
             ->orderBy('start_time_utc')->get();
 
-        $jobs = $games->flatMap(function (object $game): array {
-            return [
-                [$game, mb_strtoupper((string) $game->away_team_abbrev)],
-                [$game, mb_strtoupper((string) $game->home_team_abbrev)],
-            ];
-        })->filter(fn (array $entry): bool => $entry[1] !== '')->values();
+        $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
+        $current = DB::table('nhl_current_lineups')
+            ->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))
+            ->get()
+            ->keyBy(fn (object $row): string => $row->nhl_game_id . ':' . $row->team_id);
+        $jobs = $games->flatMap(function (object $game) use ($teamIds, $current): array {
+            $awayTeam = mb_strtoupper((string) $game->away_team_abbrev);
+            $homeTeam = mb_strtoupper((string) $game->home_team_abbrev);
+            $awayTeamId = $teamIds->get($awayTeam);
+            $homeTeamId = $teamIds->get($homeTeam);
+            $awayCurrent = $awayTeamId === null
+                ? null
+                : $current->get($game->nhl_game_id . ':' . $awayTeamId);
+            $homeCurrent = $homeTeamId === null
+                ? null
+                : $current->get($game->nhl_game_id . ':' . $homeTeamId);
+            $awayReported = (int) ($awayCurrent->source_count ?? 0) >= 1;
+            $homeReported = (int) ($homeCurrent->source_count ?? 0) >= 1;
+
+            if (! $awayReported || ! $homeReported) {
+                return array_values(array_filter([
+                    ! $awayReported && $awayTeam !== '' ? [$game, $awayTeam, $awayTeamId] : null,
+                    ! $homeReported && $homeTeam !== '' ? [$game, $homeTeam, $homeTeamId] : null,
+                ]));
+            }
+
+            return array_values(array_filter([
+                (int) $awayCurrent->source_count < 2 ? [$game, $awayTeam, $awayTeamId] : null,
+                (int) $homeCurrent->source_count < 2 ? [$game, $homeTeam, $homeTeamId] : null,
+            ]));
+        })->values();
 
         $run = $this->importRun();
         $run?->setProgressTotal($jobs->count(), 'Team lineup searches');
@@ -53,8 +78,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             return self::SUCCESS;
         }
 
-        foreach ($jobs as [$game, $teamAbbrev]) {
-            $teamId = DB::table('nhl_teams')->where('abbrev', $teamAbbrev)->value('nhl_id');
+        foreach ($jobs as [$game, $teamAbbrev, $teamId]) {
             if ($teamId === null) {
                 $run?->recordProcessed('skipped');
                 continue;
