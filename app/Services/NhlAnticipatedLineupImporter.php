@@ -26,15 +26,10 @@ class NhlAnticipatedLineupImporter
         object $game,
         string $teamAbbrev,
         int $teamId,
-        bool $seekCorroboration = true
+        bool $opponentReported = true
     ): array
     {
-        $known = DB::table('source_scopes as scopes')
-            ->join('sources', 'sources.id', '=', 'scopes.source_id')
-            ->where('scopes.sport', 'hockey')->where('scopes.league', 'NHL')
-            ->where(fn ($query) => $query->where('scopes.team_id', $teamId)->orWhereNull('scopes.team_id'))
-            ->orderByDesc('sources.last_seen_at')->limit(10)
-            ->get(['sources.name', 'sources.handle', 'sources.canonical_url'])->map(fn (object $source): array => (array) $source)->all();
+        $known = $this->knownSources($teamId);
 
         $observed = 0;
         $skipped = 0;
@@ -47,9 +42,10 @@ class NhlAnticipatedLineupImporter
             $skipped
         );
 
-        if ($seekCorroboration && $this->currentSourceCount((int) $game->nhl_game_id, $teamId) < 2) {
+        $sourceCount = $this->currentSourceCount((int) $game->nhl_game_id, $teamId);
+        if ($sourceCount === 0 || ($opponentReported && $sourceCount < 2)) {
             $this->persistCandidates(
-                $this->discovery->discover($game, $teamAbbrev, $known, true),
+                $this->discovery->discover($game, $teamAbbrev, $this->knownSources($teamId), true),
                 $game,
                 $teamAbbrev,
                 $teamId,
@@ -135,6 +131,21 @@ class NhlAnticipatedLineupImporter
             ->where('nhl_game_id', $gameId)
             ->where('team_id', $teamId)
             ->value('source_count') ?? 0);
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function knownSources(int $teamId): array
+    {
+        return DB::table('source_scopes as scopes')
+            ->join('sources', 'sources.id', '=', 'scopes.source_id')
+            ->where('scopes.sport', 'hockey')
+            ->where('scopes.league', 'NHL')
+            ->where(fn ($query) => $query->where('scopes.team_id', $teamId)->orWhereNull('scopes.team_id'))
+            ->orderByDesc('sources.last_seen_at')
+            ->limit(10)
+            ->get(['sources.name', 'sources.handle', 'sources.canonical_url'])
+            ->map(fn (object $source): array => (array) $source)
+            ->all();
     }
 
     /** @param array<string,mixed> $candidate */

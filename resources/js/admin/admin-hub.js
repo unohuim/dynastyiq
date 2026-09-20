@@ -3112,8 +3112,9 @@ export default function adminHub(options = {}) {
             const skipped = progress.skipped_records ?? 0;
             const elapsed = this.importElapsedText(key);
             const elapsedText = elapsed ? ` · elapsed ${elapsed}` : '';
+            const successfulLabel = key === 'nhl-anticipated-lineups' ? 'lineups found' : 'imported';
 
-            return `${this.formatNumber(successful)} imported, ${this.formatNumber(failed)} failed, ${this.formatNumber(skipped)} skipped${elapsedText}`;
+            return `${this.formatNumber(successful)} ${successfulLabel}, ${this.formatNumber(failed)} failed, ${this.formatNumber(skipped)} skipped${elapsedText}`;
         },
 
         formatNumber(value) {

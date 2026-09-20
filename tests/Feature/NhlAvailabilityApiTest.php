@@ -767,6 +767,34 @@ it('uses an x-only follow-up when the general search does not corroborate the li
     ]);
 });
 
+it('uses the x-only fallback when the general search finds no lineup', function (): void {
+    config(['services.openai.api_key' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020196, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    Http::fake([
+        'api.openai.com/*' => Http::sequence()
+            ->push(openAiLineupResponse([]))
+            ->push(openAiLineupResponse([
+                lineupCandidate('x_fallback', 'https://x.com/x_fallback/status/1'),
+            ])),
+    ]);
+
+    app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10, false);
+
+    $requests = Http::recorded();
+    expect($requests)->toHaveCount(2)
+        ->and(data_get($requests[1][0]->data(), 'tools.0.filters.allowed_domains'))->toBe(['x.com']);
+    $this->assertDatabaseHas('nhl_current_lineups', [
+        'nhl_game_id' => 2026020196,
+        'team_id' => 10,
+        'evidence_status' => 'reported',
+        'source_count' => 1,
+    ]);
+});
+
 it('stores and returns explicitly reported lineup special teams units', function (): void {
     config(['services.openai.api_key' => 'test-key']);
     $game = NhlGame::query()->create([
@@ -875,6 +903,27 @@ it('queues one near-puck-drop lineup job per team and excludes later games', fun
     $this->travelBack();
 });
 
+it('continues searching missing lineups for games that already started today', function (): void {
+    Queue::fake();
+    $this->travelTo(Carbon::parse('2026-09-19 18:00:00 UTC'));
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010109, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-19', 'game_dow' => 'Saturday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-19 17:00:00 UTC'),
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+
+    Artisan::call('nhl:import-anticipated-lineups', ['--window' => 'within-two-hours']);
+
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010109);
+    $this->travelBack();
+});
+
 it('queues anticipated lineup searches for today and tomorrow but not later dates', function (): void {
     Queue::fake();
     $this->travelTo(Carbon::parse('2026-09-19 14:00:00 UTC'));
@@ -937,6 +986,39 @@ it('rechecks current truth before a queued lineup job calls OpenAI', function ()
     $job->handle(app(NhlAnticipatedLineupImporter::class));
 
     Http::assertNothingSent();
+});
+
+it('counts an empty lineup search as skipped instead of imported', function (): void {
+    config(['services.openai.api_key' => 'test-key']);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026020098, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHour(), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $run = \App\Models\ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups',
+        'status' => 'working',
+        'command' => 'nhl:import-anticipated-lineups',
+        'total_records' => 1,
+        'processed_records' => 0,
+        'successful_records' => 0,
+        'failed_records' => 0,
+        'skipped_records' => 0,
+        'started_at' => now(),
+    ]);
+    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([]))]);
+
+    $job = new ImportNhlAnticipatedLineupTeamJob(2026020098, 'TOR', 10, $run->id);
+    $job->handle(app(NhlAnticipatedLineupImporter::class));
+
+    $run->refresh();
+    expect($run->successful_records)->toBe(0)
+        ->and($run->failed_records)->toBe(0)
+        ->and($run->skipped_records)->toBe(1);
 });
 
 it('does not corroborate one reported team while its opponent remains missing', function (): void {
@@ -1007,6 +1089,24 @@ it('allows tomorrow to make only the outside two hour schedule lane eligible', f
 
     expect(app(AdminImportSchedules::class)->shouldDispatch($outside, $now))->toBeTrue()
         ->and(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeFalse();
+});
+
+it('keeps the within two hour schedule lane eligible after todays puck drop', function (): void {
+    $now = Carbon::parse('2026-09-19 18:00:00 UTC')->toImmutable();
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010118, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-19', 'game_dow' => 'Saturday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-19 17:00:00 UTC'),
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $within = new AdminImportSchedule([
+        'source_key' => 'nhl-anticipated-lineups', 'lane_key' => 'within_two_hours',
+        'enabled' => true, 'lane_enabled' => true, 'interval_seconds' => 900,
+        'recurrence_mode' => 'recurring', 'daily_start_time' => '09:00:00',
+        'timezone' => 'America/Toronto',
+    ]);
+
+    expect(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeTrue();
 });
 
 it('asks lineup discovery for the game date and preceding calendar date', function (): void {

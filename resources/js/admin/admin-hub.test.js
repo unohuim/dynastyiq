@@ -2054,6 +2054,22 @@ describe('admin-hub import listeners', () => {
         );
     });
 
+    it('labels anticipated lineup successes as lineups found', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.streams['nhl-anticipated-lineups'] = {
+            progress: {
+                successful_records: 4,
+                failed_records: 1,
+                skipped_records: 7,
+            },
+        };
+
+        expect(instance.importProgressDetailText('nhl-anticipated-lineups')).toBe(
+            '4 lineups found, 1 failed, 7 skipped'
+        );
+    });
+
     it('includes elapsed time from initial import card data', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub({

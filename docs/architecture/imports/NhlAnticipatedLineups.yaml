@@ -37,8 +37,11 @@ rules:
   - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
-  - The unrestricted web search runs first; an x.com-only domain-filtered search runs only when the team still needs a second matching source and both teams in the game already have reportable lineups.
-  - Search priority follows the earliest upcoming puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
+  - The unrestricted web search runs first; an x.com-only domain-filtered search runs immediately when that pass leaves the team unreported, or later to find a second source after both teams are reported.
+  - Search priority follows the earliest scheduled puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
+  - A same-day game remains eligible after puck drop when either team still lacks a reportable lineup; started games with missing coverage take priority over later games.
+  - Team discovery jobs must share one overlap lock, respect provider Retry-After guidance for temporary rate limits, and retry without recording the released attempt as a failed team search.
+  - A successful team-search count requires at least one newly persisted lineup observation; an empty or duplicate-only response is skipped rather than reported as imported.
   - Scheduler eligibility is evaluated every second for enabled schedules, while configured lane intervals control when searches become due.
   - OpenAI requests enforce per-request tool limits and persist actual usage without an application-owned daily search ceiling.
 public_interface:

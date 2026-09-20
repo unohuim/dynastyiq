@@ -31,7 +31,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         $tomorrow = $today->copy()->addDay();
         $games = DB::table('nhl_games')
             ->whereBetween('game_date', [$today->toDateString(), $tomorrow->toDateString()])
-            ->whereNotNull('start_time_utc')->where('start_time_utc', '>', now())
+            ->whereNotNull('start_time_utc')
             ->when($window === 'within-two-hours', fn ($query) => $query
                 ->whereDate('game_date', $today->toDateString())
                 ->where('start_time_utc', '<=', now()->addHours(2)))

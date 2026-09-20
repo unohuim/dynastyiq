@@ -153,8 +153,7 @@ class AdminImportSchedules
         }
 
         $query = DB::table('nhl_games')
-            ->whereNotNull('start_time_utc')
-            ->where('start_time_utc', '>', $now);
+            ->whereNotNull('start_time_utc');
 
         if ($schedule->lane_key === 'within_two_hours') {
             $query->whereDate('game_date', $localNow->toDateString())
