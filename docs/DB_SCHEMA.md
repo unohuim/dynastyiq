@@ -4848,7 +4848,7 @@ Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores glob
 
 ## sources, source_scopes, source_metric_snapshots, source_engagement_snapshots
 
-Cross-sport public publisher identities, sport/league/team coverage, append-only mutable account metric snapshots, and append-only engagement snapshots for evidence URLs. These tables retain provenance and do not assign source trust.
+Cross-sport public publisher identities, provider account ids such as `sources.platform_user_id`, sport/league/team coverage, append-only mutable account metric snapshots, and append-only engagement snapshots for evidence URLs. These tables retain provenance and do not assign source trust.
 
 ## nhl_lineup_observations, nhl_lineup_observation_players
 
@@ -4860,6 +4860,6 @@ Current game/team anticipated-lineup projection. Each row points to the newest r
 
 ## integration_api_usage_logs
 
-Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records general and X-only search usage here for operational and cost visibility.
+Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records stored-source timeline reads as `nhl_lineup_source_timeline` for operational and cost visibility. Historical rows may retain the retired `nhl_lineup_discovery` generic-search operation.
 
 **End of DB_SCHEMA**

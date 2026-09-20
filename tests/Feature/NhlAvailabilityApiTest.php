@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\ApiClient;
 use App\Models\AdminImportSchedule;
+use App\Events\ImportStreamEvent;
 use App\Models\EvidenceSource;
 use App\Models\NhlGame;
 use App\Models\NhlCurrentLineup;
@@ -20,6 +21,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
@@ -88,12 +91,43 @@ function createCurrentAnticipatedLineup(array $overrides = []): NhlCurrentLineup
     ], $overrides));
 }
 
+function createTimelineSource(
+    string $teamAbbrev = 'TOR',
+    int $teamId = 10,
+    string $handle = 'timeline_test_source',
+    string $platformUserId = 'timeline-test-user'
+): int {
+    DB::table('sources')->updateOrInsert(
+        ['platform' => 'x', 'handle' => $handle],
+        [
+            'name' => str($handle)->replace('_', ' ')->title()->toString(),
+            'platform_user_id' => $platformUserId,
+            'canonical_url' => 'https://x.com/' . $handle,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]
+    );
+    $sourceId = (int) DB::table('sources')
+        ->where('platform', 'x')
+        ->where('handle', $handle)
+        ->value('id');
+    DB::table('source_scopes')->updateOrInsert(
+        ['source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL', 'team_id' => $teamId],
+        ['team_abbrev' => $teamAbbrev, 'created_at' => now(), 'updated_at' => now()]
+    );
+
+    return $sourceId;
+}
+
 function xLineupResponse(array $observations): array
 {
     \App\Models\NhlTeam::query()->updateOrCreate(
         ['abbrev' => 'TOR'],
         ['nhl_id' => 10, 'common_name' => 'Maple Leafs']
     );
+    createTimelineSource();
     $posts = [];
     $users = [];
     foreach ($observations as $index => $observation) {
@@ -792,7 +826,7 @@ it('treats twelve forwards and six defensemen as reported without goalies', func
     ]);
 });
 
-it('searches X directly once using a broad OR team query', function (): void {
+it('stops source timeline reads after the first accepted lineup', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020196, 'season_id' => '20262027', 'game_type' => 2,
@@ -812,15 +846,108 @@ it('searches X directly once using a broad OR team query', function (): void {
         fn (array $record): bool => str_contains($record[0]->url(), 'api.x.com')
     )->values();
     expect($requests)->toHaveCount(1)
-        ->and($requests[0][0]->url())->toContain('/2/tweets/search/recent')
-        ->and($requests[0][0]['query'])->toBe('(TOR OR "Maple Leafs")')
-        ->and((int) $requests[0][0]['max_results'])->toBe(10);
+        ->and($requests[0][0]->url())->toContain('/2/users/timeline-test-user/tweets')
+        ->and((int) $requests[0][0]['max_results'])->toBe(5);
     $this->assertDatabaseHas('nhl_current_lineups', [
         'nhl_game_id' => 2026020196,
         'team_id' => 10,
         'evidence_status' => 'reported',
         'source_count' => 1,
     ]);
+});
+
+it('reads stored team scoped X source timelines', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x',
+        'name' => 'Toronto Maple Leafs',
+        'handle' => 'MapleLeafs',
+        'platform_user_id' => '12345',
+        'canonical_url' => 'https://x.com/MapleLeafs',
+        'first_seen_at' => now(),
+        'last_seen_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('source_scopes')->insert([
+        'source_id' => $sourceId,
+        'sport' => 'hockey',
+        'league' => 'NHL',
+        'team_id' => 10,
+        'team_abbrev' => 'TOR',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020197, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $response = xLineupResponse([
+        lineupCandidate('MapleLeafs', 'https://x.com/MapleLeafs/status/1'),
+    ]);
+    $response['data'][0]['author_id'] = '12345';
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    $requests = Http::recorded();
+    expect($requests)->toHaveCount(1)
+        ->and($requests[0][0]->url())->toContain('/2/users/12345/tweets')
+        ->and((int) $requests[0][0]['max_results'])->toBe(5)
+        ->and($requests[0][0]['start_time'])->not->toBeNull()
+        ->and($candidates)->toHaveCount(1);
+});
+
+it('resolves and caches an X user id before reading a stored source timeline', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Timeline Reporter', 'handle' => 'timeline_reporter',
+        'canonical_url' => 'https://x.com/timeline_reporter', 'first_seen_at' => now(),
+        'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('source_scopes')->insert([
+        'source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL',
+        'team_id' => 10, 'team_abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $game = (object) [
+        'nhl_game_id' => 2026020199, 'game_date' => today()->toDateString(),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $timeline = xLineupResponse([
+        lineupCandidate('timeline_reporter', 'https://x.com/timeline_reporter/status/15'),
+    ]);
+    $timeline['data'][0]['author_id'] = '9988';
+    Http::fake([
+        'api.x.com/2/users/by/username/*' => Http::response([
+            'data' => ['id' => '9988', 'name' => 'Timeline Reporter', 'username' => 'timeline_reporter'],
+        ]),
+        'api.x.com/2/users/9988/tweets*' => Http::response($timeline),
+    ]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    expect($candidates)->toHaveCount(1)
+        ->and(DB::table('sources')->where('id', $sourceId)->value('platform_user_id'))->toBe('9988');
+    Http::assertSentCount(2);
+});
+
+it('seeds candidate X timeline sources for the first four configured teams', function (): void {
+    foreach ([
+        'CAR' => ['Canes', 'RyanHenkel_', 'WaltRuff'],
+        'FLA' => ['FlaPanthers', 'JamesonCoop', 'GeorgeRichards'],
+        'UTA' => ['utahmammoth', 'UtahMammoth_PR', 'houston_brogan'],
+        'COL' => ['Avalanche', 'evanrawal', 'DNVR_Avalanche'],
+    ] as $teamAbbrev => $handles) {
+        $stored = DB::table('sources')
+            ->join('source_scopes', 'source_scopes.source_id', '=', 'sources.id')
+            ->where('source_scopes.team_abbrev', $teamAbbrev)
+            ->whereIn('sources.handle', $handles)
+            ->pluck('sources.handle')
+            ->all();
+
+        expect($stored)->toEqualCanonicalizing($handles);
+    }
 });
 
 it('keeps split squad X evidence with the game whose opponent is named', function (): void {
@@ -881,6 +1008,63 @@ it('evaluates every returned X post before selecting a lineup candidate', functi
         ->and($candidates[0]['players'])->toHaveCount(20);
 });
 
+it('writes approved and declined X post audits only for local troubleshooting', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $originalEnvironment = app()->environment();
+    app()['env'] = 'local';
+    $written = [];
+    File::shouldReceive('ensureDirectoryExists')
+        ->times(3)
+        ->with(base_path('docs/troubleshooting/lineups/TOR'));
+    File::shouldReceive('put')->twice()->andReturnUsing(
+        function (string $path, string $contents) use (&$written): int {
+            $written[$path] = $contents;
+
+            return strlen($contents);
+        }
+    );
+    File::shouldReceive('append')->once()->andReturnUsing(
+        function (string $path, string $contents) use (&$written): int {
+            $written[$path] = $contents;
+
+            return strlen($contents);
+        }
+    );
+    $game = (object) [
+        'nhl_game_id' => 2026020191, 'game_date' => today()->toDateString(),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $response = xLineupResponse([
+        lineupCandidate('audit_reporter', 'https://x.com/audit_reporter/status/10'),
+    ]);
+    array_unshift($response['data'], [
+        'id' => '999',
+        'text' => 'General hockey update with no player groups.',
+        'author_id' => 'irrelevant-author',
+        'created_at' => now()->toIso8601String(),
+        'public_metrics' => [],
+    ]);
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    try {
+        $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+    } finally {
+        app()['env'] = $originalEnvironment;
+    }
+
+    expect($candidates)->toHaveCount(1)
+        ->and($written)->toHaveKeys([
+            base_path('docs/troubleshooting/lineups/TOR/x_post_999.md'),
+            base_path('docs/troubleshooting/lineups/TOR/x_post_10.md'),
+        ])
+        ->and($written[base_path('docs/troubleshooting/lineups/TOR/x_post_999.md')])
+        ->toContain('**Decision:** Declined', 'No target-team players were recognized')
+        ->and($written[base_path('docs/troubleshooting/lineups/TOR/x_post_10.md')])
+        ->toContain('**Decision:** Approved', '## Matched target-team players', '## Raw X post JSON')
+        ->and($written[base_path('docs/troubleshooting/lineups/TOR/search.md')])
+        ->toContain('- Timeline page: `timeline:@timeline_test_source page 1`', '- Results returned: 2');
+});
+
 it('recognizes target team player groups throughout complete post text', function (): void {
     foreach ([
         [8484101, 'Alpha One', 'C', 'TOR'],
@@ -915,6 +1099,83 @@ it('recognizes target team player groups throughout complete post text', functio
         ->and(collect($players)->where('line_key', 'D1')->pluck('name')->all())
         ->toBe(['Delta Four', 'Echo Five']);
 });
+
+it('retains unresolved prospect names inside structurally complete lineup groups', function (): void {
+    foreach ([
+        [8484401, 'Known One', 'C'],
+        [8484402, 'Known Two', 'LW'],
+        [8484403, 'Known Three', 'C'],
+        [8484404, 'Known Four', 'LW'],
+        [8484405, 'Known Five', 'C'],
+        [8484406, 'Known Six', 'LW'],
+        [8484407, 'Known Seven', 'C'],
+        [8484408, 'Known Eight', 'LW'],
+        [8484409, 'Known Nine', 'D'],
+        [8484410, 'Known Ten', 'D'],
+        [8484411, 'Known Eleven', 'D'],
+    ] as [$nhlId, $fullName, $position]) {
+        [$firstName, $lastName] = explode(' ', $fullName, 2);
+        Player::query()->create([
+            'nhl_id' => $nhlId,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'full_name' => $fullName,
+            'position' => $position,
+            'team_abbrev' => 'CAR',
+            'current_league_abbrev' => 'NHL',
+        ]);
+    }
+
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse(implode("\n", [
+        'Known One-Known Two-Prospect Alpha',
+        'Known Three-Known Four-Prospect Beta',
+        'Known Five-Known Six-Prospect Gamma',
+        'Known Seven-Known Eight-Prospect Delta',
+        'Known Nine-Prospect Echo',
+        'Known Ten-Prospect Foxtrot',
+        'Known Eleven-Prospect Golf',
+    ]), 'CAR');
+
+    expect(collect($players)->where('lineup_role', 'forward'))->toHaveCount(12)
+        ->and(collect($players)->where('lineup_role', 'defense'))->toHaveCount(6)
+        ->and(collect($players)->pluck('name'))->toContain(
+            'Prospect Alpha',
+            'Prospect Echo',
+            'Prospect Golf'
+        );
+});
+
+it('recognizes apostrophe variants in reported player names', function (string $reportedSurname): void {
+    foreach ([
+        [8484301, 'Conor', 'Geekie'],
+        [8484302, 'Ryan', "O'Reilly"],
+        [8484303, 'Benjamin', 'Rautiainen'],
+    ] as [$nhlId, $firstName, $lastName]) {
+        Player::query()->create([
+            'nhl_id' => $nhlId,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'full_name' => $firstName . ' ' . $lastName,
+            'position' => 'C',
+            'team_abbrev' => 'TBL',
+            'current_league_abbrev' => 'NHL',
+        ]);
+    }
+
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse(
+        "Geekie-{$reportedSurname}-Rautiainen",
+        'TBL'
+    );
+
+    expect($players)->toHaveCount(3)
+        ->and(collect($players)->pluck('name')->all())
+        ->toBe(['Conor Geekie', "Ryan O'Reilly", 'Benjamin Rautiainen']);
+})->with([
+    'straight apostrophe' => "O'Reilly",
+    'curly apostrophe' => 'O’Reilly',
+    'backtick' => 'O`Reilly',
+    'no apostrophe' => 'OReilly',
+]);
 
 it('uses a complete NHL boxscore roster and does not search X', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
@@ -1069,10 +1330,10 @@ it('skips an X text post that contains no target team player group', function ()
     ]);
 });
 
-it('does not impose an application daily lineup search limit', function (): void {
+it('does not impose an application daily timeline request limit', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     DB::table('integration_api_usage_logs')->insert([
-        'provider' => 'x', 'operation' => 'nhl_lineup_discovery',
+        'provider' => 'x', 'operation' => 'nhl_lineup_source_timeline',
         'input_tokens' => 0, 'output_tokens' => 0, 'tool_calls' => 10000,
         'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
     ]);
@@ -1122,6 +1383,64 @@ it('queues one near-puck-drop lineup job per team and excludes later games', fun
         && $job->teamAbbrev === 'TOR'
         && $job->queue === 'lineups');
     $this->travelBack();
+});
+
+it('writes a fresh local import manifest and resets eligible team search files', function (): void {
+    Queue::fake();
+    $originalEnvironment = app()->environment();
+    app()['env'] = 'local';
+    $written = [];
+    $auditDirectory = base_path('docs/troubleshooting/lineups');
+    $staleFiles = [
+        $auditDirectory . '/import_old.md',
+        $auditDirectory . '/TOR/search.md',
+        $auditDirectory . '/TOR/x_post_old.md',
+    ];
+    File::shouldReceive('ensureDirectoryExists')->times(3);
+    File::shouldReceive('allFiles')->once()->with($auditDirectory)->andReturn([
+        new \SplFileInfo($auditDirectory . '/README.md'),
+        ...array_map(fn (string $path): \SplFileInfo => new \SplFileInfo($path), $staleFiles),
+        new \SplFileInfo($auditDirectory . '/keep.txt'),
+    ]);
+    File::shouldReceive('delete')->once()->with($staleFiles)->andReturnTrue();
+    File::shouldReceive('put')->times(3)->andReturnUsing(
+        function (string $path, string $contents) use (&$written): int {
+            $written[$path] = $contents;
+
+            return strlen($contents);
+        }
+    );
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010120, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => today('America/Toronto'), 'game_dow' => today()->format('l'),
+        'game_month' => today()->format('F'), 'start_time_utc' => now()->addHours(4),
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+
+    try {
+        Artisan::call('nhl:import-anticipated-lineups');
+    } finally {
+        app()['env'] = $originalEnvironment;
+    }
+
+    $importPath = collect(array_keys($written))->first(
+        fn (string $path): bool => preg_match('/\/import_\d{8}_\d{6}_\d{6}\.md$/', $path) === 1
+    );
+    expect($importPath)->not->toBeNull()
+        ->and($written[$importPath])->toContain(
+            '- Eligible team jobs: 2',
+            '`MTL` vs `TOR`',
+            '`TOR` vs `MTL`',
+            '**dispatched**'
+        )
+        ->and($written[base_path('docs/troubleshooting/lineups/MTL/search.md')])
+        ->toContain('# MTL lineup searches', '- Import audit: `../import_')
+        ->and($written[base_path('docs/troubleshooting/lineups/TOR/search.md')])
+        ->toContain('# TOR lineup searches', '- Import audit: `../import_');
 });
 
 it('continues searching missing lineups for games that already started today', function (): void {
@@ -1366,19 +1685,101 @@ it('keeps the within two hour schedule lane eligible after todays puck drop', fu
     expect(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeTrue();
 });
 
-it('requests the minimum X result page for the broad team query', function (): void {
+it('reads source timelines round robin in five-post pages', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
-    Http::fake(['api.x.com/*' => Http::response(xLineupResponse([]))]);
+    createTimelineSource('TOR', 10, 'source_one', 'source-1');
+    createTimelineSource('TOR', 10, 'source_two', 'source-2');
     $game = (object) [
-        'nhl_game_id' => 2026010114, 'game_date' => '2026-09-20',
+        'nhl_game_id' => 2026010120, 'game_date' => '2026-09-20',
         'start_time_utc' => '2026-09-20 23:00:00',
         'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ];
+    $irrelevant = [[
+        'id' => '991',
+        'text' => 'General team update.',
+        'author_id' => 'source-1',
+        'created_at' => now()->toIso8601String(),
+        'public_metrics' => [],
+    ]];
+    $lineup = xLineupResponse([
+        lineupCandidate('source_one', 'https://x.com/source_one/status/992'),
+    ]);
+    $lineup['data'][0]['author_id'] = 'source-1';
+    Http::fake([
+        'api.x.com/*' => Http::sequence()
+            ->push(['data' => $irrelevant, 'meta' => ['next_token' => 'source-1-page-2']])
+            ->push(['data' => [], 'meta' => ['next_token' => 'source-2-page-2']])
+            ->push($lineup),
+    ]);
 
-    app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
 
-    Http::assertSent(fn ($request): bool => $request['query'] === '(TOR OR "Maple Leafs")'
-        && (int) $request['max_results'] === 10);
+    $requests = Http::recorded()
+        ->map(fn (array $record): array => [
+            $record[0]->url(),
+            $record[0]['pagination_token'],
+            (int) $record[0]['max_results'],
+        ])
+        ->all();
+    expect($requests)->toBe([
+        ['https://api.x.com/2/users/source-1/tweets', null, 5],
+        ['https://api.x.com/2/users/source-2/tweets', null, 5],
+        ['https://api.x.com/2/users/source-1/tweets', 'source-1-page-2', 5],
+    ])
+        ->and($candidates)->toHaveCount(1)
+        ->and($candidates[0]['source_handle'])->toBe('source_one');
+});
+
+it('declines a partial lineup and continues to the next stored source', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    Event::fake([ImportStreamEvent::class]);
+    createTimelineSource('TOR', 10, 'partial_reporter', 'partial-source');
+    createTimelineSource('TOR', 10, 'full_reporter', 'full-source');
+    $game = (object) [
+        'nhl_game_id' => 2026010124, 'game_date' => '2026-09-20',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $partial = xLineupResponse([
+        lineupCandidate('partial_reporter', 'https://x.com/partial_reporter/status/993'),
+    ]);
+    $partial['data'][0]['text'] = "Defense\nDefense 1 - Defense 2";
+    $partial['data'][0]['author_id'] = 'partial-source';
+    $full = xLineupResponse([
+        lineupCandidate('full_reporter', 'https://x.com/full_reporter/status/994'),
+    ]);
+    $full['data'][0]['author_id'] = 'full-source';
+    Http::fake([
+        'api.x.com/*' => Http::sequence()
+            ->push($partial)
+            ->push($full),
+    ]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    expect(Http::recorded())->toHaveCount(2)
+        ->and($candidates)->toHaveCount(1)
+        ->and($candidates[0]['source_handle'])->toBe('full_reporter');
+    Event::assertDispatched(ImportStreamEvent::class, fn (ImportStreamEvent $event): bool =>
+        $event->source === 'nhl-anticipated-lineups'
+        && str_contains($event->message, 'DECLINED')
+        && str_contains($event->message, 'F:0 D:2 G:0')
+        && str_contains($event->message, 'Incomplete lineup'));
+});
+
+it('does not call X when a team has no stored timeline sources', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    \App\Models\NhlTeam::query()->create(['nhl_id' => 55, 'abbrev' => 'NEW']);
+    Http::fake();
+    $game = (object) [
+        'nhl_game_id' => 2026010119, 'game_date' => '2026-09-20',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'NEW', 'home_team_abbrev' => 'TOR',
+    ];
+
+    app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'NEW');
+
+    Http::assertNothingSent();
 });
 
 it('derives an expected starting goalie observation from a newly observed G1', function (): void {

@@ -8,7 +8,9 @@ use App\Jobs\ImportNhlAnticipatedLineupTeamJob;
 use App\Models\ImportRun;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 
 /** Queues one anticipated-lineup discovery job per eligible team. */
 class ImportNhlAnticipatedLineupsCommand extends Command
@@ -72,6 +74,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             ]));
         })->values();
 
+        $this->writeLocalImportAudit($jobs, $window);
         $run = $this->importRun();
         $run?->setProgressTotal($jobs->count(), 'Team lineup searches');
         if ($jobs->isEmpty()) {
@@ -107,5 +110,75 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         return $this->option('import-run-id')
             ? ImportRun::query()->find((int) $this->option('import-run-id'))
             : null;
+    }
+
+    /** @param Collection<int,array{0:object,1:string,2:mixed}> $jobs */
+    private function writeLocalImportAudit(Collection $jobs, string $window): void
+    {
+        if (! app()->environment('local')) {
+            return;
+        }
+
+        $timestamp = Carbon::now('America/Toronto');
+        $directory = base_path('docs/troubleshooting/lineups');
+        File::ensureDirectoryExists($directory);
+        $this->deleteGeneratedLocalAudits($directory);
+        $filename = 'import_' . $timestamp->format('Ymd_His_u') . '.md';
+        $entries = $jobs->map(function (array $job): string {
+            [$game, $teamAbbrev, $teamId] = $job;
+            $opponent = $teamAbbrev === mb_strtoupper((string) $game->home_team_abbrev)
+                ? mb_strtoupper((string) $game->away_team_abbrev)
+                : mb_strtoupper((string) $game->home_team_abbrev);
+
+            return sprintf(
+                '- `%s` vs `%s` — game `%s`, date `%s`, start `%s`, team ID `%s`, **%s**',
+                $teamAbbrev,
+                $opponent,
+                (string) $game->nhl_game_id,
+                (string) $game->game_date,
+                (string) $game->start_time_utc,
+                $teamId === null ? 'missing' : (string) $teamId,
+                $teamId === null ? 'skipped: missing NHL team ID' : 'dispatched'
+            );
+        })->implode("\n");
+        $markdown = implode("\n", [
+            '# Anticipated lineup import',
+            '',
+            '- Started: ' . $timestamp->toIso8601String(),
+            '- Window: `' . $window . '`',
+            '- Eligible team jobs: ' . $jobs->count(),
+            '',
+            '## Teams and games',
+            '',
+            $entries !== '' ? $entries : '_No eligible team jobs._',
+            '',
+        ]);
+        File::put($directory . '/' . $filename, $markdown);
+
+        $jobs->pluck(1)->filter()->unique()->each(function (string $teamAbbrev) use ($filename): void {
+            $teamDirectory = base_path('docs/troubleshooting/lineups/' . mb_strtoupper($teamAbbrev));
+            File::ensureDirectoryExists($teamDirectory);
+            File::put($teamDirectory . '/search.md', implode("\n", [
+                '# ' . mb_strtoupper($teamAbbrev) . ' lineup searches',
+                '',
+                '- Import audit: `../' . $filename . '`',
+                '',
+            ]));
+        });
+    }
+
+    private function deleteGeneratedLocalAudits(string $directory): void
+    {
+        $readme = $directory . '/README.md';
+        $generated = collect(File::allFiles($directory))
+            ->map(fn (\SplFileInfo $file): string => $file->getPathname())
+            ->filter(fn (string $path): bool => mb_strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'md'
+                && $path !== $readme)
+            ->values()
+            ->all();
+
+        if ($generated !== []) {
+            File::delete($generated);
+        }
     }
 }

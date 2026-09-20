@@ -23,45 +23,64 @@ GET https://api-web.nhle.com/v1/gamecenter/{game-id}/boxscore
 
 When `playerByGameStats` contains at least twelve forwards and six defensemen for the team, DynastyIQ stores that roster as `official`, records a goalie marked `starter: true` as confirmed starting-goalie evidence, and does not search X. Incomplete or absent boxscore rosters fall through to X.
 
-The X fallback request is:
+The X timeline request is:
 
 ```http
-GET https://api.x.com/2/tweets/search/recent
+GET https://api.x.com/2/users/{id}/tweets
 Authorization: Bearer X_BEARER_TOKEN
 ```
 
-Each team search uses one broad OR query containing the available team identifiers:
+Discovery uses only X accounts linked to the team through `sources` and `source_scopes`. Generic X keyword search is not used. Handles are resolved once to `sources.platform_user_id`; subsequent imports use `GET /2/users/{id}/tweets` directly.
+
+The importer reads timelines in round-robin order:
+
+1. Read the newest five posts from source one.
+2. Read the newest five posts from source two, then every remaining source.
+3. If no complete lineup was accepted, read posts 6–10 from source one using its `next_token`.
+4. Continue the same cycle until a complete lineup is accepted or every timeline is exhausted.
+
+Every request includes a `start_time` at the beginning of the calendar day immediately preceding the target game, interpreted in America/Toronto and sent to X in UTC. This permits yesterday's lineup report for today's game without scanning older history.
+
+Example source-first request:
 
 ```text
-({team_abbrev} OR {team_nickname} OR "{team_full_name}")
+GET /2/users/{Canes-user-id}/tweets?max_results=5&start_time=...
 ```
 
-Example:
-
-```text
-(ANA OR Ducks OR "Anaheim Ducks")
-```
-
-The request uses `max_results=10`, the endpoint's minimum page size, and asks for:
+The request uses `max_results=5` and asks for:
 
 - Post text and publication time.
 - Author name, username, URL, and public account metrics.
 - Like, reply, repost, and impression counts when X returns them.
 - Media metadata for audit purposes.
 
-X charges for every post resource returned and separately charges for expanded author resources. Repeated resources are generally deduplicated by X within one UTC day, while DynastyIQ separately prevents the same post URL from creating duplicate observations.
+X charges for every post resource returned. Repeated resources are generally deduplicated by X within one UTC day, while DynastyIQ separately prevents the same post URL from creating duplicate observations.
+
+An account supplying accepted lineup evidence is stored in `sources` and linked to the NHL team through `source_scopes`. Official team accounts and beat writers use the same source representation for now; persistence does not imply trust.
 
 ## Local parsing
 
-All ten returned posts are read in full. Search words do not qualify or reject a post after retrieval. The parser scans each post line by line, resolves apparent names against canonical players belonging to the target team, and then looks for lineup-shaped groups. Three resolved forwards form a forward line and two resolved defensemen form a defense pair whether the names are separated by spaces, hyphens, slashes, or surrounding prose. It maps four forward groups to `F1` through `F4`, three defense pairs to `D1` through `D3`, and ordered goalies to `G1` and `G2` when present.
+Every returned timeline post is read in full. The parser scans each post line by line, resolves apparent names against canonical players belonging to the target team through `PlayerIdentityNormalizer`, and then looks for lineup-shaped groups. Straight apostrophes, curly apostrophes, backticks, and omitted apostrophes are equivalent for matching while stored display names remain unchanged. A hyphen-delimited group of three names forms a forward line and a group of two names forms a defense pair when at least one name establishes that the group belongs to the target team. Reported prospect names that do not yet resolve are retained as unresolved evidence rather than discarded. It maps four forward groups to `F1` through `F4`, three defense pairs to `D1` through `D3`, and ordered goalies to `G1` and `G2` when present.
 
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.
-- Partial lineup candidates remain partial observations, but only twelve resolved forwards and six resolved defensemen constitute a full reported lineup; image-only content is not interpreted.
+- Partial player groups are declined and retained only in discovery audits. They do not stop discovery, create lineup observations, or count as lineups found. Twelve forwards and six defensemen are required; image-only content is not interpreted.
 - Missing players are never invented from roster history or hockey knowledge.
 - Special-teams assignments remain empty unless a future deterministic parser explicitly supports them.
 - On split-squad dates, extracted players and opponent context must identify the targeted game; ambiguous evidence is not attached to either game.
+
+## Local troubleshooting audits
+
+When Laravel's environment is `local`, every returned X post is written before filtering to:
+
+```text
+docs/troubleshooting/lineups/{TEAM_ABBREV}/x_post_{X_POST_ID}.md
+```
+
+The Markdown file starts with the approval or decline reason and includes the target game, timeline page context, author, timestamp, complete post text, every canonical target-team player match, parsed lineup slots, and raw X post JSON. Repeated timeline reads overwrite the same post-ID file. Testing, staging, and production do not write these files.
+
+Before each local import writes new audits, it recursively deletes every generated `.md` file beneath `docs/troubleshooting/lineups/` while preserving `README.md` and all directories. The import then writes `import_YYYYMMDD_HHMMSS_UUUUUU.md`, listing every eligible team/game job and whether it was dispatched or skipped, and creates `docs/troubleshooting/lineups/{TEAM_ABBREV}/search.md` for every eligible team. Each subsequent X request appends the exact query and all returned results to that file; an empty X response is written as zero results rather than leaving the search invisible.
 
 ## Scheduling
 
@@ -76,7 +95,7 @@ The scheduler queues one bounded job per eligible game/team. Jobs share an X-sea
 
 ## Usage and failures
 
-Every X request writes an `integration_api_usage_logs` row containing the search query and number of posts returned. No application-owned daily search ceiling is imposed.
+Every X timeline request writes an `integration_api_usage_logs` row containing its source context and number of posts returned. No application-owned daily request ceiling is imposed.
 
 - Missing credentials fail the affected team job without deleting current truth.
 - Authentication, credit, HTTP, and parsing failures are reported through the existing import-run workflow.

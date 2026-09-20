@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Events\ImportStreamEvent;
 use App\Models\ImportRun;
 use App\Services\NhlAnticipatedLineupImporter;
 use Illuminate\Bus\Queueable;
@@ -15,6 +16,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Output\ConsoleOutput;
 use Throwable;
 
 /** Imports public anticipated-lineup evidence for one NHL game team. */
@@ -35,6 +37,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
     public function handle(NhlAnticipatedLineupImporter $importer): void
     {
+        $this->output("{$this->teamAbbrev} | game {$this->nhlGameId} | audit started");
         $result = 'successful';
         $errorMessage = null;
         try {
@@ -64,7 +67,8 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
                                 $imported = $importer->importFromX(
                                     $game,
                                     $this->teamAbbrev,
-                                    $this->teamId
+                                    $this->teamId,
+                                    $this->importRunId !== null ? (string) $this->importRunId : null
                                 );
                                 $result = $imported['observed'] > 0 ? 'successful' : 'skipped';
                             }
@@ -91,6 +95,11 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
         $run = $this->importRun();
         $run?->recordProcessed($result);
+        $this->output(match ($result) {
+            'successful' => "{$this->teamAbbrev} | game {$this->nhlGameId} | full lineup imported",
+            'failed' => "{$this->teamAbbrev} | game {$this->nhlGameId} | audit failed: {$errorMessage}",
+            default => "{$this->teamAbbrev} | game {$this->nhlGameId} | no new full lineup imported",
+        });
         if ($run !== null) {
             if ($errorMessage !== null) {
                 $run->update(['error_message' => $errorMessage]);
@@ -105,6 +114,20 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
                 }
             }
         }
+    }
+
+    private function output(string $message): void
+    {
+        if (! app()->environment('testing')) {
+            (new ConsoleOutput())->writeln('[lineups] ' . $message);
+        }
+
+        ImportStreamEvent::dispatch(
+            'nhl-anticipated-lineups',
+            $message,
+            'output',
+            $this->importRunId !== null ? (string) $this->importRunId : null
+        );
     }
 
     private function importRun(): ?ImportRun

@@ -3,6 +3,7 @@ type: Cross-Sport Source Identity And Metrics Registry
 location:
   - app/Models/EvidenceSource.php
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
+  - database/migrations/2026_09_20_000002_add_x_user_ids_and_seed_nhl_lineup_sources.php
 purpose: Reuse publisher identity, sport and league scope, and time-varying public metrics without assigning implicit trust.
 when_to_use:
   - Persisting a public account or publisher that supplied sports evidence.
@@ -11,6 +12,8 @@ when_not_to_use:
   - Treating separate posts from one account as independent corroborating sources.
   - Assigning source trust or accuracy scores without an approved evaluation model.
 rules:
+  - Provider-native account ids may be cached on sources.platform_user_id after resolving a public handle so recurring timeline reads do not repeat paid account lookups.
+  - NHL anticipated-lineup discovery may use only team-scoped source timelines and must not issue generic X keyword searches.
   - Source identity is platform scoped and reusable across sports and leagues.
   - Sport, league, and optional team coverage belongs to source scopes rather than the source identity.
   - Mutable account metrics are append-only snapshots with observation timestamps.

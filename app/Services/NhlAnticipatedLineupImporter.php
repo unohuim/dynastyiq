@@ -54,12 +54,17 @@ class NhlAnticipatedLineupImporter
     }
 
     /** @return array{observed:int,skipped:int} */
-    public function importFromX(object $game, string $teamAbbrev, int $teamId): array
+    public function importFromX(
+        object $game,
+        string $teamAbbrev,
+        int $teamId,
+        ?string $streamBatchId = null
+    ): array
     {
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates(
-            $this->discovery->discover($game, $teamAbbrev),
+            $this->discovery->discover($game, $teamAbbrev, $streamBatchId),
             $game,
             $teamAbbrev,
             $teamId,
@@ -129,7 +134,7 @@ class NhlAnticipatedLineupImporter
                 }
                 $observation->players()->createMany($normalized);
                 $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
-                if ($normalized !== []) {
+                if ($this->completeness($normalized) === 'full') {
                     $observed++;
                 }
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);

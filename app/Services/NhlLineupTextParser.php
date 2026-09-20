@@ -14,8 +14,18 @@ class NhlLineupTextParser
     /** @var Collection<int,Player>|null */
     private ?Collection $players = null;
 
+    public function __construct(private readonly PlayerIdentityNormalizer $normalizer)
+    {
+    }
+
     /** @return array<int,array<string,mixed>> */
     public function parse(string $text, string $teamAbbrev): array
+    {
+        return $this->analyze($text, $teamAbbrev)['players'];
+    }
+
+    /** @return array{players:array<int,array<string,mixed>>,matched_players:array<int,array<string,mixed>>} */
+    public function analyze(string $text, string $teamAbbrev): array
     {
         $players = $this->players ??= Player::query()->whereNotNull('nhl_id')
             ->whereNotNull('full_name')
@@ -32,6 +42,7 @@ class NhlLineupTextParser
         $defenseGroups = [];
         $goalies = [];
         $scratches = [];
+        $matchedPlayers = [];
 
         foreach ($lines as $line) {
             $line = trim($line);
@@ -45,10 +56,29 @@ class NhlLineupTextParser
                 continue;
             }
 
+            $segments = $this->structuredSegments($line);
+            if (count($segments) === 3 && count($forwardGroups) < 4) {
+                $group = $this->structuredGroup($segments, $players, $teamAbbrev, 'F');
+                if ($group !== null) {
+                    $forwardGroups[] = $group['players'];
+                    array_push($matchedPlayers, ...$group['matched']);
+                    continue;
+                }
+            }
+            if (count($segments) === 2 && ($section === 'defense' || count($forwardGroups) >= 4)) {
+                $group = $this->structuredGroup($segments, $players, $teamAbbrev, 'D');
+                if ($group !== null) {
+                    $defenseGroups[] = $group['players'];
+                    array_push($matchedPlayers, ...$group['matched']);
+                    continue;
+                }
+            }
+
             $matches = $this->playersInText($line, $players, $teamAbbrev);
             if ($matches === []) {
                 continue;
             }
+            array_push($matchedPlayers, ...$matches);
 
             if ($section === 'scratch') {
                 array_push($scratches, ...$matches);
@@ -131,7 +161,57 @@ class NhlLineupTextParser
             $result[] = $this->row($player, 'scratch', 'SCR', $slotIndex + 1);
         }
 
-        return $result;
+        return [
+            'players' => $result,
+            'matched_players' => $this->uniquePlayers($matchedPlayers),
+        ];
+    }
+
+    /** @return array<int,string> */
+    private function structuredSegments(string $line): array
+    {
+        $segments = preg_split('/\s*[-\x{2013}\x{2014}]\s*/u', trim($line)) ?: [];
+
+        return collect($segments)
+            ->map(fn (string $segment): string => trim($segment, " \t\n\r\0\x0B|,;:"))
+            ->filter(fn (string $segment): bool => $segment !== '')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int,string> $segments
+     * @param Collection<int,Player> $players
+     * @return array{players:array<int,array<string,mixed>>,matched:array<int,array<string,mixed>>}|null
+     */
+    private function structuredGroup(
+        array $segments,
+        Collection $players,
+        string $teamAbbrev,
+        string $fallbackPosition
+    ): ?array {
+        $group = [];
+        $matched = [];
+
+        foreach ($segments as $segment) {
+            $segmentMatches = $this->playersInText($segment, $players, $teamAbbrev);
+            if ($segmentMatches !== []) {
+                $player = $segmentMatches[0];
+                $group[] = $player;
+                $matched[] = $player;
+                continue;
+            }
+
+            $group[] = [
+                'name' => $segment,
+                'position' => $fallbackPosition,
+                'player_id' => null,
+                'nhl_player_id' => null,
+                'team_abbrev' => $teamAbbrev,
+            ];
+        }
+
+        return $matched === [] ? null : ['players' => $group, 'matched' => $matched];
     }
 
     private function heading(string $line): ?string
@@ -151,6 +231,11 @@ class NhlLineupTextParser
     private function playersInText(string $line, Collection $players, string $teamAbbrev): array
     {
         $found = [];
+        $normalizedLine = $this->normalizer->normalizeName($line);
+        if ($normalizedLine === null) {
+            return [];
+        }
+
         foreach ($players as $player) {
             $fullName = trim((string) $player->full_name);
             $lastName = trim((string) Str::afterLast($fullName, ' '));
@@ -164,7 +249,21 @@ class NhlLineupTextParser
             }
 
             foreach ($needles as $needle) {
-                if (preg_match('/(?<![\pL\pN])' . preg_quote($needle, '/') . '(?![\pL\pN])/iu', $line, $match, PREG_OFFSET_CAPTURE) !== 1) {
+                $normalizedNeedle = $this->normalizer->normalizeName($needle);
+                if ($normalizedNeedle === null) {
+                    continue;
+                }
+                $parts = preg_split('/\s+/', $normalizedNeedle) ?: [];
+                $pattern = implode('\\s*', array_map(
+                    fn (string $part): string => preg_quote($part, '/'),
+                    $parts
+                ));
+                if (preg_match(
+                    '/(?<![a-z0-9])' . $pattern . '(?![a-z0-9])/u',
+                    $normalizedLine,
+                    $match,
+                    PREG_OFFSET_CAPTURE
+                ) !== 1) {
                     continue;
                 }
                 $offset = (int) $match[0][1];
@@ -185,12 +284,15 @@ class NhlLineupTextParser
             ->map(fn (Player $player): array => [
                 'name' => (string) $player->full_name,
                 'position' => $player->position ? (string) $player->position : null,
+                'player_id' => $player->id,
+                'nhl_player_id' => $player->nhl_id,
+                'team_abbrev' => $player->team_abbrev,
             ])
             ->values()
             ->all();
     }
 
-    /** @param array<int,array{name:string,position:string|null}> $players @return array<int,array{name:string,position:string|null}> */
+    /** @param array<int,array<string,mixed>> $players @return array<int,array<string,mixed>> */
     private function uniquePlayers(array $players): array
     {
         return collect($players)->unique(fn (array $player): string => mb_strtolower($player['name']))
