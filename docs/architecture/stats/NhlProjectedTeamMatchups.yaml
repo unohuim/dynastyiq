@@ -5,6 +5,7 @@ location:
   - app/Http/Controllers/Admin/NhlShotAttemptController.php
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
   - app/Services/NhlGamePredictionPayload.php
+  - app/Services/NhlGameLineupProjectionBuilder.php
   - docs/architecture/stats/NhlProjectedTeamMatchups.yaml
   - resources/views/admin/nhl-shot-attempts/index.blade.php
 purpose: Simulate team-vs-team projected skater offense, composed roster offensive/defensive chance profiles, and selected projected goalie EV/PK bucket adjustments.
@@ -25,7 +26,14 @@ rules:
   - The goalie-facing EV environment must blend attacking offense bucket shape with defending roster chance-allowed bucket shape at the approved 70/30 weighting, while preserving the attacking team's projected total xSAT, xSOG, and xGF.
   - Defensive weakness must not create automatic offensive bonuses in the current simulator version.
   - Defensive suppression requires a later approved abstraction and must not be inferred from chance-allowed bucket share alone.
-  - Goalie selectors must prefer manual overrides, then current confirmed or expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows.
+  - Goalie selectors must prefer manual overrides, then official NHL starters, then confirmed before expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows, then workload projections.
+  - Partner predictions must prefer complete official NHL skater rosters, then complete canonically resolved reported lineups regardless of corroboration count, then projected rosters.
+  - A complete official or reported game roster is newer game-specific availability evidence than the current injury table and must not have listed skaters removed by the generic injury exclusion.
+  - Reported-lineup prediction inputs must retain all eighteen skaters and expose line, special-teams units, game-specific projected TOI, projection source, NHLe factor, and confidence.
+  - Game-specific skater TOI must blend reported line and explicitly reported PP/PK deployment with the season TOI baseline and must lower a player's game rate when the reported role is smaller.
+  - Reported skaters below twenty-five career NHL regular-season games may use previous-season non-NHL production translated through versioned NHLe factors when available; the same factor may provisionally translate SOG only with low confidence.
+  - Lineup-aware NHLe values are read-time game prediction inputs and must not replace raw imported statistics or stored season projections.
+  - A reported player without either a usable NHL projection or translatable non-NHL history must remain in the game roster with an explicitly low-confidence replacement-level rate.
   - Matchup goalie projection versions must be valid finished goalie performance projections with matching EV bucket rows in nhl_goalie_projection_chance_buckets; workload-only versions must not be selectable as matchup goalie versions.
   - Goalie option filtering must use the current goalie roster from players.team_abbrev, infer goalie eligibility from players.is_goalie or G position fields, and must not include historical source-team-only matches.
   - Goalie option labels must expose current team and historical source team context so traded goalies are not mistaken for projected team assignments.
@@ -48,6 +56,7 @@ public_interface:
   - api.nhl-game-predictions.show
   - NhlProjectedTeamMatchupSimulator
   - NhlGamePredictionPayload
+  - NhlGameLineupProjectionBuilder
   - resources/views/admin/nhl-shot-attempts/index.blade.php
 example_usage: |
   GET /admin/nhl-shot-attempts?tab=matchup&matchup_team_a=TOR&matchup_team_b=BOS

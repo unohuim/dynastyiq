@@ -17,8 +17,8 @@ This directory indexes provider API contracts, observed response semantics, and 
 
 ## NHL
 
+- `DIQ-API-Usage-Doc.md`: Official and canonical DynastyIQ API usage guide for every partner and API consumer.
 - `nhl-responses/README.md`: NHL endpoint inventory and response semantics.
-- `gner8-nhl-season-stats.md`: Gner8-facing NHL season-stat integration contract.
 
 ## RotoWire
 

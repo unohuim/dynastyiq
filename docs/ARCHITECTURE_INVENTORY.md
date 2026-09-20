@@ -53,11 +53,14 @@ Each entry includes:
 - `app/Http/Controllers/Api/NhlGamePredictionsController.php`
 - `app/Services/NhlSeasonStatsPayload.php`
 - `app/Services/NhlGamePredictionPayload.php`
+- `docs/integrations/DIQ-API-Usage-Doc.md`
 - `database/migrations/2026_07_27_000002_create_api_clients_table.php`
 - `routes/api.php`
 
 **Purpose:**
 Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
+
+The canonical consumer-facing contract for all partner API usage is `docs/integrations/DIQ-API-Usage-Doc.md`.
 
 **When to Use:**
 Creating revocable API tokens, protecting partner API endpoints, or exposing scoped DynastyIQ reference/stat data to another server.
@@ -73,12 +76,16 @@ Browser sessions, user OAuth credentials, public unauthenticated APIs, or Discor
 - `/api/nhl-players`
 - `/api/nhl-season-stats`
 - `/api/nhl-game-predictions`
+- `/api/nhl-starting-goalies`
+- `/api/nhl-injuries`
+- `/api/nhl-anticipated-lineups`
+- `docs/integrations/DIQ-API-Usage-Doc.md`
 
 NHL season stats supports `stat_group` and `window_key` request slicing for bounded partner imports, including goalie-specific rows when qualifying goalie data exists. NHL game predictions resolve `nhl_game_id` to scheduled teams and require resolved starting goalies.
 
 **Example Usage:**
 ```bash
-php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read
+php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl-stats:read
 ```
 
 ---
@@ -3535,6 +3542,7 @@ WHERE target_season_id = '20262027';
 - `app/Http/Controllers/Admin/NhlShotAttemptController.php`
 - `app/Http/Controllers/Api/NhlGamePredictionsController.php`
 - `app/Services/NhlGamePredictionPayload.php`
+- `app/Services/NhlGameLineupProjectionBuilder.php`
 - `docs/architecture/stats/NhlProjectedTeamMatchups.yaml`
 - `docs/architecture/imports/NhlPlayerAvailability.yaml` — Normalizes manual CBS/RotoWire injury imports and RotoWire starting-goalie observations for public, API, and prediction consumers, including matchup-grouped goalie presentation with browser-local game times.
 - `resources/views/admin/nhl-shot-attempts/index.blade.php`
@@ -3553,6 +3561,7 @@ Persisting team projection snapshots, applying defensive suppression or broad bo
 - `api.nhl-game-predictions.show`
 - `NhlProjectedTeamMatchupSimulator`
 - `NhlGamePredictionPayload`
+- `NhlGameLineupProjectionBuilder`
 - `resources/views/admin/nhl-shot-attempts/index.blade.php`
 
 **Example Usage:**

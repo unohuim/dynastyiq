@@ -1,8 +1,9 @@
-# gner8 DynastyIQ NHL API Usage Guide
+# DynastyIQ API Usage Guide
 
-This document is the single gner8-facing NHL API guide for DynastyIQ.
-It covers authentication, reference dependencies, NHL season stats, and NHL
-game predictions.
+This is the official and canonical API usage guide for every DynastyIQ partner
+and API consumer. It covers authentication, reference dependencies, NHL season
+stats, availability data, anticipated lineups, and game predictions. Consumer-
+specific implementation notes are subordinate to this contract.
 
 ## Authentication And Scopes
 
@@ -24,9 +25,9 @@ Endpoint scopes:
 | `GET /api/nhl-anticipated-lineups` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
 
-GNER8 usually needs a token with both `nhl-reference:read` and
-`nhl-stats:read` so it can resolve teams, players, stats, and predictions with
-one configured client.
+Most partner applications need a token with both `nhl-reference:read` and
+`nhl-stats:read` so they can resolve teams, players, stats, and predictions
+with one configured client.
 
 ## NHL Season Stats Endpoint
 
@@ -82,7 +83,7 @@ nhl-stats:read
 | `stat_group` | No | `basic` | Limits response to `basic`, `on_ice`, or `expected`. Required for full imports. |
 | `window_key` | No | `season` | Limits response to `season`, `last_5`, `last_10`, or `last_20`. Required for full imports. |
 
-The unfiltered endpoint remains available for diagnostics, but gner8 should use chunked pulls for season imports so DynastyIQ does not build one large JSON response.
+The unfiltered endpoint remains available for diagnostics, but consumers should use chunked pulls for season imports so DynastyIQ does not build one large JSON response.
 
 ### Payload Fields
 
@@ -90,7 +91,7 @@ Top-level payload:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `league_abbrev` | string | Always `NHL`. gner8 maps this to its local `league_id`. |
+| `league_abbrev` | string | Always `NHL`. The consumer maps this to its local league identity. |
 | `season` | object | Requested season metadata. |
 | `stat_types` | array | All stat definitions currently emitted by DynastyIQ. |
 | `player_stats` | array | Skater and goalie stat values by stat type and window. |
@@ -118,8 +119,8 @@ Top-level payload:
 | `stat_group` | string | `basic`, `on_ice`, or `expected`. |
 | `value_type` | string | `integer`, `decimal`, or `percentage`. |
 | `unit` | string|null | Value unit, such as `goals`, `shots`, `attempts`, `seconds`, or `percent`. |
-| `supports_per_game` | boolean | Whether gner8 may derive per-game values. |
-| `supports_per_60` | boolean | Whether gner8 may derive per-60 values. |
+| `supports_per_game` | boolean | Whether the consumer may derive per-game values. |
+| `supports_per_60` | boolean | Whether the consumer may derive per-60 values. |
 | `higher_is_better` | boolean|null | Sort/evaluation hint. |
 | `active` | boolean | Whether the stat type is active. |
 | `metadata` | object | Reserved extension field. |
@@ -130,7 +131,7 @@ Top-level payload:
 | --- | --- | --- |
 | `league_abbrev` | string | Always `NHL`. |
 | `season_key` | string | Season key for this stat row. |
-| `nhl_player_id` | integer | NHL player id. gner8 maps this to its local `players.id`. |
+| `nhl_player_id` | integer | NHL player id. Consumers map this to their local player identity. |
 | `stat_slug` | string | Joins to `stat_types[].slug`. |
 | `stat_group` | string | `basic`, `on_ice`, or `expected`. |
 | `window_key` | string | `season`, `last_5`, `last_10`, or `last_20`. |
@@ -198,7 +199,7 @@ must be treated as the same numeric value when the stat type is `decimal` or
 
 DynastyIQ emits the same supported windows for `basic`, `on_ice`, and `expected` player stat rows when the player has qualifying data for that window. Goalie rows use the same endpoint, same `player_stats[]` shape, and distinct goalie stat slugs.
 
-GNER8 should ingest goalie rows exactly like skater rows. The row identity is
+Consumers should ingest goalie rows exactly like skater rows. The row identity is
 still `nhl_player_id + stat_slug + window_key` after resolving
 `league_abbrev` and `season_key`; goalie rows are distinguished only by
 `goalie_`-prefixed stat slugs and the referenced player.
@@ -265,15 +266,15 @@ still `nhl_player_id + stat_slug + window_key` after resolving
 
 ## Ingestion Order
 
-1. Resolve `league_abbrev` to gner8's local `leagues.id`.
+1. Resolve `league_abbrev` to the consumer's local league identity.
 2. Upsert `season` by `league_id + season_key`.
 3. Upsert `stat_types` by `league_id + slug`.
-4. Resolve each `player_stats[].nhl_player_id` to gner8's local `players.id`.
-5. Resolve each `player_stats[].stat_slug` to gner8's local `nhl_stat_types.id`.
+4. Resolve each `player_stats[].nhl_player_id` to the consumer's local player identity.
+5. Resolve each `player_stats[].stat_slug` to the consumer's local stat-type identity.
 6. Upsert `player_stats`; goalie rows follow the same path as skater rows and should not use a separate goalie table.
 7. Resolve and upsert `player_stat_features`.
 
-Rows with unknown `nhl_player_id` should be skipped or quarantined until gner8 imports the missing player reference row.
+Rows with unknown `nhl_player_id` should be skipped or quarantined until the consumer imports the missing player reference row.
 
 ## Upsert Keys
 
@@ -308,13 +309,13 @@ foreach ($statGroups as $statGroup) {
 
 ## Notes
 
-- DynastyIQ intentionally sends `league_abbrev`, not `league_id`. gner8 owns local `league_id` values.
+- DynastyIQ intentionally sends `league_abbrev`, not `league_id`. Each consumer owns its local league identifiers.
 - Expected stats require DynastyIQ xG and xSOG predictions for the requested season.
 - On-ice expected stats require DynastyIQ event-to-shift links.
 - A row is emitted only when the player has qualifying data for that stat/window.
 - Goalie expected stats require shot-attempt facts with `goalie_player_id` and scored xG/xSOG predictions.
 - Feature rows currently compare recent `last_10` expected-rate values against the season baseline.
-- GNER8 should normalize received numeric values according to `stat_types[].value_type`; JSON decoding may not preserve a float type for whole-number decimal values.
+- Consumers should normalize received numeric values according to `stat_types[].value_type`; JSON decoding may not preserve a float type for whole-number decimal values.
 
 ## NHL Starting Goalies Endpoint
 
@@ -483,7 +484,7 @@ when no observation is available for that side.
 season's regular-season results. Regular-season and playoff games use the
 game's current season regular-season results.
 
-### gner8 Consumption Guidance
+### Consumption Guidance
 
 - Use `games[]` when processing a scheduled matchup or preparing a prediction.
 - Use `starting_goalies[]` when performing team-oriented or row-oriented upserts.
@@ -532,6 +533,8 @@ Authorization: Bearer <DYNASTYIQ_API_TOKEN>
           "lineup_role": "forward",
           "line_key": "F1",
           "slot_index": 1,
+          "power_play_unit": 1,
+          "penalty_kill_unit": null,
           "resolution_status": "resolved"
         }
       ],
@@ -560,7 +563,7 @@ Authorization: Bearer <DYNASTYIQ_API_TOKEN>
 
 `team_id` is the canonical `nhl_teams.nhl_id`. Use `nhl_game_id + team_id` as the current-lineup upsert key and `nhl_player_id` as the durable player identity. `reported` means one source, `corroborated` means two distinct sources, and `strongly_corroborated` means at least three. Unresolved names remain in the payload and must not be silently substituted.
 
-The prediction endpoint uses a lineup only when it is corroborated and all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Official NHL roster evidence remains higher authority.
+The prediction endpoint accepts a `reported`, `corroborated`, or `strongly_corroborated` lineup when all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Official NHL roster evidence remains higher authority. Explicitly reported PP/PK units are returned as `power_play_unit` and `penalty_kill_unit`; null means the source did not report the unit.
 
 ## NHL Game Predictions Endpoint
 
@@ -641,6 +644,252 @@ The `prediction` block contains the display headline:
 The response also includes `goalies.away` and `goalies.home` with the selected
 starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
 
+Starter selection precedence is request override, official NHL starter, current
+starting-goalie observation, goalie season projection, then workload projection.
+Within observations, confirmed evidence outranks expected evidence, with newest
+evidence breaking ties.
+
+When a reported lineup is used, `teams.away.roster[]` and
+`teams.home.roster[]` contain all 18 skaters actually used. Each row includes
+the reported line and PP/PK units, `game_projected_toi_seconds`, a readable
+`game_projected_toi`, `projection_source`, `confidence`, `nhl_games_played`,
+and nullable `nhle_factor`. Players below 25 career NHL regular-season games
+use their previous-season non-NHL production when available. G, A, and SOG are
+translated with the versioned league factor, SOG is marked low confidence, and
+all rates are scaled to that game's lineup-aware TOI. These values are
+read-time inputs and do not overwrite raw statistics or season projections.
+If neither a projection nor translatable history exists, the player remains in
+the roster with `projection_source: replacement_level` and low confidence.
+
+### Roster and Goalie Resolution Order
+
+DynastyIQ resolves each team independently. Consumers must inspect both
+`inputs.away_lineup_source` and `inputs.home_lineup_source`; the two teams in
+one game may use different source levels.
+
+Skater roster precedence:
+
+1. A complete official NHL boxscore roster.
+2. A complete reported anticipated lineup whose 18 skaters resolve to 18
+   unique NHL player ids.
+3. The existing projected-roster process after excluding current injuries.
+
+A complete official or reported game roster is newer, game-specific evidence
+than the injury table. A player explicitly present in that roster is retained
+even if the current injury table still lists the player as unavailable. An
+incomplete lineup or a lineup containing unresolved skaters is evidence only;
+it does not partially replace the projected roster.
+
+| `inputs.*_lineup_source` | Meaning |
+| --- | --- |
+| `nhl_boxscore` | A complete official NHL game roster supplied the skaters. |
+| `anticipated_lineup` | A complete, canonically resolved reported lineup supplied the skaters. |
+| `projected_roster` | No usable game-specific lineup existed, so DynastyIQ used its roster projection and injury exclusions. |
+
+Goalie precedence:
+
+1. `away_goalie_id` or `home_goalie_id` request override.
+2. Official NHL starter evidence.
+3. Imported starting-goalie observation, preferring `confirmed` over
+   `expected`, then preferring the newest observation within that status.
+4. Highest-start goalie from the selected goalie season projection.
+5. Highest-start goalie from the workload projection.
+
+Read `goalies.away.selection_source` and `goalies.home.selection_source` rather
+than inferring how the goalie was selected. Current values are `provided`,
+`nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, and
+`workload_projection`.
+
+### Reported Lineup TOI and Production Inputs
+
+When `inputs.*_lineup_source` is `anticipated_lineup`, DynastyIQ builds a
+game-specific input for every reported skater:
+
+- The reported forward or defense pair determines the player's base game role.
+- Explicit PP1, PP2, PK1, and PK2 evidence adjusts that role. Null special-team
+  values mean the source did not report the unit and are not inferred.
+- The role target is blended with the player's season TOI projection. A player
+  reported in a smaller role therefore receives less game TOI than their normal
+  season rate, while a promoted player receives more.
+- G, A, and SOG rates are scaled to the resulting game TOI.
+- A player with fewer than 25 career NHL regular-season games uses their prior
+  season non-NHL production and the versioned NHLe league factor when those
+  records are available.
+- The NHLe points factor is applied to G and A. It is provisionally applied to
+  SOG as well, with low confidence because the source model does not publish a
+  separate SOG translation factor.
+- If neither a usable NHL projection nor translatable non-NHL history exists,
+  DynastyIQ retains the player with an explicit low-confidence
+  `replacement_level` rate. Reported players are never silently dropped.
+
+These calculations are request-time prediction inputs. They do not replace raw
+statistics, historical records, or stored season projections.
+
+### Expanded Team Roster Fields
+
+`teams.away.roster[]` and `teams.home.roster[]` describe the skaters actually
+used by the prediction. When the lineup source is `anticipated_lineup`, each
+row has the expanded shape below.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `player_id` | integer/null | Internal DynastyIQ player id. |
+| `nhl_player_id` | integer | Canonical NHL player id; use this as the durable consumer identity. |
+| `player_name` | string | Display name captured with the reported lineup. |
+| `position` | string | Normalized lineup group: `forward` or `defense`. |
+| `line_key` | string | Reported line or pair: `F1`-`F4` or `D1`-`D3`. |
+| `slot_index` | integer | Position within the reported line or pair. |
+| `power_play_unit` | integer/null | Explicitly reported PP unit, `1` or `2`; null means unreported. |
+| `penalty_kill_unit` | integer/null | Explicitly reported PK unit, `1` or `2`; null means unreported. |
+| `nhl_games_played` | integer | Career NHL regular-season GP used for the 25-game experience threshold. |
+| `projection_source` | string | Player-rate source: `nhl_projection`, `nhle_non_nhl_history`, or `replacement_level`. |
+| `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
+| `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
+| `confidence_score` | number | Numeric `0`-`1` confidence input used by prediction confidence weighting. |
+| `baseline_toi_seconds` | number | Existing season TOI projection before applying tonight's role. |
+| `game_projected_toi_seconds` | integer | Game-specific projected TOI used to scale the player's rates. |
+| `game_projected_toi` | string | Display form of game TOI in `M:SS` format. |
+| `projected_goals` | number | Game-specific projected goals after role and TOI scaling. |
+| `adjusted_xgf_per_game` | number | Goal input consumed by the matchup confidence calculation; currently matches `projected_goals` for expanded lineup rows. |
+| `projected_assists` | number | Game-specific projected assists after role and TOI scaling. |
+| `projected_sog` | number | Game-specific projected shots on goal after role and TOI scaling. |
+
+Official-boxscore and projected-roster rows continue to use the established
+simulator roster shape and may not contain the lineup-specific, NHLe, or
+game-TOI fields above. Consumers must branch on `inputs.*_lineup_source` and treat
+absent optional fields as unavailable, not as zero.
+
+### Expanded Prediction Example
+
+The following excerpt focuses on the new lineup-aware fields. Other response
+blocks, including `market_probabilities` and `reasons`, remain unchanged.
+
+```json
+{
+  "inputs": {
+    "source_season_id": "20252026",
+    "target_season_id": "20262027",
+    "projection_version": "skater-2026-09-20",
+    "toi_projection_version": "toi-2026-09-20",
+    "goalie_projection_version": "goalie-2026-09-20",
+    "away_goalie_id": 8478406,
+    "home_goalie_id": 8478492,
+    "away_lineup_source": "anticipated_lineup",
+    "home_lineup_source": "projected_roster"
+  },
+  "goalies": {
+    "away": {
+      "nhl_player_id": 8478406,
+      "name": "Example Away Goalie",
+      "team_abbrev": "AWY",
+      "selection_source": "starting_goalie_observation"
+    },
+    "home": {
+      "nhl_player_id": 8478492,
+      "name": "Example Home Goalie",
+      "team_abbrev": "HOM",
+      "selection_source": "goalie_projection"
+    }
+  },
+  "anticipated_lineups": {
+    "away": {
+      "nhl_game_id": 2026020001,
+      "team_abbrev": "AWY",
+      "evidence_status": "reported",
+      "source_count": 1,
+      "players": [
+        {
+          "nhl_player_id": 8480001,
+          "player_name": "Example Rookie",
+          "lineup_role": "forward",
+          "line_key": "F3",
+          "slot_index": 2,
+          "power_play_unit": null,
+          "penalty_kill_unit": 2,
+          "resolution_status": "resolved"
+        }
+      ]
+    },
+    "home": null
+  },
+  "teams": {
+    "away": {
+      "team_abbrev": "AWY",
+      "opponent_team_abbrev": "HOM",
+      "summary": {
+        "adjusted_xsog_per_game": 27.84,
+        "total_goalie_adjusted_xgf_per_game": 2.7134
+      },
+      "roster": [
+        {
+          "player_id": 1234,
+          "nhl_player_id": 8480001,
+          "player_name": "Example Rookie",
+          "position": "forward",
+          "line_key": "F3",
+          "slot_index": 2,
+          "power_play_unit": null,
+          "penalty_kill_unit": 2,
+          "nhl_games_played": 8,
+          "projection_source": "nhle_non_nhl_history",
+          "nhle_factor": 0.45,
+          "confidence": "low",
+          "confidence_score": 0.25,
+          "baseline_toi_seconds": 1020,
+          "game_projected_toi_seconds": 884,
+          "game_projected_toi": "14:44",
+          "projected_goals": 0.1172,
+          "adjusted_xgf_per_game": 0.1172,
+          "projected_assists": 0.1847,
+          "projected_sog": 1.843
+        }
+      ]
+    },
+    "home": {
+      "team_abbrev": "HOM",
+      "opponent_team_abbrev": "AWY",
+      "summary": {
+        "adjusted_xsog_per_game": 31.18,
+        "total_goalie_adjusted_xgf_per_game": 3.0261
+      },
+      "roster": [
+        {
+          "player_id": 8479001,
+          "player_name": "Projected Veteran",
+          "position": "C",
+          "adjusted_xgf_per_game": 0.2141,
+          "confidence_score": 0.82
+        }
+      ]
+    }
+  }
+}
+```
+
+`anticipated_lineups.*.players` is the source-evidence view: it explains what
+was reported, by whom, and with which lineup slots. `teams.*.roster` is the
+prediction-input view: it identifies the skaters and rates actually used by the
+model. Consumers should use the latter for prediction audit and player-level event
+inputs, while retaining the former for evidence provenance.
+
+### Lineup-Aware Consumption Guidance
+
+- Persist `nhl_player_id`; do not join prediction players by name.
+- Record `inputs.*_lineup_source` with every imported prediction snapshot.
+- Use `teams.*.roster` to audit which players contributed to that prediction.
+- Treat `anticipated_lineups` as evidence and provenance, not as a second set
+  of calculated player projections.
+- Do not reject a lineup solely because `evidence_status` is `reported`; one
+  complete source is accepted by DynastyIQ.
+- Treat null PP/PK units as unknown, not as evidence that the player is off the
+  unit.
+- Treat `nhle_non_nhl_history` and `replacement_level` as lower-confidence
+  inputs, but retain those players in event construction.
+- Do not convert missing optional fields to zero when the lineup source is
+  `nhl_boxscore` or `projected_roster`.
+- Use the prediction and market rows returned in the same response. Do not
+  combine a newer lineup payload with an older prediction snapshot.
+
 Projected goalie xGA/G is the selected goalie's projected season xGA divided by
 projected games. It is not current-season GAA, historical on-ice xGA, or a
 single-game observed value.
@@ -651,7 +900,7 @@ The `market_probabilities[]` block contains model-owned betting market
 probabilities. Each row is one market selection for one full-game market.
 Supported market keys are `moneyline`, `puckline`, and `total`.
 
-GNER8 should read market probabilities from:
+Consumers should read market probabilities from:
 
 ```text
 market_probabilities[]

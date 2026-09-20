@@ -25,6 +25,7 @@ class NhlGamePredictionPayload
     public function __construct(
         private readonly NhlProjectedTeamMatchupSimulator $simulator,
         private readonly NhlAnticipatedLineupPayload $anticipatedLineups,
+        private readonly NhlGameLineupProjectionBuilder $lineupProjections,
     ) {
     }
 
@@ -67,12 +68,18 @@ class NhlGamePredictionPayload
             $nhlGameId
         );
 
-        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam);
-        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam);
+        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
+        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
         $awayOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $awayTeam);
         $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
         $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
         $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+        $awayGamePlayers = $awayOfficialRosterIds === null && $awayRosterIds !== null
+            ? $this->lineupProjections->build($awayLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+            : null;
+        $homeGamePlayers = $homeOfficialRosterIds === null && $homeRosterIds !== null
+            ? $this->lineupProjections->build($homeLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+            : null;
 
         $simulationArguments = [
             $sourceSeasonId,
@@ -101,6 +108,8 @@ class NhlGamePredictionPayload
 
         $awaySide = $result['sides'][0] ?? [];
         $homeSide = $result['sides'][1] ?? [];
+        $awaySide = $this->applyReportedLineupProjection($awaySide, $awayGamePlayers);
+        $homeSide = $this->applyReportedLineupProjection($homeSide, $homeGamePlayers);
         $awayGoals = (float) data_get($awaySide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $homeGoals = (float) data_get($homeSide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $awayGoalieAdjustment = (float) data_get($homeSide, 'summary.total_goalie_adjustment_per_game', 0);
@@ -186,6 +195,30 @@ class NhlGamePredictionPayload
             ->map(fn (mixed $id): int => (int) $id)->unique()->values();
 
         return $skaters->count() === 18 && $ids->count() === 18 ? $ids->all() : null;
+    }
+
+    /**
+     * @param array<string,mixed> $side
+     * @param array<int,array<string,mixed>>|null $players
+     * @return array<string,mixed>
+     */
+    private function applyReportedLineupProjection(array $side, ?array $players): array
+    {
+        if ($players === null) {
+            return $side;
+        }
+
+        $projectedGoals = (float) collect($players)->sum('projected_goals');
+        $projectedSog = (float) collect($players)->sum('projected_sog');
+        $goalieAdjustment = (float) data_get($side, 'summary.total_goalie_adjustment_per_game', 0);
+        data_set($side, 'summary.baseline_xsog_per_game', round($projectedSog, 2));
+        data_set($side, 'summary.adjusted_xsog_per_game', round($projectedSog, 2));
+        data_set($side, 'summary.baseline_xgf_per_game', round($projectedGoals, 4));
+        data_set($side, 'summary.adjusted_xgf_per_game', round($projectedGoals, 4));
+        data_set($side, 'summary.total_goalie_adjusted_xgf_per_game', round(max(0.01, $projectedGoals + $goalieAdjustment), 4));
+        $side['roster'] = $players;
+
+        return $side;
     }
 
     /** @return array<int,int>|null */
@@ -366,8 +399,8 @@ class NhlGamePredictionPayload
             ->where('team_abbrev', $team)
             ->whereIn('status', ['confirmed', 'expected'])
             ->whereNotNull('nhl_player_id')
-            ->orderByDesc('fetched_at')
             ->orderByRaw("CASE WHEN status = 'confirmed' THEN 0 ELSE 1 END")
+            ->orderByDesc('fetched_at')
             ->value('nhl_player_id');
 
         return $goalieId === null ? null : (int) $goalieId;
@@ -1137,6 +1170,7 @@ class NhlGamePredictionPayload
             'team_abbrev' => $side['offense_team'] ?? null,
             'opponent_team_abbrev' => $side['defense_team'] ?? null,
             'summary' => $side['summary'] ?? [],
+            'roster' => $side['roster'] ?? [],
         ];
     }
 

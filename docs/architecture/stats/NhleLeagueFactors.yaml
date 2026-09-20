@@ -13,6 +13,7 @@ when_to_use:
   - Seeding annual NHLe league factor reference data.
   - Mapping imported prospect league codes to source NHLe league rows.
   - Adding read-time prospect projections that explicitly request NHLe-adjusted output.
+  - Supplying a read-time game prediction fallback for reported skaters with fewer than twenty-five career NHL regular-season games.
 when_not_to_use:
   - Replacing raw imported player statistics.
   - Deriving NHL event, boxscore, shift, or season totals.
@@ -25,6 +26,7 @@ rules:
   - Source league mappings must be explicit and must not infer provider league codes silently.
   - NHLe read lenses may resolve source league names and explicit mapped league codes only.
   - NHLe read lenses may adjust production stats but must not adjust games played, identity, roster, contract, or cap fields.
+  - Game prediction fallbacks may translate prior-season non-NHL G, A, PTS, and provisionally SOG with the points factor, but must expose the factor and low confidence and must not persist translated totals over source data.
   - League mapping audits must use the same resolver as presentation code.
   - Generic league labels must remain unmapped unless an explicit fallback is approved and documented.
   - Generic NCAA may temporarily resolve to the source Independent NCAA row at runtime until conference-specific NCAA mapping is available.

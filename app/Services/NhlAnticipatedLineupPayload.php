@@ -105,6 +105,8 @@ class NhlAnticipatedLineupPayload
                     'lineup_role' => $player->lineup_role,
                     'line_key' => $player->line_key,
                     'slot_index' => $player->slot_index,
+                    'power_play_unit' => $player->power_play_unit,
+                    'penalty_kill_unit' => $player->penalty_kill_unit,
                     'resolution_status' => $player->resolution_status,
                 ])->values(),
             'sources' => $sources->map(fn (NhlLineupObservation $sourceObservation): array => [

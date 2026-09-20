@@ -360,7 +360,7 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
         );
 });
 
-it('uses a fully resolved corroborated anticipated lineup for prediction simulation', function (): void {
+it('uses a fully resolved single-source reported lineup for prediction simulation', function (): void {
     $token = ($this->seedPredictionInputs)(2.4, 3.2);
     $sourceId = DB::table('sources')->insertGetId([
         'platform' => 'x', 'name' => 'Practice Reporter', 'handle' => 'practice_reporter',
@@ -395,7 +395,7 @@ it('uses a fully resolved corroborated anticipated lineup for prediction simulat
     DB::table('nhl_current_lineups')->insert([
         'nhl_game_id' => 2026020001, 'team_id' => 1, 'team_abbrev' => 'AWY',
         'nhl_lineup_observation_id' => $observationId, 'structure_hash' => str_repeat('b', 64),
-        'evidence_status' => 'corroborated', 'source_count' => 2,
+        'evidence_status' => 'reported', 'source_count' => 1,
         'first_observed_at' => now(), 'last_observed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
     ]);
 
@@ -429,5 +429,7 @@ it('uses a fully resolved corroborated anticipated lineup for prediction simulat
         ->assertOk()
         ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
         ->assertJsonPath('inputs.home_lineup_source', 'projected_roster')
-        ->assertJsonCount(18, 'anticipated_lineups.away.players');
+        ->assertJsonCount(18, 'anticipated_lineups.away.players')
+        ->assertJsonCount(18, 'teams.away.roster')
+        ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
 });

@@ -107,13 +107,13 @@ function lineupCandidate(string $handle, string $postUrl, string $postText = 'Fu
 {
     $players = [];
     foreach (range(1, 12) as $index) {
-        $players[] = ['name' => "Forward {$index}", 'lineup_role' => 'forward', 'line_key' => 'F' . (int) ceil($index / 3), 'slot_index' => (($index - 1) % 3) + 1];
+        $players[] = ['name' => "Forward {$index}", 'lineup_role' => 'forward', 'line_key' => 'F' . (int) ceil($index / 3), 'slot_index' => (($index - 1) % 3) + 1, 'power_play_unit' => null, 'penalty_kill_unit' => null];
     }
     foreach (range(1, 6) as $index) {
-        $players[] = ['name' => "Defense {$index}", 'lineup_role' => 'defense', 'line_key' => 'D' . (int) ceil($index / 2), 'slot_index' => (($index - 1) % 2) + 1];
+        $players[] = ['name' => "Defense {$index}", 'lineup_role' => 'defense', 'line_key' => 'D' . (int) ceil($index / 2), 'slot_index' => (($index - 1) % 2) + 1, 'power_play_unit' => null, 'penalty_kill_unit' => null];
     }
     foreach (range(1, 2) as $index) {
-        $players[] = ['name' => "Goalie {$index}", 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => $index];
+        $players[] = ['name' => "Goalie {$index}", 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => $index, 'power_play_unit' => null, 'penalty_kill_unit' => null];
     }
 
     return [
@@ -705,6 +705,29 @@ it('stores two matching lineup sources as corroborated current truth', function 
         ->assertJsonPath('anticipated_lineups.0.source_count', 2)
         ->assertJsonCount(20, 'anticipated_lineups.0.players')
         ->assertJsonCount(2, 'anticipated_lineups.0.sources');
+});
+
+it('stores and returns explicitly reported lineup special teams units', function (): void {
+    config(['services.openai.api_key' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020199, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => today()->format('l'), 'game_month' => today()->format('F'),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $candidate = lineupCandidate('special_teams', 'https://x.com/special_teams/status/1');
+    $candidate['players'][0]['power_play_unit'] = 1;
+    $candidate['players'][0]['penalty_kill_unit'] = 2;
+    Http::fake(['api.openai.com/*' => Http::response(openAiLineupResponse([$candidate]))]);
+
+    app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
+
+    $this->assertDatabaseHas('nhl_lineup_observation_players', [
+        'player_name' => 'Forward 1', 'power_play_unit' => 1, 'penalty_kill_unit' => 2,
+    ]);
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020199')
+        ->assertOk()
+        ->assertJsonPath('anticipated_lineups.0.players.0.power_play_unit', 1)
+        ->assertJsonPath('anticipated_lineups.0.players.0.penalty_kill_unit', 2);
 });
 
 it('retains unresolved lineup names instead of dropping player slots', function (): void {

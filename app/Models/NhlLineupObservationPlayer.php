@@ -18,5 +18,7 @@ class NhlLineupObservationPlayer extends Model
         'player_id' => 'integer',
         'nhl_player_id' => 'integer',
         'slot_index' => 'integer',
+        'power_play_unit' => 'integer',
+        'penalty_kill_unit' => 'integer',
     ];
 }

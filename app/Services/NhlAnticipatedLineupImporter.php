@@ -178,6 +178,10 @@ class NhlAnticipatedLineupImporter
                     'lineup_role' => (string) $row['lineup_role'],
                     'line_key' => (string) $row['line_key'],
                     'slot_index' => (int) $row['slot_index'],
+                    'power_play_unit' => in_array((int) ($row['power_play_unit'] ?? 0), [1, 2], true)
+                        ? (int) $row['power_play_unit'] : null,
+                    'penalty_kill_unit' => in_array((int) ($row['penalty_kill_unit'] ?? 0), [1, 2], true)
+                        ? (int) $row['penalty_kill_unit'] : null,
                     'resolution_status' => $player ? 'resolved' : 'unresolved',
                 ];
             })->sortBy(fn (array $row): string => sprintf('%s:%02d', $row['line_key'], $row['slot_index']))

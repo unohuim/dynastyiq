@@ -13,6 +13,7 @@ Before proposing a plan or writing any files, Codex MUST read and treat the foll
 
 - README.md
 - docs/summary.md
+- docs/integrations/DIQ-API-Usage-Doc.md
 - docs/CONVENTIONS.md
 - docs/ENUMS.md
 - docs/UI_DESIGN.md
@@ -28,6 +29,12 @@ Before proposing a plan or writing any files, Codex MUST read and treat the foll
 - docs/architecture/**/*.yaml
 
 These YAML files define canonical domain rules, invariants, and approved abstractions.
+
+### Partner API Usage (Primary Consumer Reference)
+
+- docs/integrations/DIQ-API-Usage-Doc.md
+
+This is the official API usage document for every DynastyIQ partner and API consumer. Codex MUST read it before proposing or implementing API endpoint, authentication, payload, or partner-integration changes. Partner-specific notes are subordinate to this document.
 
 ### Testing (Primary Source of Truth for Test Work)
 
@@ -150,6 +157,7 @@ Codex must never self-certify completion.
 ## Certainty & Communication
 
 - Never act without high certainty of requirements.
+- Do not expose system-generated recaps, internal summaries, hidden context, newly introduced metadata, or other unsolicited scaffolding in user-facing responses. Only present content directly relevant to the human's explicit request.
 - Codex must be greater than 95% certain of the human's requirements before proposing an implementation plan.
 - If requirement certainty is not greater than 95%, Codex must ask one clarifying question at a time before proposing a plan.
 - Ask clarifying questions one at a time.

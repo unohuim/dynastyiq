@@ -890,6 +890,8 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl_lineup_observation_players.lineup_role`: `forward`, `defense`, `goalie`, `scratch`.
 - `nhl_lineup_observation_players.line_key`: `F1`, `F2`, `F3`, `F4`, `D1`, `D2`, `D3`, `G`, `SCR`.
 - `nhl_lineup_observation_players.resolution_status`: `resolved`, `unresolved`.
+- `nhl_lineup_observation_players.power_play_unit`: nullable `1`, `2`.
+- `nhl_lineup_observation_players.penalty_kill_unit`: nullable `1`, `2`.
 - `nhl_current_lineups.evidence_status`: `reported`, `corroborated`, `strongly_corroborated`.
 
 **Notes:**

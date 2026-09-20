@@ -9,10 +9,12 @@ location:
   - app/Http/Controllers/Api/NhlGamePredictionsController.php
   - app/Http/Controllers/Api/NhlInjuriesController.php
   - app/Http/Controllers/Api/NhlStartingGoaliesController.php
+  - app/Http/Controllers/Api/NhlAnticipatedLineupsController.php
   - app/Services/NhlSeasonStatsPayload.php
   - app/Services/NhlGamePredictionPayload.php
   - database/migrations/2026_07_27_000002_create_api_clients_table.php
   - routes/api.php
+  - docs/integrations/DIQ-API-Usage-Doc.md
 purpose: Authenticate scoped server-to-server API clients for partner-owned ingestion workflows without using human user sessions.
 when_to_use:
   - Creating revocable API tokens for first-party or partner applications.
@@ -26,6 +28,7 @@ when_not_to_use:
   - Public unauthenticated API endpoints.
   - Bot runtime commands that belong in the Discord bot service.
 rules:
+  - docs/integrations/DIQ-API-Usage-Doc.md is the canonical consumer-facing usage contract for all partner API endpoints and must be updated whenever authentication, parameters, response fields, or consumption guidance changes.
   - API clients must store only hashed bearer tokens.
   - Plaintext tokens may be shown only once by the creation command.
   - API client endpoints must require explicit scopes.
@@ -51,5 +54,7 @@ public_interface:
   - GET /api/nhl-game-predictions
   - GET /api/nhl-starting-goalies
   - GET /api/nhl-injuries
+  - GET /api/nhl-anticipated-lineups
+  - docs/integrations/DIQ-API-Usage-Doc.md
 example_usage: |
-  php artisan api-client:create gner8 --scope=nhl-reference:read --scope=nhl-stats:read
+  php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl-stats:read

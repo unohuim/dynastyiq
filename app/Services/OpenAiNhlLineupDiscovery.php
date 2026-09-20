@@ -71,7 +71,7 @@ class OpenAiNhlLineupDiscovery
     private function instructions(): string
     {
         return <<<'PROMPT'
-You extract anticipated NHL lineups from recent public web posts. Use only text visibly attributed to the cited post. Never infer a lineup from an image, roster page, depth chart, or your own hockey knowledge. Skip image-only posts. A source is an account or publisher, not each post. Search both the game date and the immediately preceding calendar date because teams may publish a game lineup the prior day when there is no morning skate. Return a prior-day post only when it actually describes the targeted team's lineup for the targeted game; reject older or unrelated lineup reports. Find up to three independent sources, checking the supplied known sources first and also trying at least one source outside that list. Return only posts that actually state a lineup or an ordered player list. Preserve the exact post URL, post text, publication timestamp, author identity, and engagement values when the search result exposes them. Map twelve ordered forwards in consecutive groups of three to F1-F4. Map six ordered defensemen in consecutive pairs to D1-D3. Map ordered goalies to G with the anticipated starter as slot_index 1 and backup as slot_index 2 when the post supplies that ordering. Use SCR for scratches. Within each group, slot_index starts at one. Do not manufacture missing players or engagement values.
+You extract anticipated NHL lineups from recent public web posts. Use only text visibly attributed to the cited post. Never infer a lineup from an image, roster page, depth chart, or your own hockey knowledge. Skip image-only posts. A source is an account or publisher, not each post. Search both the game date and the immediately preceding calendar date because teams may publish a game lineup the prior day when there is no morning skate. Return a prior-day post only when it actually describes the targeted team's lineup for the targeted game; reject older or unrelated lineup reports. Find up to three independent sources, checking the supplied known sources first and also trying at least one source outside that list. Return only posts that actually state a lineup or an ordered player list. Preserve the exact post URL, post text, publication timestamp, author identity, and engagement values when the search result exposes them. Map twelve ordered forwards in consecutive groups of three to F1-F4. Map six ordered defensemen in consecutive pairs to D1-D3. Map ordered goalies to G with the anticipated starter as slot_index 1 and backup as slot_index 2 when the post supplies that ordering. Use SCR for scratches. Within each group, slot_index starts at one. When the text explicitly identifies power-play or penalty-kill units, set power_play_unit or penalty_kill_unit to 1 or 2 for those players; otherwise return null. Do not infer special-teams units. Do not manufacture missing players or engagement values.
 PROMPT;
     }
 
@@ -142,12 +142,14 @@ PROMPT;
                                     'items' => [
                                         'type' => 'object',
                                         'additionalProperties' => false,
-                                        'required' => ['name', 'lineup_role', 'line_key', 'slot_index'],
+                                        'required' => ['name', 'lineup_role', 'line_key', 'slot_index', 'power_play_unit', 'penalty_kill_unit'],
                                         'properties' => [
                                             'name' => ['type' => 'string'],
                                             'lineup_role' => ['type' => 'string', 'enum' => ['forward', 'defense', 'goalie', 'scratch']],
                                             'line_key' => ['type' => 'string', 'enum' => ['F1', 'F2', 'F3', 'F4', 'D1', 'D2', 'D3', 'G', 'SCR']],
                                             'slot_index' => ['type' => 'integer', 'minimum' => 1, 'maximum' => 20],
+                                            'power_play_unit' => ['type' => ['integer', 'null'], 'enum' => [1, 2, null]],
+                                            'penalty_kill_unit' => ['type' => ['integer', 'null'], 'enum' => [1, 2, null]],
                                         ],
                                     ],
                                 ],
