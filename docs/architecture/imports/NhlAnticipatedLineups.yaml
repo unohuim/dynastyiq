@@ -20,6 +20,8 @@ when_not_to_use:
   - Treating multiple posts from the same publisher as independent corroboration.
 rules:
   - Discovery queues one bounded job per team and NHL game.
+  - Default and outside-two-hours discovery include future games scheduled today and tomorrow in America/Toronto; within-two-hours discovery remains limited to today's games.
+  - Discovery may accept a lineup post published on the game date or the immediately preceding calendar date when the post identifies the targeted game lineup.
   - Only text-attributed lineup evidence is eligible; image-only posts are skipped.
   - Observations retain source, post URL, post text, publication and observation times, engagement, game, team, normalized slots, and unresolved names.
   - Canonical team identity uses nhl_teams.nhl_id and also retains team abbreviation.
@@ -32,6 +34,7 @@ rules:
   - Newer evidence may supersede current truth without deleting older observations.
   - Predictions may use a corroborated lineup only when all eighteen skaters resolve to unique NHL player ids.
   - Official NHL lineup evidence remains authoritative over anticipated public evidence.
+  - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
   - OpenAI requests enforce per-request tool limits and a persisted daily web-search limit.

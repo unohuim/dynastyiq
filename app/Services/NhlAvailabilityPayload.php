@@ -44,6 +44,7 @@ class NhlAvailabilityPayload
         $rows = NhlStartingGoalieObservation::query()
             ->whereDate('game_date', $date->toDateString())
             ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
+            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
             ->orderByDesc('fetched_at')->orderByDesc('id')->get()
             ->unique(fn (NhlStartingGoalieObservation $row): string => ($row->nhl_game_id ?? $row->game_date->toDateString()) . ':' . $row->team_abbrev)
             ->sortBy([['game_date', 'asc'], ['nhl_game_id', 'asc'], ['is_home', 'asc']])->values();

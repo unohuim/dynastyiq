@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -70,23 +71,27 @@ class OpenAiNhlLineupDiscovery
     private function instructions(): string
     {
         return <<<'PROMPT'
-You extract anticipated NHL lineups from recent public web posts. Use only text visibly attributed to the cited post. Never infer a lineup from an image, roster page, depth chart, or your own hockey knowledge. Skip image-only posts. A source is an account or publisher, not each post. Prefer posts published today by reporters observing morning skate or team practice. Find up to three independent sources, checking the supplied known sources first and also trying at least one source outside that list. Return only posts that actually state a lineup or an ordered player list. Preserve the exact post URL, post text, publication timestamp, author identity, and engagement values when the search result exposes them. Map twelve ordered forwards in consecutive groups of three to F1-F4. Map six ordered defensemen in consecutive pairs to D1-D3. Use G for goalies and SCR for scratches. Within each group, slot_index starts at one. Do not manufacture missing players or engagement values.
+You extract anticipated NHL lineups from recent public web posts. Use only text visibly attributed to the cited post. Never infer a lineup from an image, roster page, depth chart, or your own hockey knowledge. Skip image-only posts. A source is an account or publisher, not each post. Search both the game date and the immediately preceding calendar date because teams may publish a game lineup the prior day when there is no morning skate. Return a prior-day post only when it actually describes the targeted team's lineup for the targeted game; reject older or unrelated lineup reports. Find up to three independent sources, checking the supplied known sources first and also trying at least one source outside that list. Return only posts that actually state a lineup or an ordered player list. Preserve the exact post URL, post text, publication timestamp, author identity, and engagement values when the search result exposes them. Map twelve ordered forwards in consecutive groups of three to F1-F4. Map six ordered defensemen in consecutive pairs to D1-D3. Map ordered goalies to G with the anticipated starter as slot_index 1 and backup as slot_index 2 when the post supplies that ordering. Use SCR for scratches. Within each group, slot_index starts at one. Do not manufacture missing players or engagement values.
 PROMPT;
     }
 
     /** @param array<int,array<string,mixed>> $knownSources */
     private function prompt(object $game, string $teamAbbrev, array $knownSources): string
     {
+        $gameDate = Carbon::parse((string) $game->game_date);
+        $precedingDate = $gameDate->copy()->subDay()->toDateString();
         $opponent = $teamAbbrev === mb_strtoupper((string) $game->home_team_abbrev)
             ? mb_strtoupper((string) $game->away_team_abbrev)
             : mb_strtoupper((string) $game->home_team_abbrev);
 
         return sprintf(
-            'Find text-based anticipated lineup posts for %s for NHL game %s versus %s on %s. Scheduled start UTC: %s. Previously useful sources: %s.',
+            'Find text-based anticipated lineup posts for %s for NHL game %s versus %s on %s. Accept relevant posts published on %s or %s. Scheduled start UTC: %s. Previously useful sources: %s.',
             $teamAbbrev,
             $game->nhl_game_id,
             $opponent,
             $game->game_date,
+            $precedingDate,
+            $gameDate->toDateString(),
             $game->start_time_utc,
             json_encode($knownSources, JSON_UNESCAPED_SLASHES)
         );

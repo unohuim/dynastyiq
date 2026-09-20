@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\EvidenceSource;
 use App\Models\NhlCurrentLineup;
 use App\Models\NhlLineupObservation;
+use App\Models\NhlStartingGoalieObservation;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -82,6 +83,7 @@ class NhlAnticipatedLineupImporter
                     return;
                 }
                 $observation->players()->createMany($normalized);
+                $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
                 $observed++;
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
             });
@@ -197,6 +199,61 @@ class NhlAnticipatedLineupImporter
     {
         return trim((string) ($candidate['post_text'] ?? '')) !== ''
             && count($candidate['players'] ?? []) >= 6;
+    }
+
+    /**
+     * Record an ordered G1 as expected starter evidence while retaining G2 in the lineup observation.
+     *
+     * @param array<int,array<string,mixed>> $players
+     * @param array<string,mixed> $candidate
+     */
+    private function recordStartingGoalie(
+        NhlLineupObservation $observation,
+        array $players,
+        array $candidate,
+        object $game,
+        string $teamAbbrev
+    ): void {
+        $starter = collect($players)->first(fn (array $player): bool => $player['line_key'] === 'G'
+            && $player['lineup_role'] === 'goalie'
+            && $player['slot_index'] === 1);
+        if ($starter === null) {
+            return;
+        }
+
+        $backup = collect($players)->first(fn (array $player): bool => $player['line_key'] === 'G'
+            && $player['lineup_role'] === 'goalie'
+            && $player['slot_index'] === 2);
+        $isHome = mb_strtoupper((string) $game->home_team_abbrev) === $teamAbbrev;
+        $opponent = $isHome ? $game->away_team_abbrev : $game->home_team_abbrev;
+
+        NhlStartingGoalieObservation::query()->create([
+            'nhl_game_id' => (int) $game->nhl_game_id,
+            'game_date' => Carbon::parse((string) $game->game_date)->toDateString(),
+            'team_abbrev' => $teamAbbrev,
+            'opponent_abbrev' => mb_strtoupper((string) $opponent),
+            'is_home' => $isHome,
+            'player_id' => $starter['player_id'],
+            'nhl_player_id' => $starter['nhl_player_id'],
+            'player_name' => $starter['player_name'],
+            'provider' => 'public_lineup',
+            'provider_player_key' => null,
+            'status' => 'expected',
+            'provider_published_at' => $observation->provider_published_at,
+            'fetched_at' => $observation->observed_at,
+            'source_url' => (string) $candidate['post_url'],
+            'raw_evidence' => [
+                'lineup_observation_id' => $observation->id,
+                'source_id' => $observation->source_id,
+                'line_key' => 'G',
+                'slot_index' => 1,
+                'backup' => $backup ? [
+                    'player_id' => $backup['player_id'],
+                    'nhl_player_id' => $backup['nhl_player_id'],
+                    'player_name' => $backup['player_name'],
+                ] : null,
+            ],
+        ]);
     }
 
     private function refreshCurrent(int $gameId, int $teamId, string $teamAbbrev): void

@@ -11,6 +11,7 @@ purpose: Preserve provider observations while exposing normalized current NHL in
 when_to_use:
   - Importing NHL injury reporting from CBS Sports or RotoWire.
   - Importing RotoWire projected or confirmed starting goalies.
+  - Importing expected starting-goalie evidence from an ordered public lineup report.
   - Resolving current player availability or game-specific goalie evidence.
 when_not_to_use:
   - Publishing projected full starting lineups.
@@ -23,7 +24,8 @@ rules:
   - RotoWire-only inferred injuries are suspected; explicit CBS reporting is reported; time-relevant agreement is corroborated.
   - Predictions exclude only out players with reported, corroborated, or confirmed-unavailable evidence.
   - Questionable, unknown, and suspected players remain eligible for projected rosters.
-  - Starting-goalie observations are append only and latest evidence drives reads.
+  - Starting-goalie observations are append only; confirmed evidence outranks expected and unknown evidence, then the latest evidence within that status drives reads.
+  - An anticipated-lineup G1 may create an expected public_lineup starting-goalie observation with the source post and publication timestamp; G2 remains backup context.
   - Starting-goalie provider rows must resolve against the complete scheduled team matchup, not either team in isolation.
   - Provider home and away orientation must resolve an exact NHL game before any inverse fallback; inverse fallback is allowed only when the date and team pair identify exactly one NHL game so split-squad games retain distinct NHL game ids.
   - When provider matchup orientation conflicts with a resolved NHL game, the NHL schedule is authoritative for home and away assignment.

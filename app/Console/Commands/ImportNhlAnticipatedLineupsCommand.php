@@ -17,7 +17,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         {--window=all : all, within-two-hours, or outside-two-hours}
         {--import-run-id= : Internal admin import run id}';
 
-    protected $description = 'Queue anticipated-lineup discovery for teams playing today';
+    protected $description = 'Queue anticipated-lineup discovery for teams playing today and tomorrow';
 
     public function handle(): int
     {
@@ -27,10 +27,14 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             return self::FAILURE;
         }
 
-        $today = Carbon::now('America/Toronto')->toDateString();
-        $games = DB::table('nhl_games')->whereDate('game_date', $today)
+        $today = Carbon::now('America/Toronto')->startOfDay();
+        $tomorrow = $today->copy()->addDay();
+        $games = DB::table('nhl_games')
+            ->whereBetween('game_date', [$today->toDateString(), $tomorrow->toDateString()])
             ->whereNotNull('start_time_utc')->where('start_time_utc', '>', now())
-            ->when($window === 'within-two-hours', fn ($query) => $query->where('start_time_utc', '<=', now()->addHours(2)))
+            ->when($window === 'within-two-hours', fn ($query) => $query
+                ->whereDate('game_date', $today->toDateString())
+                ->where('start_time_utc', '<=', now()->addHours(2)))
             ->when($window === 'outside-two-hours', fn ($query) => $query->where('start_time_utc', '>', now()->addHours(2)))
             ->orderBy('start_time_utc')->get();
 
@@ -45,7 +49,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         $run?->setProgressTotal($jobs->count(), 'Team lineup searches');
         if ($jobs->isEmpty()) {
             $run?->markCompleted();
-            $this->info('No eligible teams remain today.');
+            $this->info('No eligible teams remain today or tomorrow.');
             return self::SUCCESS;
         }
 

@@ -2609,6 +2609,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - Injury evidence levels: `suspected`, `reported`, `corroborated`, `confirmed_unavailable`, `confirmed_available`.
 - Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
 - Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
+- Starting-goalie observation provider: `rotowire`, `public_lineup`.
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 
