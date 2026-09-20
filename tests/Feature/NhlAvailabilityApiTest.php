@@ -787,3 +787,132 @@ it('queues one near-puck-drop lineup job per team and excludes later games', fun
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100 && $job->teamAbbrev === 'TOR');
     $this->travelBack();
 });
+
+it('shows every scheduled game on the public lineups page for today', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-19 14:00:00 UTC'));
+    foreach ([2026010201, 2026010202] as $gameId) {
+        NhlGame::query()->create([
+            'nhl_game_id' => $gameId, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-19', 'game_dow' => 'Saturday', 'game_month' => 'September',
+            'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL',
+            'home_team_abbrev' => 'TOR',
+        ]);
+    }
+
+    $this->get(route('lineups.index'))
+        ->assertOk()
+        ->assertSee('NHL Lineups')
+        ->assertSee(route('lineups.show', ['nhlGameId' => 2026010201]), false)
+        ->assertSee(route('lineups.show', ['nhlGameId' => 2026010202]), false);
+
+    $this->travelBack();
+});
+
+it('filters the public lineups page by an explicit date', function (): void {
+    foreach ([['2026-09-19', 2026010203], ['2026-09-20', 2026010204]] as [$date, $gameId]) {
+        NhlGame::query()->create([
+            'nhl_game_id' => $gameId, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => $date, 'game_dow' => 'Sunday', 'game_month' => 'September',
+            'start_time_utc' => Carbon::parse($date)->addHours(23), 'away_team_abbrev' => 'DAL',
+            'home_team_abbrev' => 'STL',
+        ]);
+    }
+
+    $this->get(route('lineups.index', ['date' => '2026-09-20']))
+        ->assertOk()
+        ->assertSee('Sunday, September 20, 2026')
+        ->assertSee('#2026010204')
+        ->assertDontSee('#2026010203');
+});
+
+it('validates the public lineups date filter', function (): void {
+    $this->get(route('lineups.index', ['date' => 'September-19']))
+        ->assertRedirect()
+        ->assertSessionHasErrors('date');
+});
+
+it('shows a calm empty state when no games are scheduled for a lineup date', function (): void {
+    $this->get(route('lineups.index', ['date' => '2026-09-30']))
+        ->assertOk()
+        ->assertSee('No NHL games are scheduled for this date.')
+        ->assertSee('Return to today');
+});
+
+it('shows independent not reported statuses for teams without current lineups', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010205, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-19', 'game_dow' => 'Saturday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-19 23:00:00 UTC'),
+        'away_team_abbrev' => 'DAL', 'home_team_abbrev' => 'STL',
+    ]);
+
+    $this->get(route('lineups.index', ['date' => '2026-09-19']))
+        ->assertOk()
+        ->assertSeeTextInOrder(['Away · DAL', 'Not Reported', 'Home · STL', 'Not Reported']);
+});
+
+it('shows each team current lineup status independently on a game card', function (): void {
+    $current = createCurrentAnticipatedLineup(['evidence_status' => 'reported', 'source_count' => 1]);
+    $source = EvidenceSource::query()->create([
+        'platform' => 'x', 'name' => 'Montreal Reporter', 'handle' => 'mtlreporter',
+        'canonical_url' => 'https://x.com/mtlreporter', 'first_seen_at' => now(), 'last_seen_at' => now(),
+    ]);
+    $observation = NhlLineupObservation::query()->create([
+        'nhl_game_id' => $current->nhl_game_id, 'team_id' => 8, 'team_abbrev' => 'MTL',
+        'source_id' => $source->id, 'post_url' => 'https://x.com/mtlreporter/status/2',
+        'post_text' => 'Montreal lines', 'provider_published_at' => now(), 'observed_at' => now(),
+        'completeness' => 'full', 'structure_hash' => str_repeat('b', 64), 'raw_evidence' => [],
+    ]);
+    NhlCurrentLineup::query()->create([
+        'nhl_game_id' => $current->nhl_game_id, 'team_id' => 8, 'team_abbrev' => 'MTL',
+        'nhl_lineup_observation_id' => $observation->id, 'structure_hash' => str_repeat('b', 64),
+        'evidence_status' => 'strongly_corroborated', 'source_count' => 3,
+        'first_observed_at' => now()->subHour(), 'last_observed_at' => now(),
+    ]);
+
+    $this->get(route('lineups.index', ['date' => today()->toDateString()]))
+        ->assertOk()
+        ->assertSeeTextInOrder(['Away · MTL', 'Strongly Corroborated', 'Home · TOR', 'Reported']);
+});
+
+it('groups current players and exposes supporting sources on lineup detail', function (): void {
+    $current = createCurrentAnticipatedLineup();
+    $current->observation->players()->createMany([
+        [
+            'player_id' => null, 'nhl_player_id' => 8470002, 'player_name' => 'Second Forward',
+            'lineup_role' => 'forward', 'line_key' => 'F1', 'slot_index' => 2,
+            'resolution_status' => 'unresolved',
+        ],
+        [
+            'player_id' => null, 'nhl_player_id' => 8470003, 'player_name' => 'First Defender',
+            'lineup_role' => 'defense', 'line_key' => 'D1', 'slot_index' => 1,
+            'resolution_status' => 'resolved',
+        ],
+        [
+            'player_id' => null, 'nhl_player_id' => 8470004, 'player_name' => 'Starting Goalie',
+            'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1,
+            'resolution_status' => 'resolved',
+        ],
+        [
+            'player_id' => null, 'nhl_player_id' => 8470005, 'player_name' => 'Healthy Scratch',
+            'lineup_role' => 'scratch', 'line_key' => 'SCR', 'slot_index' => 1,
+            'resolution_status' => 'resolved',
+        ],
+    ]);
+
+    $this->get(route('lineups.show', ['nhlGameId' => $current->nhl_game_id]))
+        ->assertOk()
+        ->assertSee('F1')
+        ->assertSee('Second Forward')
+        ->assertSee('Unresolved')
+        ->assertSee('D1')
+        ->assertSee('First Defender')
+        ->assertSee('Starting Goalie')
+        ->assertSee('Healthy Scratch')
+        ->assertSee('No anticipated lineup has been reported for MTL.')
+        ->assertSee('https://x.com/testreporter/status/1', false);
+});
+
+it('returns not found for an unknown public lineup game', function (): void {
+    $this->get(route('lineups.show', ['nhlGameId' => 2999999999]))->assertNotFound();
+});

@@ -59,7 +59,7 @@
                 <x-slot name="trigger">
                     <button
                         type="button"
-                        class="inline-flex items-center gap-1 border-b-2 border-transparent px-1 pt-1 text-sm font-medium leading-5 transition duration-150 ease-in-out {{ request()->routeIs('transactions.*', 'starting-goalies.*', 'injuries.*') ? 'text-indigo-600 border-indigo-500' : 'text-gray-600 hover:text-indigo-500 hover:border-gray-300' }}"
+                        class="inline-flex items-center gap-1 border-b-2 border-transparent px-1 pt-1 text-sm font-medium leading-5 transition duration-150 ease-in-out {{ request()->routeIs('transactions.*', 'starting-goalies.*', 'injuries.*', 'lineups.*') ? 'text-indigo-600 border-indigo-500' : 'text-gray-600 hover:text-indigo-500 hover:border-gray-300' }}"
                     >
                         News
                         <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.168l3.71-3.938a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z" clip-rule="evenodd" /></svg>
@@ -68,6 +68,7 @@
                 <x-slot name="content">
                     <x-dropdown-link href="{{ route('transactions.index') }}">Transactions</x-dropdown-link>
                     <x-dropdown-link href="{{ route('starting-goalies.index') }}">Starting Goalies</x-dropdown-link>
+                    <x-dropdown-link href="{{ route('lineups.index') }}">Lineups</x-dropdown-link>
                     <x-dropdown-link href="{{ route('injuries.index') }}">Injuries</x-dropdown-link>
                 </x-slot>
             </x-dropdown>
@@ -131,7 +132,7 @@
             </li>
 
             <li class="relative flex-1 text-center" @click.away="newsOpen = false">
-                <button type="button" @click="newsOpen = !newsOpen" @keydown.escape.window="newsOpen = false" class="flex w-full flex-col items-center {{ request()->routeIs('transactions.*', 'starting-goalies.*', 'injuries.*') ? 'text-white' : '' }}" aria-label="Open news menu">
+                <button type="button" @click="newsOpen = !newsOpen" @keydown.escape.window="newsOpen = false" class="flex w-full flex-col items-center {{ request()->routeIs('transactions.*', 'starting-goalies.*', 'injuries.*', 'lineups.*') ? 'text-white' : '' }}" aria-label="Open news menu">
                     <svg class="h-6 w-6 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 7.5h9m-9 4.5h9m-9 4.5h5.25M5.25 3.75h13.5A1.5 1.5 0 0120.25 5.25v13.5a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5V5.25a1.5 1.5 0 011.5-1.5Z"/>
                     </svg>
@@ -140,6 +141,7 @@
                 <div x-show="newsOpen" x-transition.opacity.duration.150ms class="absolute bottom-full left-1/2 z-[110] mb-3 w-48 -translate-x-1/2 overflow-hidden rounded-md bg-white py-1 text-left text-sm text-gray-700 shadow-lg ring-1 ring-black/10" style="display: none;">
                     <a href="{{ route('transactions.index') }}" class="block px-4 py-2 hover:bg-gray-100">Transactions</a>
                     <a href="{{ route('starting-goalies.index') }}" class="block px-4 py-2 hover:bg-gray-100">Starting Goalies</a>
+                    <a href="{{ route('lineups.index') }}" class="block px-4 py-2 hover:bg-gray-100">Lineups</a>
                     <a href="{{ route('injuries.index') }}" class="block px-4 py-2 hover:bg-gray-100">Injuries</a>
                 </div>
             </li>

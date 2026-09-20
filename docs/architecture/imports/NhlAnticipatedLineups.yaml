@@ -6,6 +6,8 @@ location:
   - app/Services/NhlAnticipatedLineupPayload.php
   - app/Jobs/ImportNhlAnticipatedLineupTeamJob.php
   - app/Console/Commands/ImportNhlAnticipatedLineupsCommand.php
+  - app/Http/Controllers/NhlLineupsController.php
+  - resources/views/lineups/
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
 purpose: Discover text-based public NHL lineup reports, preserve immutable observations, and expose a recency-aware current consensus to predictions and partner APIs.
 when_to_use:
@@ -30,10 +32,14 @@ rules:
   - Newer evidence may supersede current truth without deleting older observations.
   - Predictions may use a corroborated lineup only when all eighteen skaters resolve to unique NHL player ids.
   - Official NHL lineup evidence remains authoritative over anticipated public evidence.
+  - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
+  - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
   - OpenAI requests enforce per-request tool limits and a persisted daily web-search limit.
 public_interface:
   - nhl:import-anticipated-lineups
   - GET /api/nhl-anticipated-lineups
+  - GET /lineups
+  - GET /lineups/{nhlGameId}
   - NhlAnticipatedLineupPayload::forGameTeam
 example_usage: |
   php artisan nhl:import-anticipated-lineups --window=within-two-hours

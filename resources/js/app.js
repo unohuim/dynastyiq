@@ -83,6 +83,6 @@ if (inertiaRoot) {
 
 import('./pages/stats-page.js');
 
-if (document.querySelector('[data-starting-goalies-page]')) {
+if (document.querySelector('[data-starting-goalies-page], [data-lineups-page]')) {
     import('./pages/starting-goalies.js');
 }

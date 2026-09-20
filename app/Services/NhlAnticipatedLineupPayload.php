@@ -5,13 +5,47 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\NhlCurrentLineup;
+use App\Models\NhlGame;
 use App\Models\NhlLineupObservation;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
-/** Builds partner-facing anticipated-lineup payloads from current projections. */
+/** Builds public and partner-facing anticipated-lineup payloads from current projections. */
 class NhlAnticipatedLineupPayload
 {
+    /** @return array<string,mixed> */
+    public function page(Carbon $date): array
+    {
+        $lineups = collect($this->build($date)['anticipated_lineups'])
+            ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
+        $games = NhlGame::query()
+            ->whereDate('game_date', $date->toDateString())
+            ->orderBy('start_time_utc')
+            ->orderBy('nhl_game_id')
+            ->get()
+            ->map(fn (NhlGame $game): array => $this->game($game, $lineups));
+
+        return [
+            'games' => $games,
+            'meta' => [
+                'date' => $date->toDateString(),
+                'count' => $games->count(),
+                'generated_at' => now()->toIso8601String(),
+            ],
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    public function gamePage(int $nhlGameId): array
+    {
+        $game = NhlGame::query()->findOrFail($nhlGameId);
+        $lineups = collect($this->build($game->game_date, $nhlGameId)['anticipated_lineups'])
+            ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
+
+        return ['game' => $this->game($game, $lineups)];
+    }
+
     /** @return array<string,mixed> */
     public function build(Carbon $date, ?int $nhlGameId = null): array
     {
@@ -88,6 +122,34 @@ class NhlAnticipatedLineupPayload
                     'views' => $sourceObservation->view_count,
                 ],
             ])->values(),
+        ];
+    }
+
+    /**
+     * @param Collection<string,array<string,mixed>> $lineups
+     * @return array<string,mixed>
+     */
+    private function game(NhlGame $game, Collection $lineups): array
+    {
+        return [
+            'nhl_game_id' => $game->nhl_game_id,
+            'game_date' => $game->game_date->toDateString(),
+            'start_time_utc' => $game->start_time_utc?->toIso8601String(),
+            'game_type' => $game->game_type,
+            'away' => [
+                'team_id' => $game->away_team_id,
+                'team_abbrev' => $game->away_team_abbrev,
+                'team_name' => $game->away_team_common_name,
+                'team_logo' => $game->away_team_logo,
+                'lineup' => $lineups->get($game->nhl_game_id . ':' . $game->away_team_abbrev),
+            ],
+            'home' => [
+                'team_id' => $game->home_team_id,
+                'team_abbrev' => $game->home_team_abbrev,
+                'team_name' => $game->home_team_common_name,
+                'team_logo' => $game->home_team_logo,
+                'lineup' => $lineups->get($game->nhl_game_id . ':' . $game->home_team_abbrev),
+            ],
         ];
     }
 }
