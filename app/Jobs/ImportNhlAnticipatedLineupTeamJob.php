@@ -11,9 +11,9 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -30,16 +30,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         public readonly int $teamId,
         public readonly ?int $importRunId = null,
     ) {
-    }
-
-    /** @return array<int, object> */
-    public function middleware(): array
-    {
-        return [
-            (new WithoutOverlapping('nhl-lineup-x-search'))
-                ->releaseAfter(5)
-                ->expireAfter(300),
-        ];
+        $this->onQueue('lineups');
     }
 
     public function handle(NhlAnticipatedLineupImporter $importer): void
@@ -59,8 +50,27 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
                     if (! $search['needed']) {
                         $result = 'skipped';
                     } else {
-                        $imported = $importer->importFromX($game, $this->teamAbbrev, $this->teamId);
-                        $result = $imported['observed'] > 0 ? 'successful' : 'skipped';
+                        $lock = Cache::lock('nhl-lineup-x-search', 300);
+                        if (! $lock->get()) {
+                            $this->release(5);
+                            return;
+                        }
+
+                        try {
+                            $search = $this->searchDecision($game);
+                            if (! $search['needed']) {
+                                $result = 'skipped';
+                            } else {
+                                $imported = $importer->importFromX(
+                                    $game,
+                                    $this->teamAbbrev,
+                                    $this->teamId
+                                );
+                                $result = $imported['observed'] > 0 ? 'successful' : 'skipped';
+                            }
+                        } finally {
+                            $lock->release();
+                        }
                     }
                 }
             }

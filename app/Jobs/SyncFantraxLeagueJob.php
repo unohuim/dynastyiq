@@ -24,6 +24,7 @@ final class SyncFantraxLeagueJob implements ShouldQueue
         public ?int $userId = null,
     ) {
         $this->afterCommit = true;
+        $this->onQueue('fantrax');
     }
 
     /**

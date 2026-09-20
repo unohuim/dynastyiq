@@ -24,6 +24,7 @@ final class SyncFantraxDraftStateJob implements ShouldQueue
         public ?array $draftPickInfo = null,
     ) {
         $this->afterCommit = true;
+        $this->onQueue('fantrax');
     }
 
     public function middleware(): array

@@ -104,6 +104,7 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 
 **Purpose:**
 Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
+Horizon isolates six `default` workers, two `fantrax` workers, and two time-sensitive `lineups` workers in every environment.
 
 **When to Use:**
 Adding first-party HTTP routes, controllers, views, approved Inertia pages, request validation, policies, jobs, and application JavaScript.
@@ -2328,6 +2329,7 @@ $state = app(FantasyIntegrationState::class)->forProvider($user, FantasyProvider
 
 **Purpose:**
 Map Fantrax leagues, teams, rosters, and player identities into platform-neutral tables.
+Fantrax import, league-sync, and draft-sync jobs use the dedicated two-worker `fantrax` queue so provider backlogs cannot starve other work.
 Provider league and team logo URLs may be stored on the platform-neutral league and team rows when Fantrax exposes them. Fantrax team logos must come from explicit provider payload fields, not derived team-id paths.
 Fantrax logo candidates resolve local teams by provider team ID first, then normalized provider team name, and sync responses distinguish no candidates, unmatched candidates, and persisted updates.
 Selected Fantrax logo sync inspects every configured source URL before deciding no league logos were found, and it ignores candidates that explicitly belong to another Fantrax league.
@@ -3723,6 +3725,6 @@ Reusable cross-sport publisher identity, scope, and time-varying metrics without
 
 ## NHL Anticipated Lineups
 
-NHL gamecenter boxscore rosters are checked first for each queued game/team; a complete official roster becomes authoritative current truth and suppresses paid X discovery. Otherwise, one broad team-identity X search returns ten posts that are each read in full and locally evaluated for canonical target-team player groups before immutable observations and recency-aware consensus are produced. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/lineups` pages show every scheduled matchup with independent team evidence statuses and current lineup detail. Predictions may use an official or reported lineup with all eighteen skaters resolved; otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+NHL gamecenter boxscore rosters are checked first for each queued game/team; anticipated-lineup jobs use a dedicated two-worker `lineups` queue, and only paid X requests share the overlap lock so NHL checks may proceed concurrently. A complete official roster becomes authoritative current truth and suppresses paid X discovery. Otherwise, one broad team-identity X search returns ten posts that are each read in full and locally evaluated for canonical target-team player groups before immutable observations and recency-aware consensus are produced. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/lineups` pages show every scheduled matchup with independent team evidence statuses and current lineup detail. Predictions may use an official or reported lineup with all eighteen skaters resolved; otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
 **End of ARCHITECTURE_INVENTORY**

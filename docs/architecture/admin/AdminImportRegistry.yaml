@@ -28,6 +28,7 @@ rules:
   - The NHL Players Update DB action must dispatch bounded chunk jobs under one visible import run so multiple queue workers can process metadata refreshes concurrently while the UI reports aggregate progress.
   - NHL resolution imports may queue reconciliation work for existing canonical players with null NHL ids and should report the command dispatch sweep through import_runs.
   - Fantrax admin imports should process player records in bounded sequential chunk jobs so resolver work does not exceed queue worker timeouts.
+  - Fantrax-backed admin import batches must use the fantrax queue, anticipated-lineup admin import batches must use the lineups queue, and other admin import batches must use the default queue.
   - Empty commands for provider-owned imports must delete only provider-owned imported records and must preserve canonical players.
   - Imports with dynamic discovery may increase total_records during the run as records become known.
   - Import keys must remain aligned with docs/ENUMS.md when enum-like.

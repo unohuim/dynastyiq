@@ -14,7 +14,7 @@ class SyncFantraxTeamJob implements ShouldQueue
      */
     public function __construct()
     {
-        //
+        $this->onQueue('fantrax');
     }
 
     /**

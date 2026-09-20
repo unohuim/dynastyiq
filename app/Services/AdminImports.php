@@ -136,7 +136,7 @@ class AdminImports
                 new RunImportCommandJob($source['command'], $source['options'] ?? [], $source['key'], $importRun->id),
             ])->name("{$mode}-{$source['key']}-import")
                 ->allowFailures()
-                ->onQueue('default')
+                ->onQueue($this->queueForSource((string) $source['key']))
                 ->dispatch();
         } catch (Throwable $throwable) {
             $importRun->markFailed($throwable);
@@ -146,6 +146,15 @@ class AdminImports
         $importRun->update(['batch_id' => $batch->id]);
 
         return $batch;
+    }
+
+    private function queueForSource(string $sourceKey): string
+    {
+        if ($sourceKey === 'nhl-anticipated-lineups') {
+            return 'lineups';
+        }
+
+        return str_starts_with($sourceKey, 'fantrax') ? 'fantrax' : 'default';
     }
 
     /**

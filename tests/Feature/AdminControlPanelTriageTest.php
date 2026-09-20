@@ -33,10 +33,11 @@ use App\Models\Role;
 use App\Models\User;
 use App\Models\YahooFantasyConnection;
 use App\Models\YahooPlayer;
-use App\Services\YahooFantasyPlayerImporter;
-use App\Services\YahooFantasyRosterService;
+use App\Services\AdminImports;
 use App\Services\AdminImportSchedules;
 use App\Services\NhlImportOrchestrator;
+use App\Services\YahooFantasyPlayerImporter;
+use App\Services\YahooFantasyRosterService;
 use App\Support\NhlImportStages;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Bus;
@@ -7702,6 +7703,30 @@ it('does not dispatch disabled admin import schedules', function () {
     Artisan::call('admin:dispatch-scheduled-imports');
 
     Bus::assertNothingBatched();
+});
+
+it('allocates dedicated Horizon workers to default Fantrax and lineup queues', function () {
+    expect(config('horizon.defaults.supervisor-default.queue'))->toBe(['default'])
+        ->and(config('horizon.defaults.supervisor-default.minProcesses'))->toBe(6)
+        ->and(config('horizon.defaults.supervisor-default.maxProcesses'))->toBe(6)
+        ->and(config('horizon.defaults.supervisor-fantrax.queue'))->toBe(['fantrax'])
+        ->and(config('horizon.defaults.supervisor-fantrax.minProcesses'))->toBe(2)
+        ->and(config('horizon.defaults.supervisor-fantrax.maxProcesses'))->toBe(2)
+        ->and(config('horizon.defaults.supervisor-lineups.queue'))->toBe(['lineups'])
+        ->and(config('horizon.defaults.supervisor-lineups.minProcesses'))->toBe(2)
+        ->and(config('horizon.defaults.supervisor-lineups.maxProcesses'))->toBe(2);
+});
+
+it('routes provider admin import batches to their dedicated queues', function () {
+    Bus::fake();
+
+    app(AdminImports::class)->dispatch('fantrax');
+    app(AdminImports::class)->dispatch('nhl-anticipated-lineups');
+
+    Bus::assertBatched(fn ($batch): bool => $batch->name === 'manual-fantrax-import'
+        && data_get($batch->options, 'queue') === 'fantrax');
+    Bus::assertBatched(fn ($batch): bool => $batch->name === 'manual-nhl-anticipated-lineups-import'
+        && data_get($batch->options, 'queue') === 'lineups');
 });
 
 it('dispatches due admin import schedules through the import registry', function () {

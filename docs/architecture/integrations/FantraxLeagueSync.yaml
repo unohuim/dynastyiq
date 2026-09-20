@@ -36,6 +36,7 @@ when_not_to_use:
   - NHL source-of-truth stats imports.
   - Patreon membership syncing.
 rules:
+  - Fantrax import, league-sync, and draft-sync jobs must use the dedicated fantrax queue so provider backlogs cannot starve unrelated or time-sensitive work.
   - Fantrax-specific data must map into platform-neutral models when it powers app features.
   - Roster sync must preserve canonical player identity links through platform player IDs.
   - Roster sync must repair stale or missing fantrax_players mirrors from matched Fantrax player_external_identities before deciding current roster memberships.

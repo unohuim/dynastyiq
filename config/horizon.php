@@ -180,33 +180,55 @@ return [
     */
 
     'defaults' => [
-        'supervisor-1' => [
+        'supervisor-default' => [
             'connection' => 'redis',
             'queue' => ['default'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'minProcesses' => 1,
-            'maxProcesses' => 8,
+            'minProcesses' => 6,
+            'maxProcesses' => 6,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
             'tries' => 5,
             'timeout' => 600,
             'nice' => 0,
-        ]
-
+        ],
+        'supervisor-fantrax' => [
+            'connection' => 'redis',
+            'queue' => ['fantrax'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 2,
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
+        'supervisor-lineups' => [
+            'connection' => 'redis',
+            'queue' => ['lineups'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'minProcesses' => 2,
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 128,
+            'tries' => 5,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
-        'local' => [
-            'supervisor-1' => [
-                'connection' => 'redis',
-                'queue' => ['default'],
-                'balance' => 'auto',
-                'autoScalingStrategy' => 'time',
-                'minProcesses' => 1,
-                'maxProcesses' => 8,
-            ],
+        '*' => [
+            'supervisor-default' => [],
+            'supervisor-fantrax' => [],
+            'supervisor-lineups' => [],
         ],
     ]
 ];

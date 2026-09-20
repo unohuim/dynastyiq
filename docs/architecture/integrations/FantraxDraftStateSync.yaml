@@ -21,6 +21,7 @@ when_not_to_use:
   - Persisting every raw polling snapshot for audit history.
   - Rebuilding full Fantrax roster memberships from roster payloads.
 rules:
+  - Fantrax draft-sync jobs must use the dedicated fantrax queue.
   - The first observed draft payload establishes baseline canonical draft_picks and must not emit pick-made events.
   - Fantrax league refresh may bootstrap a platform_mirror draft only when no draft exists for the platform league and Fantrax exposes draft data.
   - Fantrax league refresh draft bootstrapping must be read-only and must not create notification settings or require commissioner action.

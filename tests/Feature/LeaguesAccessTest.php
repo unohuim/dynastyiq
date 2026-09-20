@@ -264,7 +264,8 @@ it('top level league refresh queues fantrax leagues for super admins', function 
     Queue::assertPushed(
         SyncFantraxLeagueJob::class,
         fn (SyncFantraxLeagueJob $job): bool => $job->platformLeagueId === $league->id
-            && $job->userId === $user->id,
+            && $job->userId === $user->id
+            && $job->queue === 'fantrax',
     );
 });
 

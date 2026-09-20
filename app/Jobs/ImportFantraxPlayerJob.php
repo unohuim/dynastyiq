@@ -34,6 +34,7 @@ class ImportFantraxPlayerJob implements ShouldQueue
     public function __construct(array $entry)
     {
         $this->entry = $entry;
+        $this->onQueue('fantrax');
     }
 
     public function handle(): void

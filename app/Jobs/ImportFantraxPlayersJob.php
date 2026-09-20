@@ -29,6 +29,7 @@ class ImportFantraxPlayersJob implements ShouldQueue
     public function __construct(
         private ?int $importRunId = null,
     ) {
+        $this->onQueue('fantrax');
     }
 
     /**

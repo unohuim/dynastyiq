@@ -28,6 +28,16 @@ Do not introduce new enum values without updating this document.
 
 ---
 
+## Queue Names
+
+**Storage location(s):** Laravel queued-job payloads and `config/horizon.php`
+
+- `default`: General application and import work.
+- `fantrax`: Fantrax import, league-sync, and draft-sync work.
+- `lineups`: Time-sensitive anticipated NHL lineup work.
+
+Horizon assigns six workers to `default`, two workers to `fantrax`, and two workers to `lineups`.
+
 ## API Clients
 
 ### NHL Game Prediction Market Probability Values

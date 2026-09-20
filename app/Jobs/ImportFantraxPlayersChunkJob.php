@@ -31,6 +31,7 @@ class ImportFantraxPlayersChunkJob implements ShouldQueue
         private int $totalRecords,
         private ?int $importRunId = null,
     ) {
+        $this->onQueue('fantrax');
     }
 
     public function handle(ImportFantraxPlayers $importer): void

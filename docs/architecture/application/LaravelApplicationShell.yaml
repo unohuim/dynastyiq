@@ -20,6 +20,8 @@ rules:
   - Inertia pages may own approved migrated browser page shells while controllers continue to own backend props.
   - Vite-managed JavaScript owns browser-side behavior.
   - Domain persistence and authorization stay in Laravel, not in the Discord bot runtime.
+  - Horizon must isolate time-sensitive anticipated-lineup work on the lineups queue, Fantrax provider work on the fantrax queue, and unrelated work on the default queue.
+  - Horizon worker allocation is six fixed default workers, two fixed Fantrax workers, and two fixed lineup workers in every environment.
 public_interface:
   - Laravel route definitions
   - Blade views and components

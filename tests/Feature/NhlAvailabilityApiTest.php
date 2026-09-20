@@ -1115,8 +1115,12 @@ it('queues one near-puck-drop lineup job per team and excludes later games', fun
     Artisan::call('nhl:import-anticipated-lineups', ['--window' => 'within-two-hours']);
 
     Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
-    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100 && $job->teamAbbrev === 'MTL');
-    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100 && $job->teamAbbrev === 'TOR');
+    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100
+        && $job->teamAbbrev === 'MTL'
+        && $job->queue === 'lineups');
+    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100
+        && $job->teamAbbrev === 'TOR'
+        && $job->queue === 'lineups');
     $this->travelBack();
 });
 
