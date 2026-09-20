@@ -1228,6 +1228,34 @@ it('uses a complete NHL boxscore roster and does not search X', function (): voi
     Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
 });
 
+it('uses reported first initials to distinguish same-team players with the same surname', function (): void {
+    foreach ([
+        [8479314, 'Matthew', 'Tkachuk'],
+        [8480801, 'Brady', 'Tkachuk'],
+    ] as [$nhlId, $firstName, $lastName]) {
+        Player::query()->create([
+            'nhl_id' => $nhlId,
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'full_name' => $firstName . ' ' . $lastName,
+            'position' => 'L',
+            'team_abbrev' => 'FLA',
+            'current_league_abbrev' => 'NHL',
+        ]);
+    }
+
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse(implode("\n", [
+        'Forwards',
+        'B. Tkachuk - Center One - Wing One',
+        'Wing Two - Center Two - M. Tkachuk',
+    ]), 'FLA');
+
+    expect(collect($players)->pluck('name')->all())->toBe([
+        'Brady Tkachuk', 'Center One', 'Wing One',
+        'Wing Two', 'Center Two', 'Matthew Tkachuk',
+    ]);
+});
+
 it('does not infer special teams units from an X lineup post', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([

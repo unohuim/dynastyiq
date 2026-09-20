@@ -54,6 +54,7 @@ rules:
   - X posts are charged and logged by resources returned; persisted post URLs prevent duplicate observations when searches return the same posts again.
   - Every account supplying accepted lineup evidence is stored as a reusable X source and scoped to that NHL team without assigning an official or trusted designation.
   - Text lineup extraction walks each post line by line, resolves apparent names against canonical target-team players through PlayerIdentityNormalizer, treats straight apostrophes, curly apostrophes, backticks, and omitted apostrophes as equivalent, and recognizes ordered groups of three forwards or two defensemen regardless of surrounding separators.
+  - When same-team players share a surname, a reported first initial must select the matching player; an explicit conflicting initial must not fall back to another same-surname player and create a duplicate canonical id.
   - A post is approved and persisted as lineup evidence only when it contains twelve forwards and six defensemen; partial groups remain visible in discovery audits but do not stop discovery, create lineup observations, or increment successful lineup counts.
   - Search priority follows the earliest scheduled puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
   - A same-day game remains eligible after puck drop when either team still lacks a reportable lineup; started games with missing coverage take priority over later games.

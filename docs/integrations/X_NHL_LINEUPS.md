@@ -62,6 +62,8 @@ An account supplying accepted lineup evidence is stored in `sources` and linked 
 
 Every returned timeline post is read in full. The parser scans each post line by line, resolves apparent names against canonical players belonging to the target team through `PlayerIdentityNormalizer`, and then looks for lineup-shaped groups. Straight apostrophes, curly apostrophes, backticks, and omitted apostrophes are equivalent for matching while stored display names remain unchanged. A hyphen-delimited group of three names forms a forward line and a group of two names forms a defense pair when at least one name establishes that the group belongs to the target team. Reported prospect names that do not yet resolve are retained as unresolved evidence rather than discarded. It maps four forward groups to `F1` through `F4`, three defense pairs to `D1` through `D3`, and ordered goalies to `G1` and `G2` when present.
 
+When multiple players on the team share a surname, a reported first initial selects the matching player. For example, `B. Tkachuk` and `M. Tkachuk` resolve independently; a conflicting initial is not permitted to fall back to the wrong same-surname player.
+
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.

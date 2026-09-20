@@ -243,34 +243,13 @@ class NhlLineupTextParser
             if (! $teamMatch) {
                 continue;
             }
-            $needles = [$fullName];
-            if (mb_strlen($lastName) >= 3) {
-                $needles[] = $lastName;
-            }
 
-            foreach ($needles as $needle) {
-                $normalizedNeedle = $this->normalizer->normalizeName($needle);
-                if ($normalizedNeedle === null) {
-                    continue;
-                }
-                $parts = preg_split('/\s+/', $normalizedNeedle) ?: [];
-                $pattern = implode('\\s*', array_map(
-                    fn (string $part): string => preg_quote($part, '/'),
-                    $parts
-                ));
-                if (preg_match(
-                    '/(?<![a-z0-9])' . $pattern . '(?![a-z0-9])/u',
-                    $normalizedLine,
-                    $match,
-                    PREG_OFFSET_CAPTURE
-                ) !== 1) {
-                    continue;
-                }
-                $offset = (int) $match[0][1];
-                if (! isset($found[$player->id]) || $offset < $found[$player->id]['offset']) {
-                    $found[$player->id] = ['offset' => $offset, 'player' => $player];
-                }
-                break;
+            $offset = $this->fullNameOffset($normalizedLine, $fullName);
+            if ($offset === null && mb_strlen($lastName) >= 3) {
+                $offset = $this->lastNameOffset($normalizedLine, $fullName, $lastName);
+            }
+            if ($offset !== null && (! isset($found[$player->id]) || $offset < $found[$player->id]['offset'])) {
+                $found[$player->id] = ['offset' => $offset, 'player' => $player];
             }
         }
 
@@ -290,6 +269,54 @@ class NhlLineupTextParser
             ])
             ->values()
             ->all();
+    }
+
+    private function fullNameOffset(string $normalizedLine, string $fullName): ?int
+    {
+        $normalizedName = $this->normalizer->normalizeName($fullName);
+        if ($normalizedName === null) {
+            return null;
+        }
+        $parts = preg_split('/\s+/', $normalizedName) ?: [];
+        $pattern = implode('\\s*', array_map(
+            fn (string $part): string => preg_quote($part, '/'),
+            $parts
+        ));
+
+        return preg_match(
+            '/(?<![a-z0-9])' . $pattern . '(?![a-z0-9])/u',
+            $normalizedLine,
+            $match,
+            PREG_OFFSET_CAPTURE
+        ) === 1 ? (int) $match[0][1] : null;
+    }
+
+    private function lastNameOffset(string $normalizedLine, string $fullName, string $lastName): ?int
+    {
+        $normalizedLastName = $this->normalizer->normalizeName($lastName);
+        $normalizedFullName = $this->normalizer->normalizeName($fullName);
+        if ($normalizedLastName === null || $normalizedFullName === null) {
+            return null;
+        }
+        $lastNamePattern = implode('\\s*', array_map(
+            fn (string $part): string => preg_quote($part, '/'),
+            preg_split('/\s+/', $normalizedLastName) ?: []
+        ));
+        if (preg_match(
+            '/(?<![a-z0-9])(?:(?<initial>[a-z])\\s+)?' . $lastNamePattern . '(?![a-z0-9])/u',
+            $normalizedLine,
+            $match,
+            PREG_OFFSET_CAPTURE
+        ) !== 1) {
+            return null;
+        }
+
+        $reportedInitial = (string) ($match['initial'][0] ?? '');
+        if ($reportedInitial !== '' && $reportedInitial !== mb_substr($normalizedFullName, 0, 1)) {
+            return null;
+        }
+
+        return (int) $match[0][1];
     }
 
     /** @param array<int,array<string,mixed>> $players @return array<int,array<string,mixed>> */
