@@ -30,7 +30,7 @@ rules:
   - Canonical team identity uses nhl_teams.nhl_id and also retains team abbreviation.
   - Each normalized observation-player row repeats canonical team id and abbreviation so direct table inspection remains understandable without a parent join.
   - Split-squad evidence is keyed by NHL game id and must not collapse by team and date.
-  - When one team has multiple games on the same date, a returned X post must identify the targeted opponent before it can be attached to that game.
+  - When one team has multiple games on the same date, extracted team players and opponent context must identify the targeted game; ambiguous evidence must not be attached arbitrarily.
   - Twelve ordered forwards map sequentially into four groups of three and six ordered defensemen map into three pairs.
   - A reportable lineup contains twelve forwards and six defensemen; goalies and scratches are optional supplemental evidence.
   - One distinct source is reported, two are corroborated, and three or more are strongly corroborated.
@@ -43,9 +43,11 @@ rules:
   - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
-  - Discovery uses the X recent-search API directly with the query `{team_abbrev} {team_nickname} starting lineup` and requests the minimum ten results.
+  - Discovery uses one broad X recent-search query containing OR-connected team abbreviation, nickname, and full-name identifiers and requests the minimum ten results.
+  - Every returned post is read in full and evaluated locally; search-term presence does not determine whether the post contains lineup evidence.
   - X posts are charged and logged by resources returned; persisted post URLs prevent duplicate observations when searches return the same posts again.
-  - Text lineup extraction is deterministic and conservative; a post that cannot be mapped into ordered player groups remains unused rather than being inferred.
+  - Text lineup extraction walks each post line by line, resolves apparent names against canonical target-team players, and recognizes ordered groups of three forwards or two defensemen regardless of whether names use spaces, hyphens, slashes, or other surrounding prose.
+  - A post without at least one resolved target-team player group is not a lineup candidate; partial groups may remain partial observations, while only twelve forwards and six defensemen form a full reportable lineup.
   - Search priority follows the earliest scheduled puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
   - A same-day game remains eligible after puck drop when either team still lacks a reportable lineup; started games with missing coverage take priority over later games.
   - Team discovery jobs must share one X-search overlap lock, respect provider Retry-After guidance for temporary rate limits, and retry without recording the released attempt as a failed team search.

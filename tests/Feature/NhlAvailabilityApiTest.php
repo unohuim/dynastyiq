@@ -792,7 +792,7 @@ it('treats twelve forwards and six defensemen as reported without goalies', func
     ]);
 });
 
-it('searches X directly once using the configured team query', function (): void {
+it('searches X directly once using a broad OR team query', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020196, 'season_id' => '20262027', 'game_type' => 2,
@@ -813,7 +813,7 @@ it('searches X directly once using the configured team query', function (): void
     )->values();
     expect($requests)->toHaveCount(1)
         ->and($requests[0][0]->url())->toContain('/2/tweets/search/recent')
-        ->and($requests[0][0]['query'])->toBe('TOR Maple Leafs starting lineup')
+        ->and($requests[0][0]['query'])->toBe('(TOR OR "Maple Leafs")')
         ->and((int) $requests[0][0]['max_results'])->toBe(10);
     $this->assertDatabaseHas('nhl_current_lineups', [
         'nhl_game_id' => 2026020196,
@@ -853,6 +853,67 @@ it('keeps split squad X evidence with the game whose opponent is named', functio
 
     expect($candidates)->toHaveCount(1)
         ->and($candidates[0]['source_handle'])->toBe('montreal_reporter');
+});
+
+it('evaluates every returned X post before selecting a lineup candidate', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = (object) [
+        'nhl_game_id' => 2026020192, 'game_date' => today()->toDateString(),
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $response = xLineupResponse([
+        lineupCandidate('tenth_reporter', 'https://x.com/tenth_reporter/status/10'),
+    ]);
+    $irrelevant = collect(range(1, 9))->map(fn (int $index): array => [
+        'id' => (string) $index,
+        'text' => "General hockey update {$index}",
+        'author_id' => 'irrelevant-author',
+        'created_at' => now()->toIso8601String(),
+        'public_metrics' => [],
+    ])->all();
+    $response['data'] = array_merge($irrelevant, $response['data']);
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    expect($candidates)->toHaveCount(1)
+        ->and($candidates[0]['source_handle'])->toBe('tenth_reporter')
+        ->and($candidates[0]['players'])->toHaveCount(20);
+});
+
+it('recognizes target team player groups throughout complete post text', function (): void {
+    foreach ([
+        [8484101, 'Alpha One', 'C', 'TOR'],
+        [8484102, 'Bravo Two', 'LW', 'TOR'],
+        [8484103, 'Charlie Three', 'RW', 'TOR'],
+        [8484104, 'Delta Four', 'D', 'TOR'],
+        [8484105, 'Echo Five', 'D', 'TOR'],
+        [8484191, 'Other One', 'C', 'MTL'],
+        [8484192, 'Other Two', 'LW', 'MTL'],
+        [8484193, 'Other Three', 'RW', 'MTL'],
+    ] as [$nhlId, $name, $position, $team]) {
+        Player::query()->create([
+            'nhl_id' => $nhlId,
+            'first_name' => str($name)->beforeLast(' ')->toString(),
+            'last_name' => str($name)->afterLast(' ')->toString(),
+            'full_name' => $name,
+            'position' => $position,
+            'team_abbrev' => $team,
+            'current_league_abbrev' => 'NHL',
+        ]);
+    }
+
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse(
+        "Practice notes follow.\nAlpha One - Bravo Two / Charlie Three looked sharp.\n"
+        . "Delta Four with Echo Five on the back end.\nOther One Other Two Other Three skated earlier.",
+        'TOR'
+    );
+
+    expect($players)->toHaveCount(5)
+        ->and(collect($players)->where('line_key', 'F1')->pluck('name')->all())
+        ->toBe(['Alpha One', 'Bravo Two', 'Charlie Three'])
+        ->and(collect($players)->where('line_key', 'D1')->pluck('name')->all())
+        ->toBe(['Delta Four', 'Echo Five']);
 });
 
 it('uses a complete NHL boxscore roster and does not search X', function (): void {
@@ -975,7 +1036,7 @@ it('skips image-only lineup search results', function (): void {
     $this->assertDatabaseCount('nhl_lineup_observations', 0);
 });
 
-it('retains an unparseable X text post as partial evidence without reporting a lineup', function (): void {
+it('skips an X text post that contains no target team player group', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026020104, 'season_id' => '20262027', 'game_type' => 2,
@@ -1000,11 +1061,8 @@ it('retains an unparseable X text post as partial evidence without reporting a l
     $result = app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);
 
     expect($result['observed'])->toBe(0);
-    $this->assertDatabaseHas('nhl_lineup_observations', [
-        'nhl_game_id' => 2026020104,
-        'team_id' => 10,
+    $this->assertDatabaseMissing('nhl_lineup_observations', [
         'post_url' => 'https://x.com/torreporter/status/44',
-        'completeness' => 'partial',
     ])->assertDatabaseMissing('nhl_current_lineups', [
         'nhl_game_id' => 2026020104,
         'team_id' => 10,
@@ -1304,7 +1362,7 @@ it('keeps the within two hour schedule lane eligible after todays puck drop', fu
     expect(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeTrue();
 });
 
-it('requests the minimum X result page for the team nickname query', function (): void {
+it('requests the minimum X result page for the broad team query', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     Http::fake(['api.x.com/*' => Http::response(xLineupResponse([]))]);
     $game = (object) [
@@ -1315,7 +1373,7 @@ it('requests the minimum X result page for the team nickname query', function ()
 
     app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
 
-    Http::assertSent(fn ($request): bool => $request['query'] === 'TOR Maple Leafs starting lineup'
+    Http::assertSent(fn ($request): bool => $request['query'] === '(TOR OR "Maple Leafs")'
         && (int) $request['max_results'] === 10);
 });
 

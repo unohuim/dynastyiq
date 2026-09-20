@@ -30,7 +30,7 @@ class XNhlLineupDiscovery
             throw new RuntimeException("No NHL team nickname is available for {$teamAbbrev}.");
         }
 
-        $query = trim("{$teamAbbrev} {$nickname} starting lineup");
+        $query = $this->teamQuery($teamAbbrev, $nickname, (string) $team?->full_name);
         $response = Http::withToken($bearerToken)
             ->acceptJson()
             ->timeout((int) config('services.x.timeout_seconds', 30))
@@ -101,11 +101,15 @@ class XNhlLineupDiscovery
                 'media' => $attachments,
                 'provider_post_id' => (string) $post['id'],
             ];
-        })->filter(fn (array $candidate): bool => $this->belongsToGame(
-            (string) $candidate['post_text'],
-            $game,
-            $teamAbbrev
-        ))->values()->all();
+        })->filter(fn (array $candidate): bool => collect($candidate['players'])->contains(
+            fn (array $player): bool => str_starts_with((string) $player['line_key'], 'F')
+                || str_starts_with((string) $player['line_key'], 'D')
+        )
+            && $this->belongsToGame(
+                (string) $candidate['post_text'],
+                $game,
+                $teamAbbrev
+            ))->values()->all();
     }
 
     private function belongsToGame(string $postText, object $game, string $teamAbbrev): bool
@@ -143,5 +147,17 @@ class XNhlLineupDiscovery
         $words = preg_split('/\s+/u', trim($value)) ?: [];
 
         return (string) end($words);
+    }
+
+    private function teamQuery(string $teamAbbrev, string $nickname, string $fullName): string
+    {
+        $identifiers = collect([$teamAbbrev, $nickname, trim($fullName)])
+            ->filter()
+            ->unique(fn (string $identifier): string => mb_strtolower($identifier))
+            ->map(fn (string $identifier): string => str_contains($identifier, ' ')
+                ? '"' . str_replace('"', '', $identifier) . '"'
+                : $identifier);
+
+        return '(' . $identifiers->implode(' OR ') . ')';
     }
 }

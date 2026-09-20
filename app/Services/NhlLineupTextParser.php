@@ -8,7 +8,7 @@ use App\Models\Player;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
-/** Conservatively extracts ordered lineup groups from text returned by X. */
+/** Reads complete X post text and extracts ordered groups of canonical team players. */
 class NhlLineupTextParser
 {
     /** @var Collection<int,Player>|null */
@@ -46,15 +46,6 @@ class NhlLineupTextParser
             }
 
             $matches = $this->playersInText($line, $players, $teamAbbrev);
-            if ($section !== null) {
-                $delimited = $this->namesFromDelimitedLine($line);
-                if (count($delimited) > count($matches)) {
-                    $matches = array_map(
-                        fn (string $name): array => ['name' => $name, 'position' => null],
-                        $delimited
-                    );
-                }
-            }
             if ($matches === []) {
                 continue;
             }
@@ -63,16 +54,58 @@ class NhlLineupTextParser
                 array_push($scratches, ...$matches);
                 continue;
             }
-            if ($section === 'goalie' || $this->allAtPosition($matches, 'G')) {
-                array_push($goalies, ...$matches);
+            $lineGoalies = array_values(array_filter(
+                $matches,
+                fn (array $player): bool => mb_strtoupper((string) $player['position']) === 'G'
+            ));
+            if ($section === 'goalie' || $lineGoalies !== []) {
+                array_push($goalies, ...($section === 'goalie' ? $matches : $lineGoalies));
+                $matches = array_values(array_filter(
+                    $matches,
+                    fn (array $player): bool => mb_strtoupper((string) $player['position']) !== 'G'
+                ));
+                if ($matches === []) {
+                    continue;
+                }
+            }
+            if ($section === 'defense') {
+                foreach (array_chunk($matches, 2) as $group) {
+                    if (count($group) === 2) {
+                        $defenseGroups[] = $group;
+                    }
+                }
                 continue;
             }
-            if ($section === 'defense' || count($matches) === 2) {
-                $defenseGroups[] = $matches;
-                continue;
-            }
-            if ($section === 'forward' || count($matches) >= 3) {
+            if ($section === 'forward') {
                 foreach (array_chunk($matches, 3) as $group) {
+                    if (count($group) === 3) {
+                        $forwardGroups[] = $group;
+                    }
+                }
+                continue;
+            }
+
+            $defensemen = array_values(array_filter(
+                $matches,
+                fn (array $player): bool => mb_strtoupper((string) $player['position']) === 'D'
+            ));
+            $forwards = array_values(array_filter(
+                $matches,
+                fn (array $player): bool => in_array(
+                    mb_strtoupper((string) $player['position']),
+                    ['C', 'L', 'LW', 'R', 'RW', 'F'],
+                    true
+                )
+            ));
+            if (count($defensemen) >= 2) {
+                foreach (array_chunk($defensemen, 2) as $group) {
+                    if (count($group) === 2) {
+                        $defenseGroups[] = $group;
+                    }
+                }
+            }
+            if (count($forwards) >= 3) {
+                foreach (array_chunk($forwards, 3) as $group) {
                     if (count($group) === 3) {
                         $forwardGroups[] = $group;
                     }
@@ -121,9 +154,12 @@ class NhlLineupTextParser
         foreach ($players as $player) {
             $fullName = trim((string) $player->full_name);
             $lastName = trim((string) Str::afterLast($fullName, ' '));
-            $teamMatch = mb_strtoupper((string) $player->team_abbrev) === $teamAbbrev;
+            $teamMatch = mb_strtoupper((string) $player->team_abbrev) === mb_strtoupper($teamAbbrev);
+            if (! $teamMatch) {
+                continue;
+            }
             $needles = [$fullName];
-            if ($teamMatch && mb_strlen($lastName) >= 3) {
+            if (mb_strlen($lastName) >= 3) {
                 $needles[] = $lastName;
             }
 
@@ -133,7 +169,7 @@ class NhlLineupTextParser
                 }
                 $offset = (int) $match[0][1];
                 if (! isset($found[$player->id]) || $offset < $found[$player->id]['offset']) {
-                    $found[$player->id] = ['offset' => $offset, 'player' => $player, 'team_match' => $teamMatch];
+                    $found[$player->id] = ['offset' => $offset, 'player' => $player];
                 }
                 break;
             }
@@ -143,7 +179,7 @@ class NhlLineupTextParser
 
         return collect($found)
             ->groupBy(fn (array $match): string => (string) $match['offset'])
-            ->map(fn (Collection $matches): array => $matches->sortByDesc('team_match')->first())
+            ->map(fn (Collection $matches): array => $matches->first())
             ->sortBy('offset')
             ->pluck('player')
             ->map(fn (Player $player): array => [
@@ -152,34 +188,6 @@ class NhlLineupTextParser
             ])
             ->values()
             ->all();
-    }
-
-    /** @return array<int,string> */
-    private function namesFromDelimitedLine(string $line): array
-    {
-        $parts = preg_split('/\s+(?:-|–|—|\||\/)\s+|,\s*/u', $line) ?: [];
-        if (count($parts) < 2) {
-            return [];
-        }
-
-        return collect($parts)->map(function (string $name): string {
-            $name = preg_replace('/https?:\/\/\S+/iu', '', $name) ?? $name;
-            $name = preg_replace('/^[^\pL]+|[^\pL\pN.\' -]+$/u', '', trim($name)) ?? $name;
-
-            return trim($name);
-        })->filter(fn (string $name): bool => mb_strlen($name) >= 2
-            && mb_strlen($name) <= 60
-            && preg_match('/\pL/u', $name) === 1)
-            ->values()
-            ->all();
-    }
-
-    /** @param array<int,array{name:string,position:string|null}> $players */
-    private function allAtPosition(array $players, string $position): bool
-    {
-        return $players !== [] && collect($players)->every(
-            fn (array $player): bool => mb_strtoupper((string) $player['position']) === $position
-        );
     }
 
     /** @param array<int,array{name:string,position:string|null}> $players @return array<int,array{name:string,position:string|null}> */

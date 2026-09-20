@@ -30,16 +30,16 @@ GET https://api.x.com/2/tweets/search/recent
 Authorization: Bearer X_BEARER_TOKEN
 ```
 
-Each team search uses this query:
+Each team search uses one broad OR query containing the available team identifiers:
 
 ```text
-{team_abbrev} {team_nickname} starting lineup
+({team_abbrev} OR {team_nickname} OR "{team_full_name}")
 ```
 
 Example:
 
 ```text
-ANA Ducks starting lineup
+(ANA OR Ducks OR "Anaheim Ducks")
 ```
 
 The request uses `max_results=10`, the endpoint's minimum page size, and asks for:
@@ -53,15 +53,15 @@ X charges for every post resource returned and separately charges for expanded a
 
 ## Local parsing
 
-The parser uses canonical DynastyIQ player names, team context, and explicitly delimited lineup sections to recognize ordered text groups. It maps four groups of three forwards to `F1` through `F4`, three defense pairs to `D1` through `D3`, ordered goalies to `G1` and `G2`, and explicitly headed scratches to `SCR`. Names that cannot be resolved remain visible as unresolved observation players.
+All ten returned posts are read in full. Search words do not qualify or reject a post after retrieval. The parser scans each post line by line, resolves apparent names against canonical players belonging to the target team, and then looks for lineup-shaped groups. Three resolved forwards form a forward line and two resolved defensemen form a defense pair whether the names are separated by spaces, hyphens, slashes, or surrounding prose. It maps four forward groups to `F1` through `F4`, three defense pairs to `D1` through `D3`, and ordered goalies to `G1` and `G2` when present.
 
 Parsing is intentionally conservative:
 
-- Returned text posts are retained as partial raw-evidence observations even when no lineup can be parsed; image-only content is not interpreted.
-- Posts without enough recognizable ordered player text are skipped.
+- A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.
+- Partial lineup candidates remain partial observations, but only twelve resolved forwards and six resolved defensemen constitute a full reported lineup; image-only content is not interpreted.
 - Missing players are never invented from roster history or hockey knowledge.
 - Special-teams assignments remain empty unless a future deterministic parser explicitly supports them.
-- On split-squad dates, a post must name the targeted opponent before DynastyIQ attaches it to a specific game.
+- On split-squad dates, extracted players and opponent context must identify the targeted game; ambiguous evidence is not attached to either game.
 
 ## Scheduling
 
