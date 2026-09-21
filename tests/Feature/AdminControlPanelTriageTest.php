@@ -7563,6 +7563,29 @@ it('shows current import workflow buttons to super admins', function () {
         ->assertSee('Retry failed');
 });
 
+it('returns running X lineup usage totals with import progress', function () {
+    ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups',
+        'status' => 'working',
+        'started_at' => now(),
+        'ran_at' => now(),
+        'total_records' => 10,
+        'processed_records' => 4,
+        'estimated_cost_usd' => '0.160000',
+        'meta' => [
+            'x_posts_viewed' => 32,
+            'x_post_read_cost_usd' => 0.005,
+        ],
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.imports.status', ['key' => 'nhl-anticipated-lineups']))
+        ->assertOk()
+        ->assertJsonPath('import_run.progress.processed_records', 4)
+        ->assertJsonPath('import_run.progress.x_posts_viewed', 32)
+        ->assertJsonPath('import_run.progress.x_estimated_cost_usd', 0.16);
+});
+
 it('blocks guests from updating admin import schedules', function () {
     $this->putJson(route('admin.imports.schedule.update', ['key' => 'nhl-injuries']), [
         'enabled' => true,

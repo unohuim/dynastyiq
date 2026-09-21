@@ -863,7 +863,18 @@ it('stops source timeline reads after the first accepted lineup', function (): v
 });
 
 it('reads stored team scoped X source timelines', function (): void {
-    config(['services.x.bearer_token' => 'test-key']);
+    config([
+        'services.x.bearer_token' => 'test-key',
+        'services.x.post_read_cost_usd' => 0.005,
+    ]);
+    $run = \App\Models\ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'started_at' => now(), 'ran_at' => now(),
+    ]);
+    $otherRun = \App\Models\ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'started_at' => now()->subMinute(), 'ran_at' => now()->subMinute(),
+    ]);
     $sourceId = DB::table('sources')->insertGetId([
         'platform' => 'x',
         'name' => 'Toronto Maple Leafs',
@@ -895,7 +906,7 @@ it('reads stored team scoped X source timelines', function (): void {
     $response['data'][0]['author_id'] = '12345';
     Http::fake(['api.x.com/*' => Http::response($response)]);
 
-    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR', (string) $run->id);
 
     $requests = Http::recorded();
     expect($requests)->toHaveCount(1)
@@ -903,10 +914,32 @@ it('reads stored team scoped X source timelines', function (): void {
         ->and((int) $requests[0][0]['max_results'])->toBe(5)
         ->and($requests[0][0]['start_time'])->not->toBeNull()
         ->and($candidates)->toHaveCount(1);
+    expect($run->refresh()->meta)
+        ->toMatchArray([
+            'x_posts_viewed' => 1,
+            'x_post_read_cost_usd' => 0.005,
+        ]);
+    expect((float) $run->estimated_cost_usd)->toBe(0.005);
+    $usage = DB::table('integration_api_usage_logs')->latest('id')->first();
+    expect(data_get(json_decode((string) $usage->metadata, true), 'import_run_id'))->toBe($run->id);
+
+    app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR', (string) $run->id);
+    expect($run->refresh()->meta)
+        ->toMatchArray(['x_posts_viewed' => 2])
+        ->and((float) $run->estimated_cost_usd)->toBe(0.01)
+        ->and($otherRun->refresh()->meta)->toBeNull();
 });
 
 it('resolves and caches an X user id before reading a stored source timeline', function (): void {
-    config(['services.x.bearer_token' => 'test-key']);
+    config([
+        'services.x.bearer_token' => 'test-key',
+        'services.x.post_read_cost_usd' => 0.005,
+        'services.x.user_read_cost_usd' => 0.01,
+    ]);
+    $run = \App\Models\ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'started_at' => now(), 'ran_at' => now(),
+    ]);
     $sourceId = DB::table('sources')->insertGetId([
         'platform' => 'x', 'name' => 'Timeline Reporter', 'handle' => 'timeline_reporter',
         'canonical_url' => 'https://x.com/timeline_reporter', 'first_seen_at' => now(),
@@ -931,10 +964,15 @@ it('resolves and caches an X user id before reading a stored source timeline', f
         'api.x.com/2/users/9988/tweets*' => Http::response($timeline),
     ]);
 
-    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR', (string) $run->id);
 
     expect($candidates)->toHaveCount(1)
-        ->and(DB::table('sources')->where('id', $sourceId)->value('platform_user_id'))->toBe('9988');
+        ->and(DB::table('sources')->where('id', $sourceId)->value('platform_user_id'))->toBe('9988')
+        ->and($run->refresh()->meta)->toMatchArray([
+            'x_posts_viewed' => 1,
+            'x_user_reads' => 1,
+        ])
+        ->and((float) $run->estimated_cost_usd)->toBe(0.015);
     Http::assertSentCount(2);
 });
 

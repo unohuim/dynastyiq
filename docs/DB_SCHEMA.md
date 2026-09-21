@@ -869,7 +869,8 @@ Migrations remain the **sole source of truth**.
 | skipped_records | integer | No | Records skipped due to local import conditions |
 | progress_label | string | Yes | User-facing label for the progress unit |
 | error_message | text | Yes | Failure message when status is failed |
-| meta | json | Yes | Additional import metadata, including `work_batch_id` for child import batches |
+| estimated_cost_usd | decimal(12,6) | No | Persisted estimated provider cost accumulated during the import run |
+| meta | json | Yes | Additional import metadata, including `work_batch_id` for child import batches and run-scoped X resource counts and rates for anticipated-lineup imports |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 
@@ -4864,6 +4865,6 @@ Supporting observations for the current lineup's `forwards` and `defense` compon
 
 ## integration_api_usage_logs
 
-Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records stored-source timeline reads as `nhl_lineup_source_timeline` for operational and cost visibility. Historical rows may retain the retired `nhl_lineup_discovery` generic-search operation.
+Provider-neutral API usage ledger containing operation, request id, token counts, tool-call count, timestamp, and scoped metadata. NHL lineup discovery records stored-source timeline reads as `nhl_lineup_source_timeline` for operational and cost visibility, including returned posts and the related admin import run id when one exists. Historical rows may retain the retired `nhl_lineup_discovery` generic-search operation.
 
 **End of DB_SCHEMA**

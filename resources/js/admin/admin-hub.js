@@ -3216,6 +3216,16 @@ export default function adminHub(options = {}) {
             return `${this.formatNumber(processed)} records processed`;
         },
 
+        importXUsageText(key) {
+            const progress = this.importProgress(key);
+            const posts = Number(progress?.x_posts_viewed) || 0;
+            const cost = Number(progress?.x_estimated_cost_usd) || 0;
+            const postLabel = posts === 1 ? 'post' : 'posts';
+            const decimals = cost > 0 && cost < 0.01 ? 3 : 2;
+
+            return `(${this.formatNumber(posts)} ${postLabel}, $${cost.toFixed(decimals)})`;
+        },
+
         importProgressEstimatedTotal(key) {
             const progress = this.importProgress(key);
             const discovered = Number(progress?.total_records) || 0;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Events\ImportStreamEvent;
+use App\Models\ImportRun;
 use App\Models\NhlLineupObservation;
 use App\Models\NhlTeam;
 use Illuminate\Http\Client\Response;
@@ -122,6 +123,7 @@ class XNhlLineupDiscovery
             if ($userId === '') {
                 return ['candidates' => [], 'next_token' => null];
             }
+            $this->recordUserLookupUsage($lookup, $teamAbbrev, $handle);
             DB::table('sources')->where('id', $source->id)->update([
                 'platform_user_id' => $userId,
                 'updated_at' => now(),
@@ -189,6 +191,7 @@ class XNhlLineupDiscovery
         $users = collect([...array_values($knownUsers), ...data_get($payload, 'includes.users', [])])->keyBy('id');
         $media = collect(data_get($payload, 'includes.media', []))->keyBy('media_key');
 
+        $postsReturned = count($payload['data'] ?? []);
         DB::table('integration_api_usage_logs')->insert([
             'provider' => 'x',
             'operation' => 'nhl_lineup_source_timeline',
@@ -201,12 +204,17 @@ class XNhlLineupDiscovery
                 'team_abbrev' => $teamAbbrev,
                 'context' => $context,
                 'request_type' => $requestType,
-                'posts_returned' => count($payload['data'] ?? []),
+                'posts_returned' => $postsReturned,
+                'import_run_id' => $this->streamBatchId === null ? null : (int) $this->streamBatchId,
             ]),
             'occurred_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        $this->recordImportRunUsage(
+            $postsReturned,
+            (int) round($postsReturned * (float) config('services.x.post_read_cost_usd', 0.005) * 1_000_000)
+        );
 
         $candidates = collect($payload['data'] ?? [])->map(function (array $post) use ($users, $media, $teamAbbrev): array {
             $author = $users->get((string) ($post['author_id'] ?? ''), []);
@@ -260,6 +268,64 @@ class XNhlLineupDiscovery
             ->filter(fn (array $candidate): bool => $candidate['audit_decision'] === 'approved')
             ->values()
             ->all();
+    }
+
+    /** Add one X response's billable Post Reads to the active admin import run. */
+    private function recordImportRunUsage(int $postsReturned, int $costMicros, int $userReads = 0): void
+    {
+        if ($this->streamBatchId === null || ($postsReturned <= 0 && $userReads <= 0)) {
+            return;
+        }
+
+        DB::transaction(function () use ($postsReturned, $costMicros, $userReads): void {
+            $run = ImportRun::query()->lockForUpdate()->find((int) $this->streamBatchId);
+            if ($run === null || $run->source !== 'nhl-anticipated-lineups') {
+                return;
+            }
+
+            $meta = $run->meta ?? [];
+            $existingCostMicros = (int) round(((float) $run->estimated_cost_usd) * 1_000_000);
+            $meta['x_posts_viewed'] = (int) ($meta['x_posts_viewed'] ?? 0) + $postsReturned;
+            $meta['x_user_reads'] = (int) ($meta['x_user_reads'] ?? 0) + $userReads;
+            $meta['x_post_read_cost_usd'] = (float) config('services.x.post_read_cost_usd', 0.005);
+            $meta['x_user_read_cost_usd'] = (float) config('services.x.user_read_cost_usd', 0.01);
+            $run->update([
+                'meta' => $meta,
+                'estimated_cost_usd' => number_format(
+                    ($existingCostMicros + $costMicros) / 1_000_000,
+                    6,
+                    '.',
+                    ''
+                ),
+            ]);
+        });
+    }
+
+    /** Record a billable X user resource returned while resolving a source handle. */
+    private function recordUserLookupUsage(Response $response, string $teamAbbrev, string $handle): void
+    {
+        DB::table('integration_api_usage_logs')->insert([
+            'provider' => 'x',
+            'operation' => 'nhl_lineup_source_user_lookup',
+            'provider_request_id' => $response->header('x-request-id'),
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'tool_calls' => 1,
+            'metadata' => json_encode([
+                'team_abbrev' => $teamAbbrev,
+                'handle' => $handle,
+                'users_returned' => 1,
+                'import_run_id' => $this->streamBatchId === null ? null : (int) $this->streamBatchId,
+            ]),
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->recordImportRunUsage(
+            0,
+            (int) round((float) config('services.x.user_read_cost_usd', 0.01) * 1_000_000),
+            1
+        );
     }
 
     /** @param array<string,mixed> $candidate @return array{approved:bool,reason:string} */

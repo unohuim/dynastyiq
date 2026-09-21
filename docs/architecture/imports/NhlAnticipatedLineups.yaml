@@ -74,6 +74,7 @@ rules:
   - Live lineups terminal and Admin output emits only the team abbreviation, source handle, and five-post timeline range for each request; detailed post decisions, player counts, URLs, and reasons remain in local troubleshooting Markdown.
   - Scheduler eligibility is evaluated every second for enabled schedules, while configured lane intervals control when searches become due.
   - X searches persist the query and returned-post count in integration usage logs without an application-owned daily search ceiling.
+  - Each admin-triggered lineup run atomically accumulates its returned X posts and dedicated import_runs estimated cost using the configured current X rates; usage from other runs must not affect its progress display.
 public_interface:
   - nhl:import-anticipated-lineups
   - GET /api/nhl-anticipated-lineups

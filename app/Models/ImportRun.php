@@ -20,6 +20,7 @@ class ImportRun extends Model
         'successful_records' => 'integer',
         'failed_records' => 'integer',
         'skipped_records' => 'integer',
+        'estimated_cost_usd' => 'decimal:6',
         'options' => 'array',
         'meta' => 'array',
     ];

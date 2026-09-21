@@ -2070,6 +2070,32 @@ describe('admin-hub import listeners', () => {
         );
     });
 
+    it('formats running X post usage and estimated spend', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.streams['nhl-anticipated-lineups'] = {
+            progress: {
+                x_posts_viewed: 32,
+                x_estimated_cost_usd: 0.16,
+            },
+        };
+
+        expect(instance.importXUsageText('nhl-anticipated-lineups')).toBe('(32 posts, $0.16)');
+    });
+
+    it('uses singular post wording for one X Post Read', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.streams['nhl-anticipated-lineups'] = {
+            progress: {
+                x_posts_viewed: 1,
+                x_estimated_cost_usd: 0.005,
+            },
+        };
+
+        expect(instance.importXUsageText('nhl-anticipated-lineups')).toBe('(1 post, $0.005)');
+    });
+
     it('includes elapsed time from initial import card data', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub({

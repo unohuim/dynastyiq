@@ -181,6 +181,8 @@ class ImportsController extends Controller
                 'skipped_records' => $importRun->skipped_records ?? 0,
                 'dynamic_total' => $dynamicTotal,
                 'percentage' => $percentage,
+                'x_posts_viewed' => (int) ($importRun->meta['x_posts_viewed'] ?? 0),
+                'x_estimated_cost_usd' => round((float) $importRun->estimated_cost_usd, 6),
             ],
         ];
     }

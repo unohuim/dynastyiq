@@ -74,6 +74,8 @@ return [
     'x' => [
         'bearer_token' => env('X_BEARER_TOKEN'),
         'timeout_seconds' => (int) env('X_TIMEOUT_SECONDS', 30),
+        'post_read_cost_usd' => (float) env('X_POST_READ_COST_USD', 0.005),
+        'user_read_cost_usd' => (float) env('X_USER_READ_COST_USD', 0.01),
     ],
 
 

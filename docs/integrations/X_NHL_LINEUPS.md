@@ -104,7 +104,9 @@ Live terminal and Admin output is intentionally concise and emits one line per t
 
 Every X timeline request writes an `integration_api_usage_logs` row containing its source context and number of posts returned. No application-owned daily request ceiling is imposed.
 
+Admin-triggered lineup runs accumulate returned Post Reads and User Reads in `import_runs.meta`, while their running and final estimated spend is persisted in `import_runs.estimated_cost_usd`. The progress UI displays `(posts, estimated spend)` beside the records count while polling. Estimated spend uses X's published standard Post Read rate of `$0.005` per returned post and User Read rate of `$0.01` when an uncached source handle must be resolved. `X_POST_READ_COST_USD` and `X_USER_READ_COST_USD` may override those rates when X changes its pricing. The `$0.001` Owned Read price does not apply to reporter and team accounts that DynastyIQ does not own.
+
 - Missing credentials fail the affected team job without deleting current truth.
 - Authentication, credit, HTTP, and parsing failures are reported through the existing import-run workflow.
 - Empty, unparseable, and duplicate-only searches are skipped rather than counted as successful imports.
-- Current X pricing and usage are available in the X Developer Console.
+- Actual billed usage remains authoritative in the X Developer Console; DynastyIQ displays an estimate from returned resources.

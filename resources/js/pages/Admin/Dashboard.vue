@@ -236,7 +236,14 @@ export default {
                                 
                             >
                                 <div class="flex items-center justify-between gap-3 text-xs text-gray-600">
-                                    <span v-text="importProgressText(importItem.key)"></span>
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span
+                                            v-if="importItem.key === 'nhl-anticipated-lineups'"
+                                            class="text-gray-500"
+                                            v-text="importXUsageText(importItem.key)"
+                                        ></span>
+                                        <span v-text="importProgressText(importItem.key)"></span>
+                                    </div>
                                     <span v-text="`${importProgressPercentage(importItem.key)}%`"></span>
                                 </div>
                                 <div class="h-2 overflow-hidden rounded-full bg-gray-200">
