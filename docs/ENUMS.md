@@ -917,6 +917,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 ### Anticipated NHL Lineup Values
 
+- `sources.platform` additionally supports `manual` for super-admin pasted lineup evidence. Handles use `user-{id}`; the original submitting id is retained as `raw_evidence.submitted_by_user_id`.
 - `nhl_lineup_observations.completeness`: `full`, `forwards`, `defense`, `partial`.
 - `nhl_lineup_observation_players.lineup_role`: `forward`, `defense`, `goalie`, `scratch`.
 - `nhl_lineup_observation_players.line_key`: `F1`, `F2`, `F3`, `F4`, `D1`, `D2`, `D3`, `G`, `SCR`.

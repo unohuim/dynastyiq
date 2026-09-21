@@ -6,6 +6,9 @@ namespace App\Http\Controllers;
 
 use App\Services\AdminImportSchedules;
 use App\Services\NhlAnticipatedLineupPayload;
+use App\Services\NhlAnticipatedLineupImporter;
+use App\Models\NhlGame;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -63,5 +66,31 @@ class NhlGamesController extends Controller
             $user->roles()->where('slug', 'super-admin')->exists()
             || $user->roles()->where('level', '>=', 99)->exists()
         );
+    }
+
+    /** Process super-admin pasted evidence for a participating team without contacting X. */
+    public function storeLineup(
+        Request $request,
+        int $nhlGameId,
+        NhlAnticipatedLineupImporter $importer,
+        NhlAnticipatedLineupPayload $payload
+    ): JsonResponse {
+        abort_unless($this->canManageGameSync($request), 403);
+        $input = $request->validate([
+            'team_abbrev' => ['required', 'string', 'max:10'],
+            'text' => ['required', 'string', 'max:20000'],
+        ]);
+
+        return DB::transaction(function () use ($request, $nhlGameId, $input, $importer, $payload): JsonResponse {
+            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            $team = mb_strtoupper($input['team_abbrev']);
+            abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+            abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
+            $teamId = DB::table('nhl_teams')->where('abbrev', $team)->value('nhl_id');
+            abort_if($teamId === null, 422, 'The NHL team identity is missing.');
+            $importer->importManual($game, $team, (int) $teamId, trim($input['text']), (int) $request->user()->id);
+
+            return response()->json(['lineup' => $payload->forGameTeam($nhlGameId, $team, false)]);
+        });
     }
 }

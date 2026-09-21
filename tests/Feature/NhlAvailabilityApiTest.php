@@ -2461,6 +2461,65 @@ it('groups current players and exposes supporting sources on lineup detail', fun
             ->where('game.away.lineup', null));
 });
 
+it('restricts manual lineup submissions to super admins', function (bool $signedIn): void {
+    if ($signedIn) {
+        $this->actingAs(User::factory()->create());
+    }
+    $response = $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => 'Test']);
+    $response->assertStatus($signedIn ? 403 : 401);
+    Http::assertNothingSent();
+})->with([false, true]);
+
+it('imports a super admin pasted lineup without provider requests and exposes it publicly', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $text = $current->observation->players->groupBy('line_key')
+        ->map(fn ($group) => $group->pluck('player_name')->implode(' - '))->implode("\n");
+    $current->observation->delete();
+
+    $this->actingAs($user)->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])
+        ->assertOk()->assertJsonPath('lineup.team_abbrev', 'TOR')
+        ->assertJsonPath('lineup.evidence_status', 'reported')
+        ->assertJsonPath('lineup.sources.0.platform', 'manual');
+    Http::assertNothingSent();
+    $this->assertDatabaseHas('sources', ['platform' => 'manual', 'handle' => 'user-' . $user->id]);
+    $observation = NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->firstOrFail();
+    expect($observation->post_text)->toBe($text)
+        ->and($observation->raw_evidence['submitted_by_user_id'])->toBe($user->id)
+        ->and($observation->players()->count())->toBe(18);
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+        ->assertOk()->assertJsonPath('anticipated_lineups.0.evidence_status', 'reported');
+    $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])->assertConflict();
+    expect(NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->count())->toBe(1);
+    $this->travelBack();
+});
+
+it('rejects invalid manual lineup input without writing evidence', function (string $team, string $text, int $gameId, int $status): void {
+    $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $current->observation->delete();
+
+    $this->actingAs($user)->postJson('/games/' . $gameId . '/lineup', ['team_abbrev' => $team, 'text' => $text])
+        ->assertStatus($status);
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    $this->assertDatabaseMissing('sources', ['platform' => 'manual']);
+    Http::assertNothingSent();
+    $this->travelBack();
+})->with([
+    'empty' => ['TOR', '', 2026020099, 422],
+    'partial' => ['TOR', 'Test Player 1 - Test Player 2 - Test Player 3', 2026020099, 422],
+    'wrong team' => ['BOS', 'Some lineup', 2026020099, 422],
+    'missing game' => ['TOR', 'Some lineup', 9999999999, 404],
+]);
+
 it('exposes game sync settings only to a super admin', function (): void {
     $user = User::factory()->create();
     $role = Role::query()->create([

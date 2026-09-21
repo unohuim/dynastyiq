@@ -23,6 +23,41 @@ class NhlAnticipatedLineupImporter
     ) {
     }
 
+    /**
+     * Import validated super-admin text using the same observation pipeline as public posts.
+     *
+     * @return array{observed:int,skipped:int}
+     */
+    public function importManual(
+        object $game,
+        string $teamAbbrev,
+        int $teamId,
+        string $text,
+        int $userId
+    ): array {
+        $players = app(NhlLineupTextParser::class)->parse($text, $teamAbbrev);
+        if ($this->players->verifiedLineupIds($players) === null) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'text' => 'A verified lineup needs 12 forwards and 6 defensemen with no duplicates or invalid positions. Unknown players are allowed only on F4/D3 with a verified linemate.',
+            ]);
+        }
+        $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);
+        $candidate = [
+            'platform' => 'manual', 'source_name' => 'Manual submission (user #' . $userId . ')',
+            'source_handle' => 'user-' . $userId,
+            'source_url' => route('games.index') . '#manual-user-' . $userId,
+            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . hash('sha256', $text),
+            'post_text' => $text, 'published_at' => now()->toIso8601String(),
+            'submitted_by_user_id' => $userId, 'players' => $players,
+        ];
+        $observed = 0;
+        $skipped = 0;
+        $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
+        $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
+
+        return compact('observed', 'skipped');
+    }
+
     /** @return array{observed:int,skipped:int} */
     public function import(
         object $game,

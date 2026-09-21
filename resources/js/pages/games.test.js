@@ -1,7 +1,8 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp } from 'vue';
+import { createApp, nextTick } from 'vue';
+import ManualLineupModal from './Games/ManualLineupModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
 import GameCard from './Games/GameCard.vue';
 import GamesIndex from './Games/Index.vue';
@@ -37,6 +38,73 @@ const game = {
         },
     },
 };
+
+describe('manual game lineup entry', () => {
+    let app;
+    let originalShowModal;
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="manual-test"></div>';
+        originalShowModal = HTMLDialogElement.prototype.showModal;
+        HTMLDialogElement.prototype.showModal = vi.fn();
+    });
+    afterEach(() => {
+        app?.unmount();
+        app = null;
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        if (originalShowModal) HTMLDialogElement.prototype.showModal = originalShowModal;
+        else delete HTMLDialogElement.prototype.showModal;
+        document.body.innerHTML = '';
+    });
+
+    it('does not expose manual entry to public visitors', () => {
+        app = createApp(GameCard, { game });
+        app.mount('#manual-test');
+        expect(document.querySelector('button[aria-label="Add MTL lineup"]')).toBeNull();
+    });
+
+    it('exposes only the unreported team badge to super admins', () => {
+        app = createApp(GameCard, { game, canManageLineups: true });
+        app.mount('#manual-test');
+        expect(document.querySelector('button[aria-label="Add MTL lineup"]')).not.toBeNull();
+        expect(document.querySelector('button[aria-label="Add TOR lineup"]')).toBeNull();
+    });
+
+    it('posts the selected game team and text and emits the returned lineup', async () => {
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        const lineup = { nhl_game_id: 2026010001, team_abbrev: 'MTL', evidence_status: 'reported' };
+        const submitted = vi.fn();
+        const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ lineup }) });
+        vi.stubGlobal('fetch', fetcher);
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL', onSubmitted: submitted });
+        app.mount('#manual-test');
+        const textarea = document.querySelector('textarea');
+        textarea.value = 'Pasted lineup';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        await nextTick();
+        document.querySelector('dialog form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await settle();
+        expect(fetcher.mock.calls[0][0]).toBe('/games/2026010001/lineup');
+        expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ team_abbrev: 'MTL', text: 'Pasted lineup' });
+        expect(submitted).toHaveBeenCalledWith(lineup);
+    });
+
+    it('retains invalid text and shows the server explanation', async () => {
+        HTMLDialogElement.prototype.showModal = vi.fn();
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ errors: { text: ['Unresolved core player.'] } }) }));
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL' });
+        app.mount('#manual-test');
+        const textarea = document.querySelector('textarea');
+        textarea.value = 'Incomplete lineup';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        await nextTick();
+        document.querySelector('dialog form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await settle();
+        await nextTick();
+        expect(document.querySelector('[role="alert"]').textContent).toBe('Unresolved core player.');
+        expect(textarea.value).toBe('Incomplete lineup');
+    });
+});
 
 function pageMarkup() {
     return `

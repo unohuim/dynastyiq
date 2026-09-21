@@ -14,6 +14,7 @@ when_not_to_use:
   - Treating separate posts from one account as independent corroborating sources.
   - Assigning source trust or accuracy scores without an approved evaluation model.
 rules:
+  - Manually pasted lineup evidence uses platform manual with a stable per-submitting-user handle. Attribution does not confer official status, and manual sources must never be queried through X discovery.
   - Provider-native account ids may be cached on sources.platform_user_id after resolving a public handle so recurring timeline reads do not repeat paid account lookups.
   - NHL anticipated-lineup discovery may use only team-scoped source timelines and must not issue generic X keyword searches.
   - Source identity is platform scoped and reusable across sports and leagues.
