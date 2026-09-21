@@ -19,6 +19,8 @@ use Symfony\Component\Console\Output\ConsoleOutput;
 /** Searches X directly for recent NHL lineup posts and normalizes their public metadata. */
 class XNhlLineupDiscovery
 {
+    private const MAX_ROUNDS_PER_SOURCE = 6;
+
     private ?string $streamBatchId = null;
 
     public function __construct(private readonly NhlLineupTextParser $parser)
@@ -85,7 +87,8 @@ class XNhlLineupDiscovery
 
                 $nextToken = $page['next_token'];
                 $alreadySeen = $nextToken !== null && in_array($nextToken, $state['seen_tokens'], true);
-                $states[$index]['exhausted'] = $nextToken === null || $alreadySeen;
+                $states[$index]['exhausted'] = $nextToken === null || $alreadySeen
+                    || $state['round'] >= self::MAX_ROUNDS_PER_SOURCE;
                 if ($nextToken !== null && ! $alreadySeen) {
                     $states[$index]['seen_tokens'][] = $nextToken;
                     $states[$index]['pagination_token'] = $nextToken;

@@ -1427,7 +1427,7 @@ it('does not impose an application daily timeline request limit', function (): v
     Http::assertSentCount(1);
 });
 
-it('queues one near-puck-drop lineup job per team and excludes later games', function (): void {
+it('queues all teams and passes the near-puck-drop window to each job', function (): void {
     Queue::fake();
     $this->travelTo(Carbon::parse('2026-09-19 16:00:00 UTC'));
     DB::table('nhl_teams')->insert([
@@ -1451,10 +1451,12 @@ it('queues one near-puck-drop lineup job per team and excludes later games', fun
 
     Artisan::call('nhl:import-anticipated-lineups', ['--window' => 'within-two-hours']);
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 6);
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100
         && $job->teamAbbrev === 'MTL'
         && $job->queue === 'lineups');
+    expect(Queue::pushed(ImportNhlAnticipatedLineupTeamJob::class)
+        ->every(fn ($job): bool => $job->window === 'within-two-hours'))->toBeTrue();
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010100
         && $job->teamAbbrev === 'TOR'
         && $job->queue === 'lineups');
@@ -1571,7 +1573,7 @@ it('queues anticipated lineup searches for today and tomorrow but not later date
     $this->travelBack();
 });
 
-it('queues only the missing opponent while one team already has a reported lineup', function (): void {
+it('queues both teams even when one already has a reported lineup', function (): void {
     Queue::fake();
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
@@ -1584,12 +1586,14 @@ it('queues only the missing opponent while one team already has a reported lineu
 
     Artisan::call('nhl:import-anticipated-lineups');
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 1);
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026020099
         && $job->teamAbbrev === 'MTL');
+    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026020099
+        && $job->teamAbbrev === 'TOR');
 });
 
-it('does not dispatch a reported complete lineup again when players remain unresolved', function (): void {
+it('dispatches but skips discovery for a complete lineup with unresolved players', function (): void {
     Queue::fake();
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
@@ -1607,11 +1611,11 @@ it('does not dispatch a reported complete lineup again when players remain unres
 
     Artisan::call('nhl:import-anticipated-lineups');
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 1);
-    Queue::assertNotPushed(
-        fn (ImportNhlAnticipatedLineupTeamJob $job): bool =>
-            $job->nhlGameId === 2026020099 && $job->teamAbbrev === 'TOR'
-    );
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    $job = Queue::pushed(ImportNhlAnticipatedLineupTeamJob::class)
+        ->first(fn ($job): bool => $job->teamAbbrev === 'TOR');
+    $job->handle(app(NhlAnticipatedLineupImporter::class));
+    Http::assertNothingSent();
 });
 
 it('skips both NHL and X discovery when a complete current lineup exists', function (): void {
@@ -1733,7 +1737,7 @@ it('does not revisit a complete lineup while the opponent remains missing', func
     Http::assertNothingSent();
 });
 
-it('queues tomorrow while excluding a near-puck-drop game from the outside window', function (): void {
+it('queues today and tomorrow with the outside window for jobs to evaluate', function (): void {
     Queue::fake();
     $this->travelTo(Carbon::parse('2026-09-19 16:00:00 UTC'));
     DB::table('nhl_teams')->insert([
@@ -1754,9 +1758,10 @@ it('queues tomorrow while excluding a near-puck-drop game from the outside windo
 
     Artisan::call('nhl:import-anticipated-lineups', ['--window' => 'outside-two-hours']);
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 4);
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010117);
-    Queue::assertNotPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010116);
+    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010116
+        && $job->window === 'outside-two-hours');
     $this->travelBack();
 });
 
@@ -1801,6 +1806,87 @@ it('keeps the within two hour schedule lane eligible after todays puck drop', fu
     ]);
 
     expect(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeTrue();
+});
+
+it('evaluates the discovery window inside the team job before contacting providers', function (
+    string $date,
+    string $start,
+    string $window,
+    bool $eligible
+): void {
+    $this->travelTo(Carbon::parse('2026-09-19 16:00:00 UTC'));
+    config(['services.x.bearer_token' => 'test-key']);
+    Http::fake(['*' => Http::response([])]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010120, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => $date, 'game_dow' => 'Saturday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse($start, 'UTC'),
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $run = ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'command' => 'nhl:import-anticipated-lineups', 'total_records' => 1,
+        'processed_records' => 0, 'successful_records' => 0,
+        'failed_records' => 0, 'skipped_records' => 0, 'started_at' => now(),
+    ]);
+
+    $job = new ImportNhlAnticipatedLineupTeamJob(2026010120, 'TOR', 10, $run->id, $window);
+    $job->handle(app(NhlAnticipatedLineupImporter::class));
+
+    if ($eligible) {
+        Http::assertSent(fn ($request): bool => str_contains($request->url(), 'api-web.nhle.com'));
+    } else {
+        Http::assertNothingSent();
+    }
+    expect($run->fresh()->processed_records)->toBe(1)
+        ->and($run->fresh()->skipped_records)->toBe(1)
+        ->and($run->fresh()->status)->toBe('completed');
+    $this->travelBack();
+})->with([
+    'near game' => ['2026-09-19', '2026-09-19 17:00:00', 'within-two-hours', true],
+    'boundary' => ['2026-09-19', '2026-09-19 18:00:00', 'within-two-hours', true],
+    'started today' => ['2026-09-19', '2026-09-19 15:00:00', 'within-two-hours', true],
+    'too early' => ['2026-09-19', '2026-09-19 21:00:00', 'within-two-hours', false],
+    'tomorrow not near' => ['2026-09-20', '2026-09-20 17:00:00', 'within-two-hours', false],
+    'outside excludes near' => ['2026-09-19', '2026-09-19 17:00:00', 'outside-two-hours', false],
+    'outside tomorrow' => ['2026-09-20', '2026-09-20 17:00:00', 'outside-two-hours', true],
+    'manual today' => ['2026-09-19', '2026-09-19 17:00:00', 'all', true],
+    'manual tomorrow' => ['2026-09-20', '2026-09-20 17:00:00', 'all', true],
+    'stale queued game' => ['2026-09-18', '2026-09-18 17:00:00', 'all', false],
+]);
+
+it('caps every source at six five-post pages even when pagination continues', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-20 16:00:00 UTC'));
+    config(['services.x.bearer_token' => 'test-key']);
+    createTimelineSource('TOR', 10, 'source_one', 'source-1');
+    createTimelineSource('TOR', 10, 'source_two', 'source-2');
+    $game = (object) [
+        'nhl_game_id' => 2026010120, 'game_date' => '2026-09-20',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $requests = 0;
+    Http::fake(function ($request) use (&$requests) {
+        $requests++;
+
+        return Http::response([
+            'data' => array_map(fn (int $index): array => [
+                'id' => (string) ($requests * 10 + $index),
+                'text' => 'General team update.',
+                'created_at' => '2026-09-20T12:00:00Z',
+            ], range(1, 5)),
+            'meta' => ['next_token' => 'page-' . $requests],
+        ]);
+    });
+
+    expect(app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR'))->toBe([]);
+    Http::assertSentCount(12);
+    foreach (['source-1', 'source-2'] as $sourceId) {
+        expect(Http::recorded()->filter(fn (array $record): bool =>
+            str_contains($record[0]->url(), '/users/' . $sourceId . '/tweets')
+            && (int) $record[0]['max_results'] === 5))->toHaveCount(6);
+    }
+    $this->travelBack();
 });
 
 it('reads source timelines round robin in five-post pages', function (): void {

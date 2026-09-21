@@ -27,7 +27,7 @@ when_not_to_use:
   - Replacing an official NHL game roster or boxscore lineup.
   - Treating multiple posts from the same publisher as independent corroboration.
 rules:
-  - Discovery queues one bounded job per team and NHL game.
+  - The parent command queues one job per team and NHL game scheduled today or tomorrow without reading current lineups or contacting providers. Team jobs evaluate the requested timing window and existing coverage when they execute, recording ineligible work as skipped.
   - Anticipated-lineup team jobs must use the dedicated lineups queue.
   - Default and outside-two-hours discovery include future games scheduled today and tomorrow in America/Toronto; within-two-hours discovery remains limited to today's games.
   - Discovery may accept a lineup post published on the game date or the immediately preceding calendar date when the post identifies the targeted game lineup.
@@ -47,7 +47,7 @@ rules:
   - One distinct source is reported, two are corroborated, and three or more are strongly corroborated.
   - Consensus compares normalized player slots and only time-relevant matching observations.
   - Newer evidence may supersede current truth without deleting older observations.
-  - Once a current lineup contains complete eligible forward and defense groups for the game date, lineup discovery must not dispatch or perform another X search for that game and team, regardless of source count, evidence status, or unresolved player identities.
+  - Once a current lineup contains complete eligible forward and defense groups for the game date, the dispatched team job must skip provider discovery for that game and team, regardless of source count, evidence status, or unresolved player identities.
   - Predictions may use a reported lineup when all eighteen skaters resolve to unique NHL player ids; corroboration remains higher-confidence evidence rather than a prediction prerequisite.
   - Prediction assembly must apply the same game-specific NHL, NHLe, and replacement-level projection ladder to all eighteen resolved skaters regardless of whether lineup authority is public evidence or the official NHL boxscore; official authority must not bypass rookie projection fallbacks.
   - An unresolved skater may remain prediction-eligible only on F4 or D3 and only when that same line or pair contains at least one resolved player; unresolved F1-F3 or D1-D2 skaters, or a depth group with no resolved peer, keep the lineup prediction-ineligible.
@@ -62,7 +62,7 @@ rules:
   - Public matchup status is team-specific and game detail renders the current representative lineup while retaining links to its supporting observations and remaining extensible for broader game details.
   - Generic X keyword search is prohibited; lineup discovery reads only reusable X accounts explicitly scoped to the target NHL team.
   - Lineup discovery must use only source-team scopes whose is_active flag is true.
-  - Discovery reads five posts from each stored source in round-robin order, then follows each source timeline's pagination token for its next five posts and repeats until a complete lineup is accepted or every source is exhausted at the start-of-day boundary immediately preceding the target game.
+  - Discovery reads five posts from each stored source in round-robin order, with at most six pages (thirty posts) per account per discovery attempt. A source is exhausted at that cap, when pagination ends or repeats, or at the start-of-day boundary immediately preceding the target game. Other sources continue until complete lineup coverage is accepted or every source is exhausted.
   - Provider account ids are resolved once and cached; every timeline page is evaluated without keyword filtering.
   - Every returned post is read in full and evaluated locally; search-term presence does not determine whether the post contains lineup evidence.
   - In the local Laravel environment only, every returned X post must write a Markdown audit under docs/troubleshooting/lineups/{TEAM_ABBREV}/x_post_{X_POST_ID}.md before candidate filtering, including its approval or decline reason, complete text, player matches, parsed slots, game context, and raw provider post.

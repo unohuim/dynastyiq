@@ -6,7 +6,6 @@ namespace App\Console\Commands;
 
 use App\Jobs\ImportNhlAnticipatedLineupTeamJob;
 use App\Models\ImportRun;
-use App\Models\NhlCurrentLineup;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -35,36 +34,18 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         $games = DB::table('nhl_games')
             ->whereBetween('game_date', [$today->toDateString(), $tomorrow->toDateString()])
             ->whereNotNull('start_time_utc')
-            ->when($window === 'within-two-hours', fn ($query) => $query
-                ->whereDate('game_date', $today->toDateString())
-                ->where('start_time_utc', '<=', now()->addHours(2)))
-            ->when($window === 'outside-two-hours', fn ($query) => $query->where('start_time_utc', '>', now()->addHours(2)))
             ->orderBy('start_time_utc')->get();
 
         $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
-        $gamesById = $games->keyBy('nhl_game_id');
-        $current = NhlCurrentLineup::query()->with('observation')
-            ->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))->get()
-            ->filter(function (NhlCurrentLineup $lineup) use ($gamesById): bool {
-                $game = $gamesById->get($lineup->nhl_game_id);
-
-                return $game !== null && $lineup->observation !== null
-                    && $lineup->observation->isEligibleForGameDate((string) $game->game_date);
-            })
-            ->keyBy(fn (object $row): string => $row->nhl_game_id . ':' . $row->team_id);
-        $jobs = $games->flatMap(function (object $game) use ($teamIds, $current): array {
+        $jobs = $games->flatMap(function (object $game) use ($teamIds): array {
             $awayTeam = mb_strtoupper((string) $game->away_team_abbrev);
             $homeTeam = mb_strtoupper((string) $game->home_team_abbrev);
             $awayTeamId = $teamIds->get($awayTeam);
             $homeTeamId = $teamIds->get($homeTeam);
-            $awayComplete = $awayTeamId !== null
-                && $current->has($game->nhl_game_id . ':' . $awayTeamId);
-            $homeComplete = $homeTeamId !== null
-                && $current->has($game->nhl_game_id . ':' . $homeTeamId);
 
             return array_values(array_filter([
-                ! $awayComplete && $awayTeam !== '' ? [$game, $awayTeam, $awayTeamId] : null,
-                ! $homeComplete && $homeTeam !== '' ? [$game, $homeTeam, $homeTeamId] : null,
+                $awayTeam !== '' ? [$game, $awayTeam, $awayTeamId] : null,
+                $homeTeam !== '' ? [$game, $homeTeam, $homeTeamId] : null,
             ]));
         })->values();
 
@@ -87,6 +68,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
                 $teamAbbrev,
                 (int) $teamId,
                 $run?->id,
+                $window,
             );
         }
 

@@ -29,12 +29,16 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
     public bool $failOnTimeout = true;
 
+    public string $window = 'all';
+
     public function __construct(
         public readonly int $nhlGameId,
         public readonly string $teamAbbrev,
         public readonly int $teamId,
         public readonly ?int $importRunId = null,
+        string $window = 'all',
     ) {
+        $this->window = $window;
         $this->onQueue('lineups');
     }
 
@@ -44,7 +48,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         $errorMessage = null;
         try {
             $game = DB::table('nhl_games')->where('nhl_game_id', $this->nhlGameId)->first();
-            if ($game === null) {
+            if ($game === null || ! $this->isWithinDiscoveryWindow($game)) {
                 $result = 'skipped';
             } elseif ($this->hasCompleteCurrentLineup($game)) {
                 $result = 'skipped';
@@ -109,6 +113,26 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
     private function importRun(): ?ImportRun
     {
         return $this->importRunId ? ImportRun::query()->find($this->importRunId) : null;
+    }
+
+    /** Recheck game-date and lane eligibility when the queued work actually runs. */
+    private function isWithinDiscoveryWindow(object $game): bool
+    {
+        $today = Carbon::now('America/Toronto')->startOfDay();
+        $gameDate = Carbon::parse($game->game_date)->toDateString();
+        if (! in_array($gameDate, [$today->toDateString(), $today->copy()->addDay()->toDateString()], true)
+            || empty($game->start_time_utc)) {
+            return false;
+        }
+
+        $start = Carbon::parse($game->start_time_utc, 'UTC');
+
+        return match ($this->window) {
+            'all' => true,
+            'within-two-hours' => $gameDate === $today->toDateString() && $start->lte(now()->addHours(2)),
+            'outside-two-hours' => $start->gt(now()->addHours(2)),
+            default => false,
+        };
     }
 
     private function hasCompleteCurrentLineup(object $game): bool

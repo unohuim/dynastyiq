@@ -37,7 +37,7 @@ The importer reads timelines in round-robin order:
 1. Read the newest five posts from source one.
 2. Read the newest five posts from source two, then every remaining source.
 3. If both a complete forward group and complete defense group have not been accepted, read posts 6–10 from source one using its `next_token`.
-4. Continue the same cycle until both groups are available or every timeline is exhausted.
+4. Continue the same cycle until both groups are available or every timeline is exhausted. Each account is limited to six pages of five posts (at most 30 posts) per discovery attempt, even if X returns another pagination token. Reaching one account's cap does not stop the remaining accounts.
 
 Every request includes a `start_time` at the beginning of the calendar day immediately preceding the target game, interpreted in America/Toronto and sent to X in UTC. This permits yesterday's lineup report for today's game without scanning older history.
 
@@ -94,9 +94,11 @@ The existing Anticipated Lineups admin schedule remains authoritative:
 - `within_two_hours` defaults to 900 seconds and applies to each same-day game relative to puck drop.
 - `outside_two_hours` defaults to 3600 seconds and considers games today and tomorrow.
 - Same-day games with missing lineup coverage remain eligible after puck drop.
-- A team with two current matching independent sources is no longer searched.
+- A team with a complete, date-eligible current lineup is no longer searched, even if it has only one source or unresolved player identities.
 
-The scheduler queues one bounded job per eligible game/team. Jobs share an X-search overlap lock. HTTP 429 responses release the job according to X's `Retry-After` header or the existing bounded backoff.
+The scheduler still controls when each configured lane becomes due. The parent import command dispatches one `lineups` queue job per game/team for today and tomorrow without checking current lineups or contacting providers. Each job rechecks its game date and requested timing window, skips existing complete lineup coverage, checks NHL, and only then scans X. Ineligible jobs count as skipped in import progress. Manual runs use the `all` window; the within-two-hours window applies only to today's games, including games already started.
+
+Jobs share an X-search overlap lock. HTTP 429 responses release the job according to X's `Retry-After` header or the existing bounded backoff. Pagination remains attempt-local: a retried job starts its scan again, so the 30-post cap is not a persistent cross-retry usage budget.
 
 Live terminal and Admin output is intentionally concise and emits one line per timeline page, for example `CAR | @Canes | posts 1-5`. Detailed post decisions and reasons remain in local troubleshooting Markdown.
 
