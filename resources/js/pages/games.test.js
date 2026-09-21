@@ -1,6 +1,11 @@
 /* @vitest-environment jsdom */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createApp } from 'vue';
+import ToggleSwitch from '../components/ToggleSwitch.vue';
+import GameCard from './Games/GameCard.vue';
+import GamesIndex from './Games/Index.vue';
+import LineupTeam from './Games/LineupTeam.vue';
 import {
     createGameCard,
     formatGameDate,
@@ -243,5 +248,157 @@ describe('game date navigation', () => {
         await settle();
         expect(document.querySelector('[data-games-date]').value).toBe('2026-09-20');
         expect(document.querySelector('[data-games-status]').textContent).toContain('could not be loaded');
+    });
+});
+
+describe('Vue game presentation', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="vue-game"></div>';
+    });
+
+    it('renders the matchup through the Vue game card', () => {
+        createApp(GameCard, { game }).mount('#vue-game');
+        expect(document.body.textContent).toContain('MTL at TOR');
+    });
+
+    it('renders both team scores through the Vue game card', () => {
+        createApp(GameCard, { game }).mount('#vue-game');
+        expect([...document.querySelectorAll('.tabular-nums')].map((node) => node.textContent)).toEqual(['2', '4']);
+    });
+
+    it('uses the final-state visual treatment', () => {
+        createApp(GameCard, { game: { ...game, game_state: 'FINAL', game_state_label: 'Final' } }).mount('#vue-game');
+        expect(document.body.querySelector('.bg-emerald-50')?.textContent).toBe('Final');
+    });
+
+    it('renders reported goalies and scratches in Vue lineup details', () => {
+        const team = {
+            team_abbrev: 'TOR',
+            lineup: {
+                evidence_status: 'reported', source_count: 1, last_observed_at: '2026-09-20T15:00:00Z',
+                sources: [],
+                players: [
+                    { player_name: 'Starting Goalie', line_key: 'G', slot_index: 1, resolution_status: 'resolved' },
+                    { player_name: 'Healthy Scratch', line_key: 'SCR', slot_index: 1, resolution_status: 'resolved' },
+                ],
+            },
+        };
+        createApp(LineupTeam, { team, side: 'Home' }).mount('#vue-game');
+        expect(document.body.textContent).toContain('Starting Goalie');
+        expect(document.body.textContent).toContain('Healthy Scratch');
+    });
+
+    it('renders lineup source links in Vue lineup details', () => {
+        const team = {
+            team_abbrev: 'TOR',
+            lineup: {
+                evidence_status: 'reported', source_count: 1, last_observed_at: '2026-09-20T15:00:00Z',
+                players: [],
+                sources: [{ source_id: 1, name: 'Team Reporter', handle: 'reporter', post_url: 'https://x.com/reporter/status/1' }],
+            },
+        };
+        createApp(LineupTeam, { team, side: 'Home' }).mount('#vue-game');
+        expect(document.querySelector('a[href="https://x.com/reporter/status/1"]')?.textContent).toContain('@reporter');
+    });
+});
+
+describe('Vue toggle switch', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="vue-toggle"></div>';
+    });
+
+    it('exposes accessible switch state', () => {
+        createApp(ToggleSwitch, { modelValue: true, label: 'Enable sync' }).mount('#vue-toggle');
+        const toggle = document.querySelector('[role="switch"]');
+        expect(toggle.getAttribute('aria-label')).toBe('Enable sync');
+        expect(toggle.getAttribute('aria-checked')).toBe('true');
+    });
+
+    it('emits the inverse value when selected', () => {
+        const changed = vi.fn();
+        createApp(ToggleSwitch, {
+            modelValue: false,
+            label: 'Enable sync',
+            'onUpdate:modelValue': changed,
+        }).mount('#vue-toggle');
+        document.querySelector('[role="switch"]').click();
+        expect(changed).toHaveBeenCalledWith(true);
+    });
+
+    it('does not emit while disabled', () => {
+        const changed = vi.fn();
+        createApp(ToggleSwitch, {
+            modelValue: false,
+            disabled: true,
+            label: 'Enable sync',
+            'onUpdate:modelValue': changed,
+        }).mount('#vue-toggle');
+        document.querySelector('[role="switch"]').click();
+        expect(changed).not.toHaveBeenCalled();
+    });
+
+    it('moves the switch thumb for the enabled state', () => {
+        createApp(ToggleSwitch, { modelValue: true, label: 'Enable sync' }).mount('#vue-toggle');
+        expect(document.querySelector('[role="switch"] span').classList.contains('translate-x-5')).toBe(true);
+    });
+});
+
+describe('Vue game sync settings', () => {
+    const props = {
+        initialPayload: { games: [], meta: { date: '2026-09-21', count: 0 } },
+        payloadUrl: '/games/payload',
+        canManageGameSync: true,
+        gameSyncSchedule: { enabled: false, lanes: { today: { interval_seconds: 60 } } },
+        gameSyncScheduleUrl: '/admin/imports/nhl-game-boxscores/schedule',
+    };
+
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="vue-games"></div>';
+        global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    function openSettings() {
+        createApp(GamesIndex, props).mount('#vue-games');
+        document.querySelector('[aria-label="Game sync settings"]').click();
+    }
+
+    it('shows only the Sync label beside the toggle', () => {
+        openSettings();
+        expect(document.querySelector('[role="dialog"]').textContent).toContain('Sync');
+        expect(document.querySelector('[role="dialog"]').textContent).not.toContain('Sync today’s games');
+    });
+
+    it('does not render frequency submit or cancel actions', () => {
+        openSettings();
+        expect(document.querySelector('[role="dialog"]').textContent).not.toContain('Save frequency');
+        expect(document.querySelector('[role="dialog"]').textContent).not.toContain('Cancel');
+    });
+
+    it('persists the toggle immediately through AJAX', async () => {
+        openSettings();
+        document.querySelector('[role="switch"]').click();
+        await settle();
+        expect(fetch).toHaveBeenCalledWith(
+            '/admin/imports/nhl-game-boxscores/schedule',
+            expect.objectContaining({ method: 'PUT' }),
+        );
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: true, intervals: { today: 60 } });
+    });
+
+    it('debounces frequency persistence through AJAX', async () => {
+        vi.useFakeTimers();
+        openSettings();
+        const hoursInput = document.querySelector('input[type="number"]');
+        hoursInput.value = '1';
+        hoursInput.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        expect(fetch).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(500);
+        await settle();
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, intervals: { today: 3600 } });
     });
 });

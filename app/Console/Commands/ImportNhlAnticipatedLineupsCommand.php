@@ -57,27 +57,14 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             $homeTeam = mb_strtoupper((string) $game->home_team_abbrev);
             $awayTeamId = $teamIds->get($awayTeam);
             $homeTeamId = $teamIds->get($homeTeam);
-            $awayCurrent = $awayTeamId === null
-                ? null
-                : $current->get($game->nhl_game_id . ':' . $awayTeamId);
-            $homeCurrent = $homeTeamId === null
-                ? null
-                : $current->get($game->nhl_game_id . ':' . $homeTeamId);
-            $awayReported = (int) ($awayCurrent->source_count ?? 0) >= 1;
-            $homeReported = (int) ($homeCurrent->source_count ?? 0) >= 1;
-
-            if (! $awayReported || ! $homeReported) {
-                return array_values(array_filter([
-                    ! $awayReported && $awayTeam !== '' ? [$game, $awayTeam, $awayTeamId] : null,
-                    ! $homeReported && $homeTeam !== '' ? [$game, $homeTeam, $homeTeamId] : null,
-                ]));
-            }
+            $awayComplete = $awayTeamId !== null
+                && $current->has($game->nhl_game_id . ':' . $awayTeamId);
+            $homeComplete = $homeTeamId !== null
+                && $current->has($game->nhl_game_id . ':' . $homeTeamId);
 
             return array_values(array_filter([
-                $awayCurrent->evidence_status !== 'official' && (int) $awayCurrent->source_count < 2
-                    ? [$game, $awayTeam, $awayTeamId] : null,
-                $homeCurrent->evidence_status !== 'official' && (int) $homeCurrent->source_count < 2
-                    ? [$game, $homeTeam, $homeTeamId] : null,
+                ! $awayComplete && $awayTeam !== '' ? [$game, $awayTeam, $awayTeamId] : null,
+                ! $homeComplete && $homeTeam !== '' ? [$game, $homeTeam, $homeTeamId] : null,
             ]));
         })->values();
 

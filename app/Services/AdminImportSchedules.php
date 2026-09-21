@@ -13,11 +13,13 @@ use Illuminate\Support\Facades\DB;
 class AdminImportSchedules
 {
     public const ANTICIPATED_LINEUPS = 'nhl-anticipated-lineups';
+    public const GAME_BOXSCORES = 'nhl-game-boxscores';
 
     public const DEFINITIONS = [
         'nhl-starting-goalies' => ['today' => 900, 'future' => 3600],
         'nhl-injuries' => ['current' => 900],
         self::ANTICIPATED_LINEUPS => ['within_two_hours' => 900, 'outside_two_hours' => 3600],
+        self::GAME_BOXSCORES => ['today' => 60],
     ];
 
     /**
@@ -127,6 +129,13 @@ class AdminImportSchedules
     /** Determine whether a due schedule has an eligible import window. */
     public function shouldDispatch(AdminImportSchedule $schedule, CarbonImmutable $now): bool
     {
+        if ($schedule->source_key === self::GAME_BOXSCORES) {
+            return DB::table('nhl_games')
+                ->whereDate('game_date', $now->utc()->toDateString())
+                ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
+                ->exists();
+        }
+
         if ($schedule->source_key !== self::ANTICIPATED_LINEUPS) {
             return true;
         }

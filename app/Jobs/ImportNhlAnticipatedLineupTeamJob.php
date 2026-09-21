@@ -25,6 +25,10 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
     public int $tries = 25;
 
+    public int $timeout = 600;
+
+    public bool $failOnTimeout = true;
+
     public function __construct(
         public readonly int $nhlGameId,
         public readonly string $teamAbbrev,
@@ -41,6 +45,8 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         try {
             $game = DB::table('nhl_games')->where('nhl_game_id', $this->nhlGameId)->first();
             if ($game === null) {
+                $result = 'skipped';
+            } elseif ($this->hasCompleteCurrentLineup($game)) {
                 $result = 'skipped';
             } else {
                 $official = $importer->importOfficial($game, $this->teamAbbrev, $this->teamId);
@@ -91,22 +97,13 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
             $errorMessage = $throwable->getMessage();
         }
 
-        $run = $this->importRun();
-        $run?->recordProcessed($result);
-        if ($run !== null) {
-            if ($errorMessage !== null) {
-                $run->update(['error_message' => $errorMessage]);
-            }
-            $run->refresh();
-            if (($run->processed_records ?? 0) >= ($run->total_records ?? 0)) {
-                if (($run->failed_records ?? 0) > 0) {
-                    $run->markFailed((string) ($run->error_message
-                        ?: 'One or more anticipated-lineup team searches failed.'));
-                } else {
-                    $run->markCompleted();
-                }
-            }
-        }
+        $this->recordTerminalResult($result, $errorMessage);
+    }
+
+    /** Record queue failures that occur outside handle, including timeouts and exhausted releases. */
+    public function failed(Throwable $throwable): void
+    {
+        $this->recordTerminalResult('failed', $throwable->getMessage());
     }
 
     private function importRun(): ?ImportRun
@@ -114,22 +111,46 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         return $this->importRunId ? ImportRun::query()->find($this->importRunId) : null;
     }
 
-    /** @return array{needed:bool,opponent_reported:bool} */
-    private function searchDecision(object $game): array
+    private function hasCompleteCurrentLineup(object $game): bool
     {
-        $ownCurrent = NhlCurrentLineup::query()->with('observation')
+        $current = NhlCurrentLineup::query()->with('observation')
             ->where('nhl_game_id', $this->nhlGameId)
             ->where('team_id', $this->teamId)
             ->first();
-        if ($ownCurrent !== null && ($ownCurrent->observation === null
-            || ! $ownCurrent->observation->isEligibleForGameDate((string) $game->game_date))) {
-            $ownCurrent = null;
+
+        return $current !== null
+            && $current->observation !== null
+            && $current->observation->isEligibleForGameDate((string) $game->game_date);
+    }
+
+    private function recordTerminalResult(string $result, ?string $errorMessage = null): void
+    {
+        $run = $this->importRun();
+        if ($run === null || $run->status !== 'working') {
+            return;
         }
-        if (($ownCurrent->evidence_status ?? null) === 'official') {
-            return ['needed' => false, 'opponent_reported' => false];
+
+        $run->recordProcessed($result);
+        if ($errorMessage !== null) {
+            $run->update(['error_message' => $errorMessage]);
         }
-        $ownSourceCount = (int) ($ownCurrent->source_count ?? 0);
-        if ($ownSourceCount >= 2) {
+        $run->refresh();
+        if (($run->processed_records ?? 0) < ($run->total_records ?? 0)) {
+            return;
+        }
+
+        if (($run->failed_records ?? 0) > 0) {
+            $run->markFailed((string) ($run->error_message
+                ?: 'One or more anticipated-lineup team searches failed.'));
+        } else {
+            $run->markCompleted();
+        }
+    }
+
+    /** @return array{needed:bool,opponent_reported:bool} */
+    private function searchDecision(object $game): array
+    {
+        if ($this->hasCompleteCurrentLineup($game)) {
             return ['needed' => false, 'opponent_reported' => false];
         }
 
@@ -148,7 +169,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
         $opponentSourceCount = (int) ($opponentCurrent->source_count ?? 0);
 
         return [
-            'needed' => $ownSourceCount === 0 || $opponentSourceCount > 0,
+            'needed' => true,
             'opponent_reported' => $opponentSourceCount > 0,
         ];
     }

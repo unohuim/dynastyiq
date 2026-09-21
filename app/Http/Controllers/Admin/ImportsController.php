@@ -23,35 +23,37 @@ class ImportsController extends Controller
 
     public function index()
     {
-        $imports = $this->imports->sources()->map(function (array $source) {
-            $batch = DB::table('job_batches')
-                ->where('name', 'like', "%{$source['key']}%")
-                ->latest('created_at')
-                ->first();
+        $imports = $this->imports->sources()
+            ->filter(fn (array $source): bool => (bool) ($source['visible'] ?? true))
+            ->map(function (array $source) {
+                $batch = DB::table('job_batches')
+                    ->where('name', 'like', "%{$source['key']}%")
+                    ->latest('created_at')
+                    ->first();
 
-            $lastRun = ImportRun::query()
-                ->where('source', $source['key'])
-                ->latest('ran_at')
-                ->first();
+                $lastRun = ImportRun::query()
+                    ->where('source', $source['key'])
+                    ->latest('ran_at')
+                    ->first();
 
-            return [
-                'key' => $source['key'],
-                'label' => $source['label'],
-                'group' => $source['group'] ?? 'player',
-                'batch' => $batch ? Bus::findBatch($batch->id) : null,
-                'last_run' => $lastRun?->finished_at ?? $lastRun?->started_at ?? $batch->created_at ?? null,
-                'duration' => $lastRun?->duration_seconds !== null
-                    ? "{$lastRun->duration_seconds}s"
-                    : ($batch?->finished_at ? now()->parse($batch->finished_at)->diffInSeconds($batch->created_at) . 's' : null),
-                'status' => $lastRun?->status,
-                'progress' => $lastRun ? $this->importRunPayload($lastRun)['progress'] : null,
-                'counts' => $batch?->total_jobs ? "{$batch->total_jobs} jobs" : null,
-                'run_url' => $this->importRunUrl($source),
-                'status_url' => route('admin.imports.status', ['key' => $source['key']]),
-                'can_rerun_failed' => (bool) ($source['can_retry'] ?? true),
-                'actions' => $source['actions'] ?? [],
-            ];
-        })->all();
+                return [
+                    'key' => $source['key'],
+                    'label' => $source['label'],
+                    'group' => $source['group'] ?? 'player',
+                    'batch' => $batch ? Bus::findBatch($batch->id) : null,
+                    'last_run' => $lastRun?->finished_at ?? $lastRun?->started_at ?? $batch->created_at ?? null,
+                    'duration' => $lastRun?->duration_seconds !== null
+                        ? "{$lastRun->duration_seconds}s"
+                        : ($batch?->finished_at ? now()->parse($batch->finished_at)->diffInSeconds($batch->created_at) . 's' : null),
+                    'status' => $lastRun?->status,
+                    'progress' => $lastRun ? $this->importRunPayload($lastRun)['progress'] : null,
+                    'counts' => $batch?->total_jobs ? "{$batch->total_jobs} jobs" : null,
+                    'run_url' => $this->importRunUrl($source),
+                    'status_url' => route('admin.imports.status', ['key' => $source['key']]),
+                    'can_rerun_failed' => (bool) ($source['can_retry'] ?? true),
+                    'actions' => $source['actions'] ?? [],
+                ];
+            })->all();
 
         return view('admin.imports', ['imports' => $imports]);
     }

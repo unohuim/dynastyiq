@@ -1664,6 +1664,7 @@ php artisan nhl:schedule-import --from=2026-10-01 --to=2026-10-07
 **Type:** Domain Import Services
 **Location:**
 - `app/Console/Commands/EmptyNhlCommand.php`
+- `app/Console/Commands/SyncTodayNhlBoxscoresCommand.php`
 - `app/Services/ImportNHLPlayByPlay.php`
 - `app/Services/NhlPbpEventNormalizer.php`
 - `app/Services/SumNHLPlayByPlay.php`
@@ -1675,7 +1676,7 @@ php artisan nhl:schedule-import --from=2026-10-01 --to=2026-10-07
 - `app/Services/SumNhlSeasonStats.php`
 
 **Purpose:**
-Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. Explicit reprocess runs delete game-scoped stage-owned rows before importing or recalculating so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
+Own the actual NHL data transformations used by queued import jobs and admin commands, including boxscore-guided reconciliation of provider shiftchart artifacts when official shift and TOI targets are already available. The persisted today-game schedule refreshes every non-final UTC-today game, including FUT and PRE, and excludes games after FINAL is stored. Explicit reprocess runs delete game-scoped stage-owned rows before importing or recalculating so provider removals do not leave stale play-by-play, boxscore, shift, summary, unit, or event-link data. Goalie-facing game-summary totals reconcile to official boxscore rows when PBP goal events omit goalie identity, goalie decisions preserve regulation, overtime, and shootout splits before season aggregation, and goalie season GP excludes dressed-backup rows with zero time on ice.
 Play-by-play imports use `nhl_game_id` plus `nhl_event_id` as the provider natural identity, and that identity is database-enforced for non-null NHL event ids. Duplicate PBP repair stores affected game ids in `nhl_play_by_play_dedupe_repairs` so derived summaries, validations, unit links, and shot facts can be rebuilt after dedupe.
 
 **When to Use:**
@@ -2863,9 +2864,21 @@ $batch = app(AdminImports::class)->dispatch('fantrax');
 **Type:** Persisted Scheduler Dispatch Pattern
 **Location:** `app/Services/AdminImportSchedules.php`, `app/Console/Commands/DispatchScheduledAdminImportsCommand.php`, `routes/console.php`
 
-**Purpose:** Persist opt-in intervals in seconds and queue due admin imports through the existing registry without running provider work in the scheduler. Anticipated lineups support a timezone-aware daily anchor, once-or-recurring outside-window execution, and an optional recurring two-hour pregame window.
+**Purpose:** Persist opt-in intervals in seconds and queue due admin imports through the existing registry without running provider work in the scheduler. Anticipated lineups support a timezone-aware daily anchor, once-or-recurring outside-window execution, and an optional recurring two-hour pregame window. The `nhl-game-boxscores` source runs only while UTC today contains a game not stored as FINAL.
 
 **Public Interface:** `PUT /admin/imports/{key}/schedule`, `admin:dispatch-scheduled-imports`, `admin_import_schedules`.
+
+### Vue Toggle Switch
+
+**Type:** Reusable UI Component
+
+**Location:** `resources/js/components/ToggleSwitch.vue`
+
+**Purpose:** Provide an accessible Tailwind-styled binary switch with `v-model` compatibility, disabled state, and motion-compliant visual feedback.
+
+**Public Interface:** `modelValue`, `disabled`, `label`, `describedBy`, and the `update:modelValue` event.
+
+**Example Usage:** `<ToggleSwitch v-model="enabled" label="Enable synchronization" />`
 
 ---
 
@@ -3730,6 +3743,6 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
-NHL gamecenter boxscore rosters are checked first for each queued game/team; anticipated-lineup jobs use a dedicated two-worker `lineups` queue, and only paid X requests share the overlap lock so NHL checks may proceed concurrently. A complete official roster becomes authoritative current truth and suppresses paid X discovery. Otherwise, X discovery uses only stored team-scoped source timelines and never generic keyword search. It reads five posts per source in round-robin order and follows pagination until it finds both complete lineup components or exhausts the day-before-game boundary. Complete twelve-forward and six-defense groups may come from separate posts or sources; smaller fragments remain audit-only. Current component links preserve every supporting observation without manufacturing combined evidence. Lineup extraction and persistence both use `NhlLineupPlayerResolver`; independent name matching is prohibited. The resolver uses canonical normalization, team context, unambiguous acronyms and surname prefixes, and recent team sweater evidence, and reprocessing may enrich unresolved identity fields without changing reported evidence. Same-team surname collisions use reported first initials and do not fall back across conflicting initials. Live terminal and Admin output contains only team, source handle, and five-post range; detailed decisions remain in local troubleshooting Markdown. Each local import removes prior generated lineup-audit Markdown while preserving its README and directories, then writes a new timestamped manifest, fresh team search files, complete timeline results, and per-post decisions. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/games` pages show every scheduled matchup with independent team evidence statuses and current lineup detail while providing the route foundation for broader game information. Stored scores appear only after both participating teams have boxscore rows and the boxscore import stage is completed. Predictions may use an official or combined reported lineup with all core skaters resolved; unresolved F4/D3 players may use the average of resolved peers in their exact group. Every resolved skater receives the same NHL, NHLe, or replacement-level game projection ladder regardless of lineup authority. Otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+NHL gamecenter boxscore rosters are checked only for game/teams without complete current lineup coverage; anticipated-lineup jobs use a dedicated two-worker `lineups` queue, and only paid X requests share the overlap lock so NHL checks may proceed concurrently. Any complete date-eligible current lineup suppresses further X discovery regardless of source count, evidence status, or unresolved player identities, while a complete official roster remains authoritative when no current lineup exists. Queue-level timeouts and exhausted attempts record terminal failures against the parent import so progress cannot remain working indefinitely. Otherwise, X discovery uses only stored team-scoped source timelines and never generic keyword search. It reads five posts per source in round-robin order and follows pagination until it finds both complete lineup components or exhausts the day-before-game boundary. Complete twelve-forward and six-defense groups may come from separate posts or sources; smaller fragments remain audit-only. Current component links preserve every supporting observation without manufacturing combined evidence. Lineup extraction and persistence both use `NhlLineupPlayerResolver`; independent name matching is prohibited. The resolver uses canonical normalization, team context, unambiguous acronyms and surname prefixes, and recent team sweater evidence, and reprocessing may enrich unresolved identity fields without changing reported evidence. Same-team surname collisions use reported first initials and do not fall back across conflicting initials. Live terminal and Admin output contains only team, source handle, and five-post range; detailed decisions remain in local troubleshooting Markdown. Each local import removes prior generated lineup-audit Markdown while preserving its README and directories, then writes a new timestamped manifest, fresh team search files, complete timeline results, and per-post decisions. Official starter flags and ordered public G1 reports contribute starting-goalie evidence. Public `/games` pages show every scheduled matchup with independent team evidence statuses and current lineup detail while providing the route foundation for broader game information. Stored scores appear only after both participating teams have boxscore rows and the boxscore import stage is completed. Predictions may use an official or combined reported lineup with all core skaters resolved; unresolved F4/D3 players may use the average of resolved peers in their exact group. Every resolved skater receives the same NHL, NHLe, or replacement-level game projection ladder regardless of lineup authority. Otherwise existing roster projection remains authoritative. Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
 **End of ARCHITECTURE_INVENTORY**

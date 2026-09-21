@@ -7612,6 +7612,52 @@ it('allows super admins to enable and configure availability import schedules', 
     expect(AdminImportSchedule::query()->where('source_key', 'nhl-starting-goalies')->count())->toBe(2);
 });
 
+it('allows super admins to configure the today game boxscore schedule', function () {
+    $this->actingAs(($this->makeSuperAdmin)())->putJson(
+        route('admin.imports.schedule.update', ['key' => AdminImportSchedules::GAME_BOXSCORES]),
+        ['enabled' => true, 'intervals' => ['today' => 75]]
+    )->assertOk()
+        ->assertJsonPath('schedule.enabled', true)
+        ->assertJsonPath('schedule.lanes.today.interval_seconds', 75);
+
+    expect(AdminImportSchedule::query()
+        ->where('source_key', AdminImportSchedules::GAME_BOXSCORES)
+        ->where('lane_key', 'today')
+        ->value('enabled'))->toBeTrue();
+});
+
+it('dispatches today game boxscore sync while a utc-today game is not final', function () {
+    $now = Carbon::parse('2026-09-21 23:30:00 UTC')->toImmutable();
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026010991, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'MON', 'game_month' => 'SEP',
+        'game_state' => 'PRE', 'start_time_utc' => '2026-09-21 23:00:00',
+        'created_at' => $now, 'updated_at' => $now,
+    ]);
+    $schedule = new AdminImportSchedule([
+        'source_key' => AdminImportSchedules::GAME_BOXSCORES, 'lane_key' => 'today',
+        'enabled' => true, 'lane_enabled' => true, 'interval_seconds' => 60,
+    ]);
+
+    expect(app(AdminImportSchedules::class)->shouldDispatch($schedule, $now))->toBeTrue();
+});
+
+it('does not dispatch today game boxscore sync after every utc-today game is final', function () {
+    $now = Carbon::parse('2026-09-21 23:30:00 UTC')->toImmutable();
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026010992, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'MON', 'game_month' => 'SEP',
+        'game_state' => 'FINAL', 'start_time_utc' => '2026-09-21 22:00:00',
+        'created_at' => $now, 'updated_at' => $now,
+    ]);
+    $schedule = new AdminImportSchedule([
+        'source_key' => AdminImportSchedules::GAME_BOXSCORES, 'lane_key' => 'today',
+        'enabled' => true, 'lane_enabled' => true, 'interval_seconds' => 60,
+    ]);
+
+    expect(app(AdminImportSchedules::class)->shouldDispatch($schedule, $now))->toBeFalse();
+});
+
 it('stores anticipated lineup daily and conditional recurrence settings', function () {
     $this->actingAs(($this->makeSuperAdmin)())->putJson(
         route('admin.imports.schedule.update', ['key' => 'nhl-anticipated-lineups']),

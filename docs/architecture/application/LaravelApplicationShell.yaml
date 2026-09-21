@@ -18,6 +18,7 @@ rules:
   - Laravel routes own browser and API entrypoints.
   - Blade views own server-rendered page shells.
   - Inertia pages may own approved migrated browser page shells while controllers continue to own backend props.
+  - The public /games and /games/{nhlGameId} pages are Inertia/Vue-owned and must not reintroduce page Blade templates, Alpine state, or Livewire behavior.
   - Vite-managed JavaScript owns browser-side behavior.
   - Domain persistence and authorization stay in Laravel, not in the Discord bot runtime.
   - Horizon must isolate time-sensitive anticipated-lineup work on the lineups queue, Fantrax provider work on the fantrax queue, and unrelated work on the default queue.

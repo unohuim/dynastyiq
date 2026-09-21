@@ -6,12 +6,15 @@ use App\Models\ApiClient;
 use App\Models\AdminImportSchedule;
 use App\Events\ImportStreamEvent;
 use App\Models\EvidenceSource;
+use App\Models\ImportRun;
 use App\Models\NhlGame;
 use App\Models\NhlCurrentLineup;
 use App\Models\NhlLineupObservation;
 use App\Models\NhlPlayerInjury;
 use App\Models\NhlStartingGoalieObservation;
 use App\Models\Player;
+use App\Models\Role;
+use App\Models\User;
 use App\Jobs\ImportNhlAnticipatedLineupTeamJob;
 use App\Services\NhlInjuryImporter;
 use App\Services\NhlAnticipatedLineupImporter;
@@ -26,6 +29,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
+use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
 
@@ -1585,7 +1589,32 @@ it('queues only the missing opponent while one team already has a reported lineu
         && $job->teamAbbrev === 'MTL');
 });
 
-it('checks the NHL boxscore but skips X when current truth needs no search', function (): void {
+it('does not dispatch a reported complete lineup again when players remain unresolved', function (): void {
+    Queue::fake();
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 10, 'abbrev' => 'TOR', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $current = createCurrentAnticipatedLineup([
+        'evidence_status' => 'reported',
+        'source_count' => 1,
+    ]);
+    $current->observation->players()->update([
+        'player_id' => null,
+        'nhl_player_id' => null,
+        'resolution_status' => 'unresolved',
+    ]);
+
+    Artisan::call('nhl:import-anticipated-lineups');
+
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 1);
+    Queue::assertNotPushed(
+        fn (ImportNhlAnticipatedLineupTeamJob $job): bool =>
+            $job->nhlGameId === 2026020099 && $job->teamAbbrev === 'TOR'
+    );
+});
+
+it('skips both NHL and X discovery when a complete current lineup exists', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
@@ -1597,8 +1626,26 @@ it('checks the NHL boxscore but skips X when current truth needs no search', fun
     $job = new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10);
     $job->handle(app(NhlAnticipatedLineupImporter::class));
 
-    Http::assertSent(fn ($request): bool => str_contains($request->url(), 'api-web.nhle.com'));
+    Http::assertNothingSent();
     Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
+});
+
+it('records a terminal queue failure and closes its lineup import run', function (): void {
+    $run = ImportRun::query()->create([
+        'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+        'command' => 'nhl:import-anticipated-lineups', 'total_records' => 1,
+        'processed_records' => 0, 'successful_records' => 0,
+        'failed_records' => 0, 'skipped_records' => 0, 'started_at' => now(),
+    ]);
+    $job = new ImportNhlAnticipatedLineupTeamJob(2026020999, 'TOR', 10, $run->id);
+
+    $job->failed(new \RuntimeException('Lineup worker timed out.'));
+
+    $run->refresh();
+    expect($run->status)->toBe('failed')
+        ->and($run->processed_records)->toBe(1)
+        ->and($run->failed_records)->toBe(1)
+        ->and($run->error_message)->toBe('Lineup worker timed out.');
 });
 
 it('counts an empty lineup search as skipped instead of imported', function (): void {
@@ -1668,7 +1715,7 @@ it('records an actionable X credit failure on the import run', function (): void
         ->and($run->error_message)->toContain('credits');
 });
 
-it('checks the NHL boxscore without searching X while the opponent remains missing', function (): void {
+it('does not revisit a complete lineup while the opponent remains missing', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
@@ -1683,8 +1730,7 @@ it('checks the NHL boxscore without searching X while the opponent remains missi
     $job = new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10);
     $job->handle(app(NhlAnticipatedLineupImporter::class));
 
-    Http::assertSent(fn ($request): bool => str_contains($request->url(), 'api-web.nhle.com'));
-    Http::assertNotSent(fn ($request): bool => str_contains($request->url(), 'api.x.com'));
+    Http::assertNothingSent();
 });
 
 it('queues tomorrow while excluding a near-puck-drop game from the outside window', function (): void {
@@ -2063,9 +2109,13 @@ it('shows every scheduled game on the public games page for today', function ():
 
     $this->get(route('games.index'))
         ->assertOk()
-        ->assertSee('NHL Games')
-        ->assertSee(route('games.show', ['nhlGameId' => 2026010201]), false)
-        ->assertSee(route('games.show', ['nhlGameId' => 2026010202]), false);
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Index')
+            ->where('canManageGameSync', false)
+            ->where('gameSyncSchedule', null)
+            ->has('initialPayload.games', 2)
+            ->where('initialPayload.games.0.nhl_game_id', 2026010201)
+            ->where('initialPayload.games.1.nhl_game_id', 2026010202));
 
     $this->travelBack();
 });
@@ -2082,9 +2132,11 @@ it('filters the public games page by an explicit date', function (): void {
 
     $this->get(route('games.index', ['date' => '2026-09-20']))
         ->assertOk()
-        ->assertSee('Sunday, September 20, 2026')
-        ->assertSee('#2026010204')
-        ->assertDontSee('#2026010203');
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Index')
+            ->where('initialPayload.meta.date', '2026-09-20')
+            ->has('initialPayload.games', 1)
+            ->where('initialPayload.games.0.nhl_game_id', 2026010204));
 });
 
 it('returns the public games payload for asynchronous date navigation', function (): void {
@@ -2134,7 +2186,9 @@ it('shows stored scores when both team boxscores completed processing', function
         ->assertJsonPath('games.0.home.score', 4);
     $this->get(route('games.index', ['date' => '2026-09-20']))
         ->assertOk()
-        ->assertSeeTextInOrder(['Away · BOS', '2', 'Home · NYR', '4']);
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('initialPayload.games.0.away.score', 2)
+            ->where('initialPayload.games.0.home.score', 4));
 });
 
 it('hides stored scores until boxscores for both teams complete processing', function (): void {
@@ -2177,8 +2231,10 @@ it('validates the public games date filter', function (): void {
 it('shows a calm empty state when no games are scheduled for a lineup date', function (): void {
     $this->get(route('games.index', ['date' => '2026-09-30']))
         ->assertOk()
-        ->assertSee('No NHL games are scheduled for this date.')
-        ->assertSee('Return to today');
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Index')
+            ->where('initialPayload.meta.date', '2026-09-30')
+            ->has('initialPayload.games', 0));
 });
 
 it('shows independent not reported statuses for teams without current lineups', function (): void {
@@ -2191,7 +2247,9 @@ it('shows independent not reported statuses for teams without current lineups', 
 
     $this->get(route('games.index', ['date' => '2026-09-19']))
         ->assertOk()
-        ->assertSeeTextInOrder(['Away · DAL', 'Not Reported', 'Home · STL', 'Not Reported']);
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('initialPayload.games.0.away.lineup', null)
+            ->where('initialPayload.games.0.home.lineup', null));
 });
 
 it('shows each team current lineup status independently on a game card', function (): void {
@@ -2215,7 +2273,9 @@ it('shows each team current lineup status independently on a game card', functio
 
     $this->get(route('games.index', ['date' => today()->toDateString()]))
         ->assertOk()
-        ->assertSeeTextInOrder(['Away · MTL', 'Strongly Corroborated', 'Home · TOR', 'Reported']);
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('initialPayload.games.0.away.lineup.evidence_status', 'strongly_corroborated')
+            ->where('initialPayload.games.0.home.lineup.evidence_status', 'reported'));
 });
 
 it('groups current players and exposes supporting sources on lineup detail', function (): void {
@@ -2245,15 +2305,35 @@ it('groups current players and exposes supporting sources on lineup detail', fun
 
     $this->get(route('games.show', ['nhlGameId' => $current->nhl_game_id]))
         ->assertOk()
-        ->assertSee('F1')
-        ->assertSee('Second Forward')
-        ->assertSee('Unresolved')
-        ->assertSee('D1')
-        ->assertSee('First Defender')
-        ->assertSee('Starting Goalie')
-        ->assertSee('Healthy Scratch')
-        ->assertSee('No anticipated lineup has been reported for MTL.')
-        ->assertSee('https://x.com/testreporter/status/1', false);
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Show')
+            ->where('game.nhl_game_id', $current->nhl_game_id)
+            ->where('game.home.lineup.players.0.player_name', 'First Defender')
+            ->where('game.home.lineup.players.2.player_name', 'Second Forward')
+            ->where('game.home.lineup.players.3.player_name', 'Starting Goalie')
+            ->where('game.home.lineup.players.4.player_name', 'Healthy Scratch')
+            ->where('game.home.lineup.sources.0.post_url', 'https://x.com/testreporter/status/1')
+            ->where('game.away.lineup', null));
+});
+
+it('exposes game sync settings only to a super admin', function (): void {
+    $user = User::factory()->create();
+    $role = Role::query()->create([
+        'name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99,
+        'scope' => 'global', 'is_active' => true,
+    ]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+
+    $this->actingAs($user)->get(route('games.index'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Index')
+            ->where('canManageGameSync', true)
+            ->where('gameSyncSchedule.enabled', false)
+            ->where('gameSyncSchedule.lanes.today.interval_seconds', 60)
+            ->where('gameSyncScheduleUrl', route('admin.imports.schedule.update', [
+                'key' => AdminImportSchedules::GAME_BOXSCORES,
+            ])));
 });
 
 it('returns not found for an unknown public game', function (): void {

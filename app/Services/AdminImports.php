@@ -61,6 +61,14 @@ class AdminImports
             ['key' => 'nhl-injuries', 'label' => 'Injuries', 'group' => 'player', 'command' => 'nhl:import-injuries', 'options' => []],
             ['key' => 'nhl-anticipated-lineups', 'label' => 'Anticipated Lineups', 'group' => 'player', 'command' => 'nhl:import-anticipated-lineups', 'options' => []],
             [
+                'key' => 'nhl-game-boxscores',
+                'label' => 'Today Game Boxscores',
+                'group' => 'game',
+                'command' => 'nhl:sync-today-boxscores',
+                'options' => [],
+                'visible' => false,
+            ],
+            [
                 'key' => 'fantrax-category-definitions',
                 'label' => 'Fantrax Categories Definitions',
                 'group' => 'platform',

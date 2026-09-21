@@ -877,6 +877,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl-starting-goalies`
 - `nhl-injuries`
 - `nhl-anticipated-lineups`
+- `nhl-game-boxscores`
 
 **Semantic meaning:**
 
@@ -891,6 +892,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl-starting-goalies`: RotoWire starting-goalie observation import.
 - `nhl-injuries`: CBS/RotoWire current injury import.
 - `nhl-anticipated-lineups`: Stored-source X timeline discovery of text-based anticipated NHL lineups.
+- `nhl-game-boxscores`: UTC-today NHL game-state and available boxscore refresh for non-final games.
 
 ### Admin Import Schedule Lane
 
@@ -902,7 +904,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `within_two_hours`
 - `outside_two_hours`
 
-`today` and `future` apply to starting goalies. `current` applies to game-independent injuries. `within_two_hours` and `outside_two_hours` apply to today's anticipated lineups relative to puck drop.
+`today` applies to starting goalies and today-game boxscore refreshes; `future` applies to starting goalies. `current` applies to game-independent injuries. `within_two_hours` and `outside_two_hours` apply to today's anticipated lineups relative to puck drop.
 
 ### Admin Import Schedule Recurrence Mode
 

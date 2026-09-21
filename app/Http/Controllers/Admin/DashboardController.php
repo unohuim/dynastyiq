@@ -37,33 +37,35 @@ class DashboardController extends Controller
             return $this->players($request);
         }
 
-        $imports = $this->imports->sources()->map(function (array $source) {
-            $lastRun = ImportRun::query()
-                ->where('source', $source['key'])
-                ->latest('ran_at')
-                ->first();
+        $imports = $this->imports->sources()
+            ->filter(fn (array $source): bool => (bool) ($source['visible'] ?? true))
+            ->map(function (array $source) {
+                $lastRun = ImportRun::query()
+                    ->where('source', $source['key'])
+                    ->latest('ran_at')
+                    ->first();
 
-            return [
-                'key' => $source['key'],
-                'label' => $source['label'],
-                'group' => $source['group'] ?? 'player',
-                'last_run' => ($lastRun?->finished_at ?? $lastRun?->started_at)?->toIso8601String(),
-                'status' => $lastRun?->status,
-                'started_at' => $lastRun?->started_at?->toIso8601String(),
-                'finished_at' => $lastRun?->finished_at?->toIso8601String(),
-                'duration_seconds' => $lastRun?->duration_seconds,
-                'run_url' => $this->importRunUrl($source),
-                'status_url' => route('admin.imports.status', ['key' => $source['key']]),
-                'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
-                'actions' => $source['actions'] ?? [],
-                'schedule' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
-                    ? $this->importSchedules->payload($source['key'])
-                    : null,
-                'schedule_url' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
-                    ? route('admin.imports.schedule.update', ['key' => $source['key']])
-                    : null,
-            ];
-        });
+                return [
+                    'key' => $source['key'],
+                    'label' => $source['label'],
+                    'group' => $source['group'] ?? 'player',
+                    'last_run' => ($lastRun?->finished_at ?? $lastRun?->started_at)?->toIso8601String(),
+                    'status' => $lastRun?->status,
+                    'started_at' => $lastRun?->started_at?->toIso8601String(),
+                    'finished_at' => $lastRun?->finished_at?->toIso8601String(),
+                    'duration_seconds' => $lastRun?->duration_seconds,
+                    'run_url' => $this->importRunUrl($source),
+                    'status_url' => route('admin.imports.status', ['key' => $source['key']]),
+                    'progress' => $lastRun ? $this->importProgressPayload($lastRun) : null,
+                    'actions' => $source['actions'] ?? [],
+                    'schedule' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
+                        ? $this->importSchedules->payload($source['key'])
+                        : null,
+                    'schedule_url' => isset(AdminImportSchedules::DEFINITIONS[$source['key']])
+                        ? route('admin.imports.schedule.update', ['key' => $source['key']])
+                        : null,
+                ];
+            });
 
         $hasPlayers = Player::query()->exists();
         $hasFantraxPlayers = FantraxPlayer::query()->exists();

@@ -1,0 +1,24 @@
+name: Vue Toggle Switch
+type: Reusable UI Component
+location:
+  - resources/js/components/ToggleSwitch.vue
+purpose: Provide an accessible Tailwind-styled binary switch for Inertia and Vue interfaces.
+when_to_use:
+  - A Vue interface needs a binary setting that persists immediately when changed.
+when_not_to_use:
+  - A choice has more than two possible values.
+  - A setting must be submitted as part of an indivisible multi-field transaction.
+rules:
+  - The switch must expose role switch, aria-checked, and an accessible label.
+  - The switch must emit update:modelValue and must not own persistence behavior.
+  - The consuming interface must disable the switch while persistence is pending.
+  - Failed persistence must restore the prior value and expose an inline error or toast.
+  - Visual state changes must use Tailwind transition utilities and respect reduced-motion preferences.
+public_interface:
+  - modelValue
+  - disabled
+  - label
+  - describedBy
+  - update:modelValue
+example_usage: |
+  <ToggleSwitch v-model="enabled" label="Enable synchronization" />

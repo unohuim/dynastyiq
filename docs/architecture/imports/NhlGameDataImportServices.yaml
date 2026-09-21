@@ -4,6 +4,7 @@ location:
   - app/Console/Commands/EmptyNhlCommand.php
   - app/Console/Commands/RefreshNhlGoalieDecisionsCommand.php
   - app/Console/Commands/RefreshNhlSpecialTeamsSplitsCommand.php
+  - app/Console/Commands/SyncTodayNhlBoxscoresCommand.php
   - app/Console/Commands/RepairDuplicateNhlPlayByPlayCommand.php
   - app/Jobs/DedupeNhlPlayByPlayRepairJob.php
   - app/Jobs/QueueDuplicatePbpAffectedRebuildsJob.php
@@ -62,6 +63,7 @@ rules:
   - PBP game summarization must reconcile goalie-facing goals against, saves, shots against, strength splits, save percentage, goals-against average, and time on ice from official boxscore rows after PBP-derived summaries are persisted.
   - Goalie empty-net shiftchart artifacts must be excluded from normalized shift-derived outputs when play-by-play goalie and situation state proves the goalie was no longer on ice, while raw provider payload files remain preserved for audit.
   - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
+  - Scheduled today-game boxscore refreshes must request every UTC-today game not already stored as FINAL so FUT and PRE state changes are observed; a stored FINAL game must not be requested again by that schedule.
   - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.
@@ -127,6 +129,7 @@ public_interface:
   - EmptyNhlCommand
   - RefreshNhlGoalieDecisionsCommand
   - RefreshNhlSpecialTeamsSplitsCommand
+  - SyncTodayNhlBoxscoresCommand
   - RefreshNhlGoalieDecisionJob
   - RefreshNhlSpecialTeamsSplitsJob
   - RepairDuplicateNhlPlayByPlayCommand
