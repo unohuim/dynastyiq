@@ -21,12 +21,18 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 
 uses(RefreshDatabase::class);
+
+beforeEach(function (): void {
+    Cache::flush();
+    Http::fake();
+});
 
 function availabilityToken(array $scopes = ['nhl-stats:read'], bool $revoked = false): string
 {
@@ -1821,6 +1827,102 @@ it('declines a partial lineup and continues to the next stored source', function
         && $event->message === 'TOR | @partial_reporter | posts 1-5');
 });
 
+it('combines complete forward and defense posts into one current lineup', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    createTimelineSource('TOR', 10, 'forward_reporter', 'forward-source');
+    createTimelineSource('TOR', 10, 'defense_reporter', 'defense-source');
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026010126, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $forwardResponse = xLineupResponse([
+        lineupCandidate('forward_reporter', 'https://x.com/forward_reporter/status/997'),
+    ]);
+    $forwardResponse['data'][0]['text'] = implode("\n", [
+        'Forwards',
+        'Forward 1 - Forward 2 - Forward 3',
+        'Forward 4 - Forward 5 - Forward 6',
+        'Forward 7 - Forward 8 - Forward 9',
+        'Forward 10 - Forward 11 - Forward 12',
+    ]);
+    $forwardResponse['data'][0]['author_id'] = 'forward-source';
+    $defenseResponse = xLineupResponse([
+        lineupCandidate('defense_reporter', 'https://x.com/defense_reporter/status/998'),
+    ]);
+    $defenseResponse['data'][0]['text'] = implode("\n", [
+        'Defense',
+        'Defense 1 - Defense 2',
+        'Defense 3 - Defense 4',
+        'Defense 5 - Defense 6',
+    ]);
+    $defenseResponse['data'][0]['author_id'] = 'defense-source';
+    Http::fake(['api.x.com/*' => Http::sequence()->push($forwardResponse)->push($defenseResponse)]);
+
+    $result = app(NhlAnticipatedLineupImporter::class)->importFromX($game, 'TOR', 10);
+    $payload = app(\App\Services\NhlAnticipatedLineupPayload::class)
+        ->forGameTeam(2026010126, 'TOR', false);
+
+    expect($result['observed'])->toBe(2)
+        ->and($payload)->not->toBeNull()
+        ->and($payload['players'])->toHaveCount(18)
+        ->and(collect($payload['players'])->where('lineup_role', 'forward'))->toHaveCount(12)
+        ->and(collect($payload['players'])->where('lineup_role', 'defense'))->toHaveCount(6)
+        ->and($payload['sources'])->toHaveCount(2);
+    $this->assertDatabaseHas('nhl_lineup_observations', ['completeness' => 'forwards'])
+        ->assertDatabaseHas('nhl_lineup_observations', ['completeness' => 'defense'])
+        ->assertDatabaseCount('nhl_current_lineup_components', 2)
+        ->assertDatabaseHas('nhl_current_lineups', [
+            'nhl_game_id' => 2026010126,
+            'team_id' => 10,
+            'evidence_status' => 'reported',
+            'source_count' => 2,
+        ]);
+});
+
+it('replaces only the current component supplied by a newer complete group', function (): void {
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026010127, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $full = lineupCandidate('update_reporter', 'https://x.com/update_reporter/status/1001');
+    $full['published_at'] = '2026-09-20T14:00:00Z';
+    foreach ($full['players'] as $index => &$player) {
+        $player['nhl_player_id'] = 8481000 + $index;
+    }
+    unset($player);
+    $newForwards = lineupCandidate('update_reporter', 'https://x.com/update_reporter/status/1002');
+    $newForwards['published_at'] = '2026-09-20T15:00:00Z';
+    $newForwards['players'] = collect($newForwards['players'])->where('lineup_role', 'forward')
+        ->values()->map(function (array $player, int $index): array {
+            $player['name'] = 'Updated Forward ' . ($index + 1);
+            $player['nhl_player_id'] = 8483000 + $index;
+
+            return $player;
+        })->all();
+    $discovery = \Mockery::mock(\App\Services\XNhlLineupDiscovery::class);
+    $discovery->shouldReceive('discover')->twice()->andReturn([$full], [$newForwards]);
+    $importer = new NhlAnticipatedLineupImporter(
+        app(\App\Services\NhlOfficialGameRosterDiscovery::class),
+        $discovery,
+        app(\App\Services\NhlLineupPlayerResolver::class)
+    );
+
+    $importer->importFromX($game, 'TOR', 10);
+    $importer->importFromX($game, 'TOR', 10);
+    $payload = app(\App\Services\NhlAnticipatedLineupPayload::class)
+        ->forGameTeam(2026010127, 'TOR', false);
+
+    expect(collect($payload['players'])->where('lineup_role', 'forward')->pluck('nhl_player_id')->first())
+        ->toBe(8483000)
+        ->and(collect($payload['players'])->where('lineup_role', 'defense')->pluck('nhl_player_id')->first())
+        ->toBe(8481012);
+    $this->assertDatabaseCount('nhl_current_lineup_components', 2);
+});
+
 it('does not call X when a team has no stored timeline sources', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     \App\Models\NhlTeam::query()->create(['nhl_id' => 55, 'abbrev' => 'NEW']);
@@ -1910,7 +2012,7 @@ it('does not expose a current lineup whose evidence predates the day-before-game
     $this->travelBack();
 });
 
-it('shows every scheduled game on the public lineups page for today', function (): void {
+it('shows every scheduled game on the public games page for today', function (): void {
     $this->travelTo(Carbon::parse('2026-09-19 14:00:00 UTC'));
     foreach ([2026010201, 2026010202] as $gameId) {
         NhlGame::query()->create([
@@ -1921,16 +2023,16 @@ it('shows every scheduled game on the public lineups page for today', function (
         ]);
     }
 
-    $this->get(route('lineups.index'))
+    $this->get(route('games.index'))
         ->assertOk()
-        ->assertSee('NHL Lineups')
-        ->assertSee(route('lineups.show', ['nhlGameId' => 2026010201]), false)
-        ->assertSee(route('lineups.show', ['nhlGameId' => 2026010202]), false);
+        ->assertSee('NHL Games')
+        ->assertSee(route('games.show', ['nhlGameId' => 2026010201]), false)
+        ->assertSee(route('games.show', ['nhlGameId' => 2026010202]), false);
 
     $this->travelBack();
 });
 
-it('filters the public lineups page by an explicit date', function (): void {
+it('filters the public games page by an explicit date', function (): void {
     foreach ([['2026-09-19', 2026010203], ['2026-09-20', 2026010204]] as [$date, $gameId]) {
         NhlGame::query()->create([
             'nhl_game_id' => $gameId, 'season_id' => '20262027', 'game_type' => 1,
@@ -1940,21 +2042,102 @@ it('filters the public lineups page by an explicit date', function (): void {
         ]);
     }
 
-    $this->get(route('lineups.index', ['date' => '2026-09-20']))
+    $this->get(route('games.index', ['date' => '2026-09-20']))
         ->assertOk()
         ->assertSee('Sunday, September 20, 2026')
         ->assertSee('#2026010204')
         ->assertDontSee('#2026010203');
 });
 
-it('validates the public lineups date filter', function (): void {
-    $this->get(route('lineups.index', ['date' => 'September-19']))
+it('returns the public games payload for asynchronous date navigation', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010214, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
+    ]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-21']))
+        ->assertOk()
+        ->assertJsonPath('meta.date', '2026-09-21')
+        ->assertJsonPath('meta.count', 1)
+        ->assertJsonPath('games.0.nhl_game_id', 2026010214)
+        ->assertJsonPath('games.0.away.team_abbrev', 'BOS')
+        ->assertJsonPath('games.0.home.team_abbrev', 'NYR');
+});
+
+it('shows stored scores when both team boxscores completed processing', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010215, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-20 23:00:00 UTC'),
+        'away_team_id' => 6, 'away_team_abbrev' => 'BOS', 'away_team_score' => 2,
+        'home_team_id' => 3, 'home_team_abbrev' => 'NYR', 'home_team_score' => 4,
+    ]);
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20262027', 'game_date' => '2026-09-20', 'game_id' => '2026010215',
+        'game_type' => 1, 'import_type' => 'boxscore', 'items_count' => 2, 'status' => 'completed',
+        'discovered_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_boxscores')->insert([
+        [
+            'nhl_game_id' => 2026010215, 'nhl_player_id' => 8471001, 'nhl_team_id' => 6,
+            'created_at' => now(), 'updated_at' => now(),
+        ],
+        [
+            'nhl_game_id' => 2026010215, 'nhl_player_id' => 8471002, 'nhl_team_id' => 3,
+            'created_at' => now(), 'updated_at' => now(),
+        ],
+    ]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-20']))
+        ->assertOk()
+        ->assertJsonPath('games.0.away.score', 2)
+        ->assertJsonPath('games.0.home.score', 4);
+    $this->get(route('games.index', ['date' => '2026-09-20']))
+        ->assertOk()
+        ->assertSeeTextInOrder(['Away · BOS', '2', 'Home · NYR', '4']);
+});
+
+it('hides stored scores until boxscores for both teams complete processing', function (): void {
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010216, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-20 23:00:00 UTC'),
+        'away_team_id' => 6, 'away_team_abbrev' => 'BOS', 'away_team_score' => 2,
+        'home_team_id' => 3, 'home_team_abbrev' => 'NYR', 'home_team_score' => 4,
+    ]);
+    DB::table('nhl_import_progress')->insert([
+        'season_id' => '20262027', 'game_date' => '2026-09-20', 'game_id' => '2026010216',
+        'game_type' => 1, 'import_type' => 'boxscore', 'items_count' => 1, 'status' => 'completed',
+        'discovered_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhl_boxscores')->insert([
+        'nhl_game_id' => 2026010216, 'nhl_player_id' => 8471003, 'nhl_team_id' => 6,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-20']))
+        ->assertOk()
+        ->assertJsonPath('games.0.away.score', null)
+        ->assertJsonPath('games.0.home.score', null);
+});
+
+it('requires a valid date for the public games payload', function (): void {
+    $this->getJson(route('games.payload'))->assertUnprocessable()->assertJsonValidationErrors('date');
+    $this->getJson(route('games.payload', ['date' => 'September-21']))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('date');
+});
+
+it('validates the public games date filter', function (): void {
+    $this->get(route('games.index', ['date' => 'September-19']))
         ->assertRedirect()
         ->assertSessionHasErrors('date');
 });
 
 it('shows a calm empty state when no games are scheduled for a lineup date', function (): void {
-    $this->get(route('lineups.index', ['date' => '2026-09-30']))
+    $this->get(route('games.index', ['date' => '2026-09-30']))
         ->assertOk()
         ->assertSee('No NHL games are scheduled for this date.')
         ->assertSee('Return to today');
@@ -1968,7 +2151,7 @@ it('shows independent not reported statuses for teams without current lineups', 
         'away_team_abbrev' => 'DAL', 'home_team_abbrev' => 'STL',
     ]);
 
-    $this->get(route('lineups.index', ['date' => '2026-09-19']))
+    $this->get(route('games.index', ['date' => '2026-09-19']))
         ->assertOk()
         ->assertSeeTextInOrder(['Away · DAL', 'Not Reported', 'Home · STL', 'Not Reported']);
 });
@@ -1992,7 +2175,7 @@ it('shows each team current lineup status independently on a game card', functio
         'first_observed_at' => now()->subHour(), 'last_observed_at' => now(),
     ]);
 
-    $this->get(route('lineups.index', ['date' => today()->toDateString()]))
+    $this->get(route('games.index', ['date' => today()->toDateString()]))
         ->assertOk()
         ->assertSeeTextInOrder(['Away · MTL', 'Strongly Corroborated', 'Home · TOR', 'Reported']);
 });
@@ -2022,7 +2205,7 @@ it('groups current players and exposes supporting sources on lineup detail', fun
         ],
     ]);
 
-    $this->get(route('lineups.show', ['nhlGameId' => $current->nhl_game_id]))
+    $this->get(route('games.show', ['nhlGameId' => $current->nhl_game_id]))
         ->assertOk()
         ->assertSee('F1')
         ->assertSee('Second Forward')
@@ -2035,6 +2218,105 @@ it('groups current players and exposes supporting sources on lineup detail', fun
         ->assertSee('https://x.com/testreporter/status/1', false);
 });
 
-it('returns not found for an unknown public lineup game', function (): void {
-    $this->get(route('lineups.show', ['nhlGameId' => 2999999999]))->assertNotFound();
+it('returns not found for an unknown public game', function (): void {
+    $this->get(route('games.show', ['nhlGameId' => 2999999999]))->assertNotFound();
+});
+
+it('does not expose the removed public lineups routes', function (): void {
+    $this->get('/lineups')->assertNotFound();
+    $this->get('/lineups/payload?date=2026-09-21')->assertNotFound();
+    $this->get('/lineups/2026010201')->assertNotFound();
+});
+
+it('promotes games ahead of stats and removes lineups from the news menu', function (): void {
+    $this->get(route('games.index'))
+        ->assertOk()
+        ->assertSeeTextInOrder(['Home', 'Games', 'Stats', 'News'])
+        ->assertDontSee('>Lineups</', false);
+});
+
+it('shows cached pregame state and an observed starting goalie for a utc-today game', function (): void {
+    Carbon::setTestNow('2026-09-21 12:00:00 UTC');
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010301, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
+    ]);
+    createGoalieObservation([
+        'nhl_game_id' => 2026010301, 'game_date' => '2026-09-21', 'team_abbrev' => 'BOS',
+        'opponent_abbrev' => 'NYR', 'is_home' => false, 'player_name' => 'Expected Goalie',
+    ]);
+    Http::fake(['*' => Http::response(['gameState' => 'FUT'], 200)]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-21']))
+        ->assertOk()
+        ->assertJsonPath('games.0.game_state', 'FUT')
+        ->assertJsonPath('games.0.game_state_label', 'Pregame')
+        ->assertJsonPath('games.0.away.starting_goalie.name', 'Expected Goalie')
+        ->assertJsonPath('games.0.away.starting_goalie.status', 'expected');
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-21']))->assertOk();
+    Http::assertSentCount(1);
+    Carbon::setTestNow();
+});
+
+it('treats every non-terminal non-pregame provider state as live', function (): void {
+    Carbon::setTestNow('2026-09-21 12:00:00 UTC');
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010302, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 16:00:00 UTC'),
+        'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
+    ]);
+    Http::fake(['*' => Http::response([
+        'gameState' => 'INTERMISSION', 'awayTeam' => ['score' => 2], 'homeTeam' => ['score' => 1],
+    ], 200)]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-21']))
+        ->assertOk()
+        ->assertJsonPath('games.0.game_state_label', 'Live')
+        ->assertJsonPath('games.0.away.score', 2)
+        ->assertJsonPath('games.0.home.score', 1);
+    $this->assertDatabaseHas('nhl_games', [
+        'nhl_game_id' => 2026010302, 'game_state' => 'INTERMISSION',
+        'away_team_score' => 2, 'home_team_score' => 1,
+    ]);
+    Carbon::setTestNow();
+});
+
+it('treats final as the terminal gamecenter state', function (): void {
+    Carbon::setTestNow('2026-09-21 12:00:00 UTC');
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010303, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 10:00:00 UTC'),
+        'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
+    ]);
+    Http::fake(['*' => Http::response([
+        'gameState' => 'FINAL', 'awayTeam' => ['score' => 3], 'homeTeam' => ['score' => 4],
+    ], 200)]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-21']))
+        ->assertOk()
+        ->assertJsonPath('games.0.game_state', 'FINAL')
+        ->assertJsonPath('games.0.game_state_label', 'Final')
+        ->assertJsonPath('games.0.home.score', 4);
+    Carbon::setTestNow();
+});
+
+it('does not request gamecenter for a date outside utc today', function (): void {
+    Carbon::setTestNow('2026-09-21 23:30:00 UTC');
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010304, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-22', 'game_dow' => 'Tuesday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-22 23:00:00 UTC'),
+        'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
+    ]);
+
+    $this->getJson(route('games.payload', ['date' => '2026-09-22']))
+        ->assertOk()
+        ->assertJsonPath('games.0.game_state_label', null);
+    Http::assertNothingSent();
+    Carbon::setTestNow();
 });

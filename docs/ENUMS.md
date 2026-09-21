@@ -186,6 +186,13 @@ Horizon assigns six workers to `default`, two workers to `fantrax`, and two work
 
 ## Hockey Domain
 
+### NHL Current Lineup Component Type
+
+**Storage location(s):** `nhl_current_lineup_components.component_type`
+
+- `forwards`: Complete twelve-forward component.
+- `defense`: Complete six-defense component.
+
 ### NHL SAT Model Family
 
 **Name:** NHL SAT model family
@@ -883,7 +890,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `contracts`: CapWages contract import.
 - `nhl-starting-goalies`: RotoWire starting-goalie observation import.
 - `nhl-injuries`: CBS/RotoWire current injury import.
-- `nhl-anticipated-lineups`: Direct X recent-search discovery of text-based anticipated NHL lineups.
+- `nhl-anticipated-lineups`: Stored-source X timeline discovery of text-based anticipated NHL lineups.
 
 ### Admin Import Schedule Lane
 
@@ -908,7 +915,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 ### Anticipated NHL Lineup Values
 
-- `nhl_lineup_observations.completeness`: `full`, `partial`.
+- `nhl_lineup_observations.completeness`: `full`, `forwards`, `defense`, `partial`.
 - `nhl_lineup_observation_players.lineup_role`: `forward`, `defense`, `goalie`, `scratch`.
 - `nhl_lineup_observation_players.line_key`: `F1`, `F2`, `F3`, `F4`, `D1`, `D2`, `D3`, `G`, `SCR`.
 - `nhl_lineup_observation_players.resolution_status`: `resolved`, `unresolved`.

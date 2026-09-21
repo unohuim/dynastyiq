@@ -6,14 +6,16 @@ location:
   - app/Services/NhlLineupTextParser.php
   - app/Services/NhlAnticipatedLineupImporter.php
   - app/Services/NhlAnticipatedLineupPayload.php
+  - app/Models/NhlCurrentLineupComponent.php
   - app/Jobs/ImportNhlAnticipatedLineupTeamJob.php
   - app/Console/Commands/ImportNhlAnticipatedLineupsCommand.php
-  - app/Http/Controllers/NhlLineupsController.php
-  - resources/views/lineups/
+  - app/Http/Controllers/NhlGamesController.php
+  - resources/views/games/
   - docs/integrations/X_NHL_LINEUPS.md
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
   - database/migrations/2026_09_20_000002_add_x_user_ids_and_seed_nhl_lineup_sources.php
   - database/migrations/2026_09_20_000003_add_is_active_to_source_scopes.php
+  - database/migrations/2026_09_20_000004_create_nhl_current_lineup_components_table.php
 purpose: Discover text-based public NHL lineup reports, preserve immutable observations, and expose a recency-aware current consensus to predictions and partner APIs.
 when_to_use:
   - Searching for anticipated lineups for NHL teams playing today or tomorrow.
@@ -37,6 +39,10 @@ rules:
   - When one team has multiple games on the same date, extracted team players and opponent context must identify the targeted game; ambiguous evidence must not be attached arbitrarily.
   - Twelve ordered forwards map sequentially into four groups of three and six ordered defensemen map into three pairs.
   - A reportable lineup contains twelve forwards and six defensemen; goalies and scratches are optional supplemental evidence.
+  - A post containing all twelve forwards or all six defensemen is an acceptable immutable component observation; smaller player fragments remain audit-only.
+  - Current lineup truth may combine the newest eligible complete forward group and newest eligible complete defense group from different posts or sources while preserving both original observations.
+  - A current composite lineup is prediction-eligible only when the combined groups contain eighteen unique canonically resolved skaters.
+  - A newer complete forward or defense group supersedes only that component and must not replace the other current group.
   - One distinct source is reported, two are corroborated, and three or more are strongly corroborated.
   - Consensus compares normalized player slots and only time-relevant matching observations.
   - Newer evidence may supersede current truth without deleting older observations.
@@ -46,8 +52,9 @@ rules:
   - An NHL boxscore without a complete team roster falls through to X discovery.
   - A preseason partner prediction with unresolved roster evidence must run the same official boxscore discovery for each missing team, persist complete official observations, and reload current lineups before withholding output.
   - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
-  - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
-  - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
+  - The public game index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
+  - The public game index may display historical stored team scores only when both scores are present on nhl_games, the boxscore import stage is completed, and nhl_boxscores contains rows for both participating teams; UTC-today LIVE, CRIT, and FINAL scores may be supplied by the cached official gamecenter context.
+  - Public matchup status is team-specific and game detail renders the current representative lineup while retaining links to its supporting observations and remaining extensible for broader game details.
   - Generic X keyword search is prohibited; lineup discovery reads only reusable X accounts explicitly scoped to the target NHL team.
   - Lineup discovery must use only source-team scopes whose is_active flag is true.
   - Discovery reads five posts from each stored source in round-robin order, then follows each source timeline's pagination token for its next five posts and repeats until a complete lineup is accepted or every source is exhausted at the start-of-day boundary immediately preceding the target game.
@@ -59,7 +66,7 @@ rules:
   - Every account supplying accepted lineup evidence is stored as a reusable X source and scoped to that NHL team without assigning an official or trusted designation.
   - Text lineup extraction walks each post line by line, resolves apparent names against canonical target-team players through PlayerIdentityNormalizer, treats straight apostrophes, curly apostrophes, backticks, and omitted apostrophes as equivalent, and recognizes ordered groups of three forwards or two defensemen regardless of surrounding separators.
   - When same-team players share a surname, a reported first initial must select the matching player; an explicit conflicting initial must not fall back to another same-surname player and create a duplicate canonical id.
-  - A post is approved and persisted as lineup evidence only when it contains twelve forwards and six defensemen; partial groups remain visible in discovery audits but do not stop discovery, create lineup observations, or increment successful lineup counts.
+  - A post is approved and persisted when it contains twelve forwards, six defensemen, or both; smaller fragments remain visible in discovery audits but do not create observations or increment successful observation counts.
   - Search priority follows the earliest scheduled puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.
   - A same-day game remains eligible after puck drop when either team still lacks a reportable lineup; started games with missing coverage take priority over later games.
   - Team discovery jobs may check NHL boxscores concurrently, but paid X requests must share one overlap lock, respect provider Retry-After guidance for temporary rate limits, and retry without recording the released attempt as a failed team search.
@@ -70,8 +77,10 @@ rules:
 public_interface:
   - nhl:import-anticipated-lineups
   - GET /api/nhl-anticipated-lineups
-  - GET /lineups
-  - GET /lineups/{nhlGameId}
+  - GET /games
+  - GET /games/payload
+  - GET /games/{nhlGameId}
   - NhlAnticipatedLineupPayload::forGameTeam
+  - nhl_current_lineup_components
 example_usage: |
   php artisan nhl:import-anticipated-lineups --window=within-two-hours

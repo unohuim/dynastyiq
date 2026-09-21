@@ -1,0 +1,33 @@
+name: NHL Public Game Live Context
+type: Cached Provider Game State Projection
+location:
+  - app/Services/NhlGameLiveContext.php
+  - app/Services/NhlStartingGoalieSelector.php
+  - app/Services/NhlAnticipatedLineupPayload.php
+  - resources/views/games/index.blade.php
+  - resources/js/pages/games.js
+purpose: Enrich today's public NHL game cards with short-lived official state, current scores, and canonical starting-goalie selection.
+when_to_use:
+  - Rendering a UTC-today NHL game whose persisted score is unavailable.
+  - Selecting the same starting-goalie identity for public game cards and partner predictions.
+when_not_to_use:
+  - Replacing completed historical boxscore imports.
+  - Polling NHL gamecenter for dates other than the current UTC date.
+  - Treating projected goalie selection as confirmed evidence.
+rules:
+  - NHL gamecenter boxscore responses are cached independently by NHL game id for sixty seconds.
+  - Provider failure must preserve the persisted game card and must not prevent the public games page from rendering.
+  - FUT renders as Pregame and PRE renders as Starting soon.
+  - Every non-empty provider state other than FUT, PRE, and FINAL is treated as live and renders current provider scores; FINAL renders final provider scores.
+  - Live and FINAL provider state and scores are persisted to nhl_games.
+  - Pregame cards select goalies in order from official boxscore starter, confirmed or expected observation, season projection, then workload projection.
+  - Public and prediction consumers must use NhlStartingGoalieSelector so fallback priority cannot diverge.
+  - Confirmed and expected evidence retains its evidence label; projection fallbacks must be labeled Projected.
+  - Pregame team rows present the selected goalie as a right-aligned identity with player name, evidence-status badge, and canonical player headshot when available.
+public_interface:
+  - GET /games
+  - GET /games/payload
+  - NhlGameLiveContext::forGame
+  - NhlStartingGoalieSelector::select
+example_usage: |
+  $context = app(NhlGameLiveContext::class)->forGame($game);

@@ -53,6 +53,8 @@ class XNhlLineupDiscovery
             'exhausted' => false,
         ])->values()->all();
 
+        $accepted = [];
+        $acceptedComponents = [];
         while (collect($states)->contains(fn (array $state): bool => ! $state['exhausted'])) {
             foreach ($states as $index => $state) {
                 if ($state['exhausted']) {
@@ -68,7 +70,16 @@ class XNhlLineupDiscovery
                     $state['round']
                 );
                 if ($page['candidates'] !== []) {
-                    return $page['candidates'];
+                    $accepted = [...$accepted, ...$page['candidates']];
+                    foreach ($page['candidates'] as $candidate) {
+                        $acceptedComponents = array_values(array_unique([
+                            ...$acceptedComponents,
+                            ...$this->candidateComponents($candidate),
+                        ]));
+                    }
+                    if (count($acceptedComponents) === 2) {
+                        return $accepted;
+                    }
                 }
 
                 $nextToken = $page['next_token'];
@@ -82,7 +93,7 @@ class XNhlLineupDiscovery
             }
         }
 
-        return [];
+        return $accepted;
     }
 
     /** @return array{candidates:array<int,array<string,mixed>>,next_token:?string} */
@@ -276,11 +287,11 @@ class XNhlLineupDiscovery
         $counts = $players->countBy('lineup_role');
         $forwardCount = (int) ($counts['forward'] ?? 0);
         $defenseCount = (int) ($counts['defense'] ?? 0);
-        if ($forwardCount < 12 || $defenseCount < 6) {
+        if ($forwardCount < 12 && $defenseCount < 6) {
             return [
                 'approved' => false,
                 'reason' => sprintf(
-                    'Incomplete lineup: parsed %d of 12 forwards and %d of 6 defensemen.',
+                    'Incomplete lineup groups: parsed %d of 12 forwards and %d of 6 defensemen.',
                     $forwardCount,
                     $defenseCount
                 ),
@@ -304,6 +315,17 @@ class XNhlLineupDiscovery
                 $teamAbbrev
             ),
         ];
+    }
+
+    /** @param array<string,mixed> $candidate @return array<int,string> */
+    private function candidateComponents(array $candidate): array
+    {
+        $counts = collect($candidate['players'] ?? [])->countBy('lineup_role');
+
+        return array_values(array_filter([
+            (int) ($counts['forward'] ?? 0) >= 12 ? 'forwards' : null,
+            (int) ($counts['defense'] ?? 0) >= 6 ? 'defense' : null,
+        ]));
     }
 
     private function output(string $message): void

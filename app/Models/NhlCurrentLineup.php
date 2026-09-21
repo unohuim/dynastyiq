@@ -6,6 +6,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /** Current evidence-backed anticipated lineup projection. */
 class NhlCurrentLineup extends Model
@@ -25,5 +26,11 @@ class NhlCurrentLineup extends Model
     public function observation(): BelongsTo
     {
         return $this->belongsTo(NhlLineupObservation::class, 'nhl_lineup_observation_id');
+    }
+
+    /** Return observations supporting the current forward and defense groups. */
+    public function components(): HasMany
+    {
+        return $this->hasMany(NhlCurrentLineupComponent::class);
     }
 }

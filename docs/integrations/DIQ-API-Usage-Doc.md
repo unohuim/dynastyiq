@@ -740,8 +740,10 @@ Skater roster precedence:
 A complete official or reported game roster is newer, game-specific evidence
 than the injury table. A player explicitly present in that roster is retained
 even if the current injury table still lists the player as unavailable. An
-incomplete lineup or a lineup containing unresolved skaters is evidence only;
-it does not partially replace the projected roster.
+accepted reported roster may combine a complete twelve-forward post and a
+complete six-defense post, including posts from different sources. Smaller
+fragments remain evidence only. A combined lineup containing unresolved or
+duplicate skaters does not replace the projected roster.
 
 | `inputs.*_lineup_source` | Meaning |
 | --- | --- |

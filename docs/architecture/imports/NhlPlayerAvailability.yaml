@@ -4,6 +4,7 @@ location:
   - app/Services/NhlInjuryImporter.php
   - app/Services/NhlStartingGoalieImporter.php
   - app/Services/NhlAvailabilityPayload.php
+  - app/Services/NhlStartingGoalieSelector.php
   - resources/views/starting-goalies/index.blade.php
   - resources/js/pages/starting-goalies.js
   - database/migrations/2026_09_18_000001_create_nhl_availability_tables.php
@@ -32,6 +33,7 @@ rules:
   - When provider matchup orientation conflicts with a resolved NHL game, the NHL schedule is authoritative for home and away assignment.
   - Duplicate or inverse representations of the same provider matchup must produce at most one observation per game and team within an import run.
   - Starting-goalie reads preserve the existing flat observation collection and may additionally group those observations by NHL game for matchup-oriented consumers.
+  - Starting-goalie identity selection is shared by public game cards and predictions in this order: official starter, confirmed or expected observation, season projection, then workload projection.
   - Canonical game start timestamps remain UTC in server payloads; browser presentation converts them to the user's local timezone and includes a timezone abbreviation.
   - Starting-goalie cards use regular-season goalie summaries for GAA, save percentage, and games played.
   - Preseason cards use the previous season's regular-season goalie summaries; regular-season and playoff cards use the game's current season regular-season summaries.

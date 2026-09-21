@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\EvidenceSource;
 use App\Models\NhlCurrentLineup;
+use App\Models\NhlCurrentLineupComponent;
 use App\Models\NhlLineupObservation;
 use App\Models\NhlStartingGoalieObservation;
 use Illuminate\Support\Carbon;
@@ -91,11 +92,24 @@ class NhlAnticipatedLineupImporter
                 $skipped++;
                 continue;
             }
+            $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
+            $completeness = $this->completeness($normalized);
+            if ($completeness === 'partial') {
+                $skipped++;
+                continue;
+            }
 
-            DB::transaction(function () use ($candidate, $game, $teamAbbrev, $teamId, &$observed): void {
+            DB::transaction(function () use (
+                $candidate,
+                $game,
+                $teamAbbrev,
+                $teamId,
+                $normalized,
+                $completeness,
+                &$observed
+            ): void {
                 $source = $this->source($candidate, $teamId, $teamAbbrev);
                 $this->recordEngagement($source, $candidate);
-                $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
                 $structureHash = hash('sha256', json_encode(array_map(
                     fn (array $player): array => [
                         $player['line_key'],
@@ -124,7 +138,7 @@ class NhlAnticipatedLineupImporter
                         'reply_count' => $engagement['replies'] ?? null,
                         'repost_count' => $engagement['reposts'] ?? null,
                         'view_count' => $engagement['views'] ?? null,
-                        'completeness' => $this->completeness($normalized),
+                        'completeness' => $completeness,
                         'structure_hash' => $structureHash,
                         'raw_evidence' => $candidate,
                     ]
@@ -134,9 +148,7 @@ class NhlAnticipatedLineupImporter
                 }
                 $observation->players()->createMany($normalized);
                 $this->recordStartingGoalie($observation, $normalized, $candidate, $game, $teamAbbrev);
-                if ($this->completeness($normalized) === 'full') {
-                    $observed++;
-                }
+                $observed++;
                 $this->refreshCurrent((int) $game->nhl_game_id, $teamId, $teamAbbrev);
             });
         }
@@ -260,9 +272,15 @@ class NhlAnticipatedLineupImporter
     {
         $counts = collect($players)->countBy('lineup_role');
 
-        return ($counts['forward'] ?? 0) >= 12 && ($counts['defense'] ?? 0) >= 6
-            ? 'full'
-            : 'partial';
+        $forwardsComplete = ($counts['forward'] ?? 0) >= 12;
+        $defenseComplete = ($counts['defense'] ?? 0) >= 6;
+
+        return match (true) {
+            $forwardsComplete && $defenseComplete => 'full',
+            $forwardsComplete => 'forwards',
+            $defenseComplete => 'defense',
+            default => 'partial',
+        };
     }
 
     /** @param array<string,mixed> $candidate */
@@ -334,42 +352,82 @@ class NhlAnticipatedLineupImporter
             return;
         }
         $eligibleFrom = NhlLineupObservation::evidenceCutoff((string) $gameDate);
-        $latest = NhlLineupObservation::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)
-            ->where('completeness', 'full')
+        $observations = NhlLineupObservation::query()->with('players')
+            ->where('nhl_game_id', $gameId)->where('team_id', $teamId)
+            ->whereIn('completeness', ['full', 'forwards', 'defense'])
             ->where(fn ($query) => $query->where('provider_published_at', '>=', $eligibleFrom)
                 ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
                     ->where('observed_at', '>=', $eligibleFrom)))
-            ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->first();
-        if ($latest === null) {
+            ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
+        $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
+            in_array($observation->completeness, ['full', 'forwards'], true));
+        $defense = $observations->first(fn (NhlLineupObservation $observation): bool =>
+            in_array($observation->completeness, ['full', 'defense'], true));
+        if ($forward === null || $defense === null) {
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
             return;
         }
-        $cutoff = ($latest->provider_published_at ?? $latest->observed_at)->copy()->subHours(6);
-        if ($cutoff->lt($eligibleFrom)) {
-            $cutoff = $eligibleFrom;
-        }
-        $matching = NhlLineupObservation::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)
-            ->where('structure_hash', $latest->structure_hash)
-            ->where(fn ($query) => $query->where('provider_published_at', '>=', $cutoff)
-                ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')->where('observed_at', '>=', $cutoff)))
-            ->get();
-        $sourceCount = $matching->pluck('source_id')->unique()->count();
-        $isOfficial = (bool) data_get($latest->raw_evidence, 'official', false);
+        $forwardHash = $this->componentHash($forward, 'forward');
+        $defenseHash = $this->componentHash($defense, 'defense');
+        $forwardSupport = $observations->filter(fn (NhlLineupObservation $observation): bool =>
+            $this->componentHash($observation, 'forward') === $forwardHash);
+        $defenseSupport = $observations->filter(fn (NhlLineupObservation $observation): bool =>
+            $this->componentHash($observation, 'defense') === $defenseHash);
+        $supporting = $forwardSupport->concat($defenseSupport)->unique('id');
+        $sourceCount = $supporting->pluck('source_id')->unique()->count();
+        $componentSourceCount = min(
+            $forwardSupport->pluck('source_id')->unique()->count(),
+            $defenseSupport->pluck('source_id')->unique()->count()
+        );
+        $isOfficial = (bool) data_get($forward->raw_evidence, 'official', false)
+            && (bool) data_get($defense->raw_evidence, 'official', false);
         $status = $isOfficial
             ? 'official'
-            : ($sourceCount >= 3 ? 'strongly_corroborated' : ($sourceCount >= 2 ? 'corroborated' : 'reported'));
-
-        NhlCurrentLineup::query()->updateOrCreate(
+            : ($componentSourceCount >= 3
+                ? 'strongly_corroborated'
+                : ($componentSourceCount >= 2 ? 'corroborated' : 'reported'));
+        $representative = $observations->first(fn (NhlLineupObservation $observation): bool =>
+            in_array($observation->id, [$forward->id, $defense->id], true));
+        $current = NhlCurrentLineup::query()->updateOrCreate(
             ['nhl_game_id' => $gameId, 'team_id' => $teamId],
             [
                 'team_abbrev' => $teamAbbrev,
-                'nhl_lineup_observation_id' => $latest->id,
-                'structure_hash' => $latest->structure_hash,
+                'nhl_lineup_observation_id' => $representative->id,
+                'structure_hash' => hash('sha256', $forwardHash . ':' . $defenseHash),
                 'evidence_status' => $status,
                 'source_count' => $sourceCount,
-                'first_observed_at' => $matching->min('observed_at'),
-                'last_observed_at' => $matching->max('observed_at'),
+                'first_observed_at' => $supporting->min('observed_at'),
+                'last_observed_at' => $supporting->max('observed_at'),
             ]
         );
+        $current->components()->delete();
+        foreach ([
+            NhlCurrentLineupComponent::TYPE_FORWARDS => [$forward, $forwardSupport],
+            NhlCurrentLineupComponent::TYPE_DEFENSE => [$defense, $defenseSupport],
+        ] as $componentType => [$representativeObservation, $componentSupport]) {
+            foreach ($componentSupport as $observation) {
+                $current->components()->create([
+                    'component_type' => $componentType,
+                    'nhl_lineup_observation_id' => $observation->id,
+                    'is_representative' => $observation->id === $representativeObservation->id,
+                ]);
+            }
+        }
+    }
+
+    private function componentHash(NhlLineupObservation $observation, string $role): ?string
+    {
+        $expected = $role === 'forward' ? 12 : 6;
+        $players = $observation->players->where('lineup_role', $role)
+            ->sortBy(fn ($player): string => sprintf('%s:%02d', $player->line_key, $player->slot_index));
+        if ($players->count() < $expected) {
+            return null;
+        }
+
+        return hash('sha256', $players->map(fn ($player): array => [
+            $player->line_key,
+            $player->slot_index,
+            $player->nhl_player_id ?? Str::slug($player->player_name),
+        ])->values()->toJson());
     }
 }

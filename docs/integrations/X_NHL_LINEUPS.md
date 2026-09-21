@@ -36,8 +36,8 @@ The importer reads timelines in round-robin order:
 
 1. Read the newest five posts from source one.
 2. Read the newest five posts from source two, then every remaining source.
-3. If no complete lineup was accepted, read posts 6–10 from source one using its `next_token`.
-4. Continue the same cycle until a complete lineup is accepted or every timeline is exhausted.
+3. If both a complete forward group and complete defense group have not been accepted, read posts 6–10 from source one using its `next_token`.
+4. Continue the same cycle until both groups are available or every timeline is exhausted.
 
 Every request includes a `start_time` at the beginning of the calendar day immediately preceding the target game, interpreted in America/Toronto and sent to X in UTC. This permits yesterday's lineup report for today's game without scanning older history.
 
@@ -69,7 +69,8 @@ When multiple players on the team share a surname, a reported first initial sele
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.
-- Partial player groups are declined and retained only in discovery audits. They do not stop discovery, create lineup observations, or count as lineups found. Twelve forwards and six defensemen are required; image-only content is not interpreted.
+- A complete twelve-forward group or complete six-defense group is accepted and persisted independently. Smaller fragments remain discovery-audit-only; image-only content is not interpreted.
+- Current truth combines the newest accepted forward and defense groups, including groups from different posts or sources. Discovery continues while either group is missing.
 - Missing players are never invented from roster history or hockey knowledge.
 - Special-teams assignments remain empty unless a future deterministic parser explicitly supports them.
 - On split-squad dates, extracted players and opponent context must identify the targeted game; ambiguous evidence is not attached to either game.

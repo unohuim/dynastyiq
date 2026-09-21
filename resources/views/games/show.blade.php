@@ -1,11 +1,11 @@
 <x-app-layout>
-    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8" data-lineups-page>
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8" data-game-page>
         <div class="mb-6">
-            <a href="{{ route('lineups.index', ['date' => $game['game_date']]) }}" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">&larr; All games</a>
+            <a href="{{ route('games.index', ['date' => $game['game_date']]) }}" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">&larr; All games</a>
             <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                     <h1 class="text-2xl font-semibold tracking-normal text-gray-950">
-                        {{ $game['away']['team_abbrev'] ?? 'TBD' }} at {{ $game['home']['team_abbrev'] ?? 'TBD' }} lineups
+                        {{ $game['away']['team_abbrev'] ?? 'TBD' }} at {{ $game['home']['team_abbrev'] ?? 'TBD' }}
                     </h1>
                     <p class="mt-1 text-sm text-gray-600">
                         @if ($game['start_time_utc'])

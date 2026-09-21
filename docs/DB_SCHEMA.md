@@ -4856,7 +4856,11 @@ Immutable text-based anticipated-lineup evidence keyed by NHL game, canonical NH
 
 ## nhl_current_lineups
 
-Current game/team anticipated-lineup projection. Each row points to the newest representative observation for its normalized structure and records distinct-source corroboration and first/last observation times.
+Current game/team anticipated-lineup projection. Each row retains a representative observation for compatibility and records distinct-source corroboration and first/last observation times.
+
+## nhl_current_lineup_components
+
+Supporting observations for the current lineup's `forwards` and `defense` components. Multiple matching observations may support each component, while `is_representative` identifies the newest observation supplying the rendered group. This permits a complete current lineup to combine separately reported forward and defense groups without creating synthetic evidence.
 
 ## integration_api_usage_logs
 
