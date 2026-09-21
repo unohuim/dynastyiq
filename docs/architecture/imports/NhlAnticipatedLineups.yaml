@@ -44,6 +44,7 @@ rules:
   - Official NHL lineup evidence remains authoritative over anticipated public evidence.
   - Each eligible team job checks the NHL gamecenter boxscore before X; twelve official forwards and six official defensemen become current official truth and suppress X discovery for that game/team.
   - An NHL boxscore without a complete team roster falls through to X discovery.
+  - A preseason partner prediction with unresolved roster evidence must run the same official boxscore discovery for each missing team, persist complete official observations, and reload current lineups before withholding output.
   - An explicitly ordered first goalie is also recorded as expected starting-goalie evidence; the second goalie remains backup context and does not become a starting candidate.
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.

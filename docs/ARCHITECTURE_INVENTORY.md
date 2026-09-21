@@ -3538,7 +3538,7 @@ WHERE target_season_id = '20262027';
 ### NHL Projected Team Matchups
 
 **Name:** NHL Projected Team Matchups
-**Type:** Read-Only Projected Team Matchup Simulator
+**Type:** Projected Team Matchup Simulator And Partner Prediction Assembly
 **Location:**
 - `app/Services/NhlProjectedTeamMatchupSimulator.php`
 - `app/Http/Controllers/Admin/NhlShotAttemptController.php`
@@ -3550,7 +3550,7 @@ WHERE target_season_id = '20262027';
 - `resources/views/admin/nhl-shot-attempts/index.blade.php`
 
 **Purpose:**
-Simulate team-vs-team projected skater offense, composed roster offensive/defensive chance profiles, and selected projected goalie EV/PK bucket adjustments.
+Simulate team-vs-team projected skater offense and assemble partner predictions. Missing preseason roster evidence triggers a bounded NHL gamecenter lookup through the existing official-lineup importer so complete official rosters are persisted and reused before prediction availability is decided.
 
 **When to Use:**
  Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs, explaining high-level xSAT/xSOG/EV xGF/PK xG/total expected-goals matchup changes through composed roster chance profiles and projected goalie bucket adjustments, blending attacking offense shape with defending chance-allowed shape into a 70/30 adjusted goalie environment while preserving attacking offense totals, anchoring selected goalie impact to projected season EV/PK GA/xGA even when exact bucket evidence is sparse, showing goalie reasons directly below the adjusted environment as rolled-up EV and PP coverage groups with represented xSAT/xSOG/xG totals, percentages, row-level xSOG share, child bucket counts, GSAx/G, GA/G, and goalie response, computing per-game rates from projected games with an 84-game fallback, exposing partner-facing moneyline, puckline, and total market probabilities from the projected score distribution, or testing matchup methodology before persisting team profile buckets.

@@ -590,7 +590,10 @@ must check this field before reading prediction or market output.
 During preseason (`game_type: 1`), DynastyIQ publishes a prediction only when
 both teams have a complete official NHL roster or a complete reported lineup
 whose 18 skaters resolve canonically. A missing lineup does not turn the request
-into an API error: the endpoint returns HTTP `200` with
+into an API error. Before withholding the prediction, DynastyIQ checks the live
+NHL gamecenter boxscore for every missing team, persists any complete official
+roster, and reevaluates both sides. If either side remains unresolved, the
+endpoint returns HTTP `200` with
 `prediction_available: false`, `reason: preseason_lineup_unresolved`, and the
 affected abbreviations in `missing_lineups`.
 

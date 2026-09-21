@@ -27,6 +27,7 @@ class NhlGamePredictionPayload
         private readonly NhlProjectedTeamMatchupSimulator $simulator,
         private readonly NhlAnticipatedLineupPayload $anticipatedLineups,
         private readonly NhlGameLineupProjectionBuilder $lineupProjections,
+        private readonly NhlAnticipatedLineupImporter $lineupImporter,
     ) {
     }
 
@@ -60,10 +61,28 @@ class NhlGamePredictionPayload
         $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
         $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
         $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
-        $awayGamePlayers = $awayOfficialRosterIds === null && $awayRosterIds !== null
+
+        if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
+            && ($awayRosterIds === null || $homeRosterIds === null)) {
+            $this->importMissingOfficialLineups(
+                $game,
+                $awayTeam,
+                $homeTeam,
+                $awayRosterIds === null,
+                $homeRosterIds === null
+            );
+            $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
+            $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
+            $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
+            $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+        }
+
+        $awayOfficial = $awayOfficialRosterIds !== null || $this->isOfficialLineup($awayLineup);
+        $homeOfficial = $homeOfficialRosterIds !== null || $this->isOfficialLineup($homeLineup);
+        $awayGamePlayers = ! $awayOfficial && $awayRosterIds !== null
             ? $this->lineupProjections->build($awayLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
             : null;
-        $homeGamePlayers = $homeOfficialRosterIds === null && $homeRosterIds !== null
+        $homeGamePlayers = ! $homeOfficial && $homeRosterIds !== null
             ? $this->lineupProjections->build($homeLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
             : null;
 
@@ -87,6 +106,8 @@ class NhlGamePredictionPayload
                 $homeGamePlayers,
                 $awayOfficialRosterIds,
                 $homeOfficialRosterIds,
+                $awayOfficial,
+                $homeOfficial,
                 $overrides
             );
         }
@@ -165,10 +186,10 @@ class NhlGamePredictionPayload
                 'goalie_projection_version' => $goalieProjectionVersion,
                 'away_goalie_id' => $awayGoalie['nhl_player_id'],
                 'home_goalie_id' => $homeGoalie['nhl_player_id'],
-                'away_lineup_source' => $awayOfficialRosterIds !== null
+                'away_lineup_source' => $awayOfficial
                     ? 'nhl_boxscore'
                     : ($awayRosterIds === null ? 'projected_roster' : 'anticipated_lineup'),
-                'home_lineup_source' => $homeOfficialRosterIds !== null
+                'home_lineup_source' => $homeOfficial
                     ? 'nhl_boxscore'
                     : ($homeRosterIds === null ? 'projected_roster' : 'anticipated_lineup'),
             ],
@@ -236,10 +257,12 @@ class NhlGamePredictionPayload
         ?array $homeGamePlayers,
         ?array $awayOfficialRosterIds,
         ?array $homeOfficialRosterIds,
+        bool $awayOfficial,
+        bool $homeOfficial,
         array $overrides
     ): array {
-        $awaySource = $this->lineupSource($awayOfficialRosterIds, $awayRosterIds);
-        $homeSource = $this->lineupSource($homeOfficialRosterIds, $homeRosterIds);
+        $awaySource = $this->lineupSource($awayOfficialRosterIds, $awayRosterIds, $awayOfficial);
+        $homeSource = $this->lineupSource($homeOfficialRosterIds, $homeRosterIds, $homeOfficial);
         $awayRoster = $awayGamePlayers ?? $this->projectedRosterPreview(
             $targetSeasonId,
             $toiProjectionVersion,
@@ -300,11 +323,37 @@ class NhlGamePredictionPayload
     }
 
     /** @param array<int, int>|null $officialIds @param array<int, int>|null $rosterIds */
-    private function lineupSource(?array $officialIds, ?array $rosterIds): string
+    private function lineupSource(?array $officialIds, ?array $rosterIds, bool $official = false): string
     {
-        return $officialIds !== null
+        return $officialIds !== null || $official
             ? 'nhl_boxscore'
             : ($rosterIds === null ? 'projected_roster' : 'anticipated_lineup');
+    }
+
+    private function isOfficialLineup(?array $lineup): bool
+    {
+        return ($lineup['evidence_status'] ?? null) === 'official';
+    }
+
+    /**
+     * Persist complete live NHL rosters for missing preseason sides before prediction refusal.
+     */
+    private function importMissingOfficialLineups(
+        object $game,
+        string $awayTeam,
+        string $homeTeam,
+        bool $awayMissing,
+        bool $homeMissing
+    ): void {
+        foreach ([[$awayTeam, $awayMissing], [$homeTeam, $homeMissing]] as [$teamAbbrev, $missing]) {
+            if (! $missing) {
+                continue;
+            }
+            $teamId = DB::table('nhl_teams')->where('abbrev', $teamAbbrev)->value('nhl_id');
+            if ($teamId !== null) {
+                $this->lineupImporter->importOfficial($game, $teamAbbrev, (int) $teamId);
+            }
+        }
     }
 
     /**

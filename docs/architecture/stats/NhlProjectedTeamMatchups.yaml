@@ -1,5 +1,5 @@
 name: NHL Projected Team Matchups
-type: Read-Only Projected Team Matchup Simulator
+type: Projected Team Matchup Simulator And Partner Prediction Assembly
 location:
   - app/Services/NhlProjectedTeamMatchupSimulator.php
   - app/Http/Controllers/Admin/NhlShotAttemptController.php
@@ -8,7 +8,7 @@ location:
   - app/Services/NhlGameLineupProjectionBuilder.php
   - docs/architecture/stats/NhlProjectedTeamMatchups.yaml
   - resources/views/admin/nhl-shot-attempts/index.blade.php
-purpose: Simulate team-vs-team projected skater offense, composed roster offensive/defensive chance profiles, and selected projected goalie EV/PK bucket adjustments.
+purpose: Simulate team-vs-team projected offense and assemble partner predictions, including a bounded official-lineup refresh when preseason roster evidence is missing.
 when_to_use:
   - Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs.
   - Building partner-facing prediction payloads from an NHL game id.
@@ -28,6 +28,7 @@ rules:
   - Defensive suppression requires a later approved abstraction and must not be inferred from chance-allowed bucket share alone.
   - Goalie selectors must prefer manual overrides, then official NHL starters, then confirmed before expected starting-goalie observations, then the highest projected-start goalie from valid nhl_goalie_season_projections rows, then workload projections.
   - Partner predictions must prefer complete official NHL skater rosters, then complete canonically resolved reported lineups regardless of corroboration count, then projected rosters.
+  - Before withholding a preseason partner prediction for missing lineups, prediction assembly must query the current NHL gamecenter boxscore through the official-lineup importer, persist any complete official team rosters, and reevaluate both teams.
   - Preseason partner predictions must not publish scores, probabilities, or betting output unless both teams have complete official or complete canonically resolved reported lineups; an unresolved preseason game must instead return successful evidence-only output identifying each missing team and clearly label any fallback roster preview as projected_roster.
   - A complete official or reported game roster is newer game-specific availability evidence than the current injury table and must not have listed skaters removed by the generic injury exclusion.
   - Reported-lineup prediction inputs must retain all eighteen skaters and expose line, special-teams units, game-specific projected TOI, projection source, NHLe factor, and confidence.

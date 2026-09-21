@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Models\ApiClient;
 use App\Services\NhlProjectedTeamMatchupSimulator;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -432,7 +433,12 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
 it('returns evidence without a prediction when one preseason lineup is unresolved', function (): void {
     $token = ($this->seedPredictionInputs)();
     DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
+    ]);
     ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-only');
+    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
 
     $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
     $simulator->shouldNotReceive('simulate');
@@ -460,6 +466,11 @@ it('returns evidence without a prediction when one preseason lineup is unresolve
 it('returns both missing teams when neither preseason lineup is resolved', function (): void {
     $token = ($this->seedPredictionInputs)();
     DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
 
     $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
     $simulator->shouldNotReceive('simulate');
@@ -480,6 +491,73 @@ it('returns both missing teams when neither preseason lineup is resolved', funct
         ->assertJsonPath('teams.away.lineup_source', 'projected_roster')
         ->assertJsonPath('teams.home.lineup_source', 'projected_roster')
         ->assertJsonCount(0, 'market_probabilities');
+});
+
+it('fetches and persists complete NHL boxscore lineups before withholding a preseason prediction', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 1, 'abbrev' => 'AWY', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 2, 'abbrev' => 'HOM', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $teamPlayers = function (int $firstPlayerId): array {
+        return [
+            'forwards' => collect(range(0, 11))->map(fn (int $index): array => [
+                'playerId' => $firstPlayerId + $index,
+                'name' => ['default' => 'Forward ' . ($firstPlayerId + $index)],
+            ])->all(),
+            'defense' => collect(range(12, 17))->map(fn (int $index): array => [
+                'playerId' => $firstPlayerId + $index,
+                'name' => ['default' => 'Defense ' . ($firstPlayerId + $index)],
+            ])->all(),
+            'goalies' => [],
+        ];
+    };
+    Http::fake(['api-web.nhle.com/*' => Http::response([
+        'awayTeam' => ['abbrev' => 'AWY'],
+        'homeTeam' => ['abbrev' => 'HOM'],
+        'playerByGameStats' => [
+            'awayTeam' => $teamPlayers(8481001),
+            'homeTeam' => $teamPlayers(8482001),
+        ],
+    ])]);
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    $simulator->shouldReceive('simulateWithRosters')->once()
+        ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && count($arguments[10]) === 18)
+        ->andReturn([
+            'is_available' => true,
+            'sides' => [
+                [
+                    'offense_team' => 'AWY', 'defense_team' => 'HOM',
+                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0],
+                    'roster' => [['adjusted_xgf_per_game' => 2.4, 'confidence_score' => 0.8]],
+                ],
+                [
+                    'offense_team' => 'HOM', 'defense_team' => 'AWY',
+                    'summary' => ['total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0],
+                    'roster' => [['adjusted_xgf_per_game' => 3.2, 'confidence_score' => 0.8]],
+                ],
+            ],
+        ]);
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('inputs.away_lineup_source', 'nhl_boxscore')
+        ->assertJsonPath('inputs.home_lineup_source', 'nhl_boxscore')
+        ->assertJsonPath('anticipated_lineups.away.evidence_status', 'official')
+        ->assertJsonPath('anticipated_lineups.home.evidence_status', 'official');
+
+    $this->assertDatabaseCount('nhl_current_lineups', 2)
+        ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'AWY', 'evidence_status' => 'official'])
+        ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'HOM', 'evidence_status' => 'official']);
 });
 
 it('uses complete reported lineups for both teams in a preseason prediction', function (): void {
