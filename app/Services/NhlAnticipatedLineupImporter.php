@@ -163,10 +163,22 @@ class NhlAnticipatedLineupImporter
         } else {
             $source->update(['last_seen_at' => now()]);
         }
-        DB::table('source_scopes')->updateOrInsert(
-            ['source_id' => $source->id, 'sport' => 'hockey', 'league' => 'NHL', 'team_id' => $teamId],
-            ['team_abbrev' => $teamAbbrev, 'created_at' => now(), 'updated_at' => now()]
-        );
+        DB::table('source_scopes')->insertOrIgnore([
+            'source_id' => $source->id,
+            'sport' => 'hockey',
+            'league' => 'NHL',
+            'team_id' => $teamId,
+            'team_abbrev' => $teamAbbrev,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('source_scopes')
+            ->where('source_id', $source->id)
+            ->where('sport', 'hockey')
+            ->where('league', 'NHL')
+            ->where('team_id', $teamId)
+            ->update(['team_abbrev' => $teamAbbrev, 'updated_at' => now()]);
         if (collect([$candidate['followers'] ?? null, $candidate['following'] ?? null, $candidate['post_count'] ?? null])->contains(
             fn (mixed $value): bool => $value !== null
         )) {
@@ -317,13 +329,25 @@ class NhlAnticipatedLineupImporter
 
     private function refreshCurrent(int $gameId, int $teamId, string $teamAbbrev): void
     {
+        $gameDate = DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_date');
+        if ($gameDate === null) {
+            return;
+        }
+        $eligibleFrom = NhlLineupObservation::evidenceCutoff((string) $gameDate);
         $latest = NhlLineupObservation::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)
             ->where('completeness', 'full')
+            ->where(fn ($query) => $query->where('provider_published_at', '>=', $eligibleFrom)
+                ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
+                    ->where('observed_at', '>=', $eligibleFrom)))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->first();
         if ($latest === null) {
+            NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
             return;
         }
         $cutoff = ($latest->provider_published_at ?? $latest->observed_at)->copy()->subHours(6);
+        if ($cutoff->lt($eligibleFrom)) {
+            $cutoff = $eligibleFrom;
+        }
         $matching = NhlLineupObservation::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)
             ->where('structure_hash', $latest->structure_hash)
             ->where(fn ($query) => $query->where('provider_published_at', '>=', $cutoff)

@@ -311,6 +311,14 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                     ->name('admin.imports.retry');
                 Route::put('/imports/{key}/schedule', [\App\Http\Controllers\Admin\ImportsController::class, 'updateSchedule'])
                     ->name('admin.imports.schedule.update');
+                Route::get('/lineup-sources', [\App\Http\Controllers\Admin\XLineupSourceController::class, 'index'])
+                    ->name('admin.lineup-sources.index');
+                Route::post('/lineup-sources', [\App\Http\Controllers\Admin\XLineupSourceController::class, 'store'])
+                    ->name('admin.lineup-sources.store');
+                Route::put('/lineup-sources/{source}', [\App\Http\Controllers\Admin\XLineupSourceController::class, 'update'])
+                    ->name('admin.lineup-sources.update');
+                Route::delete('/lineup-sources/{source}', [\App\Http\Controllers\Admin\XLineupSourceController::class, 'destroy'])
+                    ->name('admin.lineup-sources.destroy');
 
                 // Yahoo OAuth proof
                 Route::get('/yahoo/oauth/redirect', [\App\Http\Controllers\Admin\YahooOAuthProbeController::class, 'redirect'])

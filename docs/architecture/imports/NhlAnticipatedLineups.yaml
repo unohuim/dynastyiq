@@ -13,6 +13,7 @@ location:
   - docs/integrations/X_NHL_LINEUPS.md
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
   - database/migrations/2026_09_20_000002_add_x_user_ids_and_seed_nhl_lineup_sources.php
+  - database/migrations/2026_09_20_000003_add_is_active_to_source_scopes.php
 purpose: Discover text-based public NHL lineup reports, preserve immutable observations, and expose a recency-aware current consensus to predictions and partner APIs.
 when_to_use:
   - Searching for anticipated lineups for NHL teams playing today or tomorrow.
@@ -27,6 +28,7 @@ rules:
   - Anticipated-lineup team jobs must use the dedicated lineups queue.
   - Default and outside-two-hours discovery include future games scheduled today and tomorrow in America/Toronto; within-two-hours discovery remains limited to today's games.
   - Discovery may accept a lineup post published on the game date or the immediately preceding calendar date when the post identifies the targeted game lineup.
+  - The evidence window begins at 00:00 America/Toronto on the calendar day immediately preceding the game; older observations must be declined and must not satisfy scheduler coverage, current-lineup selection, public/API payloads, or prediction inputs.
   - Only text-attributed lineup evidence is eligible; image-only posts are skipped.
   - Observations retain source, post URL, post text, publication and observation times, engagement, game, team, normalized slots, and unresolved names.
   - Canonical team identity uses nhl_teams.nhl_id and also retains team abbreviation.
@@ -46,6 +48,7 @@ rules:
   - The public lineup index includes every scheduled game for the selected date even when one or both teams have no current lineup projection.
   - Public matchup status is team-specific and game detail renders only the current representative lineup while retaining links to its supporting observations.
   - Generic X keyword search is prohibited; lineup discovery reads only reusable X accounts explicitly scoped to the target NHL team.
+  - Lineup discovery must use only source-team scopes whose is_active flag is true.
   - Discovery reads five posts from each stored source in round-robin order, then follows each source timeline's pagination token for its next five posts and repeats until a complete lineup is accepted or every source is exhausted at the start-of-day boundary immediately preceding the target game.
   - Provider account ids are resolved once and cached; every timeline page is evaluated without keyword filtering.
   - Every returned post is read in full and evaluated locally; search-term presence does not determine whether the post contains lineup evidence.
@@ -60,7 +63,7 @@ rules:
   - A same-day game remains eligible after puck drop when either team still lacks a reportable lineup; started games with missing coverage take priority over later games.
   - Team discovery jobs may check NHL boxscores concurrently, but paid X requests must share one overlap lock, respect provider Retry-After guidance for temporary rate limits, and retry without recording the released attempt as a failed team search.
   - A successful team-search count requires at least one newly persisted full lineup observation; partial, empty, or duplicate-only responses are skipped rather than reported as lineups found.
-  - Every team audit, provider request, returned post decision, resolved F/D/G count, and final full-lineup outcome is written to the lineups queue terminal and the existing admin import output stream in real time.
+  - Live lineups terminal and Admin output emits only the team abbreviation, source handle, and five-post timeline range for each request; detailed post decisions, player counts, URLs, and reasons remain in local troubleshooting Markdown.
   - Scheduler eligibility is evaluated every second for enabled schedules, while configured lane intervals control when searches become due.
   - X searches persist the query and returned-post count in integration usage logs without an application-owned daily search ceiling.
 public_interface:

@@ -53,7 +53,9 @@ class NhlAnticipatedLineupPayload
             ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
             ->pluck('nhl_game_id');
         $rows = NhlCurrentLineup::query()->with(['observation.players', 'observation.source'])
-            ->whereIn('nhl_game_id', $gameIds)->orderBy('nhl_game_id')->orderBy('team_abbrev')->get();
+            ->whereIn('nhl_game_id', $gameIds)->orderBy('nhl_game_id')->orderBy('team_abbrev')->get()
+            ->filter(fn (NhlCurrentLineup $row): bool => $row->observation !== null
+                && $row->observation->isEligibleForGameDate($date));
 
         return [
             'anticipated_lineups' => $rows->map(fn (NhlCurrentLineup $row): array => $this->lineup($row))->values(),
@@ -74,6 +76,12 @@ class NhlAnticipatedLineupPayload
             ->when($requireCorroboration, fn ($query) => $query->whereIn('evidence_status', ['official', 'corroborated', 'strongly_corroborated']))
             ->first();
 
+        $gameDate = NhlGame::query()->where('nhl_game_id', $nhlGameId)->value('game_date');
+        if ($row !== null && ($gameDate === null || $row->observation === null
+            || ! $row->observation->isEligibleForGameDate((string) $gameDate))) {
+            return null;
+        }
+
         return $row ? $this->lineup($row) : null;
     }
 
@@ -82,6 +90,11 @@ class NhlAnticipatedLineupPayload
     {
         $observation = $row->observation;
         $cutoff = ($observation->provider_published_at ?? $observation->observed_at)->copy()->subHours(6);
+        $gameDate = NhlGame::query()->where('nhl_game_id', $row->nhl_game_id)->value('game_date');
+        $eligibleFrom = NhlLineupObservation::evidenceCutoff((string) $gameDate);
+        if ($cutoff->lt($eligibleFrom)) {
+            $cutoff = $eligibleFrom;
+        }
         $sources = NhlLineupObservation::query()->with('source')
             ->where('nhl_game_id', $row->nhl_game_id)->where('team_id', $row->team_id)
             ->where('structure_hash', $row->structure_hash)

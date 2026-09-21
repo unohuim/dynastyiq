@@ -2,8 +2,10 @@ name: Public Evidence Sources
 type: Cross-Sport Source Identity And Metrics Registry
 location:
   - app/Models/EvidenceSource.php
+  - app/Http/Controllers/Admin/XLineupSourceController.php
   - database/migrations/2026_09_19_000001_create_public_evidence_and_nhl_lineup_tables.php
   - database/migrations/2026_09_20_000002_add_x_user_ids_and_seed_nhl_lineup_sources.php
+  - database/migrations/2026_09_20_000003_add_is_active_to_source_scopes.php
 purpose: Reuse publisher identity, sport and league scope, and time-varying public metrics without assigning implicit trust.
 when_to_use:
   - Persisting a public account or publisher that supplied sports evidence.
@@ -16,6 +18,8 @@ rules:
   - NHL anticipated-lineup discovery may use only team-scoped source timelines and must not issue generic X keyword searches.
   - Source identity is platform scoped and reusable across sports and leagues.
   - Sport, league, and optional team coverage belongs to source scopes rather than the source identity.
+  - Source-to-team coverage is many-to-many; source_scopes.is_active controls discovery eligibility for each team independently.
+  - Deactivating a source or removing a team assignment must retain the source, scope, observations, and metric history.
   - Mutable account metrics are append-only snapshots with observation timestamps.
   - Mutable engagement values for evidence URLs are append-only snapshots with observation timestamps.
   - Reposts and multiple posts from one source count as one source for corroboration.
@@ -25,6 +29,8 @@ public_interface:
   - source_scopes
   - source_metric_snapshots
   - source_engagement_snapshots
+  - GET|POST /admin/lineup-sources
+  - PUT|DELETE /admin/lineup-sources/{source}
   - EvidenceSource
 example_usage: |
   EvidenceSource::query()->where('platform', 'x')->where('handle', 'reporter')->first();

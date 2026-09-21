@@ -1,9 +1,9 @@
 # CGY lineup searches
 
-- Import audit: `../import_20260920_184554_577420.md`
+- Import audit: `../import_20260920_192700_948894.md`
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:31+00:00
+- Searched at: 2026-09-20T23:27:02+00:00
 - Team: `CGY`
 - NHL game ID: `2026010014`
 - Game date: `2026-09-20`
@@ -15,6 +15,32 @@
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/TeaeNTee_/status/2101813110038258103
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T23:17:49.000Z
+
+````text
+RT @slafshots: brought in a bag over 4x6
+````
+
+## Result 2
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/TeaeNTee_/status/2101805628293255310
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T22:48:06.000Z
+
+````text
+RT @Mets: Can you tell us how to get to Sesame Street? 😂
+
+Thanks to @sesamestreet for sending the costumes! https://t.co/nkcutajHss
+````
+
+## Result 3
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
 - Post: https://x.com/TeaeNTee_/status/2101789792824361392
 - Author: T 🇵🇸 (`@TeaeNTee_`)
 - Published: 2026-09-20T21:45:10.000Z
@@ -23,7 +49,7 @@
 RT @zellieimani: White privilege doesn’t mean white people don’t struggle. It means whiteness itself isn’t the reason you’re struggling, an…
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -35,7 +61,7 @@ RT @zellieimani: White privilege doesn’t mean white people don’t struggle. I
 RT @goalietaps: bag rules also make it much harder for women to go to games. you can’t say you care about growing the sport when you make i…
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -49,33 +75,9 @@ RT @AbbeyMastracco: The big news Mets fans have been waiting for: the rookie dre
 Zac T…
 ````
 
-## Result 4
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/TeaeNTee_/status/2101787700449693920
-- Author: T 🇵🇸 (`@TeaeNTee_`)
-- Published: 2026-09-20T21:36:51.000Z
-
-````text
-RT @barbarismcrit: Y’all can’t do this kind of boomer era shaming in this economy
-````
-
-## Result 5
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/TeaeNTee_/status/2101787670133215508
-- Author: T 🇵🇸 (`@TeaeNTee_`)
-- Published: 2026-09-20T21:36:44.000Z
-
-````text
-RT @hellohalima: Public Transit should be FREE. Why are we arguing about distance based fares when we should be pushing for FREE transit.
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:32+00:00
+- Searched at: 2026-09-20T23:27:03+00:00
 - Team: `CGY`
 - NHL game ID: `2026010014`
 - Game date: `2026-09-20`
@@ -148,7 +150,7 @@ Tarasov
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:32+00:00
+- Searched at: 2026-09-20T23:27:03+00:00
 - Team: `CGY`
 - NHL game ID: `2026010014`
 - Game date: `2026-09-20`
@@ -160,6 +162,30 @@ Tarasov
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/TeaeNTee_/status/2101787700449693920
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T21:36:51.000Z
+
+````text
+RT @barbarismcrit: Y’all can’t do this kind of boomer era shaming in this economy
+````
+
+## Result 2
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/TeaeNTee_/status/2101787670133215508
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T21:36:44.000Z
+
+````text
+RT @hellohalima: Public Transit should be FREE. Why are we arguing about distance based fares when we should be pushing for FREE transit.
+````
+
+## Result 3
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
 - Post: https://x.com/TeaeNTee_/status/2101782319937765560
 - Author: T 🇵🇸 (`@TeaeNTee_`)
 - Published: 2026-09-20T21:15:28.000Z
@@ -168,7 +194,7 @@ Tarasov
 RT @HELIOARIA: Palestinian Adults deserve to live too
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -180,7 +206,7 @@ RT @HELIOARIA: Palestinian Adults deserve to live too
 @jp_gambatese What did you think of Seamus Casey?
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -192,7 +218,28 @@ RT @HELIOARIA: Palestinian Adults deserve to live too
 RT @bluebelgeorgia: CONNOR BROWN REMAINS THE BEST GINGER CONNOR IN THE LEAGUE https://t.co/kRJ40VBfM4
 ````
 
-## Result 4
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:03+00:00
+- Team: `CGY`
+- NHL game ID: `2026010014`
+- Game date: `2026-09-20`
+- Timeline page: `timeline:@BlueLinesHQ next page`
+- Request type: `timeline`
+- Results returned: 0
+
+_X returned no posts._
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:03+00:00
+- Team: `CGY`
+- NHL game ID: `2026010014`
+- Game date: `2026-09-20`
+- Timeline page: `timeline:@TeaeNTee_ next page`
+- Request type: `timeline`
+- Results returned: 5
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -205,7 +252,7 @@ RT @DevilsInsiders: wait, this was so cute tho😭
 @Breeze2Greeze https://t.co/lgOIWAYF3Q
 ````
 
-## Result 5
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -217,28 +264,7 @@ RT @DevilsInsiders: wait, this was so cute tho😭
 @jude_bus oh god I forgot about him. booooo
 ````
 
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:32+00:00
-- Team: `CGY`
-- NHL game ID: `2026010014`
-- Game date: `2026-09-20`
-- Timeline page: `timeline:@BlueLinesHQ next page`
-- Request type: `timeline`
-- Results returned: 0
-
-_X returned no posts._
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:32+00:00
-- Team: `CGY`
-- NHL game ID: `2026010014`
-- Game date: `2026-09-20`
-- Timeline page: `timeline:@TeaeNTee_ next page`
-- Request type: `timeline`
-- Results returned: 5
-
-## Result 1
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -250,7 +276,7 @@ _X returned no posts._
 RT @proseandpucks: purposely using only alex formenton’s first name in an attempt to mislead fans about who he is sure is something!
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -262,7 +288,7 @@ RT @proseandpucks: purposely using only alex formenton’s first name in an atte
 RT @scarylawyerguy: They really think they are the heroes and not the villains of this story. Just wild to watch them sanctimoniously act l…
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -274,33 +300,9 @@ RT @scarylawyerguy: They really think they are the heroes and not the villains o
 RT @Edmontonsun: ‘No means no’: Protesters gather outside Rogers Place in a show of anger over Formenton signing https://t.co/YV05QWiCZf ht…
 ````
 
-## Result 4
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/TeaeNTee_/status/2101540443569705095
-- Author: T 🇵🇸 (`@TeaeNTee_`)
-- Published: 2026-09-20T05:14:21.000Z
-
-````text
-RT @_iamblakeley: Abdul El-Sayed throwing Hasan Piker under the bus and cozying up to the establishment is a mistake and if he loses this w…
-````
-
-## Result 5
-
-- Decision: **Declined**
-- Reason: Incomplete lineup: parsed 0 of 12 forwards and 2 of 6 defensemen.
-- Post: https://x.com/TeaeNTee_/status/2101534652968177748
-- Author: T 🇵🇸 (`@TeaeNTee_`)
-- Published: 2026-09-20T04:51:20.000Z
-
-````text
-RT @davedubbin85: People around the #flames need to stop talking about Parekh OR Nemec and starting going with Parekh AND Nemec…. Both are…
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:33+00:00
+- Searched at: 2026-09-20T23:27:03+00:00
 - Team: `CGY`
 - NHL game ID: `2026010014`
 - Game date: `2026-09-20`
@@ -312,6 +314,30 @@ RT @davedubbin85: People around the #flames need to stop talking about Parekh OR
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/TeaeNTee_/status/2101540443569705095
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T05:14:21.000Z
+
+````text
+RT @_iamblakeley: Abdul El-Sayed throwing Hasan Piker under the bus and cozying up to the establishment is a mistake and if he loses this w…
+````
+
+## Result 2
+
+- Decision: **Declined**
+- Reason: Incomplete lineup: parsed 0 of 12 forwards and 2 of 6 defensemen.
+- Post: https://x.com/TeaeNTee_/status/2101534652968177748
+- Author: T 🇵🇸 (`@TeaeNTee_`)
+- Published: 2026-09-20T04:51:20.000Z
+
+````text
+RT @davedubbin85: People around the #flames need to stop talking about Parekh OR Nemec and starting going with Parekh AND Nemec…. Both are…
+````
+
+## Result 3
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
 - Post: https://x.com/TeaeNTee_/status/2101528507696181631
 - Author: T 🇵🇸 (`@TeaeNTee_`)
 - Published: 2026-09-20T04:26:55.000Z
@@ -320,7 +346,7 @@ RT @davedubbin85: People around the #flames need to stop talking about Parekh OR
 RT @NTarnopolsky: 💥To me this looks very much like a Mamdani win
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -332,7 +358,7 @@ RT @NTarnopolsky: 💥To me this looks very much like a Mamdani win
 RT @dianelyssa: and y’all need to STOP treating kalshi and polymarket as if they’re The News. they are BETTING platforms, and treating them…
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -346,7 +372,17 @@ RT @Mets: Kid can play! 🤩
 Carson Benge is now the franchise’s rookie hits leader! https://t.co/81QWnIkltt
 ````
 
-## Result 4
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:04+00:00
+- Team: `CGY`
+- NHL game ID: `2026010014`
+- Game date: `2026-09-20`
+- Timeline page: `timeline:@TeaeNTee_ next page`
+- Request type: `timeline`
+- Results returned: 5
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -358,7 +394,7 @@ Carson Benge is now the franchise’s rookie hits leader! https://t.co/81QWnIklt
 RT @quinnifer43: 🤩 https://t.co/DRXJv6X5Zy
 ````
 
-## Result 5
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -370,17 +406,7 @@ RT @quinnifer43: 🤩 https://t.co/DRXJv6X5Zy
 RT @bluebelgeorgia: there was literally a 0% chance of that happening https://t.co/z98Q3mBeoW
 ````
 
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:33+00:00
-- Team: `CGY`
-- NHL game ID: `2026010014`
-- Game date: `2026-09-20`
-- Timeline page: `timeline:@TeaeNTee_ next page`
-- Request type: `timeline`
-- Results returned: 5
-
-## Result 1
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -392,7 +418,7 @@ RT @bluebelgeorgia: there was literally a 0% chance of that happening https://t.
 RT @Miggs_NotMigos: “Anything for you baby” - I whisper to myself as I make another reckless financial decision.
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -404,7 +430,7 @@ RT @Miggs_NotMigos: “Anything for you baby” - I whisper to myself as I make 
 RT @stuckonbarnes: if this happens i’ll set marvel studios on fire
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -416,7 +442,17 @@ RT @stuckonbarnes: if this happens i’ll set marvel studios on fire
 RT @ACoronaNJD: Nico Hischier gets in some extra work after training camp concludes. #NJDevils https://t.co/PyBX8H9Zq1
 ````
 
-## Result 4
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:04+00:00
+- Team: `CGY`
+- NHL game ID: `2026010014`
+- Game date: `2026-09-20`
+- Timeline page: `timeline:@TeaeNTee_ next page`
+- Request type: `timeline`
+- Results returned: 5
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -428,7 +464,7 @@ RT @ACoronaNJD: Nico Hischier gets in some extra work after training camp conclu
 @JamesNicholsNHL ...so you should correct this since it wasn't power play drills, since Mantha isn't on the unit with Bratt and Hughes.
 ````
 
-## Result 5
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -440,17 +476,7 @@ RT @ACoronaNJD: Nico Hischier gets in some extra work after training camp conclu
 @JamesNicholsNHL is it the power play or just normal 5v5 drills?
 ````
 
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:33+00:00
-- Team: `CGY`
-- NHL game ID: `2026010014`
-- Game date: `2026-09-20`
-- Timeline page: `timeline:@TeaeNTee_ next page`
-- Request type: `timeline`
-- Results returned: 5
-
-## Result 1
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -464,7 +490,7 @@ RT @leahfrombklyn: This grandma was in Tennessee minding her business. Never eve
 Police all the way in North Dakota use…
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -476,7 +502,7 @@ Police all the way in North Dakota use…
 RT @ratjoshi: notice how it’s always the gay sibling complaining about having the hottest bedroom in the house… it’s bc your family is prep…
 ````
 
-## Result 3
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -488,7 +514,17 @@ RT @ratjoshi: notice how it’s always the gay sibling complaining about having 
 RT @vanguard_pod: I am BEGGING @AbdulElSayed to remember what got him to the dance and stop listening to the Dem advisors who are determine…
 ````
 
-## Result 4
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:04+00:00
+- Team: `CGY`
+- NHL game ID: `2026010014`
+- Game date: `2026-09-20`
+- Timeline page: `timeline:@TeaeNTee_ next page`
+- Request type: `timeline`
+- Results returned: 4
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -500,7 +536,7 @@ RT @vanguard_pod: I am BEGGING @AbdulElSayed to remember what got him to the dan
 RT @YungxJayy: Really wish y’all would just read about the decades long history of Black people speaking up on Palestine instead of acting…
 ````
 
-## Result 5
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -512,17 +548,7 @@ RT @YungxJayy: Really wish y’all would just read about the decades long histor
 RT @HeerJeet: Because of Trump's embrace of unregulated AI, Dems have another 80-20 issue they can win on. There's no way even they could m…
 ````
 
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:33+00:00
-- Team: `CGY`
-- NHL game ID: `2026010014`
-- Game date: `2026-09-20`
-- Timeline page: `timeline:@TeaeNTee_ next page`
-- Request type: `timeline`
-- Results returned: 2
-
-## Result 1
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -534,7 +560,7 @@ RT @HeerJeet: Because of Trump's embrace of unregulated AI, Dems have another 80
 RT @MarcoFoster_: Jon Stewart on the Supreme Court: “They have single-handedly made it impossible for us to reform and save our democracy.…
 ````
 
-## Result 2
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.

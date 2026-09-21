@@ -63,6 +63,7 @@ export default function adminHub(options = {}) {
         shiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
         activeShiftMismatchesUrl: options.shiftMismatchesUrl ?? '/admin/nhl-validations?admin_panel=1&status=shiftchart-mismatch',
         apiKeysUrl: options.apiKeysUrl ?? '/admin/api-keys',
+        lineupSourcesUrl: options.lineupSourcesUrl ?? '/admin/lineup-sources',
         gameImportStatusUrl: options.gameImportStatusUrl ?? '/admin/nhl-game-imports/status',
         gameImportSourceGapsUrl: options.gameImportSourceGapsUrl ?? '/admin/nhl-game-imports/source-gaps',
         gameImportGameRerunUrl: options.gameImportGameRerunUrl ?? '/admin/nhl-game-imports/games',
@@ -172,6 +173,20 @@ export default function adminHub(options = {}) {
             importLabel: '',
             lanes: {},
             timing: {},
+        },
+        lineupSources: {
+            open: false,
+            loading: false,
+            saving: false,
+            error: '',
+            query: '',
+            sort: 'name',
+            direction: 'asc',
+            items: [],
+            teams: [],
+            editingId: null,
+            formOpen: false,
+            form: { name: '', handle: '', team_ids: [] },
         },
 
         roster: {
@@ -2694,6 +2709,125 @@ export default function adminHub(options = {}) {
         toggleStream(key) {
             this.ensureStream(key);
             this.streams[key].open = !this.streams[key].open;
+        },
+
+        async openLineupSources() {
+            this.lineupSources.open = true;
+            this.lineupSources.loading = true;
+            this.lineupSources.error = '';
+            try {
+                const response = await fetch(this.lineupSourcesUrl, { headers: { Accept: 'application/json' } });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message || 'Could not load lineup sources.');
+                this.lineupSources.items = payload.sources ?? [];
+                this.lineupSources.teams = payload.teams ?? [];
+            } catch (error) {
+                this.lineupSources.error = error.message || 'Could not load lineup sources.';
+            } finally {
+                this.lineupSources.loading = false;
+            }
+        },
+
+        closeLineupSources() {
+            if (this.lineupSources.saving) return;
+            this.lineupSources.open = false;
+            this.cancelLineupSourceForm();
+        },
+
+        filteredLineupSources() {
+            const query = this.lineupSources.query.trim().toLowerCase();
+            const direction = this.lineupSources.direction === 'desc' ? -1 : 1;
+            const value = (source) => {
+                if (this.lineupSources.sort === 'handle') return source.handle ?? '';
+                if (this.lineupSources.sort === 'teams') return source.teams?.filter((team) => team.active).map((team) => team.abbrev).join(',') ?? '';
+                if (this.lineupSources.sort === 'followers') return Number(source.followers ?? -1);
+                if (this.lineupSources.sort === 'status') return source.active ? 1 : 0;
+                return source.name ?? '';
+            };
+
+            return this.lineupSources.items.filter((source) => !query || [
+                source.name,
+                source.handle,
+                ...(source.teams ?? []).map((team) => team.abbrev),
+            ].some((candidate) => String(candidate ?? '').toLowerCase().includes(query)))
+                .sort((left, right) => String(value(left)).localeCompare(String(value(right)), undefined, { numeric: true }) * direction);
+        },
+
+        sortLineupSources(column) {
+            if (this.lineupSources.sort === column) {
+                this.lineupSources.direction = this.lineupSources.direction === 'asc' ? 'desc' : 'asc';
+                return;
+            }
+            this.lineupSources.sort = column;
+            this.lineupSources.direction = 'asc';
+        },
+
+        openLineupSourceForm(source = null) {
+            this.lineupSources.editingId = source?.id ?? null;
+            this.lineupSources.form = {
+                name: source?.name ?? '',
+                handle: source?.handle ?? '',
+                team_ids: (source?.teams ?? []).filter((team) => team.active).map((team) => team.id),
+            };
+            this.lineupSources.formOpen = true;
+            this.lineupSources.error = '';
+        },
+
+        cancelLineupSourceForm() {
+            this.lineupSources.formOpen = false;
+            this.lineupSources.editingId = null;
+            this.lineupSources.form = { name: '', handle: '', team_ids: [] };
+        },
+
+        async saveLineupSource() {
+            if (this.lineupSources.saving) return;
+            this.lineupSources.saving = true;
+            this.lineupSources.error = '';
+            const id = this.lineupSources.editingId;
+            try {
+                const response = await fetch(id ? `${this.lineupSourcesUrl}/${id}` : this.lineupSourcesUrl, {
+                    method: id ? 'PUT' : 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                    },
+                    body: JSON.stringify(this.lineupSources.form),
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message || 'Could not save lineup source.');
+                const index = this.lineupSources.items.findIndex((source) => source.id === payload.source.id);
+                if (index === -1) this.lineupSources.items.push(payload.source);
+                else this.lineupSources.items.splice(index, 1, payload.source);
+                this.cancelLineupSourceForm();
+            } catch (error) {
+                this.lineupSources.error = error.message || 'Could not save lineup source.';
+            } finally {
+                this.lineupSources.saving = false;
+            }
+        },
+
+        async deactivateLineupSource(source) {
+            if (this.lineupSources.saving || !globalThis.confirm?.(`Deactivate @${source.handle} for every NHL team?`)) return;
+            this.lineupSources.saving = true;
+            this.lineupSources.error = '';
+            try {
+                const response = await fetch(`${this.lineupSourcesUrl}/${source.id}`, {
+                    method: 'DELETE',
+                    headers: {
+                        Accept: 'application/json',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+                    },
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(payload.message || 'Could not deactivate lineup source.');
+                const index = this.lineupSources.items.findIndex((item) => item.id === source.id);
+                if (index !== -1) this.lineupSources.items.splice(index, 1, payload.source);
+            } catch (error) {
+                this.lineupSources.error = error.message || 'Could not deactivate lineup source.';
+            } finally {
+                this.lineupSources.saving = false;
+            }
         },
 
         importScheduleSeconds(lane) {

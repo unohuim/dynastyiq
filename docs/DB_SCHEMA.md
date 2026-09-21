@@ -4848,7 +4848,7 @@ Opt-in scheduler settings keyed by `source_key + lane_key`. Each row stores glob
 
 ## sources, source_scopes, source_metric_snapshots, source_engagement_snapshots
 
-Cross-sport public publisher identities, provider account ids such as `sources.platform_user_id`, sport/league/team coverage, append-only mutable account metric snapshots, and append-only engagement snapshots for evidence URLs. These tables retain provenance and do not assign source trust.
+Cross-sport public publisher identities, provider account ids such as `sources.platform_user_id`, sport/league/team coverage, append-only mutable account metric snapshots, and append-only engagement snapshots for evidence URLs. `source_scopes.is_active` enables or disables discovery independently for each source-team relationship without deleting attribution or evidence history. These tables retain provenance and do not assign source trust.
 
 ## nhl_lineup_observations, nhl_lineup_observation_players
 

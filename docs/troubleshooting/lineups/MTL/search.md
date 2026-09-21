@@ -1,9 +1,9 @@
 # MTL lineup searches
 
-- Import audit: `../import_20260920_184554_577420.md`
+- Import audit: `../import_20260920_192700_948894.md`
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:28+00:00
+- Searched at: 2026-09-20T23:27:12+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -26,7 +26,7 @@ Training camp has produced a few surprises, and some Canadiens hopefuls are maki
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:28+00:00
+- Searched at: 2026-09-20T23:27:12+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -96,7 +96,7 @@ Who’s a Leafs fan? @ORRSIMONDS https://t.co/cq1ZmYnwWV
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:29+00:00
+- Searched at: 2026-09-20T23:27:13+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -173,7 +173,7 @@ Come on Quebec! Get with the times!
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:29+00:00
+- Searched at: 2026-09-20T23:27:13+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -247,7 +247,7 @@ Oh please... @ABDanielleSmith manifactured those "tears" like it was a planned t
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:29+00:00
+- Searched at: 2026-09-20T23:27:13+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -320,7 +320,7 @@ https://t.co/Asx3fIoa19
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:30+00:00
+- Searched at: 2026-09-20T23:27:13+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -394,7 +394,7 @@ https://t.co/t1CN7W1XRj
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:30+00:00
+- Searched at: 2026-09-20T23:27:13+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -483,7 +483,7 @@ https://t.co/8jgvID8tju
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:31+00:00
+- Searched at: 2026-09-20T23:27:14+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`
@@ -563,7 +563,7 @@ The world is full of good people. If you can’t find one, BE one. Scratch that.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:31+00:00
+- Searched at: 2026-09-20T23:27:14+00:00
 - Team: `MTL`
 - NHL game ID: `2026010022`
 - Game date: `2026-09-21`

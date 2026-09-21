@@ -1,9 +1,9 @@
 # NJD lineup searches
 
-- Import audit: `../import_20260920_184554_577420.md`
+- Import audit: `../import_20260920_192700_948894.md`
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:21+00:00
+- Searched at: 2026-09-20T23:27:07+00:00
 - Team: `NJD`
 - NHL game ID: `2026010019`
 - Game date: `2026-09-21`
@@ -84,7 +84,7 @@ Islanders outshooting the Devils 19-15 after 2.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:21+00:00
+- Searched at: 2026-09-20T23:27:07+00:00
 - Team: `NJD`
 - NHL game ID: `2026010019`
 - Game date: `2026-09-21`
@@ -159,7 +159,7 @@ Isles outshoot the Devils in the 1st, 12-6.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:22+00:00
+- Searched at: 2026-09-20T23:27:07+00:00
 - Team: `NJD`
 - NHL game ID: `2026010019`
 - Game date: `2026-09-21`
@@ -241,7 +241,7 @@ Vanecek
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:22+00:00
+- Searched at: 2026-09-20T23:27:08+00:00
 - Team: `NJD`
 - NHL game ID: `2026010019`
 - Game date: `2026-09-21`

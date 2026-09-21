@@ -1,9 +1,9 @@
 # WPG lineup searches
 
-- Import audit: `../import_20260920_184554_577420.md`
+- Import audit: `../import_20260920_192700_948894.md`
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:53+00:00
+- Searched at: 2026-09-20T23:27:14+00:00
 - Team: `WPG`
 - NHL game ID: `2026010015`
 - Game date: `2026-09-21`
@@ -15,6 +15,44 @@
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/Beebsbondy/status/2101812831905575290
+- Author: Beebs Bondy (`@Beebsbondy`)
+- Published: 2026-09-20T23:16:43.000Z
+
+````text
+@Proficiency_ Cagnoni to start for SJS and it seems like CGY is just going to go with the hot hand. Parekh for me but it’s tough
+````
+
+## Result 2
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/Beebsbondy/status/2101812168513511787
+- Author: Beebs Bondy (`@Beebsbondy`)
+- Published: 2026-09-20T23:14:05.000Z
+
+````text
+Sharks PP1👀
+
+Luca Cagnoni is on D. Interesting. (I think this could change but it’s a start) https://t.co/nWG5Xd0rcs
+````
+
+## Result 3
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/Beebsbondy/status/2101808261481570790
+- Author: Beebs Bondy (`@Beebsbondy`)
+- Published: 2026-09-20T22:58:33.000Z
+
+````text
+It’s preseason but also okay Beckett👀 https://t.co/nFNitDiVwg
+````
+
+## Result 4
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
 - Post: https://x.com/Beebsbondy/status/2101783714006962592
 - Author: Beebs Bondy (`@Beebsbondy`)
 - Published: 2026-09-20T21:21:01.000Z
@@ -23,7 +61,7 @@
 @fcorrado67 If hits are worth 1 point, Podkolzin. If less, Leonard (should out score him but not by a ton)
 ````
 
-## Result 2
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -42,7 +80,17 @@ Sneaky category covering FANTASY HOCKEY players going late or undrafted (WEEK IN
 -Joel Eriksson Ek (PPP/Banger/Cat Coverage)
 ````
 
-## Result 3
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:14+00:00
+- Team: `WPG`
+- NHL game ID: `2026010015`
+- Game date: `2026-09-21`
+- Timeline page: `timeline:@Beebsbondy next page`
+- Request type: `timeline`
+- Results returned: 5
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -62,7 +110,7 @@ https://t.co/Nd8FHgFVSr
 I love that they’re both on PP1
 ````
 
-## Result 4
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -80,7 +128,7 @@ Ottawa’s PP1 includes:
 To put it lightly, we absolutely LOVE THAT!🔥 https://t.co/KaNboOE6j1
 ````
 
-## Result 5
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -92,17 +140,7 @@ To put it lightly, we absolutely LOVE THAT!🔥 https://t.co/KaNboOE6j1
 @Go22rd @BlakeCreamerAG It certainly is something we could look into. We’ll need a few games to see who is where in lineups but those players are unicorns and useful. Barbashev is another name that comes to mind
 ````
 
-## X timeline page
-
-- Searched at: 2026-09-20T22:46:53+00:00
-- Team: `WPG`
-- NHL game ID: `2026010015`
-- Game date: `2026-09-21`
-- Timeline page: `timeline:@Beebsbondy next page`
-- Request type: `timeline`
-- Results returned: 4
-
-## Result 1
+## Result 4
 
 - Decision: **Declined**
 - Reason: Only one target-team player was recognized; no lineup group exists.
@@ -118,7 +156,7 @@ Werenski, Guentzel, Schaefer, Forsberg and likely Hellebuyck (honestly not sure 
 If you want to go safe, Dobes instead would be a plenty fine choice (but I like Helle)
 ````
 
-## Result 2
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -135,7 +173,17 @@ PP1 in STL includes:
 We like that🫡 https://t.co/dzYW98Gcxq
 ````
 
-## Result 3
+## X timeline page
+
+- Searched at: 2026-09-20T23:27:15+00:00
+- Team: `WPG`
+- NHL game ID: `2026010015`
+- Game date: `2026-09-21`
+- Timeline page: `timeline:@Beebsbondy next page`
+- Request type: `timeline`
+- Results returned: 2
+
+## Result 1
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -147,7 +195,7 @@ We like that🫡 https://t.co/dzYW98Gcxq
 Link says it’s something else but will take you to the post🫡
 ````
 
-## Result 4
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.

@@ -1062,7 +1062,7 @@ it('writes approved and declined X post audits only for local troubleshooting', 
         ->and($written[base_path('docs/troubleshooting/lineups/TOR/x_post_10.md')])
         ->toContain('**Decision:** Approved', '## Matched target-team players', '## Raw X post JSON')
         ->and($written[base_path('docs/troubleshooting/lineups/TOR/search.md')])
-        ->toContain('- Timeline page: `timeline:@timeline_test_source page 1`', '- Results returned: 2');
+        ->toContain('- Timeline page: `timeline:@timeline_test_source posts 1-5`', '- Results returned: 2');
 });
 
 it('recognizes target team player groups throughout complete post text', function (): void {
@@ -1758,6 +1758,34 @@ it('reads source timelines round robin in five-post pages', function (): void {
         ->and($candidates[0]['source_handle'])->toBe('source_one');
 });
 
+it('rejects timeline posts older than the day before the target game', function (): void {
+    config(['services.x.bearer_token' => 'test-key']);
+    createTimelineSource('TOR', 10, 'window_reporter', 'window-source');
+    $game = (object) [
+        'nhl_game_id' => 2026010125, 'game_date' => '2026-09-20',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ];
+    $old = xLineupResponse([
+        lineupCandidate('window_reporter', 'https://x.com/window_reporter/status/995'),
+    ]);
+    $old['data'][0]['author_id'] = 'window-source';
+    $old['data'][0]['created_at'] = '2026-09-18T23:59:59Z';
+    $old['meta'] = ['next_token' => 'next-five'];
+    $eligible = xLineupResponse([
+        lineupCandidate('window_reporter', 'https://x.com/window_reporter/status/996'),
+    ]);
+    $eligible['data'][0]['author_id'] = 'window-source';
+    $eligible['data'][0]['created_at'] = '2026-09-19T04:00:00Z';
+    Http::fake(['api.x.com/*' => Http::sequence()->push($old)->push($eligible)]);
+
+    $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
+
+    expect(Http::recorded())->toHaveCount(2)
+        ->and($candidates)->toHaveCount(1)
+        ->and($candidates[0]['post_url'])->toBe('https://x.com/window_reporter/status/996');
+});
+
 it('declines a partial lineup and continues to the next stored source', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     Event::fake([ImportStreamEvent::class]);
@@ -1790,9 +1818,7 @@ it('declines a partial lineup and continues to the next stored source', function
         ->and($candidates[0]['source_handle'])->toBe('full_reporter');
     Event::assertDispatched(ImportStreamEvent::class, fn (ImportStreamEvent $event): bool =>
         $event->source === 'nhl-anticipated-lineups'
-        && str_contains($event->message, 'DECLINED')
-        && str_contains($event->message, 'F:0 D:2 G:0')
-        && str_contains($event->message, 'Incomplete lineup'));
+        && $event->message === 'TOR | @partial_reporter | posts 1-5');
 });
 
 it('does not call X when a team has no stored timeline sources', function (): void {
@@ -1867,6 +1893,21 @@ it('keeps confirmed goalie evidence ahead of newer lineup-derived expectations',
         ->assertJsonCount(1, 'starting_goalies')
         ->assertJsonPath('starting_goalies.0.player_name', 'Confirmed Goalie')
         ->assertJsonPath('starting_goalies.0.status', 'confirmed');
+});
+
+it('does not expose a current lineup whose evidence predates the day-before-game window', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-20 12:00:00 America/Toronto'));
+    $current = createCurrentAnticipatedLineup();
+    $current->observation()->update([
+        'provider_published_at' => Carbon::parse('2026-09-18 23:59:59 America/Toronto'),
+        'observed_at' => Carbon::parse('2026-09-20 10:00:00 America/Toronto'),
+    ]);
+
+    $payload = app(\App\Services\NhlAnticipatedLineupPayload::class)
+        ->build(Carbon::parse('2026-09-20 America/Toronto'), 2026020099);
+
+    expect($payload['anticipated_lineups'])->toHaveCount(0);
+    $this->travelBack();
 });
 
 it('shows every scheduled game on the public lineups page for today', function (): void {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Events\ImportStreamEvent;
+use App\Models\NhlLineupObservation;
 use App\Models\NhlTeam;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
@@ -38,6 +39,7 @@ class XNhlLineupDiscovery
             ->where('source_scopes.sport', 'hockey')
             ->where('source_scopes.league', 'NHL')
             ->where('source_scopes.team_abbrev', mb_strtoupper($teamAbbrev))
+            ->where('source_scopes.is_active', true)
             ->whereNotNull('sources.handle')
             ->orderBy('sources.id')
             ->get(['sources.id', 'sources.name', 'sources.handle', 'sources.platform_user_id'])
@@ -47,6 +49,7 @@ class XNhlLineupDiscovery
             'source' => $source,
             'pagination_token' => null,
             'seen_tokens' => [],
+            'round' => 1,
             'exhausted' => false,
         ])->values()->all();
 
@@ -61,7 +64,8 @@ class XNhlLineupDiscovery
                     $teamAbbrev,
                     $bearerToken,
                     $state['source'],
-                    $state['pagination_token']
+                    $state['pagination_token'],
+                    $state['round']
                 );
                 if ($page['candidates'] !== []) {
                     return $page['candidates'];
@@ -73,6 +77,7 @@ class XNhlLineupDiscovery
                 if ($nextToken !== null && ! $alreadySeen) {
                     $states[$index]['seen_tokens'][] = $nextToken;
                     $states[$index]['pagination_token'] = $nextToken;
+                    $states[$index]['round']++;
                 }
             }
         }
@@ -86,7 +91,8 @@ class XNhlLineupDiscovery
         string $teamAbbrev,
         string $bearerToken,
         object $source,
-        ?string $paginationToken
+        ?string $paginationToken,
+        int $round
     ): array {
         $handle = ltrim(trim((string) $source->handle), '@');
         $userId = trim((string) $source->platform_user_id);
@@ -98,13 +104,11 @@ class XNhlLineupDiscovery
                     'user.fields' => 'id,name,username,public_metrics,url',
                 ]);
             if ($lookup->status() === 404) {
-                $this->output("{$teamAbbrev} | timeline @{$handle} | X account was not found; continuing");
                 return ['candidates' => [], 'next_token' => null];
             }
             $lookup->throw();
             $userId = trim((string) data_get($lookup->json(), 'data.id'));
             if ($userId === '') {
-                $this->output("{$teamAbbrev} | timeline @{$handle} | user lookup returned no X user ID");
                 return ['candidates' => [], 'next_token' => null];
             }
             DB::table('sources')->where('id', $source->id)->update([
@@ -113,9 +117,10 @@ class XNhlLineupDiscovery
             ]);
         }
 
-        $pageLabel = $paginationToken === null ? 'page 1' : 'next page';
-        $context = 'timeline:@' . $handle . ' ' . $pageLabel;
-        $this->output("{$teamAbbrev} | game {$game->nhl_game_id} | {$context} | requesting latest posts");
+        $firstPost = (($round - 1) * 5) + 1;
+        $lastPost = $round * 5;
+        $context = 'timeline:@' . $handle . " posts {$firstPost}-{$lastPost}";
+        $this->output("{$teamAbbrev} | @{$handle} | posts {$firstPost}-{$lastPost}");
         $parameters = [
             'max_results' => 5,
             'start_time' => Carbon::parse((string) $game->game_date, 'America/Toronto')
@@ -132,7 +137,6 @@ class XNhlLineupDiscovery
             ->timeout((int) config('services.x.timeout_seconds', 30))
             ->get("https://api.x.com/2/users/{$userId}/tweets", $parameters);
         if ($response->status() === 404) {
-            $this->output("{$teamAbbrev} | {$context} | timeline was unavailable; continuing");
             return ['candidates' => [], 'next_token' => null];
         }
         $response->throw();
@@ -236,32 +240,10 @@ class XNhlLineupDiscovery
             $candidate['audit_decision'] = $decision['approved'] ? 'approved' : 'declined';
             $candidate['audit_reason'] = $decision['reason'];
             $this->writeLocalAudit($candidate, $game, $teamAbbrev, $context, $requestType);
-            $counts = collect($candidate['players'] ?? [])->countBy('lineup_role');
-            $this->output(sprintf(
-                '%s | %s | @%s | %s | F:%d D:%d G:%d | %s | %s',
-                $teamAbbrev,
-                $context,
-                (string) ($candidate['source_handle'] ?? 'unknown'),
-                mb_strtoupper((string) $candidate['audit_decision']),
-                (int) ($counts['forward'] ?? 0),
-                (int) ($counts['defense'] ?? 0),
-                (int) ($counts['goalie'] ?? 0),
-                (string) $candidate['audit_reason'],
-                (string) $candidate['post_url']
-            ));
 
             return $candidate;
         });
         $this->writeLocalSearchAudit($candidates->all(), $game, $teamAbbrev, $context, $requestType);
-        $this->output(sprintf(
-            '%s | game %s | %s | %s | %d results | %d full lineups',
-            $teamAbbrev,
-            (string) $game->nhl_game_id,
-            $context,
-            $requestType,
-            count($payload['data'] ?? []),
-            $candidates->where('audit_decision', 'approved')->count()
-        ));
 
         return $candidates
             ->filter(fn (array $candidate): bool => $candidate['audit_decision'] === 'approved')
@@ -272,6 +254,16 @@ class XNhlLineupDiscovery
     /** @param array<string,mixed> $candidate @return array{approved:bool,reason:string} */
     private function decision(array $candidate, object $game, string $teamAbbrev): array
     {
+        $publishedAt = filled($candidate['published_at'] ?? null)
+            ? Carbon::parse((string) $candidate['published_at'])
+            : now();
+        if ($publishedAt->lt(NhlLineupObservation::evidenceCutoff((string) $game->game_date))) {
+            return [
+                'approved' => false,
+                'reason' => 'The post predates the allowed day-before-game evidence window.',
+            ];
+        }
+
         $matchedCount = count($candidate['matched_players'] ?? []);
         if ($matchedCount === 0) {
             return ['approved' => false, 'reason' => 'No target-team players were recognized in the complete post.'];

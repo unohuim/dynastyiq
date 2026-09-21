@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Jobs\ImportNhlAnticipatedLineupTeamJob;
 use App\Models\ImportRun;
+use App\Models\NhlCurrentLineup;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -41,9 +42,15 @@ class ImportNhlAnticipatedLineupsCommand extends Command
             ->orderBy('start_time_utc')->get();
 
         $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
-        $current = DB::table('nhl_current_lineups')
-            ->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))
-            ->get()
+        $gamesById = $games->keyBy('nhl_game_id');
+        $current = NhlCurrentLineup::query()->with('observation')
+            ->whereIn('nhl_game_id', $games->pluck('nhl_game_id'))->get()
+            ->filter(function (NhlCurrentLineup $lineup) use ($gamesById): bool {
+                $game = $gamesById->get($lineup->nhl_game_id);
+
+                return $game !== null && $lineup->observation !== null
+                    && $lineup->observation->isEligibleForGameDate((string) $game->game_date);
+            })
             ->keyBy(fn (object $row): string => $row->nhl_game_id . ':' . $row->team_id);
         $jobs = $games->flatMap(function (object $game) use ($teamIds, $current): array {
             $awayTeam = mb_strtoupper((string) $game->away_team_abbrev);

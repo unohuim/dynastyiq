@@ -41,6 +41,8 @@ The importer reads timelines in round-robin order:
 
 Every request includes a `start_time` at the beginning of the calendar day immediately preceding the target game, interpreted in America/Toronto and sent to X in UTC. This permits yesterday's lineup report for today's game without scanning older history.
 
+Returned evidence is checked against the same boundary before acceptance. Older observations cannot remain current, suppress another scheduled lookup, appear in public or partner payloads, or feed a prediction.
+
 Example source-first request:
 
 ```text
@@ -94,6 +96,8 @@ The existing Anticipated Lineups admin schedule remains authoritative:
 - A team with two current matching independent sources is no longer searched.
 
 The scheduler queues one bounded job per eligible game/team. Jobs share an X-search overlap lock. HTTP 429 responses release the job according to X's `Retry-After` header or the existing bounded backoff.
+
+Live terminal and Admin output is intentionally concise and emits one line per timeline page, for example `CAR | @Canes | posts 1-5`. Detailed post decisions and reasons remain in local troubleshooting Markdown.
 
 ## Usage and failures
 

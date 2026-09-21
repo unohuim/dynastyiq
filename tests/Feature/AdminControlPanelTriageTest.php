@@ -7792,3 +7792,144 @@ it('shows Yahoo as a triage source after Yahoo identities are imported', functio
         ->assertSee('Nathan MacKinnon')
         ->assertSee('475.p.5980');
 });
+
+it('blocks guests and non super admins from lineup source management', function () {
+    $this->getJson(route('admin.lineup-sources.index'))->assertUnauthorized();
+    $this->actingAs(User::factory()->create())
+        ->getJson(route('admin.lineup-sources.index'))
+        ->assertForbidden();
+});
+
+it('lists x lineup sources with metrics and active team scopes', function () {
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 12, 'abbrev' => 'CAR', 'full_name' => 'Carolina Hurricanes',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Ryan Henkel', 'handle' => 'RyanHenkel_',
+        'canonical_url' => 'https://x.com/RyanHenkel_', 'first_seen_at' => now(),
+        'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('source_scopes')->insert([
+        'source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL',
+        'team_id' => 12, 'team_abbrev' => 'CAR', 'is_active' => true,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('source_metric_snapshots')->insert([
+        'source_id' => $sourceId, 'followers' => 1234, 'observed_at' => now(),
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->getJson(route('admin.lineup-sources.index'))
+        ->assertOk()
+        ->assertJsonPath('sources.0.handle', 'RyanHenkel_')
+        ->assertJsonPath('sources.0.followers', 1234)
+        ->assertJsonPath('sources.0.teams.0.abbrev', 'CAR')
+        ->assertJsonPath('sources.0.teams.0.active', true);
+});
+
+it('creates an x lineup source with multiple active team scopes', function () {
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 12, 'abbrev' => 'CAR', 'full_name' => 'Carolina Hurricanes', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 13, 'abbrev' => 'FLA', 'full_name' => 'Florida Panthers', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+
+    $response = $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.lineup-sources.store'), [
+            'name' => 'Reporter', 'handle' => '@Reporter_', 'team_ids' => [12, 13],
+        ])
+        ->assertCreated()
+        ->assertJsonPath('source.handle', 'Reporter_')
+        ->assertJsonCount(2, 'source.teams');
+
+    $sourceId = $response->json('source.id');
+    expect(DB::table('sources')->where('id', $sourceId)->value('canonical_url'))
+        ->toBe('https://x.com/Reporter_')
+        ->and(DB::table('source_scopes')->where('source_id', $sourceId)->where('is_active', true)->count())
+        ->toBe(2);
+});
+
+it('updates team assignments by deactivating removed scopes and retaining rows', function () {
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 12, 'abbrev' => 'CAR', 'created_at' => now(), 'updated_at' => now()],
+        ['nhl_id' => 13, 'abbrev' => 'FLA', 'created_at' => now(), 'updated_at' => now()],
+    ]);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Reporter', 'handle' => 'Reporter_',
+        'canonical_url' => 'https://x.com/Reporter_', 'first_seen_at' => now(),
+        'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    foreach ([[12, 'CAR'], [13, 'FLA']] as [$teamId, $abbrev]) {
+        DB::table('source_scopes')->insert([
+            'source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL',
+            'team_id' => $teamId, 'team_abbrev' => $abbrev, 'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->putJson(route('admin.lineup-sources.update', $sourceId), [
+            'name' => 'Reporter Updated', 'handle' => 'Reporter_', 'team_ids' => [13],
+        ])->assertOk();
+
+    expect(DB::table('source_scopes')->where('source_id', $sourceId)->count())->toBe(2)
+        ->and((bool) DB::table('source_scopes')->where('source_id', $sourceId)->where('team_id', 12)->value('is_active'))->toBeFalse()
+        ->and((bool) DB::table('source_scopes')->where('source_id', $sourceId)->where('team_id', 13)->value('is_active'))->toBeTrue();
+});
+
+it('allows an edited source to unlink every team without deleting its scopes', function () {
+    DB::table('nhl_teams')->insert(['nhl_id' => 12, 'abbrev' => 'CAR', 'created_at' => now(), 'updated_at' => now()]);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Reporter', 'handle' => 'Reporter_',
+        'canonical_url' => 'https://x.com/Reporter_', 'first_seen_at' => now(),
+        'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('source_scopes')->insert([
+        'source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL',
+        'team_id' => 12, 'team_abbrev' => 'CAR', 'is_active' => true,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->putJson(route('admin.lineup-sources.update', $sourceId), [
+            'name' => 'Reporter', 'handle' => 'Reporter_', 'team_ids' => [],
+        ])
+        ->assertOk()
+        ->assertJsonPath('source.active', false);
+
+    expect(DB::table('source_scopes')->where('source_id', $sourceId)->count())->toBe(1)
+        ->and((bool) DB::table('source_scopes')->where('source_id', $sourceId)->value('is_active'))->toBeFalse();
+});
+
+it('deactivates a lineup source without deleting its evidence history', function () {
+    DB::table('nhl_teams')->insert(['nhl_id' => 12, 'abbrev' => 'CAR', 'created_at' => now(), 'updated_at' => now()]);
+    $sourceId = DB::table('sources')->insertGetId([
+        'platform' => 'x', 'name' => 'Reporter', 'handle' => 'Reporter_',
+        'canonical_url' => 'https://x.com/Reporter_', 'first_seen_at' => now(),
+        'last_seen_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('source_scopes')->insert([
+        'source_id' => $sourceId, 'sport' => 'hockey', 'league' => 'NHL',
+        'team_id' => 12, 'team_abbrev' => 'CAR', 'is_active' => true,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->deleteJson(route('admin.lineup-sources.destroy', $sourceId))
+        ->assertOk()
+        ->assertJsonPath('source.active', false);
+
+    expect(DB::table('sources')->where('id', $sourceId)->exists())->toBeTrue()
+        ->and(DB::table('source_scopes')->where('source_id', $sourceId)->exists())->toBeTrue()
+        ->and((bool) DB::table('source_scopes')->where('source_id', $sourceId)->value('is_active'))->toBeFalse();
+});
+
+it('validates lineup source handles and canonical nhl teams', function () {
+    $this->actingAs(($this->makeSuperAdmin)())
+        ->postJson(route('admin.lineup-sources.store'), [
+            'name' => 'Bad source', 'handle' => 'not a handle', 'team_ids' => [999],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['handle', 'team_ids.0']);
+});

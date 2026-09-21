@@ -2326,3 +2326,67 @@ describe('admin-hub import listeners', () => {
         );
     });
 });
+
+describe('admin-hub lineup sources', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        global.window = {};
+        global.document = { querySelector: vi.fn(() => ({ getAttribute: () => 'csrf' })) };
+        global.confirm = vi.fn(() => true);
+    });
+
+    it('loads and searches x lineup sources', async () => {
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({
+                sources: [
+                    { id: 1, name: 'Ryan Henkel', handle: 'RyanHenkel_', teams: [{ id: 12, abbrev: 'CAR', active: true }], active: true },
+                    { id: 2, name: 'George Richards', handle: 'GeorgeRichards', teams: [{ id: 13, abbrev: 'FLA', active: true }], active: true },
+                ],
+                teams: [{ id: 12, abbrev: 'CAR' }, { id: 13, abbrev: 'FLA' }],
+            }),
+        }));
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ lineupSourcesUrl: '/admin/lineup-sources' });
+
+        await instance.openLineupSources();
+        instance.lineupSources.query = 'CAR';
+
+        expect(instance.lineupSources.open).toBe(true);
+        expect(instance.filteredLineupSources().map((source) => source.id)).toEqual([1]);
+    });
+
+    it('saves edited source team assignments without reloading', async () => {
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ source: { id: 1, name: 'Reporter', handle: 'Reporter', teams: [{ id: 13, abbrev: 'FLA', active: true }], active: true } }),
+        }));
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ lineupSourcesUrl: '/admin/lineup-sources' });
+        instance.lineupSources.items = [{ id: 1, name: 'Old', handle: 'Old', teams: [], active: true }];
+        instance.lineupSources.editingId = 1;
+        instance.lineupSources.form = { name: 'Reporter', handle: 'Reporter', team_ids: [13] };
+
+        await instance.saveLineupSource();
+
+        expect(global.fetch).toHaveBeenCalledWith('/admin/lineup-sources/1', expect.objectContaining({ method: 'PUT' }));
+        expect(instance.lineupSources.items[0].teams[0].abbrev).toBe('FLA');
+        expect(instance.lineupSources.formOpen).toBe(false);
+    });
+
+    it('deactivates a source and retains it in the list', async () => {
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ source: { id: 1, name: 'Reporter', handle: 'Reporter', teams: [{ id: 12, abbrev: 'CAR', active: false }], active: false } }),
+        }));
+        const adminHub = await loadAdminHub();
+        const instance = adminHub({ lineupSourcesUrl: '/admin/lineup-sources' });
+        const source = { id: 1, name: 'Reporter', handle: 'Reporter', teams: [{ id: 12, abbrev: 'CAR', active: true }], active: true };
+        instance.lineupSources.items = [source];
+
+        await instance.deactivateLineupSource(source);
+
+        expect(instance.lineupSources.items).toHaveLength(1);
+        expect(instance.lineupSources.items[0].active).toBe(false);
+    });
+});

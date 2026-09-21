@@ -1,9 +1,9 @@
 # CHI lineup searches
 
-- Import audit: `../import_20260920_184554_577420.md`
+- Import audit: `../import_20260920_192700_948894.md`
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:56+00:00
+- Searched at: 2026-09-20T23:27:15+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -42,7 +42,7 @@ RT @NHLBlackhawks: now that's how you get the preseason started 🥳 https://t.c
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:56+00:00
+- Searched at: 2026-09-20T23:27:15+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -123,7 +123,7 @@ I don't care, there's plenty of other schools. Fool me thrice and that'…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:57+00:00
+- Searched at: 2026-09-20T23:27:16+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -202,7 +202,7 @@ No slapshots yet but he was rip…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:57+00:00
+- Searched at: 2026-09-20T23:27:16+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -274,7 +274,7 @@ Happy birthday rook!!! Can't wait to see you in Chicago!!! https://t.co/mN97rdRW
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:57+00:00
+- Searched at: 2026-09-20T23:27:16+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -286,26 +286,26 @@ Happy birthday rook!!! Can't wait to see you in Chicago!!! https://t.co/mN97rdRW
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/HawkeyKnight30/status/2101804761867796895
+- Post: https://x.com/HawkeyKnight30/status/2101810308620984679
 - Author: HawkeyKnightInChicago (`@HawkeyKnight30`)
-- Published: 2026-09-20T22:44:39.000Z
+- Published: 2026-09-20T23:06:41.000Z
 
 ````text
-@blainewagner12 More so than game 1 id assume.
+RT @HawkeyKnight30: Drink this one off boys. 
+
+Blackhawks play tomorrow night at 7PM CT.
 ````
 
 ## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/HawkeyKnight30/status/2101789602293886985
+- Post: https://x.com/HawkeyKnight30/status/2101804761867796895
 - Author: HawkeyKnightInChicago (`@HawkeyKnight30`)
-- Published: 2026-09-20T21:44:25.000Z
+- Published: 2026-09-20T22:44:39.000Z
 
 ````text
-RT @HawkeyKnight30: Drink this one off boys. 
-
-Blackhawks play tomorrow night at 7PM CT.
+@blainewagner12 More so than game 1 id assume.
 ````
 
 ## Result 3
@@ -348,7 +348,7 @@ Seasons over boys. Onto the Blackhawks regular scheduled programming. https://t.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:58+00:00
+- Searched at: 2026-09-20T23:27:16+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -433,7 +433,7 @@ RT @SabresClassics: I love this #Sabres team. Please go win a cup for us.  https
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:58+00:00
+- Searched at: 2026-09-20T23:27:17+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -512,7 +512,7 @@ Bertuzzi-Frondell-L…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:59+00:00
+- Searched at: 2026-09-20T23:27:17+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -521,6 +521,22 @@ Bertuzzi-Frondell-L…
 - Results returned: 5
 
 ## Result 1
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/GameDayLines/status/2101806994088989026
+- Author: Game Day Lines (`@GameDayLines`)
+- Published: 2026-09-20T22:53:31.000Z
+
+````text
+RT @evanrawal: Avs lines in preseason game #1 against Utah.
+
+Lehkonen - Hamilton - Necas
+Schwartz - Nelson - Hughes
+Landeskog - Kadri - Bri…
+````
+
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -536,7 +552,7 @@ Verhaeghe - Bennett - M. Tkachuk
 Luostarinen - Lundell - Vi…
 ````
 
-## Result 2
+## Result 3
 
 - Decision: **Declined**
 - Reason: Only one target-team player was recognized; no lineup group exists.
@@ -548,7 +564,7 @@ Luostarinen - Lundell - Vi…
 SJS: The top power-play unit featured forwards Macklin Celebrini and Will Smith on the flanks, defenseman Luca Cagnoni on the point, center Alexander Wennberg at the net front, and Igor Chernyshov in the bumper position. https://t.co/sd1oDQyJej
 ````
 
-## Result 3
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -565,7 +581,7 @@ Miroshnichenko - Dunne - Brodzinski
 L…
 ````
 
-## Result 4
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -582,24 +598,9 @@ Killorn-McQueen-Colangelo
 Farr…
 ````
 
-## Result 5
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/GameDayLines/status/2101725456362050038
-- Author: Game Day Lines (`@GameDayLines`)
-- Published: 2026-09-20T17:29:31.000Z
-
-````text
-RT @ThomasDrance: #Canucks Group A lineup gets a bit of a face lift on Sunday after their preseason opener:
-
-DeBrusk-Pettersson-Karlsson
-Öh…
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:59+00:00
+- Searched at: 2026-09-20T23:27:17+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -673,7 +674,7 @@ RT @AdamSchefter: Bears say Caleb Williams suffered a hamstring injury.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:45:59+00:00
+- Searched at: 2026-09-20T23:27:18+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -747,7 +748,7 @@ RT @Marcus_Mosher: That’s a bad TD call lol
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:00+00:00
+- Searched at: 2026-09-20T23:27:18+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -807,7 +808,7 @@ Jeff Blashill revealed in his postgame presser that the Blackhawks arrived to th
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:00+00:00
+- Searched at: 2026-09-20T23:27:18+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -832,7 +833,7 @@ Lardis-Frondell-Bertuzzi…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:00+00:00
+- Searched at: 2026-09-20T23:27:18+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -902,7 +903,7 @@ Iceman mode activate.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:01+00:00
+- Searched at: 2026-09-20T23:27:19+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -977,7 +978,7 @@ I understand players that want to jump ships, with incompetent management such a
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:01+00:00
+- Searched at: 2026-09-20T23:27:19+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1001,7 +1002,7 @@ So this summer, he worked on "using my brain to navigate a little mo…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:02+00:00
+- Searched at: 2026-09-20T23:27:19+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1010,6 +1011,21 @@ So this summer, he worked on "using my brain to navigate a little mo…
 - Results returned: 5
 
 ## Result 1
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/GameDayLines/status/2101725456362050038
+- Author: Game Day Lines (`@GameDayLines`)
+- Published: 2026-09-20T17:29:31.000Z
+
+````text
+RT @ThomasDrance: #Canucks Group A lineup gets a bit of a face lift on Sunday after their preseason opener:
+
+DeBrusk-Pettersson-Karlsson
+Öh…
+````
+
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1027,7 +1043,7 @@ PP2
 Buchn…
 ````
 
-## Result 2
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1043,7 +1059,7 @@ Carlson-Point-Kucherov-Hagel-Guentzel
 Hedman-Geekie-Rautiainen-O’Reil…
 ````
 
-## Result 3
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1059,7 +1075,7 @@ McMann / Stephenson / Eberle
 Kakko / Catton / Wright…
 ````
 
-## Result 4
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1076,23 +1092,9 @@ Prokhorov-Foudy-Larson
 Poletin…
 ````
 
-## Result 5
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/GameDayLines/status/2101711339316281551
-- Author: Game Day Lines (`@GameDayLines`)
-- Published: 2026-09-20T16:33:25.000Z
-
-````text
-RT @Gabby_Shirley_: a look at the #Bolts lines and D pairings from their first morning skate of the preseason: 
-
-Mikheyev - Point - Kuchero…
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:02+00:00
+- Searched at: 2026-09-20T23:27:19+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1174,7 +1176,7 @@ RT @NDFootball: Night games in Notre Dame Stadium &gt;&gt;&gt;
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:03+00:00
+- Searched at: 2026-09-20T23:27:20+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1251,7 +1253,7 @@ RT @CRoumeliotis: Anton Frondell with a slick shootout goal. #Blackhawks https:/
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:03+00:00
+- Searched at: 2026-09-20T23:27:20+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1330,7 +1332,7 @@ RT @CRoumeliotis: Patrick Kane scores his second goal of the scrimmage. Nice pas
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:03+00:00
+- Searched at: 2026-09-20T23:27:20+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1407,7 +1409,7 @@ RT @BrianHedger: #CBJ scrimmaging today. Not many goals, one thus far, but we di
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:04+00:00
+- Searched at: 2026-09-20T23:27:21+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1416,6 +1418,20 @@ RT @BrianHedger: #CBJ scrimmaging today. Not many goals, one thus far, but we di
 - Results returned: 5
 
 ## Result 1
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/GameDayLines/status/2101711339316281551
+- Author: Game Day Lines (`@GameDayLines`)
+- Published: 2026-09-20T16:33:25.000Z
+
+````text
+RT @Gabby_Shirley_: a look at the #Bolts lines and D pairings from their first morning skate of the preseason: 
+
+Mikheyev - Point - Kuchero…
+````
+
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1432,7 +1448,7 @@ Tanev - Rooney - Roy
 Borikov…
 ````
 
-## Result 2
+## Result 3
 
 - Decision: **Declined**
 - Reason: Incomplete lineup: parsed 9 of 12 forwards and 0 of 6 defensemen.
@@ -1449,7 +1465,7 @@ Donato-Moore-Mangiapane/Teravainen
 Gr…
 ````
 
-## Result 3
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1467,7 +1483,7 @@ Unit 2:
 Chabot,  Yakemchuk, Giroux,…
 ````
 
-## Result 4
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1482,25 +1498,9 @@ Holloway-Thomas-Snuggerud
 Buchnevich-McTavish-McMic…
 ````
 
-## Result 5
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/GameDayLines/status/2101696430779813991
-- Author: Game Day Lines (`@GameDayLines`)
-- Published: 2026-09-20T15:34:11.000Z
-
-````text
-RT @MitchellClinton: Good morning! Lines for the group that didn’t play last night:
-
-Connor-Scheifele-Perfetti
-Barron-Lowry-Vilardi
-Niederr…
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:04+00:00
+- Searched at: 2026-09-20T23:27:21+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1576,7 +1576,7 @@ No slapshots yet but he was rip…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:05+00:00
+- Searched at: 2026-09-20T23:27:21+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1646,7 +1646,7 @@ RT @VoiceOfTheStar: now THAT'S how the #Cowboys offense is supposed to look. htt
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:05+00:00
+- Searched at: 2026-09-20T23:27:21+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1719,7 +1719,7 @@ RT @ByScottPowers: Smith has looked good the first few days of camp. His speed a
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:05+00:00
+- Searched at: 2026-09-20T23:27:22+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1769,7 +1769,7 @@ RT @F1RETHECANNON: Quick observation. Dmitri Voronkov looks pretty nimble. #cbj
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:06+00:00
+- Searched at: 2026-09-20T23:27:22+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1778,6 +1778,22 @@ RT @F1RETHECANNON: Quick observation. Dmitri Voronkov looks pretty nimble. #cbj
 - Results returned: 5
 
 ## Result 1
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/GameDayLines/status/2101696430779813991
+- Author: Game Day Lines (`@GameDayLines`)
+- Published: 2026-09-20T15:34:11.000Z
+
+````text
+RT @MitchellClinton: Good morning! Lines for the group that didn’t play last night:
+
+Connor-Scheifele-Perfetti
+Barron-Lowry-Vilardi
+Niederr…
+````
+
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1790,7 +1806,7 @@ RT @AnsarKhanMLive: Here’s the power play units from practice:
 1. Copp (net front), Arvidsson (bumper), DeBrincat-Raymond (flanks), Seider…
 ````
 
-## Result 2
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1804,7 +1820,7 @@ DeBrincat-Copp-Raymond
 Finnie-Kasper-Arvidsson…
 ````
 
-## Result 3
+## Result 4
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1820,7 +1836,7 @@ Honzek-Jones-Hunt
 Stromgren-Gross-Basha…
 ````
 
-## Result 4
+## Result 5
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -1836,23 +1852,9 @@ PP1: Kerins-Gridin-Suniev-Nylander-Parekh
 PP2: Gross-Basha-Strom…
 ````
 
-## Result 5
-
-- Decision: **Declined**
-- Reason: No target-team players were recognized in the complete post.
-- Post: https://x.com/GameDayLines/status/2101695879098831081
-- Author: Game Day Lines (`@GameDayLines`)
-- Published: 2026-09-20T15:31:59.000Z
-
-````text
-RT @RyanHenkel_: PP1: Valimaki, Nadeau, Unger Sorum, Cerrato, Robidas
-
-PP2: Fransen, Jaaska, Kotkaniemi, Ryabkin, Brind'Amour
-````
-
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:06+00:00
+- Searched at: 2026-09-20T23:27:22+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -1932,7 +1934,7 @@ TAIL 🔗: https://t.co/VZfg8s…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:07+00:00
+- Searched at: 2026-09-20T23:27:22+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2008,7 +2010,7 @@ sets up Dak to G…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:07+00:00
+- Searched at: 2026-09-20T23:27:23+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2071,15 +2073,29 @@ RT @ChicagoBears: Honey, we're home 😏 https://t.co/98cbWYYOpc
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:08+00:00
+- Searched at: 2026-09-20T23:27:23+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
 - Timeline page: `timeline:@GameDayLines next page`
 - Request type: `timeline`
-- Results returned: 2
+- Results returned: 3
 
 ## Result 1
+
+- Decision: **Declined**
+- Reason: No target-team players were recognized in the complete post.
+- Post: https://x.com/GameDayLines/status/2101695879098831081
+- Author: Game Day Lines (`@GameDayLines`)
+- Published: 2026-09-20T15:31:59.000Z
+
+````text
+RT @RyanHenkel_: PP1: Valimaki, Nadeau, Unger Sorum, Cerrato, Robidas
+
+PP2: Fransen, Jaaska, Kotkaniemi, Ryabkin, Brind'Amour
+````
+
+## Result 2
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -2096,7 +2112,7 @@ Slavin-Brind'Amour-Robidas
 Lansard-Ryabkin-E…
 ````
 
-## Result 2
+## Result 3
 
 - Decision: **Declined**
 - Reason: No target-team players were recognized in the complete post.
@@ -2116,7 +2132,7 @@ Ralph-R…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:08+00:00
+- Searched at: 2026-09-20T23:27:23+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2186,7 +2202,7 @@ RT @ChicagoBears: 🐻⬇️
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:08+00:00
+- Searched at: 2026-09-20T23:27:23+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2264,7 +2280,7 @@ RT @VoiceOfTheStar: 1. Dak excels off of the play action.
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:09+00:00
+- Searched at: 2026-09-20T23:27:24+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2343,7 +2359,7 @@ week✌🏼- let’s have a day🙂‍↔️ @Playbook https://t.co/u9om3MyHmT
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:09+00:00
+- Searched at: 2026-09-20T23:27:24+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2415,7 +2431,7 @@ RT @jonmachota: Dak Prescott wearing the Roger Staubach jersey for the Cowboys�
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:10+00:00
+- Searched at: 2026-09-20T23:27:24+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2493,7 +2509,7 @@ Colorado proceeded to lose 41-7 at Northwestern https://t…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:10+00:00
+- Searched at: 2026-09-20T23:27:25+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2566,7 +2582,7 @@ A capitalist economy isn’t just…
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:11+00:00
+- Searched at: 2026-09-20T23:27:25+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2639,7 +2655,7 @@ RT @AdamSchefter: ESPN’s Sunday NFL Countdown, Week 2, is on air leading into 
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:11+00:00
+- Searched at: 2026-09-20T23:27:25+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2709,7 +2725,7 @@ https://t.co/9sehvFM9sc https://t.co/ONV11Bs1nF
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:12+00:00
+- Searched at: 2026-09-20T23:27:25+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2783,7 +2799,7 @@ RT @NHLBlackhawks: take a look at that one ⬇️ https://t.co/YWkT0EoJID
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:12+00:00
+- Searched at: 2026-09-20T23:27:25+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2860,7 +2876,7 @@ RT @NHLBlackhawks: the theme is 😁 https://t.co/02xqWjpRVM
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:12+00:00
+- Searched at: 2026-09-20T23:27:26+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -2944,7 +2960,7 @@ The Wieners Circle will giveaway free hot dogs to the city of Chicago if Colston
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:13+00:00
+- Searched at: 2026-09-20T23:27:26+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -3020,7 +3036,7 @@ RT @ScooterMagruder: Jesus loves you
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:13+00:00
+- Searched at: 2026-09-20T23:27:26+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -3096,7 +3112,7 @@ RT @lauren_w67: "you think they'd be out arresting dope dealers" lmfao https://t
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:14+00:00
+- Searched at: 2026-09-20T23:27:26+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -3163,7 +3179,7 @@ Coming soon to Digital. https://t.co/cauBG2Fhtg
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:14+00:00
+- Searched at: 2026-09-20T23:27:27+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -3235,7 +3251,7 @@ RT @NBCSports: It's 3-0 for the Fighting Irish and Kathryn Tappen chats with Mar
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:14+00:00
+- Searched at: 2026-09-20T23:27:27+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`
@@ -3315,7 +3331,7 @@ RT @NDFootball: Staying in South Bend 📣
 
 ## X timeline page
 
-- Searched at: 2026-09-20T22:46:15+00:00
+- Searched at: 2026-09-20T23:27:27+00:00
 - Team: `CHI`
 - NHL game ID: `2026010018`
 - Game date: `2026-09-21`

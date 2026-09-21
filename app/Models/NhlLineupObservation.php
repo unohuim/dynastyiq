@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /** Immutable public-source observation of an anticipated NHL lineup. */
 class NhlLineupObservation extends Model
@@ -35,5 +36,17 @@ class NhlLineupObservation extends Model
     public function players(): HasMany
     {
         return $this->hasMany(NhlLineupObservationPlayer::class);
+    }
+
+    public static function evidenceCutoff(string|Carbon $gameDate): Carbon
+    {
+        return Carbon::parse($gameDate, 'America/Toronto')->startOfDay()->subDay()->utc();
+    }
+
+    public function isEligibleForGameDate(string|Carbon $gameDate): bool
+    {
+        $timestamp = $this->provider_published_at ?? $this->observed_at;
+
+        return $timestamp !== null && $timestamp->gte(self::evidenceCutoff($gameDate));
     }
 }

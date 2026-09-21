@@ -109,6 +109,7 @@ class DashboardController extends Controller
             'gameImportSeasonSyncUrl' => route('admin.nhl-game-imports.season-sync'),
             'gameImportEmptyGamesUrl' => route('admin.nhl-game-imports.empty-games'),
             'apiKeysUrl' => route('admin.api-keys.index'),
+            'lineupSourcesUrl' => route('admin.lineup-sources.index'),
             'leagueRefreshUrl' => route('leagues.resync'),
         ];
     }
