@@ -4,6 +4,7 @@ location:
   - app/Services/XNhlLineupDiscovery.php
   - app/Services/NhlOfficialGameRosterDiscovery.php
   - app/Services/NhlLineupTextParser.php
+  - app/Services/NhlLineupPlayerResolver.php
   - app/Services/NhlAnticipatedLineupImporter.php
   - app/Services/NhlAnticipatedLineupPayload.php
   - app/Models/NhlCurrentLineupComponent.php
@@ -64,7 +65,10 @@ rules:
   - Before writing a local lineup import audit, all generated Markdown beneath docs/troubleshooting/lineups is deleted recursively while README.md and directories are preserved; the import then creates a timestamped import_{date}_{time}.md manifest and fresh search.md for each eligible team, and each X request appends its exact query, game context, result count, complete returned posts, and decisions, including explicit zero-result searches.
   - X posts are charged and logged by resources returned; persisted post URLs prevent duplicate observations when searches return the same posts again.
   - Every account supplying accepted lineup evidence is stored as a reusable X source and scoped to that NHL team without assigning an official or trusted designation.
-  - Text lineup extraction walks each post line by line, resolves apparent names against canonical target-team players through PlayerIdentityNormalizer, treats straight apostrophes, curly apostrophes, backticks, and omitted apostrophes as equivalent, and recognizes ordered groups of three forwards or two defensemen regardless of surrounding separators.
+  - NhlLineupPlayerResolver is the single canonical identity-matching path for both lineup text extraction and observation persistence; lineup consumers must not implement independent player-name matching.
+  - NhlLineupPlayerResolver must use PlayerIdentityNormalizer and canonical players, prefer an unambiguous target-team match, and may accept a unique league-wide match when canonical team assignment is stale.
+  - Text lineup extraction walks each post line by line, resolves apparent names through NhlLineupPlayerResolver, treats straight apostrophes, curly apostrophes, backticks, and omitted apostrophes as equivalent, recognizes unambiguous initials, acronym references, surname prefixes, and recent team sweater numbers, and recognizes ordered groups of three forwards or two defensemen regardless of surrounding separators.
+  - Reprocessing a game and team must re-evaluate unresolved observation-player identity fields through NhlLineupPlayerResolver while preserving the originally reported player name and source evidence.
   - When same-team players share a surname, a reported first initial must select the matching player; an explicit conflicting initial must not fall back to another same-surname player and create a duplicate canonical id.
   - A post is approved and persisted when it contains twelve forwards, six defensemen, or both; smaller fragments remain visible in discovery audits but do not create observations or increment successful observation counts.
   - Search priority follows the earliest scheduled puck drop, fills missing team coverage before seeking corroboration, and stops searching a team after two matching independent sources are current.

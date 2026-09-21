@@ -4,18 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\Player;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
-
 /** Reads complete X post text and extracts ordered groups of canonical team players. */
 class NhlLineupTextParser
 {
-    /** @var Collection<int,Player>|null */
-    private ?Collection $players = null;
-
-    public function __construct(private readonly PlayerIdentityNormalizer $normalizer)
-    {
+    public function __construct(
+        private readonly NhlLineupPlayerResolver $players,
+    ) {
     }
 
     /** @return array<int,array<string,mixed>> */
@@ -27,9 +21,6 @@ class NhlLineupTextParser
     /** @return array{players:array<int,array<string,mixed>>,matched_players:array<int,array<string,mixed>>} */
     public function analyze(string $text, string $teamAbbrev): array
     {
-        $players = $this->players ??= Player::query()->whereNotNull('nhl_id')
-            ->whereNotNull('full_name')
-            ->get(['id', 'full_name', 'team_abbrev', 'position']);
         $decoded = html_entity_decode($text, ENT_QUOTES | ENT_HTML5);
         $decoded = preg_replace(
             '/\b(forwards?|forward lines?|defen[cs]e|defen[cs]emen|d pairs?|pairings?|goalies?|goaltenders?|scratches?|extras?)\s*:\s*/iu',
@@ -58,7 +49,7 @@ class NhlLineupTextParser
 
             $segments = $this->structuredSegments($line);
             if (count($segments) === 3 && count($forwardGroups) < 4) {
-                $group = $this->structuredGroup($segments, $players, $teamAbbrev, 'F');
+                $group = $this->structuredGroup($segments, $teamAbbrev, 'F');
                 if ($group !== null) {
                     $forwardGroups[] = $group['players'];
                     array_push($matchedPlayers, ...$group['matched']);
@@ -66,7 +57,7 @@ class NhlLineupTextParser
                 }
             }
             if (count($segments) === 2 && ($section === 'defense' || count($forwardGroups) >= 4)) {
-                $group = $this->structuredGroup($segments, $players, $teamAbbrev, 'D');
+                $group = $this->structuredGroup($segments, $teamAbbrev, 'D');
                 if ($group !== null) {
                     $defenseGroups[] = $group['players'];
                     array_push($matchedPlayers, ...$group['matched']);
@@ -74,7 +65,7 @@ class NhlLineupTextParser
                 }
             }
 
-            $matches = $this->playersInText($line, $players, $teamAbbrev);
+            $matches = $this->players->mentions($line, $teamAbbrev);
             if ($matches === []) {
                 continue;
             }
@@ -181,12 +172,10 @@ class NhlLineupTextParser
 
     /**
      * @param array<int,string> $segments
-     * @param Collection<int,Player> $players
      * @return array{players:array<int,array<string,mixed>>,matched:array<int,array<string,mixed>>}|null
      */
     private function structuredGroup(
         array $segments,
-        Collection $players,
         string $teamAbbrev,
         string $fallbackPosition
     ): ?array {
@@ -194,9 +183,15 @@ class NhlLineupTextParser
         $matched = [];
 
         foreach ($segments as $segment) {
-            $segmentMatches = $this->playersInText($segment, $players, $teamAbbrev);
-            if ($segmentMatches !== []) {
-                $player = $segmentMatches[0];
+            $resolved = $this->players->resolve($segment, $teamAbbrev);
+            if ($resolved !== null) {
+                $player = [
+                    'name' => (string) $resolved->full_name,
+                    'position' => $resolved->position ? (string) $resolved->position : null,
+                    'player_id' => $resolved->id,
+                    'nhl_player_id' => $resolved->nhl_id,
+                    'team_abbrev' => $resolved->team_abbrev,
+                ];
                 $group[] = $player;
                 $matched[] = $player;
                 continue;
@@ -227,98 +222,6 @@ class NhlLineupTextParser
         };
     }
 
-    /** @param Collection<int,Player> $players @return array<int,array{name:string,position:string|null}> */
-    private function playersInText(string $line, Collection $players, string $teamAbbrev): array
-    {
-        $found = [];
-        $normalizedLine = $this->normalizer->normalizeName($line);
-        if ($normalizedLine === null) {
-            return [];
-        }
-
-        foreach ($players as $player) {
-            $fullName = trim((string) $player->full_name);
-            $lastName = trim((string) Str::afterLast($fullName, ' '));
-            $teamMatch = mb_strtoupper((string) $player->team_abbrev) === mb_strtoupper($teamAbbrev);
-            if (! $teamMatch) {
-                continue;
-            }
-
-            $offset = $this->fullNameOffset($normalizedLine, $fullName);
-            if ($offset === null && mb_strlen($lastName) >= 3) {
-                $offset = $this->lastNameOffset($normalizedLine, $fullName, $lastName);
-            }
-            if ($offset !== null && (! isset($found[$player->id]) || $offset < $found[$player->id]['offset'])) {
-                $found[$player->id] = ['offset' => $offset, 'player' => $player];
-            }
-        }
-
-        uasort($found, fn (array $left, array $right): int => $left['offset'] <=> $right['offset']);
-
-        return collect($found)
-            ->groupBy(fn (array $match): string => (string) $match['offset'])
-            ->map(fn (Collection $matches): array => $matches->first())
-            ->sortBy('offset')
-            ->pluck('player')
-            ->map(fn (Player $player): array => [
-                'name' => (string) $player->full_name,
-                'position' => $player->position ? (string) $player->position : null,
-                'player_id' => $player->id,
-                'nhl_player_id' => $player->nhl_id,
-                'team_abbrev' => $player->team_abbrev,
-            ])
-            ->values()
-            ->all();
-    }
-
-    private function fullNameOffset(string $normalizedLine, string $fullName): ?int
-    {
-        $normalizedName = $this->normalizer->normalizeName($fullName);
-        if ($normalizedName === null) {
-            return null;
-        }
-        $parts = preg_split('/\s+/', $normalizedName) ?: [];
-        $pattern = implode('\\s*', array_map(
-            fn (string $part): string => preg_quote($part, '/'),
-            $parts
-        ));
-
-        return preg_match(
-            '/(?<![a-z0-9])' . $pattern . '(?![a-z0-9])/u',
-            $normalizedLine,
-            $match,
-            PREG_OFFSET_CAPTURE
-        ) === 1 ? (int) $match[0][1] : null;
-    }
-
-    private function lastNameOffset(string $normalizedLine, string $fullName, string $lastName): ?int
-    {
-        $normalizedLastName = $this->normalizer->normalizeName($lastName);
-        $normalizedFullName = $this->normalizer->normalizeName($fullName);
-        if ($normalizedLastName === null || $normalizedFullName === null) {
-            return null;
-        }
-        $lastNamePattern = implode('\\s*', array_map(
-            fn (string $part): string => preg_quote($part, '/'),
-            preg_split('/\s+/', $normalizedLastName) ?: []
-        ));
-        if (preg_match(
-            '/(?<![a-z0-9])(?:(?<initial>[a-z])\\s+)?' . $lastNamePattern . '(?![a-z0-9])/u',
-            $normalizedLine,
-            $match,
-            PREG_OFFSET_CAPTURE
-        ) !== 1) {
-            return null;
-        }
-
-        $reportedInitial = (string) ($match['initial'][0] ?? '');
-        if ($reportedInitial !== '' && $reportedInitial !== mb_substr($normalizedFullName, 0, 1)) {
-            return null;
-        }
-
-        return (int) $match[0][1];
-    }
-
     /** @param array<int,array<string,mixed>> $players @return array<int,array<string,mixed>> */
     private function uniquePlayers(array $players): array
     {
@@ -336,6 +239,9 @@ class NhlLineupTextParser
             'slot_index' => $slotIndex,
             'power_play_unit' => null,
             'penalty_kill_unit' => null,
+            'player_id' => $player['player_id'] ?? null,
+            'nhl_player_id' => $player['nhl_player_id'] ?? null,
+            'team_abbrev' => $player['team_abbrev'] ?? null,
         ];
     }
 }

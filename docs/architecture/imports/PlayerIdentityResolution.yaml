@@ -16,6 +16,7 @@ location:
   - app/Listeners/QueueCapWagesContractRefresh.php
   - app/Listeners/SyncFantraxRosterMembershipsForLinkedIdentity.php
   - app/Services/NhlPlayerIdentityLookup.php
+  - app/Services/NhlLineupPlayerResolver.php
   - app/Services/PlayerIdentityNormalizer.php
   - app/Services/PlayerIdentityResolver.php
   - database/migrations/*_create_player_external_identities_table.php
@@ -48,6 +49,7 @@ rules:
   - Admin-triggered NHL player resolution must run nhl:resolve --players --inline so import progress reflects actual resolution, merge, skip, and failure outcomes instead of unique job dispatch attempts.
   - NHL identity enrichment must not block the source provider import and must run from a queued job.
   - NhlPlayerIdentityLookup is the single NHL Stats name-search and landing-validation abstraction for resolving an NHL player id from a canonical player or first-name, last-name, and position-type evidence.
+  - NhlLineupPlayerResolver is the canonical local resolver for names, abbreviations, aliases, and sweater references extracted from lineup evidence; lineup importers and parsers must reuse it instead of implementing independent matching logic.
   - NHL identity enrichment must search NHL Stats players by first and last name, filter candidates by compatible position type, and only mutate the canonical player when exactly one validated NHL landing payload remains.
   - NHL identity enrichment must link the validated NHL identity to the existing canonical player before running the canonical NHL landing import so enrichment cannot create duplicate players for the resolved NHL id.
   - A newly assigned players.nhl_id, whether on create or update, must queue a canonical NHL landing refresh that updates player metadata and upserts legacy stats rows from NHL landing seasonTotals.
@@ -100,6 +102,8 @@ public_interface:
   - NhlPlayerIdentityLookup::resolveForPlayer()
   - NhlPlayerIdentityLookup::resolveForName()
   - NhlPlayerIdentityLookup::hasLookupEvidence()
+  - NhlLineupPlayerResolver::resolve()
+  - NhlLineupPlayerResolver::mentions()
   - PlayerIdentityResolver::upsertFantraxIdentity()
   - PlayerIdentityResolver::upsertYahooIdentity()
   - PlayerIdentityResolver::upsertCapWagesIdentity()

@@ -42,6 +42,7 @@ class NhlAnticipatedLineupImporter
     /** @return array{available:bool,observed:int} */
     public function importOfficial(object $game, string $teamAbbrev, int $teamId): array
     {
+        $this->reconcileUnresolved((int) $game->nhl_game_id, $teamId, $teamAbbrev);
         $candidate = $this->officialRosters->discover($game, $teamAbbrev);
         if ($candidate === null) {
             return ['available' => false, 'observed' => 0];
@@ -62,6 +63,7 @@ class NhlAnticipatedLineupImporter
         ?string $streamBatchId = null
     ): array
     {
+        $this->reconcileUnresolved((int) $game->nhl_game_id, $teamId, $teamAbbrev);
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates(
@@ -74,6 +76,36 @@ class NhlAnticipatedLineupImporter
         );
 
         return compact('observed', 'skipped');
+    }
+
+    /** Re-evaluate identity fields while preserving the immutable reported evidence. */
+    private function reconcileUnresolved(int $gameId, int $teamId, string $teamAbbrev): void
+    {
+        $rows = \App\Models\NhlLineupObservationPlayer::query()
+            ->where('team_id', $teamId)
+            ->where('team_abbrev', $teamAbbrev)
+            ->where('resolution_status', 'unresolved')
+            ->whereHas('observation', fn ($query) => $query->where('nhl_game_id', $gameId))
+            ->get();
+        $resolved = false;
+
+        foreach ($rows as $row) {
+            $player = $this->players->resolve((string) $row->player_name, $teamAbbrev);
+            if ($player === null) {
+                continue;
+            }
+
+            $row->update([
+                'player_id' => $player->id,
+                'nhl_player_id' => $player->nhl_id,
+                'resolution_status' => 'resolved',
+            ]);
+            $resolved = true;
+        }
+
+        if ($resolved) {
+            $this->refreshCurrent($gameId, $teamId, $teamAbbrev);
+        }
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /** One normalized player slot within a lineup observation. */
 class NhlLineupObservationPlayer extends Model
@@ -21,4 +22,9 @@ class NhlLineupObservationPlayer extends Model
         'power_play_unit' => 'integer',
         'penalty_kill_unit' => 'integer',
     ];
+
+    public function observation(): BelongsTo
+    {
+        return $this->belongsTo(NhlLineupObservation::class, 'nhl_lineup_observation_id');
+    }
 }

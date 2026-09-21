@@ -2358,3 +2358,72 @@ it('does not request gamecenter for a date outside utc today', function (): void
     Http::assertNothingSent();
     Carbon::setTestNow();
 });
+
+it('resolves lineup acronym references through the canonical lineup resolver', function (): void {
+    $player = Player::query()->create([
+        'nhl_id' => 8482105, 'first_name' => 'Jacob', 'last_name' => 'Bernard-Docker',
+        'full_name' => 'Jacob Bernard-Docker', 'position' => 'D', 'team_abbrev' => 'DET',
+    ]);
+
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('JBD', 'DET');
+
+    expect($resolved?->is($player))->toBeTrue();
+});
+
+it('resolves an unambiguous lineup surname prefix for the target team', function (): void {
+    $player = Player::query()->create([
+        'nhl_id' => 8481540, 'first_name' => 'Juraj', 'last_name' => 'Slafkovsky',
+        'full_name' => 'Juraj Slafkovsky', 'position' => 'LW', 'team_abbrev' => 'MTL',
+    ]);
+
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('Slaf', 'MTL');
+
+    expect($resolved?->is($player))->toBeTrue();
+});
+
+it('resolves a unique canonical player when the stored team assignment is stale', function (): void {
+    $player = Player::query()->create([
+        'nhl_id' => 8484901, 'first_name' => 'Trade', 'last_name' => 'Candidate',
+        'full_name' => 'Trade Candidate', 'position' => 'C', 'team_abbrev' => 'AHL',
+    ]);
+
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('Trade Candidate', 'DAL');
+
+    expect($resolved?->is($player))->toBeTrue();
+});
+
+it('uses configured first name variants in reported lineup names', function (): void {
+    config(['name_variants.first_name_variants' => ['Nicholas' => ['Nick']]]);
+    $player = Player::query()->create([
+        'nhl_id' => 8484902, 'first_name' => 'Nicholas', 'last_name' => 'Prospect',
+        'full_name' => 'Nicholas Prospect', 'position' => 'C', 'team_abbrev' => 'BUF',
+    ]);
+
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('Nick Prospect', 'BUF');
+
+    expect($resolved?->is($player))->toBeTrue();
+});
+
+it('resolves a reported sweater number from the teams latest imported boxscore', function (): void {
+    $player = Player::query()->create([
+        'nhl_id' => 8484903, 'first_name' => 'Numbered', 'last_name' => 'Prospect',
+        'full_name' => 'Numbered Prospect', 'position' => 'D', 'team_abbrev' => 'WSH',
+    ]);
+    DB::table('nhl_teams')->insert([
+        'nhl_id' => 15, 'abbrev' => 'WSH', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010999, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-20 23:00:00',
+        'away_team_abbrev' => 'WSH', 'home_team_abbrev' => 'BOS',
+    ]);
+    DB::table('nhl_boxscores')->insert([
+        'nhl_game_id' => 2026010999, 'nhl_player_id' => $player->nhl_id, 'nhl_team_id' => 15,
+        'sweater_number' => 48, 'created_at' => now(), 'updated_at' => now(),
+    ]);
+
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve('48', 'WSH');
+
+    expect($resolved?->is($player))->toBeTrue();
+});
