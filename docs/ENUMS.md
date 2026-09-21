@@ -2633,6 +2633,22 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 ---
 
+### NHL Game Prediction Player Projection Source
+
+**Name:** NHL game prediction player projection source
+**Storage location(s):** Request-time `teams.*.roster[].projection_source`
+**Allowed values:**
+
+- `nhl_projection`
+- `nhle_non_nhl_history`
+- `replacement_level`
+- `line_peer_average`
+
+`line_peer_average` is restricted to unresolved F4 or D3 lineup rows with at
+least one resolved peer in the same line or pair.
+
+---
+
 ## Conflicts / Ambiguities Report
 
 ### NHL Player Availability

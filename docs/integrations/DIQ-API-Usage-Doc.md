@@ -786,6 +786,12 @@ DynastyIQ builds a game-specific input for every resolved skater:
 - If neither a usable NHL projection nor translatable non-NHL history exists,
   DynastyIQ retains the player with an explicit low-confidence
   `replacement_level` rate. Resolved lineup players are never silently dropped.
+- An unresolved player is permitted only on `F4` or `D3` when at least one
+  teammate in that exact line or pair resolves canonically. The unresolved row
+  retains its reported name and null NHL id, uses `line_peer_average`, and
+  receives the average projected TOI, goals, assists, and SOG of its resolved
+  peers. Unresolved players in `F1`-`F3` or `D1`-`D2` still make a preseason
+  lineup prediction-ineligible.
 
 Official NHL authority changes the roster evidence source, not the player-rate
 fallback ladder. Official-boxscore rookies therefore receive the same NHLe or
@@ -806,7 +812,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `player_id` | integer/null | Internal DynastyIQ player id. |
-| `nhl_player_id` | integer | Canonical NHL player id; use this as the durable consumer identity. |
+| `nhl_player_id` | integer/null | Canonical NHL player id; null only for an eligible unresolved F4/D3 peer-average row. |
 | `player_name` | string | Display name captured with the reported lineup. |
 | `position` | string | Normalized lineup group: `forward` or `defense`. |
 | `line_key` | string | Reported line or pair: `F1`-`F4` or `D1`-`D3`. |
@@ -814,7 +820,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `power_play_unit` | integer/null | Explicitly reported PP unit, `1` or `2`; null means unreported. |
 | `penalty_kill_unit` | integer/null | Explicitly reported PK unit, `1` or `2`; null means unreported. |
 | `nhl_games_played` | integer | Career NHL regular-season GP used for the 25-game experience threshold. |
-| `projection_source` | string | Player-rate source: `nhl_projection`, `nhle_non_nhl_history`, or `replacement_level`. |
+| `projection_source` | string | Player-rate source: `nhl_projection`, `nhle_non_nhl_history`, `replacement_level`, or `line_peer_average`. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
 | `confidence_score` | number | Numeric `0`-`1` confidence input used by prediction confidence weighting. |

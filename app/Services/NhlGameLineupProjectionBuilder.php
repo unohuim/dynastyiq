@@ -27,11 +27,11 @@ final class NhlGameLineupProjectionBuilder
         string $toiProjectionVersion
     ): ?array {
         $players = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense'])->values();
-        if ($players->count() !== 18 || $players->pluck('nhl_player_id')->filter()->unique()->count() !== 18) {
+        if (! $this->hasUsableLineup($players)) {
             return null;
         }
 
-        $ids = $players->pluck('nhl_player_id')->map(fn (mixed $id): int => (int) $id)->all();
+        $ids = $players->pluck('nhl_player_id')->filter()->map(fn (mixed $id): int => (int) $id)->all();
         $projections = DB::table('nhl_player_season_projections')
             ->where('target_season_id', $targetSeasonId)->where('projection_version', $projectionVersion)
             ->whereIn('player_id', $ids)->get()->keyBy('player_id');
@@ -48,7 +48,29 @@ final class NhlGameLineupProjectionBuilder
             ->orderBy('gp')->get()->keyBy('player_id');
 
         $rows = $players->map(function (array $player) use ($projections, $toi, $careerGames, $nhlHistory, $nonNhl): array {
-            $nhlId = (int) $player['nhl_player_id'];
+            $nhlId = empty($player['nhl_player_id']) ? null : (int) $player['nhl_player_id'];
+            if ($nhlId === null) {
+                return [
+                    'player_id' => $player['player_id'] ?? null,
+                    'nhl_player_id' => null,
+                    'player_name' => $player['player_name'],
+                    'position' => $player['lineup_role'],
+                    'line_key' => $player['line_key'],
+                    'slot_index' => $player['slot_index'],
+                    'power_play_unit' => $player['power_play_unit'] ?? null,
+                    'penalty_kill_unit' => $player['penalty_kill_unit'] ?? null,
+                    'nhl_games_played' => 0,
+                    'projection_source' => 'line_peer_average',
+                    'nhle_factor' => null,
+                    'confidence' => 'low',
+                    'confidence_score' => 0.20,
+                    'role_weight' => $this->roleWeight($player),
+                    'baseline_toi_seconds' => 0.0,
+                    'goals_per_game_unscaled' => 0.0,
+                    'assists_per_game_unscaled' => 0.0,
+                    'sog_per_game_unscaled' => 0.0,
+                ];
+            }
             $projection = $projections->get($nhlId);
             $toiProjection = $toi->get($nhlId);
             $nhlGames = (int) ($careerGames->get($nhlId) ?? 0);
@@ -106,7 +128,77 @@ final class NhlGameLineupProjectionBuilder
             ];
         });
 
-        return $this->applyGameToi($rows)->all();
+        $rows = $this->applyPeerAverages($rows);
+
+        return $this->applyFinalPeerAverages($this->applyGameToi($rows))->all();
+    }
+
+    /** @param Collection<int,array<string,mixed>> $players */
+    private function hasUsableLineup(Collection $players): bool
+    {
+        if ($players->count() !== 18) {
+            return false;
+        }
+
+        $unresolved = $players->filter(fn (array $player): bool => empty($player['nhl_player_id']));
+        if ($unresolved->contains(fn (array $player): bool => ! in_array($player['line_key'] ?? null, ['F4', 'D3'], true))) {
+            return false;
+        }
+
+        foreach (['F4' => 3, 'D3' => 2] as $lineKey => $expected) {
+            $group = $players->where('line_key', $lineKey);
+            if ($group->count() !== $expected || $group->pluck('nhl_player_id')->filter()->isEmpty()) {
+                return false;
+            }
+        }
+
+        return $players->pluck('nhl_player_id')->filter()->unique()->count()
+            === $players->pluck('nhl_player_id')->filter()->count();
+    }
+
+    /** @param Collection<int,array<string,mixed>> $rows @return Collection<int,array<string,mixed>> */
+    private function applyPeerAverages(Collection $rows): Collection
+    {
+        return $rows->map(function (array $row) use ($rows): array {
+            if ($row['projection_source'] !== 'line_peer_average') {
+                return $row;
+            }
+
+            $peers = $rows->where('line_key', $row['line_key'])
+                ->where('projection_source', '!=', 'line_peer_average');
+            foreach ([
+                'baseline_toi_seconds',
+                'goals_per_game_unscaled',
+                'assists_per_game_unscaled',
+                'sog_per_game_unscaled',
+            ] as $field) {
+                $row[$field] = (float) $peers->avg($field);
+            }
+
+            return $row;
+        });
+    }
+
+    /** @param Collection<int,array<string,mixed>> $rows @return Collection<int,array<string,mixed>> */
+    private function applyFinalPeerAverages(Collection $rows): Collection
+    {
+        return $rows->map(function (array $row) use ($rows): array {
+            if ($row['projection_source'] !== 'line_peer_average') {
+                return $row;
+            }
+
+            $peers = $rows->where('line_key', $row['line_key'])
+                ->where('projection_source', '!=', 'line_peer_average');
+            foreach (['game_projected_toi_seconds', 'projected_goals', 'adjusted_xgf_per_game', 'projected_assists', 'projected_sog'] as $field) {
+                $row[$field] = $field === 'game_projected_toi_seconds'
+                    ? (int) round((float) $peers->avg($field))
+                    : round((float) $peers->avg($field), $field === 'projected_sog' ? 3 : 4);
+            }
+            $seconds = (int) $row['game_projected_toi_seconds'];
+            $row['game_projected_toi'] = sprintf('%d:%02d', intdiv($seconds, 60), $seconds % 60);
+
+            return $row;
+        });
     }
 
     /**

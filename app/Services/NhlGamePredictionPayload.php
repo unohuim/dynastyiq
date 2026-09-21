@@ -453,11 +453,27 @@ class NhlGamePredictionPayload
             return null;
         }
 
-        $skaters = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense']);
+        $skaters = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense'])->values();
+        if ($skaters->count() !== 18) {
+            return null;
+        }
+
+        $unresolved = $skaters->filter(fn (array $player): bool => empty($player['nhl_player_id']));
+        if ($unresolved->contains(fn (array $player): bool => ! in_array($player['line_key'] ?? null, ['F4', 'D3'], true))) {
+            return null;
+        }
+
+        foreach (['F4' => 3, 'D3' => 2] as $lineKey => $expected) {
+            $group = $skaters->where('line_key', $lineKey);
+            if ($group->count() !== $expected || $group->pluck('nhl_player_id')->filter()->isEmpty()) {
+                return null;
+            }
+        }
+
         $ids = $skaters->pluck('nhl_player_id')->filter()
             ->map(fn (mixed $id): int => (int) $id)->unique()->values();
 
-        return $skaters->count() === 18 && $ids->count() === 18 ? $ids->all() : null;
+        return $ids->count() === $skaters->whereNotNull('nhl_player_id')->count() ? $ids->all() : null;
     }
 
     /**

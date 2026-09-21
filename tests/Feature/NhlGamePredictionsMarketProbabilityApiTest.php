@@ -610,6 +610,122 @@ it('applies nhle and replacement values to rookies in a resolved game lineup', f
         ->toBe('replacement_level');
 });
 
+it('predicts with an unresolved fourth-line player using resolved line-peer averages', function (): void {
+    $token = ($this->seedPredictionInputs)(2.4, 3.2);
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-depth-average');
+    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home-depth-average');
+    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
+        ->where('line_key', 'F4')->where('slot_index', 2)->update([
+            'nhl_player_id' => null,
+            'player_name' => 'Unresolved Fourth Liner',
+            'resolution_status' => 'unresolved',
+        ]);
+    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
+        ->where('line_key', 'F4')->where('slot_index', 3)->update([
+            'nhl_player_id' => null,
+            'player_name' => 'Second Unresolved Fourth Liner',
+            'resolution_status' => 'unresolved',
+        ]);
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    $simulator->shouldReceive('simulateWithRosters')->once()->andReturn([
+        'is_available' => true,
+        'sides' => [
+            ['offense_team' => 'AWY', 'defense_team' => 'HOM', 'summary' => [
+                'total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0,
+            ], 'roster' => []],
+            ['offense_team' => 'HOM', 'defense_team' => 'AWY', 'summary' => [
+                'total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0,
+            ], 'roster' => []],
+        ],
+    ]);
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+
+    $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))->assertOk()->assertJsonPath('prediction_available', true)->assertJsonCount(18, 'teams.away.roster');
+    $roster = collect($response->json('teams.away.roster'));
+    $unresolved = $roster->firstWhere('player_name', 'Unresolved Fourth Liner');
+    $peers = $roster->where('line_key', 'F4')->where('projection_source', '!=', 'line_peer_average');
+
+    expect($unresolved['nhl_player_id'])->toBeNull()
+        ->and($unresolved['projection_source'])->toBe('line_peer_average')
+        ->and($unresolved['projected_sog'])->toBe(round((float) $peers->avg('projected_sog'), 3))
+        ->and($roster->where('projection_source', 'line_peer_average'))->toHaveCount(2);
+});
+
+it('still withholds a preseason prediction for an unresolved top-nine forward', function (): void {
+    $token = ($this->seedPredictionInputs)();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
+    ($this->insertReportedLineup)('AWY', 1, 8481001, 'away-core-unresolved');
+    ($this->insertReportedLineup)('HOM', 2, 8482001, 'home-core-unresolved');
+    DB::table('nhl_lineup_observation_players')->where('team_abbrev', 'AWY')
+        ->where('line_key', 'F3')->where('slot_index', 1)->update([
+            'nhl_player_id' => null, 'resolution_status' => 'unresolved',
+        ]);
+
+    $this->withHeader('Authorization', 'Bearer ' . $token)
+        ->getJson('/api/nhl-game-predictions?' . http_build_query([
+            'nhl_game_id' => 2026020001,
+            'source_season_id' => '20252026', 'target_season_id' => '20262027',
+            'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+            'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+        ]))->assertOk()
+        ->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('reason', 'preseason_lineup_unresolved');
+});
+
+it('requires at least one resolved peer in each unresolved depth group', function (): void {
+    $players = collect(range(1, 18))->map(function (int $index): array {
+        $forward = $index <= 12;
+        $positionIndex = $forward ? $index - 1 : $index - 13;
+        $lineKey = ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1);
+
+        return [
+            'player_id' => null,
+            'nhl_player_id' => $lineKey === 'D3' ? null : 8488000 + $index,
+            'player_name' => "Depth Player {$index}",
+            'lineup_role' => $forward ? 'forward' : 'defense',
+            'line_key' => $lineKey,
+            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
+        ];
+    })->all();
+
+    expect(app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
+        ['players' => $players], '20252026', '20262027', 'skater-market', 'toi-market'
+    ))->toBeNull();
+});
+
+it('uses the resolved third-pair defenseman for an unresolved d3 projection', function (): void {
+    $players = collect(range(1, 18))->map(function (int $index): array {
+        $forward = $index <= 12;
+        $positionIndex = $forward ? $index - 1 : $index - 13;
+        $lineKey = ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1);
+
+        return [
+            'player_id' => null,
+            'nhl_player_id' => $index === 18 ? null : 8489000 + $index,
+            'player_name' => $index === 18 ? 'Unresolved D3' : "Resolved Player {$index}",
+            'lineup_role' => $forward ? 'forward' : 'defense',
+            'line_key' => $lineKey,
+            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
+        ];
+    })->all();
+
+    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
+        ['players' => $players], '20252026', '20262027', 'skater-market', 'toi-market'
+    );
+    $unresolved = collect($result)->firstWhere('player_name', 'Unresolved D3');
+
+    expect($result)->toHaveCount(18)
+        ->and($unresolved['projection_source'])->toBe('line_peer_average')
+        ->and($unresolved['nhl_player_id'])->toBeNull();
+});
+
 it('uses complete reported lineups for both teams in a preseason prediction', function (): void {
     $token = ($this->seedPredictionInputs)(2.4, 3.2);
     DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
