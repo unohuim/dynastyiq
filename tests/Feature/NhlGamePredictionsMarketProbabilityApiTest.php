@@ -553,11 +553,61 @@ it('fetches and persists complete NHL boxscore lineups before withholding a pres
         ->assertJsonPath('inputs.away_lineup_source', 'nhl_boxscore')
         ->assertJsonPath('inputs.home_lineup_source', 'nhl_boxscore')
         ->assertJsonPath('anticipated_lineups.away.evidence_status', 'official')
-        ->assertJsonPath('anticipated_lineups.home.evidence_status', 'official');
+        ->assertJsonPath('anticipated_lineups.home.evidence_status', 'official')
+        ->assertJsonCount(18, 'teams.away.roster')
+        ->assertJsonCount(18, 'teams.home.roster')
+        ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
 
     $this->assertDatabaseCount('nhl_current_lineups', 2)
         ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'AWY', 'evidence_status' => 'official'])
         ->assertDatabaseHas('nhl_current_lineups', ['team_abbrev' => 'HOM', 'evidence_status' => 'official']);
+});
+
+it('applies nhle and replacement values to rookies in a resolved game lineup', function (): void {
+    $rookie = DB::table('players')->insertGetId([
+        'nhl_id' => 8487001, 'first_name' => 'Nhle', 'last_name' => 'Rookie',
+        'full_name' => 'Nhle Rookie', 'position' => 'C', 'team_abbrev' => 'AWY',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('stats')->insert([
+        'player_id' => $rookie, 'player_name' => 'Nhle Rookie', 'season_id' => '20252026',
+        'league_abbrev' => 'AHL', 'team_name' => 'Affiliate', 'game_type_id' => 2,
+        'gp' => 50, 'g' => 20, 'a' => 30, 'pts' => 50, 'sog' => 150,
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('nhle_league_factors')->insert([
+        'source' => 'nl_ice_data', 'source_version' => 'test', 'model_name' => 'Test',
+        'model_window' => 'Test', 'source_league_name' => 'AHL', 'mapped_league_codes' => json_encode(['AHL']),
+        'points_factor' => 0.45, 'win_shares_factor' => 0.45,
+        'source_url' => 'https://example.test/nhle', 'created_at' => now(), 'updated_at' => now(),
+    ]);
+    $players = collect(range(1, 18))->map(function (int $index) use ($rookie): array {
+        $forward = $index <= 12;
+        $positionIndex = $forward ? $index - 1 : $index - 13;
+
+        return [
+            'player_id' => $index === 1 ? $rookie : null,
+            'nhl_player_id' => 8487000 + $index,
+            'player_name' => $index === 1 ? 'Nhle Rookie' : "Replacement Rookie {$index}",
+            'lineup_role' => $forward ? 'forward' : 'defense',
+            'line_key' => ($forward ? 'F' : 'D') . ((int) floor($positionIndex / ($forward ? 3 : 2)) + 1),
+            'slot_index' => ($positionIndex % ($forward ? 3 : 2)) + 1,
+        ];
+    })->all();
+
+    $result = app(\App\Services\NhlGameLineupProjectionBuilder::class)->build(
+        ['players' => $players],
+        '20252026',
+        '20262027',
+        'skater-market',
+        'toi-market'
+    );
+
+    expect($result)->toHaveCount(18)
+        ->and(collect($result)->firstWhere('nhl_player_id', 8487001)['projection_source'])
+        ->toBe('nhle_non_nhl_history')
+        ->and(collect($result)->firstWhere('nhl_player_id', 8487002)['projection_source'])
+        ->toBe('replacement_level');
 });
 
 it('uses complete reported lineups for both teams in a preseason prediction', function (): void {

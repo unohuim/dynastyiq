@@ -48,6 +48,7 @@ rules:
   - Consensus compares normalized player slots and only time-relevant matching observations.
   - Newer evidence may supersede current truth without deleting older observations.
   - Predictions may use a reported lineup when all eighteen skaters resolve to unique NHL player ids; corroboration remains higher-confidence evidence rather than a prediction prerequisite.
+  - Prediction assembly must apply the same game-specific NHL, NHLe, and replacement-level projection ladder to all eighteen resolved skaters regardless of whether lineup authority is public evidence or the official NHL boxscore; official authority must not bypass rookie projection fallbacks.
   - Official NHL lineup evidence remains authoritative over anticipated public evidence.
   - Each eligible team job checks the NHL gamecenter boxscore before X; twelve official forwards and six official defensemen become current official truth and suppress X discovery for that game/team.
   - An NHL boxscore without a complete team roster falls through to X discovery.

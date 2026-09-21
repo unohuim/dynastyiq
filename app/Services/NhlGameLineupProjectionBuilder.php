@@ -109,6 +109,76 @@ final class NhlGameLineupProjectionBuilder
         return $this->applyGameToi($rows)->all();
     }
 
+    /**
+     * Build game projections when official boxscore IDs exist before an official lineup observation does.
+     *
+     * @param array<int,int> $rosterIds
+     * @return array<int,array<string,mixed>>|null
+     */
+    public function buildFromRosterIds(
+        array $rosterIds,
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion
+    ): ?array {
+        $players = DB::table('nhl_boxscores as boxscores')
+            ->leftJoin('players', 'players.nhl_id', '=', 'boxscores.nhl_player_id')
+            ->leftJoin('nhl_player_toi_projections as toi', function ($join) use (
+                $targetSeasonId,
+                $toiProjectionVersion
+            ): void {
+                $join->on('toi.player_id', '=', 'boxscores.nhl_player_id')
+                    ->where('toi.target_season_id', '=', $targetSeasonId)
+                    ->where('toi.projection_version', '=', $toiProjectionVersion);
+            })
+            ->whereIn('boxscores.nhl_player_id', $rosterIds)
+            ->whereRaw("UPPER(COALESCE(players.position, boxscores.position, '')) <> 'G'")
+            ->selectRaw('boxscores.nhl_player_id')
+            ->selectRaw('MAX(players.id) as id')
+            ->selectRaw('MAX(COALESCE(players.full_name, boxscores.player_name, boxscores.nhl_player_id::text)) as full_name')
+            ->selectRaw('MAX(COALESCE(players.position, boxscores.position)) as position')
+            ->selectRaw('MAX(toi.projected_toi_per_game_seconds) as projected_toi_per_game_seconds')
+            ->groupBy('boxscores.nhl_player_id')
+            ->orderByDesc('projected_toi_per_game_seconds')
+            ->orderBy('boxscores.nhl_player_id')
+            ->get();
+        $forwards = $players->filter(
+            fn (object $player): bool => mb_strtoupper((string) $player->position) !== 'D'
+        )->take(12)->values();
+        $defense = $players->filter(
+            fn (object $player): bool => mb_strtoupper((string) $player->position) === 'D'
+        )->take(6)->values();
+
+        if ($forwards->count() !== 12 || $defense->count() !== 6) {
+            return null;
+        }
+
+        $lineupPlayers = $forwards->map(fn (object $player, int $index): array => [
+            'player_id' => $player->id === null ? null : (int) $player->id,
+            'nhl_player_id' => (int) $player->nhl_player_id,
+            'player_name' => (string) $player->full_name,
+            'lineup_role' => 'forward',
+            'line_key' => 'F' . ((int) floor($index / 3) + 1),
+            'slot_index' => ($index % 3) + 1,
+        ])->concat($defense->map(fn (object $player, int $index): array => [
+            'player_id' => $player->id === null ? null : (int) $player->id,
+            'nhl_player_id' => (int) $player->nhl_player_id,
+            'player_name' => (string) $player->full_name,
+            'lineup_role' => 'defense',
+            'line_key' => 'D' . ((int) floor($index / 2) + 1),
+            'slot_index' => ($index % 2) + 1,
+        ]))->values();
+
+        return $this->build(
+            ['players' => $lineupPlayers->all()],
+            $sourceSeasonId,
+            $targetSeasonId,
+            $projectionVersion,
+            $toiProjectionVersion
+        );
+    }
+
     /** @param array<string,mixed> $player */
     private function roleWeight(array $player): float
     {

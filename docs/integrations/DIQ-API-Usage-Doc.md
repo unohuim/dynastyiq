@@ -712,7 +712,7 @@ starting-goalie observation, goalie season projection, then workload projection.
 Within observations, confirmed evidence outranks expected evidence, with newest
 evidence breaking ties.
 
-When a reported lineup is used, `teams.away.roster[]` and
+When a complete official or reported lineup is used, `teams.away.roster[]` and
 `teams.home.roster[]` contain all 18 skaters actually used. Each row includes
 the reported line and PP/PK units, `game_projected_toi_seconds`, a readable
 `game_projected_toi`, `projection_source`, `confidence`, `nhl_games_played`,
@@ -765,10 +765,10 @@ than inferring how the goalie was selected. Current values are `provided`,
 `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, and
 `workload_projection`.
 
-### Reported Lineup TOI and Production Inputs
+### Game-Specific Lineup TOI and Production Inputs
 
-When `inputs.*_lineup_source` is `anticipated_lineup`, DynastyIQ builds a
-game-specific input for every reported skater:
+When `inputs.*_lineup_source` is `nhl_boxscore` or `anticipated_lineup`,
+DynastyIQ builds a game-specific input for every resolved skater:
 
 - The reported forward or defense pair determines the player's base game role.
 - Explicit PP1, PP2, PK1, and PK2 evidence adjusts that role. Null special-team
@@ -785,7 +785,14 @@ game-specific input for every reported skater:
   separate SOG translation factor.
 - If neither a usable NHL projection nor translatable non-NHL history exists,
   DynastyIQ retains the player with an explicit low-confidence
-  `replacement_level` rate. Reported players are never silently dropped.
+  `replacement_level` rate. Resolved lineup players are never silently dropped.
+
+Official NHL authority changes the roster evidence source, not the player-rate
+fallback ladder. Official-boxscore rookies therefore receive the same NHLe or
+replacement-level handling as rookies from reported anticipated lineups. When
+only official boxscore roster IDs are available and no ordered official lineup
+observation exists, DynastyIQ assigns provisional line keys by position and
+projected TOI solely to calculate game-specific usage.
 
 These calculations are request-time prediction inputs. They do not replace raw
 statistics, historical records, or stored season projections.
@@ -793,8 +800,8 @@ statistics, historical records, or stored season projections.
 ### Expanded Team Roster Fields
 
 `teams.away.roster[]` and `teams.home.roster[]` describe the skaters actually
-used by the prediction. When the lineup source is `anticipated_lineup`, each
-row has the expanded shape below.
+used by the prediction. When the lineup source is `nhl_boxscore` or
+`anticipated_lineup`, each row has the expanded shape below.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -819,10 +826,10 @@ row has the expanded shape below.
 | `projected_assists` | number | Game-specific projected assists after role and TOI scaling. |
 | `projected_sog` | number | Game-specific projected shots on goal after role and TOI scaling. |
 
-Official-boxscore and projected-roster rows continue to use the established
-simulator roster shape and may not contain the lineup-specific, NHLe, or
-game-TOI fields above. Consumers must branch on `inputs.*_lineup_source` and treat
-absent optional fields as unavailable, not as zero.
+Projected-roster rows continue to use the established simulator roster shape
+and may not contain the lineup-specific, NHLe, or game-TOI fields above.
+Consumers must branch on `inputs.*_lineup_source` and treat absent optional
+fields as unavailable, not as zero.
 
 ### Expanded Prediction Example
 

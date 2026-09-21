@@ -80,12 +80,22 @@ class NhlGamePredictionPayload
 
         $awayOfficial = $awayOfficialRosterIds !== null || $this->isOfficialLineup($awayLineup);
         $homeOfficial = $homeOfficialRosterIds !== null || $this->isOfficialLineup($homeLineup);
-        $awayGamePlayers = ! $awayOfficial && $awayRosterIds !== null
-            ? $this->lineupProjections->build($awayLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
-            : null;
-        $homeGamePlayers = ! $homeOfficial && $homeRosterIds !== null
-            ? $this->lineupProjections->build($homeLineup, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
-            : null;
+        $awayGamePlayers = $this->gamePlayerProjections(
+            $awayLineup,
+            $awayRosterIds,
+            $sourceSeasonId,
+            $targetSeasonId,
+            $projectionVersion,
+            $toiProjectionVersion
+        );
+        $homeGamePlayers = $this->gamePlayerProjections(
+            $homeLineup,
+            $homeRosterIds,
+            $sourceSeasonId,
+            $targetSeasonId,
+            $projectionVersion,
+            $toiProjectionVersion
+        );
 
         if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
             && ($awayRosterIds === null || $homeRosterIds === null)) {
@@ -155,8 +165,8 @@ class NhlGamePredictionPayload
 
         $awaySide = $result['sides'][0] ?? [];
         $homeSide = $result['sides'][1] ?? [];
-        $awaySide = $this->applyReportedLineupProjection($awaySide, $awayGamePlayers);
-        $homeSide = $this->applyReportedLineupProjection($homeSide, $homeGamePlayers);
+        $awaySide = $this->applyGameLineupProjection($awaySide, $awayGamePlayers);
+        $homeSide = $this->applyGameLineupProjection($homeSide, $homeGamePlayers);
         $awayGoals = (float) data_get($awaySide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $homeGoals = (float) data_get($homeSide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $awayGoalieAdjustment = (float) data_get($homeSide, 'summary.total_goalie_adjustment_per_game', 0);
@@ -451,11 +461,47 @@ class NhlGamePredictionPayload
     }
 
     /**
+     * Apply the same NHL, NHLe, and replacement-level projection ladder to every resolved lineup source.
+     *
+     * @param array<string,mixed>|null $lineup
+     * @param array<int,int>|null $rosterIds
+     * @return array<int,array<string,mixed>>|null
+     */
+    private function gamePlayerProjections(
+        ?array $lineup,
+        ?array $rosterIds,
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $projectionVersion,
+        string $toiProjectionVersion
+    ): ?array {
+        if ($rosterIds === null) {
+            return null;
+        }
+
+        return $lineup !== null
+            ? $this->lineupProjections->build(
+                $lineup,
+                $sourceSeasonId,
+                $targetSeasonId,
+                $projectionVersion,
+                $toiProjectionVersion
+            )
+            : $this->lineupProjections->buildFromRosterIds(
+                $rosterIds,
+                $sourceSeasonId,
+                $targetSeasonId,
+                $projectionVersion,
+                $toiProjectionVersion
+            );
+    }
+
+    /**
      * @param array<string,mixed> $side
      * @param array<int,array<string,mixed>>|null $players
      * @return array<string,mixed>
      */
-    private function applyReportedLineupProjection(array $side, ?array $players): array
+    private function applyGameLineupProjection(array $side, ?array $players): array
     {
         if ($players === null) {
             return $side;
