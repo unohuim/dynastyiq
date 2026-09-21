@@ -3192,6 +3192,7 @@ export default function adminHub(options = {}) {
             const progress = this.importProgress(key);
             const processed = progress?.processed_records ?? 0;
             const total = progress?.total_records;
+            let text;
 
             if (progress?.dynamic_total) {
                 const status = this.streams[key]?.importRun?.status
@@ -3199,21 +3200,21 @@ export default function adminHub(options = {}) {
                 const estimate = this.importProgressEstimatedTotal(key);
 
                 if (status === 'completed' && total) {
-                    return `${this.formatNumber(processed)} / ${this.formatNumber(total)} records`;
+                    text = `${this.formatNumber(processed)} / ${this.formatNumber(total)} records`;
+                } else if (estimate) {
+                    text = `${this.formatNumber(processed)} / ~${this.formatNumber(estimate)} records`;
+                } else {
+                    text = `${this.formatNumber(processed)} records processed`;
                 }
-
-                if (estimate) {
-                    return `${this.formatNumber(processed)} / ~${this.formatNumber(estimate)} records`;
-                }
-
-                return `${this.formatNumber(processed)} records processed`;
+            } else if (total) {
+                text = `${this.formatNumber(processed)} / ~${this.formatNumber(total)} records`;
+            } else {
+                text = `${this.formatNumber(processed)} records processed`;
             }
 
-            if (total) {
-                return `${this.formatNumber(processed)} / ~${this.formatNumber(total)} records`;
-            }
-
-            return `${this.formatNumber(processed)} records processed`;
+            return key === 'nhl-anticipated-lineups'
+                ? `${text} ${this.importXUsageText(key)}`
+                : text;
         },
 
         importXUsageText(key) {

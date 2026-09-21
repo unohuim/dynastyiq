@@ -2081,6 +2081,26 @@ describe('admin-hub import listeners', () => {
         };
 
         expect(instance.importXUsageText('nhl-anticipated-lineups')).toBe('(32 posts, $0.16)');
+        expect(instance.importProgressText('nhl-anticipated-lineups')).toBe(
+            '0 records processed (32 posts, $0.16)'
+        );
+    });
+
+    it('includes X usage directly in the anticipated lineup records count', async () => {
+        const adminHub = await loadAdminHub();
+        const instance = adminHub();
+        instance.streams['nhl-anticipated-lineups'] = {
+            progress: {
+                processed_records: 27,
+                total_records: 27,
+                x_posts_viewed: 32,
+                x_estimated_cost_usd: 0.16,
+            },
+        };
+
+        expect(instance.importProgressText('nhl-anticipated-lineups')).toBe(
+            '27 / ~27 records (32 posts, $0.16)'
+        );
     });
 
     it('uses singular post wording for one X Post Read', async () => {
