@@ -7647,7 +7647,7 @@ it('applies the per-game boxscore start window and cadence', function (string $s
     'pregame due' => ['PRE', '2026-09-21 20:20:00', '2026-09-21 19:45:00', 30, true],
     'live not due' => ['LIVE', '2026-09-21 19:00:00', '2026-09-21 19:56:00', 30, false],
     'live due' => ['LIVE', '2026-09-21 19:00:00', '2026-09-21 19:55:00', 30, true],
-    'general interval' => ['FUT', '2026-09-21 21:30:00', '2026-09-21 19:30:00', 120, false],
+    'pregame applies beyond one hour when window permits' => ['FUT', '2026-09-21 21:30:00', '2026-09-21 19:30:00', 120, true],
     'final excluded' => ['FINAL', '2026-09-21 19:00:00', null, 30, false],
 ]);
 

@@ -16,13 +16,8 @@ const toggleSaving = ref(false);
 const frequencySaving = ref(false);
 const error = ref('');
 const enabled = ref(Boolean(props.gameSyncSchedule?.enabled));
-const initialSeconds = Number(props.gameSyncSchedule?.lanes?.today?.interval_seconds ?? 60);
-const hours = ref(Math.floor(initialSeconds / 3600));
-const minutes = ref(Math.floor((initialSeconds % 3600) / 60));
-const seconds = ref(initialSeconds % 60);
-const intervalSeconds = computed(() => Math.max(60, (hours.value * 3600) + (minutes.value * 60) + seconds.value));
 const splitTimer = (value) => ({ hours: Math.floor(value / 3600), minutes: Math.floor((value % 3600) / 60), seconds: value % 60 });
-const pregame = reactive(splitTimer(props.gameSyncSchedule?.timing?.within_one_hour_seconds ?? 900));
+const pregame = reactive(splitTimer(props.gameSyncSchedule?.timing?.pregame_seconds ?? props.gameSyncSchedule?.timing?.within_one_hour_seconds ?? 900));
 const live = reactive(splitTimer(props.gameSyncSchedule?.timing?.live_seconds ?? 300));
 const startBeforeMinutes = ref(props.gameSyncSchedule?.timing?.start_before_minutes ?? 30);
 const timerSeconds = (timer) => Math.max(60, Number(timer.hours) * 3600 + Number(timer.minutes) * 60 + Number(timer.seconds));
@@ -42,15 +37,15 @@ async function changeDate(value) {
     loading.value = false;
   }
 }
-async function persistSchedule(nextEnabled, nextInterval) {
-  const response = await fetch(props.gameSyncScheduleUrl, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' }, body: JSON.stringify({ enabled: nextEnabled, intervals: { today: nextInterval }, timing: { start_before_minutes: startBeforeMinutes.value, within_one_hour_seconds: timerSeconds(pregame), live_seconds: timerSeconds(live) } }) });
+async function persistSchedule(nextEnabled) {
+  const response = await fetch(props.gameSyncScheduleUrl, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' }, body: JSON.stringify({ enabled: nextEnabled, timing: { start_before_minutes: startBeforeMinutes.value, pregame_seconds: timerSeconds(pregame), live_seconds: timerSeconds(live) } }) });
   if (!response.ok) throw new Error('Unable to update game synchronization.');
 }
 async function toggleSync(nextEnabled) {
   const previousEnabled = enabled.value;
   enabled.value = nextEnabled; toggleSaving.value = true; error.value = '';
   try {
-    await persistSchedule(nextEnabled, intervalSeconds.value);
+    await persistSchedule(nextEnabled);
   } catch (exception) {
     enabled.value = previousEnabled;
     error.value = exception instanceof Error ? exception.message : 'Unable to update game synchronization.';
@@ -58,12 +53,12 @@ async function toggleSync(nextEnabled) {
     toggleSaving.value = false;
   }
 }
-watch([hours, minutes, seconds, startBeforeMinutes, pregame, live], () => {
+watch([startBeforeMinutes, pregame, live], () => {
   window.clearTimeout(frequencySaveTimer);
   frequencySaveTimer = window.setTimeout(async () => {
     frequencySaving.value = true; error.value = '';
     try {
-      await persistSchedule(enabled.value, intervalSeconds.value);
+      await persistSchedule(enabled.value);
     } catch (exception) {
       error.value = exception instanceof Error ? exception.message : 'Unable to update sync frequency.';
     } finally {
@@ -91,7 +86,7 @@ onBeforeUnmount(() => window.clearTimeout(frequencySaveTimer));
     <div v-if="payload.games.length" class="grid gap-5 lg:grid-cols-2"><GameCard v-for="game in payload.games" :key="game.nhl_game_id" :game="game" /></div>
     <div v-else class="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-600">No NHL games are scheduled for this date.</div>
 
-    <Teleport to="body"><div v-if="drawerOpen" class="fixed inset-0 z-[100]" role="dialog" aria-modal="true"><button class="absolute inset-0 bg-gray-950/40" aria-label="Close settings" @click="drawerOpen = false"></button><aside class="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><div><h2 class="text-lg font-semibold">Game settings</h2><p class="mt-1 text-sm text-gray-500">NHL gamecenter synchronization</p></div><button class="text-2xl text-gray-500" @click="drawerOpen = false">×</button></div><div class="mt-8 space-y-6"><div class="flex items-center justify-between gap-4"><span class="text-sm font-medium text-gray-900">Sync</span><ToggleSwitch :model-value="enabled" :disabled="toggleSaving" label="Sync" @update:model-value="toggleSync" /></div><fieldset><div class="flex items-center justify-between"><legend class="text-sm font-semibold">General</legend><span v-if="frequencySaving" class="text-xs text-gray-500">Saving…</span></div><div class="mt-3 grid grid-cols-3 gap-3"><label class="text-xs text-gray-600">Hours<input v-model.number="hours" type="number" min="0" max="24" class="mt-1 w-full rounded-md border-gray-300"></label><label class="text-xs text-gray-600">Minutes<input v-model.number="minutes" type="number" min="0" max="59" class="mt-1 w-full rounded-md border-gray-300"></label><label class="text-xs text-gray-600">Seconds<input v-model.number="seconds" type="number" min="0" max="59" class="mt-1 w-full rounded-md border-gray-300"></label></div><p class="mt-2 text-xs text-gray-500">{{ intervalSeconds }} base seconds</p></fieldset><fieldset v-for="timer in [{ label: 'Within 1 hour of puck drop', value: pregame }, { label: 'Live', value: live }]" :key="timer.label">
+    <Teleport to="body"><div v-if="drawerOpen" class="fixed inset-0 z-[100]" role="dialog" aria-modal="true"><button class="absolute inset-0 bg-gray-950/40" aria-label="Close settings" @click="drawerOpen = false"></button><aside class="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><div><h2 class="text-lg font-semibold">Game settings</h2><p class="mt-1 text-sm text-gray-500">NHL gamecenter synchronization</p></div><button class="text-2xl text-gray-500" @click="drawerOpen = false">×</button></div><div class="mt-8 space-y-6"><div class="flex items-center justify-between gap-4"><span class="text-sm font-medium text-gray-900">Sync</span><ToggleSwitch :model-value="enabled" :disabled="toggleSaving" label="Sync" @update:model-value="toggleSync" /></div><p v-if="frequencySaving" class="text-xs text-gray-500" role="status">Saving…</p><fieldset v-for="timer in [{ label: 'Pregame', value: pregame }, { label: 'Live', value: live }]" :key="timer.label">
             <legend class="text-sm font-semibold">{{ timer.label }}</legend>
             <div class="mt-3 grid grid-cols-3 gap-3">
               <label v-for="unit in ['hours', 'minutes', 'seconds']" :key="unit" class="text-xs capitalize text-gray-600">{{ unit }}

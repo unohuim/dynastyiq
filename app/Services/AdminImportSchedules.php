@@ -82,6 +82,8 @@ class AdminImportSchedules
                 'within_one_hour_seconds' => 900,
                 'live_seconds' => 300,
             ], $rows->first()->game_sync_timing ?? []);
+            $payload['timing']['pregame_seconds'] = $payload['timing']['pregame_seconds']
+                ?? $payload['timing']['within_one_hour_seconds'];
         }
 
         return $payload;
@@ -108,7 +110,7 @@ class AdminImportSchedules
             if ($sourceKey === self::GAME_BOXSCORES) {
                 $attributes['game_sync_timing'] = array_replace($row->game_sync_timing ?? [], array_intersect_key(
                     $timing,
-                    array_flip(['start_before_minutes', 'within_one_hour_seconds', 'live_seconds'])
+                    array_flip(['start_before_minutes', 'pregame_seconds', 'within_one_hour_seconds', 'live_seconds'])
                 ));
                 $attributes['next_due_at'] = $enabled ? now() : null;
             }
@@ -247,7 +249,7 @@ class AdminImportSchedules
             ->whereNotNull('start_time_utc')
             ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
             ->orderBy('start_time_utc')->get()
-            ->filter(function ($game) use ($schedule, $now, $timing): bool {
+            ->filter(function ($game) use ($now, $timing): bool {
                 $start = CarbonImmutable::parse($game->start_time_utc);
                 if ($now->lt($start->subMinutes((int) ($timing['start_before_minutes'] ?? 30)))) {
                     return false;
@@ -255,9 +257,7 @@ class AdminImportSchedules
                 $state = strtoupper((string) $game->game_state);
                 $live = ! in_array($state, ['', 'FUT', 'PRE', 'FINAL'], true);
                 $interval = $live ? (int) ($timing['live_seconds'] ?? 300)
-                    : ($now->gte($start->subHour())
-                        ? (int) ($timing['within_one_hour_seconds'] ?? 900)
-                        : $schedule->interval_seconds);
+                    : (int) ($timing['pregame_seconds'] ?? $timing['within_one_hour_seconds'] ?? 900);
 
                 return $game->boxscore_synced_at === null
                     || CarbonImmutable::parse($game->boxscore_synced_at)->addSeconds($interval)->lte($now);

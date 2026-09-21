@@ -1,7 +1,7 @@
 # Database Schema Inventory (DB_SCHEMA)
 
 Game synchronization additions (`2026_09_21_000001_add_game_sync_timing`):
-- `admin_import_schedules.game_sync_timing`: nullable JSON for the game-sync start window in minutes and within-one-hour/live intervals in seconds; the existing `interval_seconds` remains the general interval.
+- `admin_import_schedules.game_sync_timing`: nullable JSON for the game-sync start window in minutes and pregame/live intervals in seconds. Existing `within_one_hour_seconds` values are accepted as a fallback for `pregame_seconds`; `interval_seconds` is no longer used for game-sync cadence.
 - `nhl_games.boxscore_synced_at`: nullable timestamp of the last successful scheduled boxscore refresh, used for per-game cadence.
 
 This document inventories **all database tables and columns** as defined by migrations.

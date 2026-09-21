@@ -35,7 +35,7 @@ rules:
   - Imports with dynamic discovery may increase total_records during the run as records become known.
   - Import keys must remain aligned with docs/ENUMS.md when enum-like.
   - Scheduled admin imports must use AdminImportSchedule and dispatch through the same queued AdminImports path as manual runs.
-  - The nhl-game-boxscores source checks per-game eligibility every second; only non-final UTC-today games inside the configured start-before-puck-drop window may sync. Defaults are a 30-minute start window, a 900-second within-one-hour interval, and a 300-second live interval. Earlier eligible games use the existing general interval. Each game's boxscore_synced_at controls its cadence.
+  - The nhl-game-boxscores source checks per-game eligibility every second; only non-final UTC-today games inside the configured start-before-puck-drop window may sync. Defaults are a 30-minute start window, a 900-second pregame interval, and a 300-second live interval. There is no separate general or one-hour cadence. Each game's boxscore_synced_at controls its cadence.
 public_interface:
   - AdminImports::sources()
   - AdminImports::dispatch()

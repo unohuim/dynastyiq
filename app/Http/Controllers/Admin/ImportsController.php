@@ -110,6 +110,7 @@ class ImportsController extends Controller
             'timing.within_two_hours_enabled' => ['nullable', 'boolean'],
             'timing.start_before_minutes' => ['sometimes', 'integer', 'min:0', 'max:1440'],
             'timing.within_one_hour_seconds' => ['sometimes', 'integer', 'min:60', 'max:86400'],
+            'timing.pregame_seconds' => ['sometimes', 'integer', 'min:60', 'max:86400'],
             'timing.live_seconds' => ['sometimes', 'integer', 'min:60', 'max:86400'],
         ]);
         $intervals = collect($data['intervals'] ?? [])->only(array_keys($definitions))->map(

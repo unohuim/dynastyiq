@@ -63,7 +63,7 @@ rules:
   - PBP game summarization must reconcile goalie-facing goals against, saves, shots against, strength splits, save percentage, goals-against average, and time on ice from official boxscore rows after PBP-derived summaries are persisted.
   - Goalie empty-net shiftchart artifacts must be excluded from normalized shift-derived outputs when play-by-play goalie and situation state proves the goalie was no longer on ice, while raw provider payload files remain preserved for audit.
   - Boxscore import must run before shift import so official shift and time-on-ice targets are available to shift reconciliation.
-  - Scheduled today-game boxscore refreshes respect each UTC-today game's configured start window and general, within-one-hour, or live interval. FINAL games are excluded. Successful scheduled refreshes persist boxscore_synced_at. FUT and PRE remain eligible inside the start window.
+  - Scheduled today-game boxscore refreshes respect each UTC-today game's configured start window and pregame or live interval. FINAL games are excluded. Successful scheduled refreshes persist boxscore_synced_at. FUT and PRE remain eligible inside the start window.
   - Game import stages must process only NHL game types documented as supported in docs/ENUMS.md.
   - Play-by-play import must establish the provider game type before later stages advance.
   - Later game import stages must not run unless PBP has stored an allowed game type for the game.
