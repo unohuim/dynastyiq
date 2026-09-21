@@ -7626,6 +7626,31 @@ it('allows super admins to configure the today game boxscore schedule', function
         ->value('enabled'))->toBeTrue();
 });
 
+it('applies the per-game boxscore start window and cadence', function (string $state, string $start, ?string $lastSync, int $window, bool $expected) {
+    $now = Carbon::parse('2026-09-21 20:00:00 UTC')->toImmutable();
+    DB::table('nhl_games')->insert([
+        'nhl_game_id' => 2026010998, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'MON', 'game_month' => 'SEP',
+        'game_state' => $state, 'start_time_utc' => $start, 'boxscore_synced_at' => $lastSync,
+        'created_at' => $now, 'updated_at' => $now,
+    ]);
+    $schedule = new AdminImportSchedule([
+        'source_key' => AdminImportSchedules::GAME_BOXSCORES, 'lane_key' => 'today',
+        'enabled' => true, 'lane_enabled' => true, 'interval_seconds' => 3600,
+        'game_sync_timing' => ['start_before_minutes' => $window],
+    ]);
+    expect(app(AdminImportSchedules::class)->shouldDispatch($schedule, $now))->toBe($expected);
+})->with([
+    'blocked before window' => ['FUT', '2026-09-21 20:31:00', null, 30, false],
+    'eligible at window' => ['PRE', '2026-09-21 20:30:00', null, 30, true],
+    'pregame not due' => ['PRE', '2026-09-21 20:20:00', '2026-09-21 19:46:00', 30, false],
+    'pregame due' => ['PRE', '2026-09-21 20:20:00', '2026-09-21 19:45:00', 30, true],
+    'live not due' => ['LIVE', '2026-09-21 19:00:00', '2026-09-21 19:56:00', 30, false],
+    'live due' => ['LIVE', '2026-09-21 19:00:00', '2026-09-21 19:55:00', 30, true],
+    'general interval' => ['FUT', '2026-09-21 21:30:00', '2026-09-21 19:30:00', 120, false],
+    'final excluded' => ['FINAL', '2026-09-21 19:00:00', null, 30, false],
+]);
+
 it('dispatches today game boxscore sync while a utc-today game is not final', function () {
     $now = Carbon::parse('2026-09-21 23:30:00 UTC')->toImmutable();
     DB::table('nhl_games')->insert([

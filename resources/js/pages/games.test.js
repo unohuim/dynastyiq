@@ -386,7 +386,7 @@ describe('Vue game sync settings', () => {
             '/admin/imports/nhl-game-boxscores/schedule',
             expect.objectContaining({ method: 'PUT' }),
         );
-        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: true, intervals: { today: 60 } });
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: true, intervals: { today: 60 }, timing: { start_before_minutes: 30, within_one_hour_seconds: 900, live_seconds: 300 } });
     });
 
     it('debounces frequency persistence through AJAX', async () => {
@@ -399,6 +399,6 @@ describe('Vue game sync settings', () => {
         expect(fetch).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(500);
         await settle();
-        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, intervals: { today: 3600 } });
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ enabled: false, intervals: { today: 3660 }, timing: { start_before_minutes: 30, within_one_hour_seconds: 900, live_seconds: 300 } });
     });
 });

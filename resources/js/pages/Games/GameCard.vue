@@ -10,6 +10,10 @@ const statusClass = (status) => ({
   strongly_corroborated: 'border-emerald-200 bg-emerald-50 text-emerald-700',
 }[status] ?? 'border-gray-200 bg-gray-50 text-gray-600');
 const label = (value) => String(value ?? 'not_reported').replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+const goalieStatusClass = (status) => ({
+  confirmed: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  expected: 'border-sky-200 bg-sky-50 text-sky-700',
+}[status] ?? 'border-gray-200 bg-gray-50 text-gray-600');
 const localDateTime = (value) => value ? new Intl.DateTimeFormat(undefined, {
   weekday: 'short', month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
 }).format(new Date(value)) : 'Start time unavailable';
@@ -34,7 +38,7 @@ const gameStateClass = (state) => state === 'FINAL'
           <div class="mt-1 flex items-center gap-2"><span class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="statusClass(game[side].lineup?.evidence_status)">{{ label(game[side].lineup?.evidence_status) }}</span><span v-if="game[side].lineup" class="text-xs text-gray-500">{{ game[side].lineup.source_count }} source<span v-if="game[side].lineup.source_count !== 1">s</span></span></div>
           <p v-if="game[side].lineup?.last_observed_at" class="mt-2 text-xs text-gray-500">Updated {{ localDateTime(game[side].lineup.last_observed_at) }}</p>
         </div>
-        <div v-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="text-xs text-sky-700">{{ label(game[side].starting_goalie.status) }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
+        <div v-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
         <span v-if="game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
       </section>
     </div>

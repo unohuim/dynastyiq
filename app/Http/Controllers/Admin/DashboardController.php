@@ -39,6 +39,7 @@ class DashboardController extends Controller
 
         $imports = $this->imports->sources()
             ->filter(fn (array $source): bool => (bool) ($source['visible'] ?? true))
+            ->values()
             ->map(function (array $source) {
                 $lastRun = ImportRun::query()
                     ->where('source', $source['key'])

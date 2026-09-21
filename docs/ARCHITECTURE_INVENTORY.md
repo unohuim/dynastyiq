@@ -2860,6 +2860,8 @@ $batch = app(AdminImports::class)->dispatch('fantrax');
 
 ### Admin Import Schedule
 
+Game boxscore scheduling uses a per-game successful-refresh timestamp and persisted general, within-one-hour, and live intervals. The Vue Games drawer autosaves these settings and the start-before-puck-drop cutoff. Canonical rules: `docs/architecture/admin/AdminImportRegistry.yaml`.
+
 **Name:** Admin Import Schedule
 **Type:** Persisted Scheduler Dispatch Pattern
 **Location:** `app/Services/AdminImportSchedules.php`, `app/Console/Commands/DispatchScheduledAdminImportsCommand.php`, `routes/console.php`

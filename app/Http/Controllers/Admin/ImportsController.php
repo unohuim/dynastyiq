@@ -25,6 +25,7 @@ class ImportsController extends Controller
     {
         $imports = $this->imports->sources()
             ->filter(fn (array $source): bool => (bool) ($source['visible'] ?? true))
+            ->values()
             ->map(function (array $source) {
                 $batch = DB::table('job_batches')
                     ->where('name', 'like', "%{$source['key']}%")
@@ -107,6 +108,9 @@ class ImportsController extends Controller
             }],
             'timing.outside_mode' => ['nullable', Rule::in(['once', 'recurring'])],
             'timing.within_two_hours_enabled' => ['nullable', 'boolean'],
+            'timing.start_before_minutes' => ['sometimes', 'integer', 'min:0', 'max:1440'],
+            'timing.within_one_hour_seconds' => ['sometimes', 'integer', 'min:60', 'max:86400'],
+            'timing.live_seconds' => ['sometimes', 'integer', 'min:60', 'max:86400'],
         ]);
         $intervals = collect($data['intervals'] ?? [])->only(array_keys($definitions))->map(
             fn (mixed $seconds): int => (int) $seconds
@@ -117,7 +121,8 @@ class ImportsController extends Controller
                 $key,
                 (bool) $data['enabled'],
                 $intervals,
-                $key === AdminImportSchedules::ANTICIPATED_LINEUPS ? ($data['timing'] ?? []) : []
+                in_array($key, [AdminImportSchedules::ANTICIPATED_LINEUPS, AdminImportSchedules::GAME_BOXSCORES], true)
+                    ? ($data['timing'] ?? []) : []
             ),
         ]);
     }

@@ -12,6 +12,7 @@ class AdminImportSchedule extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'game_sync_timing' => 'array',
         'enabled' => 'boolean',
         'lane_enabled' => 'boolean',
         'interval_seconds' => 'integer',

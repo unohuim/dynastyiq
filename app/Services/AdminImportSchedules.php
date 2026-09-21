@@ -76,6 +76,14 @@ class AdminImportSchedules
             ];
         }
 
+        if ($sourceKey === self::GAME_BOXSCORES) {
+            $payload['timing'] = array_replace([
+                'start_before_minutes' => 30,
+                'within_one_hour_seconds' => 900,
+                'live_seconds' => 300,
+            ], $rows->first()->game_sync_timing ?? []);
+        }
+
         return $payload;
     }
 
@@ -96,6 +104,14 @@ class AdminImportSchedules
                 'interval_seconds' => $seconds,
                 'next_due_at' => $enabled ? ($row->next_due_at ?? now()) : null,
             ];
+
+            if ($sourceKey === self::GAME_BOXSCORES) {
+                $attributes['game_sync_timing'] = array_replace($row->game_sync_timing ?? [], array_intersect_key(
+                    $timing,
+                    array_flip(['start_before_minutes', 'within_one_hour_seconds', 'live_seconds'])
+                ));
+                $attributes['next_due_at'] = $enabled ? now() : null;
+            }
 
             if ($sourceKey === self::ANTICIPATED_LINEUPS) {
                 $dailyStart = $timing['daily_start_time']
@@ -130,10 +146,7 @@ class AdminImportSchedules
     public function shouldDispatch(AdminImportSchedule $schedule, CarbonImmutable $now): bool
     {
         if ($schedule->source_key === self::GAME_BOXSCORES) {
-            return DB::table('nhl_games')
-                ->whereDate('game_date', $now->utc()->toDateString())
-                ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
-                ->exists();
+            return $this->dueBoxscoreGames($schedule, $now)->isNotEmpty();
         }
 
         if ($schedule->source_key !== self::ANTICIPATED_LINEUPS) {
@@ -180,6 +193,11 @@ class AdminImportSchedules
     /** Persist the dispatch timestamp and calculate the lane's next due time. */
     public function markDispatched(AdminImportSchedule $schedule, CarbonImmutable $now): void
     {
+        if ($schedule->source_key === self::GAME_BOXSCORES) {
+            $schedule->update(['last_dispatched_at' => $now, 'next_due_at' => $now->addSecond()]);
+
+            return;
+        }
         if ($schedule->source_key !== self::ANTICIPATED_LINEUPS) {
             $schedule->update([
                 'last_dispatched_at' => $now,
@@ -214,6 +232,36 @@ class AdminImportSchedules
             'last_dispatched_at' => $now,
             'next_due_at' => $nextDue->utc(),
         ]);
+    }
+
+    /** Return UTC-today games whose own start window and refresh interval are due. */
+    public function dueBoxscoreGames(AdminImportSchedule $schedule, CarbonImmutable $now): Collection
+    {
+        if (! $schedule->enabled || ! $schedule->lane_enabled) {
+            return collect();
+        }
+
+        $timing = $schedule->game_sync_timing ?? [];
+        return \App\Models\NhlGame::query()
+            ->whereDate('game_date', $now->utc()->toDateString())
+            ->whereNotNull('start_time_utc')
+            ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
+            ->orderBy('start_time_utc')->get()
+            ->filter(function ($game) use ($schedule, $now, $timing): bool {
+                $start = CarbonImmutable::parse($game->start_time_utc);
+                if ($now->lt($start->subMinutes((int) ($timing['start_before_minutes'] ?? 30)))) {
+                    return false;
+                }
+                $state = strtoupper((string) $game->game_state);
+                $live = ! in_array($state, ['', 'FUT', 'PRE', 'FINAL'], true);
+                $interval = $live ? (int) ($timing['live_seconds'] ?? 300)
+                    : ($now->gte($start->subHour())
+                        ? (int) ($timing['within_one_hour_seconds'] ?? 900)
+                        : $schedule->interval_seconds);
+
+                return $game->boxscore_synced_at === null
+                    || CarbonImmutable::parse($game->boxscore_synced_at)->addSeconds($interval)->lte($now);
+            })->values();
     }
 
     /**
