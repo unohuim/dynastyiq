@@ -94,7 +94,7 @@ The existing Anticipated Lineups admin schedule remains authoritative:
 - `within_two_hours` defaults to 900 seconds and applies to each same-day game relative to puck drop.
 - `outside_two_hours` defaults to 3600 seconds and considers games today and tomorrow.
 - Same-day games with missing lineup coverage remain eligible after puck drop.
-- A team with a complete, date-eligible current lineup is no longer searched, even if it has only one source or unresolved player identities.
+- A team with a verified, date-eligible current lineup is no longer searched, even if it has only one source. Unresolved core players, duplicate identities, and invalid positions prevent this skip. Unknown F4/D3 slots remain explicitly unresolved and are allowed only with a verified same-group peer for prediction fallback.
 
 The scheduler still controls when each configured lane becomes due. The parent import command dispatches one `lineups` queue job per game/team for today and tomorrow without checking current lineups or contacting providers. Each job rechecks its game date and requested timing window, skips existing complete lineup coverage, checks NHL, and only then scans X. Ineligible jobs count as skipped in import progress. Manual runs use the `all` window; the within-two-hours window applies only to today's games, including games already started.
 

@@ -952,6 +952,8 @@ inputs, while retaining the former for evidence provenance.
 
 ### Lineup-Aware Consumption Guidance
 
+- A `reported` lineup has verified canonical core skaters and valid slots, not merely eighteen parsed names. Duplicate identities, goalies in skater slots, or unresolved F1–F3/D1–D2 players prevent publication as a current reported lineup. Invalid legacy lineups are omitted too.
+- Unidentified F4/D3 players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the existing peer-average fallback; they are never presented as identified players.
 - Persist `nhl_player_id`; do not join prediction players by name.
 - Record `inputs.*_lineup_source` with every imported prediction snapshot.
 - Use `teams.*.roster` to audit which players contributed to that prediction.

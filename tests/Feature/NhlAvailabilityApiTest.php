@@ -88,10 +88,22 @@ function createCurrentAnticipatedLineup(array $overrides = []): NhlCurrentLineup
         'post_text' => 'Toronto lines', 'provider_published_at' => now(), 'observed_at' => now(),
         'completeness' => 'full', 'structure_hash' => str_repeat('a', 64), 'raw_evidence' => [],
     ]);
-    $observation->players()->create([
-        'player_id' => null, 'nhl_player_id' => 8470001, 'player_name' => 'Test Player',
-        'lineup_role' => 'forward', 'line_key' => 'F1', 'slot_index' => 1, 'resolution_status' => 'resolved',
-    ]);
+    foreach (range(1, 18) as $index) {
+        $forward = $index <= 12;
+        $offset = $forward ? $index - 1 : $index - 13;
+        $size = $forward ? 3 : 2;
+        $player = Player::query()->create([
+            'nhl_id' => 8470000 + $index, 'full_name' => 'Test Player ' . $index,
+            'first_name' => 'Test', 'last_name' => 'Player ' . $index,
+            'position' => $forward ? 'C' : 'D', 'team_abbrev' => 'TOR',
+        ]);
+        $observation->players()->create([
+            'player_id' => $player->id, 'nhl_player_id' => $player->nhl_id,
+            'player_name' => $player->full_name, 'lineup_role' => $forward ? 'forward' : 'defense',
+            'line_key' => ($forward ? 'F' : 'D') . ((int) floor($offset / $size) + 1),
+            'slot_index' => ($offset % $size) + 1, 'resolution_status' => 'resolved',
+        ]);
+    }
 
     return NhlCurrentLineup::query()->create(array_merge([
         'nhl_game_id' => $game->nhl_game_id, 'team_id' => 10, 'team_abbrev' => 'TOR',
@@ -219,6 +231,60 @@ function lineupCandidate(string $handle, string $postUrl, string $postText = 'Fu
     ];
 }
 
+it('uses verified identities consistently for reporting predictions and discovery skips', function (string $scenario, bool $reportable): void {
+    $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
+    $current = createCurrentAnticipatedLineup(['evidence_status' => 'reported', 'source_count' => 1]);
+    $players = $current->observation->players();
+    if (in_array($scenario, ['F1', 'D1', 'F4', 'D3', 'whole F4', 'whole D3'], true)) {
+        $line = str_replace('whole ', '', $scenario);
+        $players->where('line_key', $line)
+            ->when(! str_starts_with($scenario, 'whole '), fn ($query) => $query->where('slot_index', 1))
+            ->update(['player_id' => null, 'nhl_player_id' => null, 'resolution_status' => 'unresolved']);
+    } elseif ($scenario === 'duplicate') {
+        $first = $players->where('line_key', 'D3')->where('slot_index', 1)->first();
+        $current->observation->players()->where('line_key', 'D3')->where('slot_index', 2)
+            ->update(['player_id' => $first->player_id, 'nhl_player_id' => $first->nhl_player_id]);
+    } elseif ($scenario === 'goalie as defense') {
+        Player::query()->where('nhl_id', 8470017)->update(['position' => 'G']);
+    } elseif ($scenario === 'unknown canonical id') {
+        $players->where('line_key', 'F1')->where('slot_index', 1)
+            ->update(['player_id' => null, 'nhl_player_id' => 9999999]);
+    }
+    $rows = $current->observation->players()->get()->toArray();
+    expect($current->fresh()->hasVerifiedPlayers())->toBe($reportable);
+    $predictionGate = new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'resolvedSkaterIds');
+    expect($predictionGate->invoke(app(\App\Services\NhlGamePredictionPayload::class), ['players' => $rows]) !== null)
+        ->toBe($reportable);
+
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+        ->assertOk()->assertJsonCount($reportable ? 1 : 0, 'anticipated_lineups');
+    $this->get(route('games.show', ['nhlGameId' => 2026020099]))
+        ->assertOk()->assertInertia(fn (Assert $page) => $reportable
+            ? $page->where('game.home.lineup.evidence_status', 'reported')
+            : $page->where('game.home.lineup', null));
+
+    $importer = Mockery::mock(NhlAnticipatedLineupImporter::class);
+    if ($reportable) {
+        $importer->shouldNotReceive('importOfficial');
+    } else {
+        $importer->shouldReceive('importOfficial')->once()->andReturn(['available' => true, 'observed' => 0]);
+    }
+    $importer->shouldNotReceive('importFromX');
+    (new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10))->handle($importer);
+    $this->travelBack();
+})->with([
+    'verified lineup' => ['valid', true],
+    'unknown first-line forward' => ['F1', false],
+    'unknown first-pair defender' => ['D1', false],
+    'depth forward fallback' => ['F4', true],
+    'depth defender fallback' => ['D3', true],
+    'no fourth-line peer' => ['whole F4', false],
+    'no third-pair peer' => ['whole D3', false],
+    'duplicate depth identity' => ['duplicate', false],
+    'goalie is not a defender' => ['goalie as defense', false],
+    'unverified NHL id' => ['unknown canonical id', false],
+]);
+
 it('rejects unauthenticated injury api requests', function (): void {
     $this->getJson('/api/nhl-injuries')->assertUnauthorized();
 });
@@ -269,7 +335,7 @@ it('returns canonical identity and source evidence for anticipated lineups', fun
         ->assertOk()
         ->assertJsonPath('anticipated_lineups.0.nhl_game_id', 2026020099)
         ->assertJsonPath('anticipated_lineups.0.team_id', 10)
-        ->assertJsonPath('anticipated_lineups.0.players.0.nhl_player_id', 8470001)
+        ->assertJsonPath('anticipated_lineups.0.players.0.nhl_player_id', 8470013)
         ->assertJsonPath('anticipated_lineups.0.sources.0.handle', 'testreporter');
 });
 
@@ -1593,7 +1659,7 @@ it('queues both teams even when one already has a reported lineup', function ():
         && $job->teamAbbrev === 'TOR');
 });
 
-it('dispatches but skips discovery for a complete lineup with unresolved players', function (): void {
+it('dispatches but skips discovery for a verified lineup with an unresolved depth player', function (): void {
     Queue::fake();
     DB::table('nhl_teams')->insert([
         ['nhl_id' => 8, 'abbrev' => 'MTL', 'created_at' => now(), 'updated_at' => now()],
@@ -1603,7 +1669,7 @@ it('dispatches but skips discovery for a complete lineup with unresolved players
         'evidence_status' => 'reported',
         'source_count' => 1,
     ]);
-    $current->observation->players()->update([
+    $current->observation->players()->where('line_key', 'F4')->where('slot_index', 3)->update([
         'player_id' => null,
         'nhl_player_id' => null,
         'resolution_status' => 'unresolved',
@@ -2350,6 +2416,9 @@ it('shows each team current lineup status independently on a game card', functio
         'post_text' => 'Montreal lines', 'provider_published_at' => now(), 'observed_at' => now(),
         'completeness' => 'full', 'structure_hash' => str_repeat('b', 64), 'raw_evidence' => [],
     ]);
+    $observation->players()->createMany($current->observation->players->map(fn ($player): array =>
+        collect($player->getAttributes())->except(['id', 'nhl_lineup_observation_id', 'created_at', 'updated_at'])->all()
+    )->all());
     NhlCurrentLineup::query()->create([
         'nhl_game_id' => $current->nhl_game_id, 'team_id' => 8, 'team_abbrev' => 'MTL',
         'nhl_lineup_observation_id' => $observation->id, 'structure_hash' => str_repeat('b', 64),
@@ -2368,16 +2437,6 @@ it('groups current players and exposes supporting sources on lineup detail', fun
     $current = createCurrentAnticipatedLineup();
     $current->observation->players()->createMany([
         [
-            'player_id' => null, 'nhl_player_id' => 8470002, 'player_name' => 'Second Forward',
-            'lineup_role' => 'forward', 'line_key' => 'F1', 'slot_index' => 2,
-            'resolution_status' => 'unresolved',
-        ],
-        [
-            'player_id' => null, 'nhl_player_id' => 8470003, 'player_name' => 'First Defender',
-            'lineup_role' => 'defense', 'line_key' => 'D1', 'slot_index' => 1,
-            'resolution_status' => 'resolved',
-        ],
-        [
             'player_id' => null, 'nhl_player_id' => 8470004, 'player_name' => 'Starting Goalie',
             'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1,
             'resolution_status' => 'resolved',
@@ -2394,10 +2453,10 @@ it('groups current players and exposes supporting sources on lineup detail', fun
         ->assertInertia(fn (Assert $page) => $page
             ->component('Games/Show')
             ->where('game.nhl_game_id', $current->nhl_game_id)
-            ->where('game.home.lineup.players.0.player_name', 'First Defender')
-            ->where('game.home.lineup.players.2.player_name', 'Second Forward')
-            ->where('game.home.lineup.players.3.player_name', 'Starting Goalie')
-            ->where('game.home.lineup.players.4.player_name', 'Healthy Scratch')
+            ->where('game.home.lineup.players.0.player_name', 'Test Player 13')
+            ->where('game.home.lineup.players.7.player_name', 'Test Player 2')
+            ->where('game.home.lineup.players.18.player_name', 'Starting Goalie')
+            ->where('game.home.lineup.players.19.player_name', 'Healthy Scratch')
             ->where('game.home.lineup.sources.0.post_url', 'https://x.com/testreporter/status/1')
             ->where('game.away.lineup', null));
 });

@@ -33,4 +33,19 @@ class NhlCurrentLineup extends Model
     {
         return $this->hasMany(NhlCurrentLineupComponent::class);
     }
+
+    /** Verify the actual selected groups, not the stored evidence-status label. */
+    public function hasVerifiedPlayers(): bool
+    {
+        $this->loadMissing('observation.players', 'components.observation.players');
+        $components = $this->components->where('is_representative', true);
+        $players = $components->isEmpty()
+            ? collect($this->observation?->players ?? [])
+            : collect($components->firstWhere('component_type', 'forwards')?->observation?->players ?? [])
+                ->where('lineup_role', 'forward')
+                ->concat(collect($components->firstWhere('component_type', 'defense')?->observation?->players ?? [])
+                    ->where('lineup_role', 'defense'));
+
+        return app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players->values()->toArray()) !== null;
+    }
 }

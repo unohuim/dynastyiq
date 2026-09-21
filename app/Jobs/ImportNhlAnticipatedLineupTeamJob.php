@@ -144,7 +144,8 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
 
         return $current !== null
             && $current->observation !== null
-            && $current->observation->isEligibleForGameDate((string) $game->game_date);
+            && $current->observation->isEligibleForGameDate((string) $game->game_date)
+            && $current->hasVerifiedPlayers();
     }
 
     private function recordTerminalResult(string $result, ?string $errorMessage = null): void

@@ -36,6 +36,61 @@ class NhlLineupPlayerResolver
         return $this->preferTeamMatch($matches, $teamAbbrev);
     }
 
+    /**
+     * Verify canonical skater identities and slots, allowing only depth-line peer fallbacks.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,int>|null Verified NHL ids, or null when the group is not reportable.
+     */
+    public function verifiedLineupIds(array $rows, ?string $role = null): ?array
+    {
+        $groups = $role === 'forward' ? ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3]
+            : ($role === 'defense' ? ['D1' => 2, 'D2' => 2, 'D3' => 2]
+                : ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3, 'D1' => 2, 'D2' => 2, 'D3' => 2]);
+        $skaters = collect($rows)->whereIn('lineup_role', $role === null ? ['forward', 'defense'] : [$role]);
+        if ($skaters->count() !== array_sum($groups)) {
+            return null;
+        }
+
+        $ids = $skaters->pluck('nhl_player_id')->filter()->map(fn ($id): int => (int) $id);
+        if ($ids->unique()->count() !== $ids->count()) {
+            return null;
+        }
+        $canonical = Player::query()->whereIn('nhl_id', $ids)->get()->keyBy('nhl_id');
+        foreach ($groups as $line => $size) {
+            $group = $skaters->where('line_key', $line);
+            if ($group->pluck('slot_index')->map(fn ($slot): int => (int) $slot)->sort()->values()->all() !== range(1, $size)) {
+                return null;
+            }
+            $verified = 0;
+            foreach ($group as $row) {
+                $expectedRole = str_starts_with($line, 'F') ? 'forward' : 'defense';
+                if (($row['lineup_role'] ?? null) !== $expectedRole) {
+                    return null;
+                }
+                if (empty($row['nhl_player_id'])) {
+                    if (! in_array($line, ['F4', 'D3'], true)) {
+                        return null;
+                    }
+                    continue;
+                }
+                $player = $canonical->get((int) $row['nhl_player_id']);
+                $positions = $expectedRole === 'forward' ? ['C', 'L', 'R', 'LW', 'RW', 'F'] : ['D'];
+                if ($player === null || ! in_array(mb_strtoupper((string) $player->position), $positions, true)
+                    || (! empty($row['player_id']) && (int) $row['player_id'] !== (int) $player->id)
+                    || ($row['resolution_status'] ?? 'resolved') !== 'resolved') {
+                    return null;
+                }
+                $verified++;
+            }
+            if ($verified === 0) {
+                return null;
+            }
+        }
+
+        return $ids->values()->all();
+    }
+
     /** @return array<int,array<string,mixed>> */
     public function mentions(string $text, string $teamAbbrev): array
     {

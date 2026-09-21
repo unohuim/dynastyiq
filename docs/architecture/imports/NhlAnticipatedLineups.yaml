@@ -39,16 +39,16 @@ rules:
   - Split-squad evidence is keyed by NHL game id and must not collapse by team and date.
   - When one team has multiple games on the same date, extracted team players and opponent context must identify the targeted game; ambiguous evidence must not be attached arbitrarily.
   - Twelve ordered forwards map sequentially into four groups of three and six ordered defensemen map into three pairs.
-  - A reportable lineup contains twelve forwards and six defensemen; goalies and scratches are optional supplemental evidence.
+  - A reportable lineup contains twelve forwards and six defensemen in unique valid slots, with verified canonical identities and compatible positions. Unknown core players, duplicated NHL identities, and goalies placed in skater slots prohibit reported status. Goalies and scratches are optional supplemental evidence.
   - A post containing all twelve forwards or all six defensemen is an acceptable immutable component observation; smaller player fragments remain audit-only.
   - Current lineup truth may combine the newest eligible complete forward group and newest eligible complete defense group from different posts or sources while preserving both original observations.
-  - A current composite lineup is prediction-eligible only when the combined groups contain eighteen unique canonically resolved skaters.
+  - NhlLineupPlayerResolver owns the shared identity-and-slot validation used by discovery acceptance, current-lineup promotion, public/API reporting, job skip decisions, and anticipated-roster prediction eligibility. F4/D3 peer fallback is the only unresolved-skater exception.
   - A newer complete forward or defense group supersedes only that component and must not replace the other current group.
   - One distinct source is reported, two are corroborated, and three or more are strongly corroborated.
   - Consensus compares normalized player slots and only time-relevant matching observations.
   - Newer evidence may supersede current truth without deleting older observations.
-  - Once a current lineup contains complete eligible forward and defense groups for the game date, the dispatched team job must skip provider discovery for that game and team, regardless of source count, evidence status, or unresolved player identities.
-  - Predictions may use a reported lineup when all eighteen skaters resolve to unique NHL player ids; corroboration remains higher-confidence evidence rather than a prediction prerequisite.
+  - A team job skips provider discovery only for a date-eligible lineup passing shared player verification, regardless of source count. Legacy rows labelled reported without verified core players must not appear in payloads or suppress correction searches.
+  - Predictions may use a reported lineup whose skaters pass shared verification, including permitted unresolved F4/D3 peer fallbacks; corroboration remains higher-confidence evidence rather than a prediction prerequisite.
   - Prediction assembly must apply the same game-specific NHL, NHLe, and replacement-level projection ladder to all eighteen resolved skaters regardless of whether lineup authority is public evidence or the official NHL boxscore; official authority must not bypass rookie projection fallbacks.
   - An unresolved skater may remain prediction-eligible only on F4 or D3 and only when that same line or pair contains at least one resolved player; unresolved F1-F3 or D1-D2 skaters, or a depth group with no resolved peer, keep the lineup prediction-ineligible.
   - Prediction-eligible unresolved F4 and D3 skaters retain their reported name and null NHL player id, use projection_source line_peer_average, and receive the mean projected TOI, goals, assists, and SOG of the resolved players in that same line or pair.

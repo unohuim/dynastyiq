@@ -186,6 +186,9 @@ class NhlAnticipatedLineupPayload
 
     private function isEligible(NhlCurrentLineup $row, string|Carbon $gameDate): bool
     {
+        if (! $row->hasVerifiedPlayers()) {
+            return false;
+        }
         $representatives = $row->components->where('is_representative', true)->pluck('observation')->filter();
         if ($representatives->isEmpty()) {
             return $row->observation !== null && $row->observation->isEligibleForGameDate($gameDate);

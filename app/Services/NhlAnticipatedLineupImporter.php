@@ -52,7 +52,10 @@ class NhlAnticipatedLineupImporter
         $skipped = 0;
         $this->persistCandidates([$candidate], $game, $teamAbbrev, $teamId, $observed, $skipped);
 
-        return ['available' => true, 'observed' => $observed];
+        $current = NhlCurrentLineup::query()->where('nhl_game_id', $game->nhl_game_id)
+            ->where('team_id', $teamId)->first();
+
+        return ['available' => $current?->hasVerifiedPlayers() ?? false, 'observed' => $observed];
     }
 
     /** @return array{observed:int,skipped:int} */
@@ -87,7 +90,6 @@ class NhlAnticipatedLineupImporter
             ->where('resolution_status', 'unresolved')
             ->whereHas('observation', fn ($query) => $query->where('nhl_game_id', $gameId))
             ->get();
-        $resolved = false;
 
         foreach ($rows as $row) {
             $player = $this->players->resolve((string) $row->player_name, $teamAbbrev);
@@ -100,12 +102,9 @@ class NhlAnticipatedLineupImporter
                 'nhl_player_id' => $player->nhl_id,
                 'resolution_status' => 'resolved',
             ]);
-            $resolved = true;
         }
 
-        if ($resolved) {
-            $this->refreshCurrent($gameId, $teamId, $teamAbbrev);
-        }
+        $this->refreshCurrent($gameId, $teamId, $teamAbbrev);
     }
 
     /**
@@ -276,9 +275,7 @@ class NhlAnticipatedLineupImporter
                 $player = isset($row['nhl_player_id'])
                     ? \App\Models\Player::query()->where('nhl_id', (int) $row['nhl_player_id'])->first()
                     : $this->players->resolve((string) $row['name'], $teamAbbrev);
-                $nhlPlayerId = isset($row['nhl_player_id'])
-                    ? (int) $row['nhl_player_id']
-                    : $player?->nhl_id;
+                $nhlPlayerId = $player?->nhl_id;
 
                 return [
                     'team_id' => $teamId,
@@ -302,10 +299,8 @@ class NhlAnticipatedLineupImporter
     /** @param array<int,array<string,mixed>> $players */
     private function completeness(array $players): string
     {
-        $counts = collect($players)->countBy('lineup_role');
-
-        $forwardsComplete = ($counts['forward'] ?? 0) >= 12;
-        $defenseComplete = ($counts['defense'] ?? 0) >= 6;
+        $forwardsComplete = $this->players->verifiedLineupIds($players, 'forward') !== null;
+        $defenseComplete = $this->players->verifiedLineupIds($players, 'defense') !== null;
 
         return match (true) {
             $forwardsComplete && $defenseComplete => 'full',
@@ -392,9 +387,11 @@ class NhlAnticipatedLineupImporter
                     ->where('observed_at', '>=', $eligibleFrom)))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
-            in_array($observation->completeness, ['full', 'forwards'], true));
+            in_array($observation->completeness, ['full', 'forwards'], true)
+            && $this->players->verifiedLineupIds($observation->players->toArray(), 'forward') !== null);
         $defense = $observations->first(fn (NhlLineupObservation $observation): bool =>
-            in_array($observation->completeness, ['full', 'defense'], true));
+            in_array($observation->completeness, ['full', 'defense'], true)
+            && $this->players->verifiedLineupIds($observation->players->toArray(), 'defense') !== null);
         if ($forward === null || $defense === null) {
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
             return;
@@ -452,7 +449,8 @@ class NhlAnticipatedLineupImporter
         $expected = $role === 'forward' ? 12 : 6;
         $players = $observation->players->where('lineup_role', $role)
             ->sortBy(fn ($player): string => sprintf('%s:%02d', $player->line_key, $player->slot_index));
-        if ($players->count() < $expected) {
+        if ($players->count() !== $expected
+            || $this->players->verifiedLineupIds($players->values()->toArray(), $role) === null) {
             return null;
         }
 

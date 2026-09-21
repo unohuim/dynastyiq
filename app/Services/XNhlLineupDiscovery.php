@@ -367,6 +367,13 @@ class XNhlLineupDiscovery
             ];
         }
 
+        if ($this->candidateComponents($candidate) === []) {
+            return [
+                'approved' => false,
+                'reason' => 'Player verification failed: unresolved core slots, duplicate identities, invalid positions, or missing depth-line peers.',
+            ];
+        }
+
         $gameDecision = $this->gameDecision((string) $candidate['post_text'], $game, $teamAbbrev);
         if (! $gameDecision['approved']) {
             return $gameDecision;
@@ -389,11 +396,12 @@ class XNhlLineupDiscovery
     /** @param array<string,mixed> $candidate @return array<int,string> */
     private function candidateComponents(array $candidate): array
     {
-        $counts = collect($candidate['players'] ?? [])->countBy('lineup_role');
+        $resolver = app(NhlLineupPlayerResolver::class);
+        $players = $candidate['players'] ?? [];
 
         return array_values(array_filter([
-            (int) ($counts['forward'] ?? 0) >= 12 ? 'forwards' : null,
-            (int) ($counts['defense'] ?? 0) >= 6 ? 'defense' : null,
+            $resolver->verifiedLineupIds($players, 'forward') !== null ? 'forwards' : null,
+            $resolver->verifiedLineupIds($players, 'defense') !== null ? 'defense' : null,
         ]));
     }
 
