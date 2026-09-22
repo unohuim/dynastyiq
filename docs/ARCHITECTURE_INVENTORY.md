@@ -3745,6 +3745,8 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Live `/games` presentation is separate from anticipated lineups: NHL boxscore JSON supplies all displayed game data and participating goalies, with database goalie avatars as the only enrichment. Missing provider data must not fall back to projected goalies or stored scores. See `docs/architecture/imports/NhlPublicGameLiveContext.yaml`.
+
 Super admins can paste a game/team lineup through its unreported badge on `/games`. The Vue modal posts to `POST /games/{nhlGameId}/lineup`, reusing text parsing, verified identity checks, and observation/current-lineup persistence without X requests. Evidence is attributed to a per-user manual source; invalid text and existing reported lineups are rejected. Cards update via AJAX.
 
 The parent import dispatches today's and tomorrow's game/team jobs without inspecting lineup coverage. Each job evaluates its timing window and coverage before provider calls. X timeline scanning is capped at six five-post pages per account per discovery attempt, continuing round-robin through other sources until complete coverage or exhaustion. Retries restart attempt-local pagination.

@@ -2632,20 +2632,63 @@ it('exposes live starter identity and individual goalie statistics', function (?
     Http::fake(['*' => Http::response([
         'gameState' => 'LIVE', 'awayTeam' => ['score' => 1], 'homeTeam' => ['score' => 7],
         'playerByGameStats' => ['awayTeam' => ['goalies' => [
-            ['playerId' => 8489992, 'starter' => false, 'goalsAgainst' => 5, 'saves' => 8], $starter,
+            ['playerId' => 8489992, 'starter' => false, 'toi' => '00:00', 'goalsAgainst' => 0, 'saves' => 0], $starter,
         ]]],
     ])]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
-        ->assertJsonPath('games.0.away.starting_goalie.nhl_player_id', 8489991)
-        ->assertJsonPath('games.0.away.starting_goalie.name', 'Live Starter')
-        ->assertJsonPath('games.0.away.starting_goalie.avatar_url', 'https://example.test/starter.png')
-        ->assertJsonPath('games.0.away.starting_goalie.goals_against', $goalsAgainst)
-        ->assertJsonPath('games.0.away.starting_goalie.saves', $saves);
+        ->assertJsonCount(1, 'games.0.away.goalies')
+        ->assertJsonPath('games.0.away.goalies.0.nhl_player_id', 8489991)
+        ->assertJsonPath('games.0.away.goalies.0.name', 'L. Starter')
+        ->assertJsonPath('games.0.away.goalies.0.avatar_url', 'https://example.test/starter.png')
+        ->assertJsonPath('games.0.away.goalies.0.goals_against', $goalsAgainst)
+        ->assertJsonPath('games.0.away.goalies.0.saves', $saves);
     $this->get('/games/2026010395')->assertOk()->assertInertia(fn (Assert $page) => $page
-        ->where('game.away.starting_goalie.goals_against', $goalsAgainst)
-        ->where('game.away.starting_goalie.saves', $saves));
+        ->where('game.away.goalies.0.goals_against', $goalsAgainst)
+        ->where('game.away.goalies.0.saves', $saves));
     $this->travelBack();
 })->with([[2, 14], [0, 0], [null, null]]);
+
+it('uses only provider live data and database avatars without requiring starter flags', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
+    $this->mock(\App\Services\NhlStartingGoalieSelector::class)->shouldNotReceive('select');
+    Player::query()->create([
+        'nhl_id' => 8489991, 'full_name' => 'Do not display this database name', 'position' => 'G',
+        'head_shot_url' => 'https://example.test/avatar.png',
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010396, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'OLD', 'home_team_abbrev' => 'OLD', 'game_state' => 'LIVE',
+        'away_team_score' => 99, 'away_team_sog' => 99,
+    ]);
+    Http::fake(['*' => Http::response([
+        'id' => 2026010396, 'gameState' => 'LIVE', 'gameDate' => '2026-09-21',
+        'startTimeUTC' => '2026-09-21T23:05:00Z',
+        'awayTeam' => ['abbrev' => 'PHI', 'score' => 1],
+        'homeTeam' => ['abbrev' => 'WSH', 'score' => 3],
+        'playerByGameStats' => ['awayTeam' => ['goalies' => [
+            ['playerId' => 8489991, 'name' => ['default' => 'Provider Starter'], 'shotsAgainst' => 18, 'goalsAgainst' => 3, 'toi' => '30:00'],
+            ['playerId' => 8489992, 'name' => ['default' => 'Provider Relief'], 'saveShotsAgainst' => '4/4', 'goalsAgainst' => 0, 'toi' => '10:00'],
+            ['playerId' => 8489993, 'name' => ['default' => 'Unused Backup'], 'shotsAgainst' => 0, 'goalsAgainst' => 0, 'toi' => '00:00'],
+        ]]],
+    ])]);
+    $this->getJson('/games/payload?date=2026-09-21')->assertOk()
+        ->assertJsonPath('games.0.live_mode', true)
+        ->assertJsonPath('games.0.start_time_utc', '2026-09-21T23:05:00Z')
+        ->assertJsonPath('games.0.away.team_abbrev', 'PHI')
+        ->assertJsonPath('games.0.away.score', 1)
+        ->assertJsonPath('games.0.away.sog', null)
+        ->assertJsonPath('games.0.away.lineup', null)
+        ->assertJsonPath('games.0.away.starting_goalie', null)
+        ->assertJsonCount(2, 'games.0.away.goalies')
+        ->assertJsonPath('games.0.away.goalies.0.name', 'Provider Starter')
+        ->assertJsonPath('games.0.away.goalies.0.avatar_url', 'https://example.test/avatar.png')
+        ->assertJsonPath('games.0.away.goalies.0.saves', 15)
+        ->assertJsonPath('games.0.away.goalies.1.saves', 4)
+        ->assertJsonPath('games.0.away.goalies.1.avatar_url', null);
+    $this->travelBack();
+});
 
 it('treats final as the terminal gamecenter state', function (): void {
     Carbon::setTestNow('2026-09-21 12:00:00 UTC');
@@ -2710,7 +2753,7 @@ it('refreshes unfinished games across utc midnight in index and detail payloads'
     $this->travelBack();
 })->with(['LIVE', 'PRE', 'FUT']);
 
-it('retains recent stored scores when the provider fails or the game is final', function (string $state): void {
+it('does not substitute stored live data on provider failure while retaining final history', function (string $state): void {
     $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
     NhlGame::query()->create([
         'nhl_game_id' => 2026010391, 'season_id' => '20262027', 'game_type' => 1,
@@ -2721,9 +2764,10 @@ it('retains recent stored scores when the provider fails or the game is final', 
     ]);
     Http::fake(['*' => Http::response([], 503)]);
     $this->getJson('/games/payload?date=2026-09-21')->assertOk()
-        ->assertJsonPath('games.0.game_state_label', $state === 'FINAL' ? 'Final' : 'Live')
-        ->assertJsonPath('games.0.away.score', 0)->assertJsonPath('games.0.home.score', 3)
-        ->assertJsonPath('games.0.home.sog', 20);
+        ->assertJsonPath('games.0.game_state_label', $state === 'FINAL' ? 'Final' : null)
+        ->assertJsonPath('games.0.away.score', $state === 'FINAL' ? 0 : null)
+        ->assertJsonPath('games.0.home.score', $state === 'FINAL' ? 3 : null)
+        ->assertJsonPath('games.0.home.sog', $state === 'FINAL' ? 20 : null);
     if ($state === 'FINAL') {
         Http::assertNothingSent();
     }

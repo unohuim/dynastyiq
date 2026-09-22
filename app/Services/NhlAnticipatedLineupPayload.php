@@ -219,6 +219,18 @@ class NhlAnticipatedLineupPayload
     {
         $pregame = in_array($live['state'] ?? null, ['FUT', 'PRE'], true);
         $state = $live['state'] ?? $game->game_state;
+        if (filled($state) && ! in_array($state, ['FUT', 'PRE', 'FINAL'], true)) {
+            $emptyTeam = ['team_id' => null, 'team_abbrev' => null, 'team_name' => null,
+                'team_logo' => null, 'score' => null, 'sog' => null, 'goalies' => [],
+                'starting_goalie' => null, 'lineup' => null];
+
+            return ['nhl_game_id' => $game->nhl_game_id, ...($live['live_game'] ?? [
+                'game_date' => null, 'start_time_utc' => null, 'game_type' => null,
+                'game_state' => null, 'game_state_label' => null,
+                'live_mode' => true, 'live_data_unavailable' => true,
+                'away' => $emptyTeam, 'home' => $emptyTeam,
+            ])];
+        }
         $showGoalie = $pregame || ($state !== null && $state !== '' && ! in_array($state, ['FUT', 'PRE', 'FINAL'], true));
 
         return [
@@ -316,7 +328,7 @@ class NhlAnticipatedLineupPayload
                 'FINAL' => 'Final',
                 default => $state === '' ? null : 'Live',
             },
-            'show_score' => ! in_array($state, ['', 'FUT', 'PRE'], true)
+            'show_score' => $state === 'FINAL'
                 && $game->away_team_score !== null && $game->home_team_score !== null,
         ];
     }

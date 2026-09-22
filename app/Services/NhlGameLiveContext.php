@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\NhlGame;
+use App\Models\Player;
 use App\Traits\HasAPITrait;
 use Illuminate\Support\Facades\Cache;
 use Throwable;
@@ -52,6 +53,13 @@ class NhlGameLiveContext
             $game->forceFill(['game_state' => $state])->save();
         }
 
+        if ($showScore && $state !== 'FINAL') {
+            return [
+                'state' => $state, 'label' => 'Live', 'show_score' => true,
+                'live_game' => $this->livePresentation($response),
+            ];
+        }
+
         return [
             'state' => $state,
             'label' => match ($state) {
@@ -66,6 +74,58 @@ class NhlGameLiveContext
             'away_goalie' => $this->goalie($response, 'awayTeam', $game, (string) $game->away_team_abbrev),
             'home_goalie' => $this->goalie($response, 'homeTeam', $game, (string) $game->home_team_abbrev),
         ];
+    }
+
+    /** Build live presentation exclusively from provider JSON, except canonical goalie avatars. */
+    private function livePresentation(array $response): array
+    {
+        $result = [
+            'provider_game_id' => $response['id'] ?? null,
+            'game_date' => $response['gameDate'] ?? null,
+            'start_time_utc' => $response['startTimeUTC'] ?? null,
+            'game_type' => $response['gameType'] ?? null,
+            'game_state' => $response['gameState'], 'game_state_label' => 'Live',
+            'live_mode' => true, 'live_data_unavailable' => false,
+        ];
+        foreach (['away', 'home'] as $side) {
+            $team = $response[$side . 'Team'] ?? [];
+            $rows = collect(data_get($response, "playerByGameStats.{$side}Team.goalies", []))
+                ->filter(fn ($row): bool => is_array($row) && isset($row['playerId']))
+                ->filter(fn (array $row): bool => ($row['starter'] ?? false) === true
+                    || preg_match('/[1-9]/', (string) ($row['toi'] ?? '')) === 1
+                    || (int) ($row['shotsAgainst'] ?? 0) > 0
+                    || preg_match('/[1-9]/', (string) ($row['saveShotsAgainst'] ?? '')) === 1
+                    || (int) ($row['saves'] ?? 0) > 0 || (int) ($row['goalsAgainst'] ?? 0) > 0);
+            $avatars = Player::query()->whereIn('nhl_id', $rows->pluck('playerId'))
+                ->pluck('head_shot_url', 'nhl_id');
+            $goalies = $rows->map(function (array $row) use ($avatars): array {
+                $saves = isset($row['saves']) ? (int) $row['saves'] : null;
+                if ($saves === null && preg_match('/^(\d+)\/(\d+)$/', (string) ($row['saveShotsAgainst'] ?? ''), $match) === 1
+                    && (int) $match[1] <= (int) $match[2]) {
+                    $saves = (int) $match[1];
+                }
+                if ($saves === null && isset($row['shotsAgainst'], $row['goalsAgainst'])
+                    && (int) $row['shotsAgainst'] >= (int) $row['goalsAgainst']) {
+                    $saves = (int) $row['shotsAgainst'] - (int) $row['goalsAgainst'];
+                }
+
+                return [
+                    'nhl_player_id' => (int) $row['playerId'],
+                    'name' => data_get($row, 'name.default'),
+                    'avatar_url' => $avatars->get((int) $row['playerId']),
+                    'goals_against' => isset($row['goalsAgainst']) ? (int) $row['goalsAgainst'] : null,
+                    'saves' => $saves,
+                ];
+            })->values()->all();
+            $result[$side] = [
+                'team_id' => $team['id'] ?? null, 'team_abbrev' => $team['abbrev'] ?? null,
+                'team_name' => data_get($team, 'commonName.default'), 'team_logo' => $team['logo'] ?? null,
+                'score' => $team['score'] ?? null, 'sog' => $team['sog'] ?? null,
+                'goalies' => $goalies, 'starting_goalie' => null, 'lineup' => null,
+            ];
+        }
+
+        return $result;
     }
 
     /** @param array<string,mixed> $response @return array<string,mixed>|null */

@@ -71,13 +71,42 @@ describe('live game card scores and shots', () => {
         expect(document.body.textContent).toContain('SOG: —');
     });
 
+    it('renders all participating NHL goalies instead of a projected starter', () => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: {
+            ...game, live_mode: true, game_state: 'LIVE', away: { ...game.away,
+                starting_goalie: { name: 'Wrong projected goalie' },
+                goalies: [
+                    { nhl_player_id: 1, name: 'NHL starter', goals_against: 0, saves: 13 },
+                    { nhl_player_id: 2, name: 'NHL relief', goals_against: 1, saves: 4 },
+                ],
+            },
+        } });
+        app.mount('#live-card');
+        expect(document.body.textContent).toContain('NHL starter');
+        expect(document.body.textContent).toContain('NHL relief');
+        expect(document.body.textContent).not.toContain('Wrong projected goalie');
+        expect(document.body.textContent).not.toContain('View current lineups');
+    });
+
+    it('does not display stored game information when live NHL data is unavailable', () => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: { ...game, live_mode: true, live_data_unavailable: true } });
+        app.mount('#live-card');
+        expect(document.body.textContent).toContain('Live NHL boxscore temporarily unavailable.');
+        expect(document.body.textContent).not.toContain('MTL');
+        expect(document.body.textContent).not.toContain('Corroborated');
+        expect(document.querySelectorAll('img')).toHaveLength(0);
+    });
+
     it.each([[0, 0, 'GA: 0 · Saves: 0'], [2, 18, 'GA: 2 · Saves: 18'], [null, null, 'GA: — · Saves: —']])('keeps the live goalie identity and shows individual stats (%s, %s)', (goalsAgainst, saves, expected) => {
         document.body.innerHTML = '<div id="live-card"></div>';
         app = createApp(GameCard, { game: {
-            ...game, game_state: 'LIVE', away: { ...game.away, starting_goalie: {
+            ...game, game_state: 'LIVE', away: { ...game.away, goalies: [{
+                nhl_player_id: 8489991,
                 name: 'Live Goalie', avatar_url: 'https://example.test/goalie.png', status: 'confirmed',
                 goals_against: goalsAgainst, saves,
-            } },
+            }] },
         } });
         app.mount('#live-card');
         expect(document.querySelector('img[alt="Live Goalie"]').getAttribute('src')).toBe('https://example.test/goalie.png');
@@ -373,6 +402,43 @@ describe('game date navigation', () => {
         await settle();
         expect(document.querySelector('[data-games-date]').value).toBe('2026-09-20');
         expect(document.querySelector('[data-games-status]').textContent).toContain('could not be loaded');
+    });
+});
+
+describe('Vue game ordering', () => {
+    let app;
+    const matchup = (id, state, hour) => ({
+        ...game, nhl_game_id: id, game_state: state,
+        start_time_utc: `2026-09-20T${hour}:00:00Z`,
+        away: { ...game.away, team_abbrev: `TEAM${id}` },
+    });
+    const order = () => [...document.querySelectorAll('article h2')].map((node) => node.textContent);
+    beforeEach(() => {
+        document.body.innerHTML = '<div id="sorted-games"></div>';
+    });
+    afterEach(() => {
+        app?.unmount();
+        app = null;
+        vi.unstubAllGlobals();
+        document.body.innerHTML = '';
+    });
+
+    it('places live games first and final games last with puck-drop order inside groups', () => {
+        const games = [matchup(1, 'FINAL', '18'), matchup(2, 'FUT', '23'), matchup(3, 'LIVE', '22'), matchup(4, 'CRIT', '21'), matchup(5, 'PRE', '20')];
+        app = createApp(GamesIndex, { initialPayload: { games, meta: { date: '2026-09-20' } }, payloadUrl: '/games/payload' });
+        app.mount('#sorted-games');
+        expect(order()).toEqual(['TEAM4 at TOR', 'TEAM3 at TOR', 'TEAM5 at TOR', 'TEAM2 at TOR', 'TEAM1 at TOR']);
+        expect(games.map((item) => item.nhl_game_id)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('reorders updated game states after an AJAX date change', async () => {
+        app = createApp(GamesIndex, { initialPayload: { games: [matchup(1, 'LIVE', '18'), matchup(2, 'FUT', '20')], meta: { date: '2026-09-20' } }, payloadUrl: '/games/payload' });
+        app.mount('#sorted-games');
+        vi.stubGlobal('fetch', vi.fn(() => response({ games: [matchup(1, 'FINAL', '18'), matchup(2, 'LIVE', '20')], meta: { date: '2026-09-21' } })));
+        document.querySelector('[aria-label="Next game date"]').click();
+        await settle();
+        await nextTick();
+        expect(order()).toEqual(['TEAM2 at TOR', 'TEAM1 at TOR']);
     });
 });
 

@@ -4,7 +4,7 @@ import { computed, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
 
 const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
-const isLive = computed(() => Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state));
+const isLive = computed(() => props.game.live_mode || (Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state)));
 const emit = defineEmits(['lineup-submitted']);
 const manualTeam = ref(null);
 function submitted(lineup) {
@@ -35,9 +35,11 @@ const gameStateClass = (state) => state === 'FINAL'
 
 <template>
   <article class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+    <p v-if="game.live_data_unavailable" role="status" class="px-5 py-6 text-sm text-gray-500">Live NHL boxscore temporarily unavailable.</p>
+    <template v-else>
     <header class="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
       <div><h2 class="text-lg font-semibold text-gray-950">{{ game.away.team_abbrev }} at {{ game.home.team_abbrev }}</h2><p class="mt-1 text-sm text-gray-600">{{ localDateTime(game.start_time_utc) }}</p></div>
-      <div class="text-right"><span v-if="game.game_state_label" class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="gameStateClass(game.game_state)">{{ game.game_state_label }}</span><p class="mt-2 text-xs text-gray-400">#{{ game.nhl_game_id }}</p></div>
+      <div class="text-right"><span v-if="game.game_state_label" class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="gameStateClass(game.game_state)">{{ game.game_state_label }}</span><p class="mt-2 text-xs text-gray-400">#{{ isLive ? (game.provider_game_id ?? '—') : game.nhl_game_id }}</p></div>
     </header>
     <div class="divide-y divide-gray-100">
       <section v-for="side in ['away', 'home']" :key="side" class="flex items-center gap-4 px-5 py-4">
@@ -53,11 +55,18 @@ const gameStateClass = (state) => state === 'FINAL'
           <p v-if="game[side].lineup?.last_observed_at" class="mt-2 text-xs text-gray-500">Updated {{ localDateTime(game[side].lineup.last_observed_at) }}</p>
           </template>
         </div>
-        <div v-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><p v-if="isLive" class="mt-1 text-xs tabular-nums text-gray-500">GA: {{ game[side].starting_goalie.goals_against ?? '—' }} · Saves: {{ game[side].starting_goalie.saves ?? '—' }}</p><span v-else class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
+        <div v-if="isLive" class="space-y-3">
+          <div v-for="goalie in game[side].goalies ?? []" :key="goalie.nhl_player_id" class="flex items-center justify-end gap-3">
+            <div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ goalie.name ?? '—' }}</p><p class="mt-1 text-xs tabular-nums text-gray-500">GA: {{ goalie.goals_against ?? '—' }} · Saves: {{ goalie.saves ?? '—' }}</p></div>
+            <img v-if="goalie.avatar_url" :src="goalie.avatar_url" :alt="goalie.name ?? 'Goalie'" class="size-12 rounded-full border border-gray-200 object-cover">
+          </div>
+        </div>
+        <div v-else-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
         <span v-if="!isLive && game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
       </section>
     </div>
-    <footer class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-right"><Link :href="`/games/${game.nhl_game_id}`" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">View current lineups →</Link></footer>
+    <footer v-if="!isLive" class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-right"><Link :href="`/games/${game.nhl_game_id}`" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">View current lineups →</Link></footer>
+    </template>
   </article>
-  <ManualLineupModal v-if="manualTeam" :game-id="Number(game.nhl_game_id)" :team="manualTeam" @close="manualTeam = null" @submitted="submitted" />
+  <ManualLineupModal v-if="manualTeam && !isLive" :game-id="Number(game.nhl_game_id)" :team="manualTeam" @close="manualTeam = null" @submitted="submitted" />
 </template>
