@@ -26,6 +26,7 @@ class NhlAnticipatedLineupImporter
     /**
      * Import validated super-admin text using the same observation pipeline as public posts.
      *
+     * @param array<string,mixed>|null $imageEvidence Server-produced OCR evidence, never raw request fields.
      * @return array{observed:int,skipped:int}
      */
     public function importManual(
@@ -33,10 +34,30 @@ class NhlAnticipatedLineupImporter
         string $teamAbbrev,
         int $teamId,
         string $text,
-        int $userId
+        int $userId,
+        ?array $imageEvidence = null
     ): array {
-        $players = app(NhlLineupTextParser::class)->parse($text, $teamAbbrev);
+        $parser = app(NhlLineupTextParser::class);
+        $lineupText = $text;
+        $players = $parser->parse($text, $teamAbbrev);
+        if ($this->players->verifiedLineupIds($players) === null && ($imageEvidence['status'] ?? null) === 'ok') {
+            foreach ([$imageEvidence['text'], $text . "\n" . $imageEvidence['text']] as $candidateText) {
+                $imagePlayers = $parser->parse($candidateText, $teamAbbrev);
+                if ($this->players->verifiedLineupIds($imagePlayers) !== null) {
+                    $players = $imagePlayers;
+                    $lineupText = $candidateText;
+                    break;
+                }
+            }
+        }
         if ($this->players->verifiedLineupIds($players) === null) {
+            if ($imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'image' => ($imageEvidence['status'] ?? '') === 'empty'
+                        ? 'No readable lineup text was found in this image.'
+                        : ($imageEvidence['reason'] ?? 'The image did not contain readable lineup text.'),
+                ]);
+            }
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'text' => 'A verified lineup needs 12 forwards and 6 defensemen with no duplicates or invalid positions. Unknown players are allowed only on F4/D3 with a verified linemate.',
             ]);
@@ -46,8 +67,9 @@ class NhlAnticipatedLineupImporter
             'platform' => 'manual', 'source_name' => 'Manual submission (user #' . $userId . ')',
             'source_handle' => 'user-' . $userId,
             'source_url' => route('games.index') . '#manual-user-' . $userId,
-            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . hash('sha256', $text),
+            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . hash('sha256', $text . ($imageEvidence['sha256'] ?? '')),
             'post_text' => $text, 'published_at' => now()->toIso8601String(),
+            'lineup_text' => $lineupText, 'ocr' => $imageEvidence !== null ? [$imageEvidence] : [],
             'submitted_by_user_id' => $userId, 'players' => $players,
         ];
         $observed = 0;
@@ -348,7 +370,7 @@ class NhlAnticipatedLineupImporter
     /** @param array<string,mixed> $candidate */
     private function hasLineupText(array $candidate): bool
     {
-        return trim((string) ($candidate['post_text'] ?? '')) !== '';
+        return trim((string) ($candidate['lineup_text'] ?? $candidate['post_text'] ?? '')) !== '';
     }
 
     /**

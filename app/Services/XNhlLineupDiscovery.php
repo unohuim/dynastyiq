@@ -23,6 +23,8 @@ class XNhlLineupDiscovery
 
     private ?string $streamBatchId = null;
 
+    private float $ocrDeadline = 0;
+
     public function __construct(private readonly NhlLineupTextParser $parser)
     {
     }
@@ -31,6 +33,7 @@ class XNhlLineupDiscovery
     public function discover(object $game, string $teamAbbrev, ?string $streamBatchId = null): array
     {
         $this->streamBatchId = $streamBatchId;
+        $this->ocrDeadline = microtime(true) + (int) config('lineup_ocr.discovery_budget_seconds', 120);
         $bearerToken = (string) config('services.x.bearer_token');
         if ($bearerToken === '') {
             throw new RuntimeException('X_BEARER_TOKEN is not configured.');
@@ -219,7 +222,7 @@ class XNhlLineupDiscovery
             (int) round($postsReturned * (float) config('services.x.post_read_cost_usd', 0.005) * 1_000_000)
         );
 
-        $candidates = collect($payload['data'] ?? [])->map(function (array $post) use ($users, $media, $teamAbbrev): array {
+        $candidates = collect($payload['data'] ?? [])->map(function (array $post) use ($users, $media, $teamAbbrev, $game): array {
             $author = $users->get((string) ($post['author_id'] ?? ''), []);
             $username = trim((string) ($author['username'] ?? ''));
             $metrics = $post['public_metrics'] ?? [];
@@ -231,6 +234,34 @@ class XNhlLineupDiscovery
 
             $postText = (string) data_get($post, 'note_tweet.text', $post['text'] ?? '');
             $analysis = $this->parser->analyze($postText, $teamAbbrev);
+            $ocrEvidence = [];
+            $imageText = '';
+            $eligibleDate = ! empty($post['created_at']) && Carbon::parse($post['created_at'])
+                ->gte(NhlLineupObservation::evidenceCutoff((string) $game->game_date));
+            if ($eligibleDate && count($this->candidateComponents(['players' => $analysis['players']])) < 2) {
+                foreach (array_slice($attachments, 0, (int) config('lineup_ocr.max_images_per_post', 4)) as $attachment) {
+                    if (($attachment['type'] ?? '') !== 'photo' || empty($attachment['url'])) {
+                        continue;
+                    }
+                    $extraction = app(NhlLineupImageOcr::class)->extract((string) $attachment['url'], $this->ocrDeadline);
+                    $ocrEvidence[] = $extraction;
+                    if (($extraction['status'] ?? '') === 'ok') {
+                        $imageText .= "\n" . $extraction['text'];
+                    }
+                }
+            }
+            $lineupText = $postText;
+            if (trim($imageText) !== '') {
+                // Try image-only and combined evidence; never replace better caption coverage.
+                foreach ([trim($imageText), $postText . "\n" . trim($imageText)] as $text) {
+                    $imageAnalysis = $this->parser->analyze($text, $teamAbbrev);
+                    if (count($this->candidateComponents(['players' => $imageAnalysis['players']]))
+                        > count($this->candidateComponents(['players' => $analysis['players']]))) {
+                        $analysis = $imageAnalysis;
+                        $lineupText = $text;
+                    }
+                }
+            }
 
             return [
                 'platform' => 'x',
@@ -244,6 +275,8 @@ class XNhlLineupDiscovery
                     ? sprintf('https://x.com/%s/status/%s', $username, $post['id'])
                     : sprintf('https://x.com/i/status/%s', $post['id']),
                 'post_text' => $postText,
+                'lineup_text' => $lineupText,
+                'ocr' => $ocrEvidence,
                 'published_at' => $post['created_at'] ?? null,
                 'engagement' => [
                     'likes' => $metrics['like_count'] ?? null,
@@ -259,6 +292,12 @@ class XNhlLineupDiscovery
             ];
         })->map(function (array $candidate) use ($game, $teamAbbrev, $context, $requestType): array {
             $decision = $this->decision($candidate, $game, $teamAbbrev);
+            $ocrProblems = collect($candidate['ocr'] ?? [])->filter(
+                fn (array $item): bool => ($item['status'] ?? '') !== 'ok'
+            )->pluck('reason')->filter()->unique()->implode(' ');
+            if ($ocrProblems !== '') {
+                $decision['reason'] .= ' OCR: ' . $ocrProblems;
+            }
             $candidate['audit_decision'] = $decision['approved'] ? 'approved' : 'declined';
             $candidate['audit_reason'] = $decision['reason'];
             $this->writeLocalAudit($candidate, $game, $teamAbbrev, $context, $requestType);
@@ -374,7 +413,11 @@ class XNhlLineupDiscovery
             ];
         }
 
-        $gameDecision = $this->gameDecision((string) $candidate['post_text'], $game, $teamAbbrev);
+        $gameDecision = $this->gameDecision(
+            (string) $candidate['post_text'] . "\n" . (string) ($candidate['lineup_text'] ?? ''),
+            $game,
+            $teamAbbrev
+        );
         if (! $gameDecision['approved']) {
             return $gameDecision;
         }
@@ -537,6 +580,18 @@ class XNhlLineupDiscovery
             '',
             '````text',
             (string) $candidate['post_text'],
+            '````',
+            '',
+            '## Image OCR evidence',
+            '',
+            '````json',
+            json_encode($candidate['ocr'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]',
+            '````',
+            '',
+            '## Text used for lineup parsing',
+            '',
+            '````text',
+            (string) ($candidate['lineup_text'] ?? $candidate['post_text']),
             '````',
             '',
             '## Matched target-team players',

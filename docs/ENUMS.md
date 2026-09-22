@@ -30,6 +30,16 @@ Do not introduce new enum values without updating this document.
 
 ## Queue Names
 
+### Lineup OCR extraction status
+
+Storage: `nhl_lineup_observations.raw_evidence.ocr[].status` and local post audits.
+
+- `ok`: Text extracted; lineup acceptance still requires player/slot verification.
+- `empty`: No text recognized.
+- `uncertain`: Low-confidence text withheld; original OCR rows retained.
+- `error`: Disabled extraction, invalid image URL, exceeded limit, download failure, or runtime failure.
+
+
 **Storage location(s):** Laravel queued-job payloads and `config/horizon.php`
 
 - `default`: General application and import work.

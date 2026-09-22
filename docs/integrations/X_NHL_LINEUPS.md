@@ -4,6 +4,11 @@ DynastyIQ searches X directly for recent text-based anticipated NHL lineups only
 
 ## Configuration
 
+OCR and English language data are production dependencies in `package.json` and
+`package-lock.json`; see [Lineup OCR](LINEUP_OCR.md). Date-eligible photo attachments
+are read when caption text does not contain a verified full lineup. The normal
+npm installation supplies the runtime; no separate model setup is required.
+
 Store the X app bearer token as a deployment secret:
 
 ```dotenv
@@ -69,7 +74,7 @@ When multiple players on the team share a surname, a reported first initial sele
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.
-- A complete twelve-forward group or complete six-defense group is accepted and persisted independently. Smaller fragments remain discovery-audit-only; image-only content is not interpreted.
+- A complete twelve-forward group or complete six-defense group is accepted and persisted independently. Smaller fragments remain discovery-audit-only. Photo text passes the same parser and verification as captions; original captions, OCR text, confidence, and image URLs remain separate evidence.
 - Current truth combines the newest accepted forward and defense groups, including groups from different posts or sources. Discovery continues while either group is missing.
 - Missing players are never invented from roster history or hockey knowledge.
 - Special-teams assignments remain empty unless a future deterministic parser explicitly supports them.

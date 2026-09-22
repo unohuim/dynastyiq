@@ -132,6 +132,10 @@ describe('manual game lineup entry', () => {
         document.body.innerHTML = '<div id="manual-test"></div>';
         originalShowModal = HTMLDialogElement.prototype.showModal;
         HTMLDialogElement.prototype.showModal = vi.fn();
+        vi.stubGlobal('URL', class extends URL {
+            static createObjectURL = vi.fn(() => 'blob:lineup-preview');
+            static revokeObjectURL = vi.fn();
+        });
     });
     afterEach(() => {
         app?.unmount();
@@ -173,6 +177,66 @@ describe('manual game lineup entry', () => {
         expect(fetcher.mock.calls[0][0]).toBe('/games/2026010001/lineup');
         expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ team_abbrev: 'MTL', text: 'Pasted lineup' });
         expect(submitted).toHaveBeenCalledWith(lineup);
+    });
+
+    it('uploads an image alone as multipart data and emits the lineup', async () => {
+        const lineup = { team_abbrev: 'MTL', evidence_status: 'reported' };
+        const submitted = vi.fn();
+        const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ lineup }) });
+        vi.stubGlobal('fetch', fetcher);
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL', onSubmitted: submitted });
+        app.mount('#manual-test');
+        const file = new File(['image'], 'lineup.png', { type: 'image/png' });
+        const input = document.querySelector('input[type="file"]');
+        Object.defineProperty(input, 'files', { value: [file], configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await nextTick();
+        expect(document.querySelector('img').src).toBe('blob:lineup-preview');
+        expect(document.querySelector('textarea').required).toBe(false);
+        document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        await settle();
+        const request = fetcher.mock.calls[0][1];
+        expect(request.body).toBeInstanceOf(FormData);
+        expect(request.body.get('image').name).toBe('lineup.png');
+        expect(request.body.get('team_abbrev')).toBe('MTL');
+        expect(request.headers['Content-Type']).toBeUndefined();
+        expect(submitted).toHaveBeenCalledWith(lineup);
+    });
+
+    it('accepts clipboard images in the text field and allows removing them', async () => {
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL' });
+        app.mount('#manual-test');
+        const event = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'clipboardData', { value: { files: [new File(['image'], 'paste.png', { type: 'image/png' })] } });
+        document.querySelector('textarea').dispatchEvent(event);
+        await nextTick();
+        expect(event.defaultPrevented).toBe(true);
+        expect(document.querySelector('img')).not.toBeNull();
+        document.querySelector('button[type="button"]').click();
+        await nextTick();
+        expect(document.querySelector('img')).toBeNull();
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:lineup-preview');
+        expect(document.querySelector('button[type="submit"]').disabled).toBe(true);
+    });
+
+    it('leaves ordinary text paste to the browser', () => {
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL' });
+        app.mount('#manual-test');
+        const event = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'clipboardData', { value: { files: [] } });
+        document.querySelector('textarea').dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('rejects unsupported image uploads in the modal', async () => {
+        app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL' });
+        app.mount('#manual-test');
+        const input = document.querySelector('input[type="file"]');
+        Object.defineProperty(input, 'files', { value: [new File(['svg'], 'lineup.svg', { type: 'image/svg+xml' })] });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await nextTick();
+        expect(document.querySelector('[role="alert"]').textContent).toContain('JPEG or PNG');
+        expect(document.querySelector('img')).toBeNull();
     });
 
     it('retains invalid text and shows the server explanation', async () => {

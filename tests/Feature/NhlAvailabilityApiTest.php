@@ -902,6 +902,144 @@ it('treats twelve forwards and six defensemen as reported without goalies', func
     ]);
 });
 
+it('imports OCR lineup evidence through the canonical resolver without changing the caption', function (string $caption, bool $splitImages): void {
+    $this->travelTo(Carbon::parse('2026-09-22 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026020196, 'season_id' => '20262027', 'game_type' => 2,
+        'game_date' => today(), 'game_dow' => 'TUE', 'game_month' => 'SEP',
+        'start_time_utc' => now()->addHours(4), 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $payload = xLineupResponse([lineupCandidate('image_reporter', 'https://x.com/image_reporter/status/123')]);
+    $text = $payload['data'][0]['text'];
+    $payload['data'][0]['text'] = $caption;
+    $texts = $splitImages ? explode("\nDefense\n", $text, 2) : [$text];
+    if ($splitImages) {
+        $texts[1] = "Defense\n" . $texts[1];
+    }
+    $ocr = Mockery::mock(\App\Services\NhlLineupImageOcr::class);
+    foreach ($texts as $index => $imageText) {
+        $key = 'photo-' . $index;
+        $url = "https://pbs.twimg.com/media/lineup-{$index}.jpg";
+        $payload['data'][0]['attachments']['media_keys'][] = $key;
+        $payload['includes']['media'][] = ['media_key' => $key, 'type' => 'photo', 'url' => $url];
+        $ocr->shouldReceive('extract')->once()->with($url, Mockery::type('float'))->andReturn([
+            'url' => $url, 'status' => 'ok', 'text' => $imageText, 'lines' => [],
+        ]);
+    }
+    app()->instance(\App\Services\NhlLineupImageOcr::class, $ocr);
+    Http::fake([
+        'api-web.nhle.com/*' => Http::response([]),
+        'api.x.com/*' => Http::response($payload),
+    ]);
+    try {
+        app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10, false);
+        $observation = NhlLineupObservation::query()->where('nhl_game_id', $game->nhl_game_id)->firstOrFail();
+        expect($observation->post_text)->toBe($caption)
+            ->and($observation->completeness)->toBe('full')
+            ->and($observation->raw_evidence['ocr'])->toHaveCount(count($texts))
+            ->and($observation->players()->whereNull('player_id')->count())->toBe(0);
+        $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=' . $game->nhl_game_id)
+            ->assertOk()->assertJsonCount(1, 'anticipated_lineups');
+    } finally {
+        $this->travelBack();
+    }
+})->with([['Tonight’s lineup', false], ['', false], ['Line combinations', true]]);
+
+it('does not promote failed uncertain or incomplete photo extraction', function (string $status, string $text): void {
+    $this->travelTo(Carbon::parse('2026-09-22 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $payload = xLineupResponse([lineupCandidate('image_reporter', 'https://x.com/image_reporter/status/123')]);
+    $payload['data'][0]['text'] = 'Tonight';
+    $payload['data'][0]['attachments']['media_keys'] = ['photo'];
+    $payload['includes']['media'] = [['media_key' => 'photo', 'type' => 'photo', 'url' => 'https://pbs.twimg.com/media/fail.jpg']];
+    $this->mock(\App\Services\NhlLineupImageOcr::class, function ($mock) use ($status, $text): void {
+        $mock->shouldReceive('extract')->once()->andReturn(['status' => $status, 'text' => $text, 'reason' => 'Test extraction']);
+    });
+    Http::fake(['api.x.com/*' => Http::response($payload)]);
+    try {
+        $result = app(\App\Services\XNhlLineupDiscovery::class)->discover((object) [
+            'nhl_game_id' => 2026020196, 'game_date' => '2026-09-22',
+            'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+        ], 'TOR');
+        expect($result)->toBe([]);
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    } finally {
+        $this->travelBack();
+    }
+})->with([['error', ''], ['uncertain', ''], ['empty', ''], ['ok', 'Defense 1 - Defense 2']]);
+
+it('does not OCR photos when the caption already contains a verified full lineup', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-22 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $payload = xLineupResponse([lineupCandidate('image_reporter', 'https://x.com/image_reporter/status/123')]);
+    $payload['data'][0]['attachments']['media_keys'] = ['photo'];
+    $payload['includes']['media'] = [['media_key' => 'photo', 'type' => 'photo', 'url' => 'https://pbs.twimg.com/media/unused.jpg']];
+    $this->mock(\App\Services\NhlLineupImageOcr::class, fn ($mock) => $mock->shouldNotReceive('extract'));
+    Http::fake(['api.x.com/*' => Http::response($payload)]);
+    try {
+        $result = app(\App\Services\XNhlLineupDiscovery::class)->discover((object) [
+            'nhl_game_id' => 2026020196, 'game_date' => '2026-09-22',
+            'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+        ], 'TOR');
+        expect($result)->toHaveCount(1)->and($result[0]['ocr'])->toBe([]);
+    } finally {
+        $this->travelBack();
+    }
+});
+
+it('blocks unsafe OCR image URLs without making a request', function (string $url): void {
+    \Illuminate\Support\Facades\Process::fake();
+    $result = app(\App\Services\NhlLineupImageOcr::class)->extract($url, PHP_FLOAT_MAX);
+    expect($result['status'])->toBe('error')->and($result['text'])->toBe('');
+    Http::assertNothingSent();
+    \Illuminate\Support\Facades\Process::assertNothingRan();
+})->with([
+    'http://pbs.twimg.com/media/test.jpg', 'https://example.com/media/test.jpg',
+    'https://pbs.twimg.com.example.com/media/test.jpg', 'file:///etc/passwd',
+    'https://127.0.0.1/media/test.jpg', 'https://pbs.twimg.com:444/media/test.jpg',
+    'https://user:password@pbs.twimg.com/media/test.jpg', 'https://pbs.twimg.com/profile_images/test.jpg',
+]);
+
+it('caches successful OCR extraction instead of reading an image twice', function (): void {
+    $output = ['status' => 'ok', 'text' => 'Forwards', 'lines' => []];
+    \Illuminate\Support\Facades\Process::fake([
+        '*' => \Illuminate\Support\Facades\Process::result(output: json_encode($output)),
+    ]);
+    Http::fake(['pbs.twimg.com/*' => Http::response('photo', 200)]);
+    $ocr = app(\App\Services\NhlLineupImageOcr::class);
+    expect($ocr->extract('https://pbs.twimg.com/media/cache.jpg', PHP_FLOAT_MAX)['text'])->toBe('Forwards');
+    expect($ocr->extract('https://pbs.twimg.com/media/cache.jpg', PHP_FLOAT_MAX)['cached'])->toBeTrue();
+    Http::assertSentCount(1);
+    \Illuminate\Support\Facades\Process::assertRanTimes(1);
+});
+
+it('records OCR process errors without returning unverified text', function (string $output, int $exitCode): void {
+    \Illuminate\Support\Facades\Process::fake([
+        '*' => \Illuminate\Support\Facades\Process::result(output: $output, exitCode: $exitCode),
+    ]);
+    Http::fake(['pbs.twimg.com/*' => Http::response('photo', 200)]);
+    $result = app(\App\Services\NhlLineupImageOcr::class)->extract('https://pbs.twimg.com/media/error.jpg', PHP_FLOAT_MAX);
+    expect($result['status'])->toBe('error')->and($result['text'])->toBe('')->and($result['reason'])->not->toBeEmpty();
+})->with([['', 1], ['not json', 0], ['{}', 0]]);
+
+it('does not follow redirected OCR downloads', function (): void {
+    \Illuminate\Support\Facades\Process::fake();
+    Http::fake(['pbs.twimg.com/*' => Http::response('', 302, ['Location' => 'http://127.0.0.1/private'])]);
+    $result = app(\App\Services\NhlLineupImageOcr::class)->extract('https://pbs.twimg.com/media/redirect.jpg', PHP_FLOAT_MAX);
+    expect($result['reason'])->toContain('302');
+    Http::assertSentCount(1);
+    \Illuminate\Support\Facades\Process::assertNothingRan();
+});
+
+it('does not start OCR after its discovery budget expires', function (): void {
+    \Illuminate\Support\Facades\Process::fake();
+    $result = app(\App\Services\NhlLineupImageOcr::class)->extract('https://pbs.twimg.com/media/budget.jpg', 0);
+    expect($result['reason'])->toContain('budget');
+    Http::assertNothingSent();
+    \Illuminate\Support\Facades\Process::assertNothingRan();
+});
+
 it('stops source timeline reads after the first accepted lineup', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
@@ -2496,6 +2634,79 @@ it('imports a super admin pasted lineup without provider requests and exposes it
     $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])->assertConflict();
     expect(NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->count())->toBe(1);
     $this->travelBack();
+});
+
+it('imports a manually uploaded lineup image with optional caption through the same resolver', function (string $caption): void {
+    $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $text = $current->observation->players->groupBy('line_key')
+        ->map(fn ($group) => $group->pluck('player_name')->implode(' - '))->implode("\n");
+    $current->observation->delete();
+    $this->mock(\App\Services\NhlLineupImageOcr::class, function ($mock) use ($text): void {
+        $mock->shouldReceive('extractUpload')->once()->andReturn([
+            'status' => 'ok', 'text' => $text, 'lines' => [], 'sha256' => 'test-image-hash',
+        ]);
+    });
+    try {
+        $this->actingAs($user)->post('/games/2026020099/lineup', [
+            'team_abbrev' => 'TOR', 'text' => $caption,
+            'image' => \Illuminate\Http\UploadedFile::fake()->image('lineup.png'),
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('lineup.evidence_status', 'reported');
+        $observation = NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->firstOrFail();
+        expect($observation->post_text)->toBe($caption)
+            ->and($observation->raw_evidence['lineup_text'])->toBe($text)
+            ->and($observation->raw_evidence['ocr'][0]['sha256'])->toBe('test-image-hash')
+            ->and($observation->raw_evidence['submitted_by_user_id'])->toBe($user->id)
+            ->and($observation->players()->count())->toBe(18);
+        $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+            ->assertOk()->assertJsonPath('anticipated_lineups.0.evidence_status', 'reported');
+        Http::assertNothingSent();
+    } finally {
+        $this->travelBack();
+    }
+})->with(['', 'Tonight’s lineup']);
+
+it('rejects a manual image upload before OCR when unauthorized', function (bool $signedIn): void {
+    $this->mock(\App\Services\NhlLineupImageOcr::class, fn ($mock) => $mock->shouldNotReceive('extractUpload'));
+    if ($signedIn) {
+        $this->actingAs(User::factory()->create());
+    }
+    $this->post('/games/2026020099/lineup', [
+        'team_abbrev' => 'TOR', 'image' => \Illuminate\Http\UploadedFile::fake()->image('lineup.png'),
+    ], ['Accept' => 'application/json'])->assertStatus($signedIn ? 403 : 401);
+    Http::assertNothingSent();
+})->with([false, true]);
+
+it('rejects non-image manual uploads before processing', function (): void {
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    $this->mock(\App\Services\NhlLineupImageOcr::class, fn ($mock) => $mock->shouldNotReceive('extractUpload'));
+    $this->actingAs($user)->post('/games/2026020099/lineup', [
+        'team_abbrev' => 'TOR', 'image' => \Illuminate\Http\UploadedFile::fake()->create('lineup.pdf', 10, 'application/pdf'),
+    ], ['Accept' => 'application/json'])->assertUnprocessable()->assertJsonValidationErrors('image');
+});
+
+it('reports unreadable manual images without writing observations', function (): void {
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $current->observation->delete();
+    $this->mock(\App\Services\NhlLineupImageOcr::class, function ($mock): void {
+        $mock->shouldReceive('extractUpload')->once()->andReturn([
+            'status' => 'uncertain', 'text' => '', 'reason' => 'Low-confidence image text requires review.',
+        ]);
+    });
+    $this->actingAs($user)->post('/games/2026020099/lineup', [
+        'team_abbrev' => 'TOR', 'image' => \Illuminate\Http\UploadedFile::fake()->image('lineup.png'),
+    ], ['Accept' => 'application/json'])->assertUnprocessable()->assertJsonValidationErrors('image');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
 });
 
 it('rejects invalid manual lineup input without writing evidence', function (string $team, string $text, int $gameId, int $status): void {

@@ -2,6 +2,9 @@ name: NHL Anticipated Lineups
 type: Public Evidence Observation And Consensus Projection
 location:
   - app/Services/XNhlLineupDiscovery.php
+  - app/Services/NhlLineupImageOcr.php
+  - scripts/lineup-ocr.mjs
+  - config/lineup_ocr.php
   - app/Services/NhlOfficialGameRosterDiscovery.php
   - app/Services/NhlLineupTextParser.php
   - app/Services/NhlLineupPlayerResolver.php
@@ -23,12 +26,13 @@ when_to_use:
   - Resolving public lineup reports to canonical players and game-specific current truth.
   - Selecting a corroborated game roster for prediction inputs.
 when_not_to_use:
-  - Extracting lineup evidence solely from images.
+  - Approving image text without canonical player and slot verification.
   - Replacing an official NHL game roster or boxscore lineup.
   - Treating multiple posts from the same publisher as independent corroboration.
 rules:
-  - Super admins may submit pasted text for an unreported participating game/team through POST /games/{nhlGameId}/lineup. Authorization and game/team membership are server-enforced; existing reported lineups cannot be overwritten through this endpoint.
-  - Manual submissions use NhlLineupTextParser, NhlLineupPlayerResolver verification, and NhlAnticipatedLineupImporter persistence without provider calls. A complete verified roster is required, including the existing F4/D3 exception; invalid submissions create no evidence.
+  - Super admins may submit pasted text, an uploaded or clipboard-pasted JPEG/PNG image, or both for an unreported participating game/team through POST /games/{nhlGameId}/lineup. Authorization and game/team membership are server-enforced; existing reported lineups cannot be overwritten through this endpoint.
+  - Manual images are limited to 10 MiB and use the same bounded OCR runner as X photos without provider calls. OCR runs outside the database lock; target membership and reported status are rechecked under lock before writing. Uploaded bytes remain temporary; accepted evidence retains the content hash, MIME type, size, OCR output and submitting user.
+  - Manual submissions use NhlLineupTextParser, NhlLineupPlayerResolver verification, and NhlAnticipatedLineupImporter persistence without provider calls. A complete verified roster is required, including the existing F4/D3 exception; invalid submissions create no evidence. The Vue modal previews/removes selected images, uses multipart AJAX for images and JSON for text-only input, and retains input on validation errors.
   - Manual evidence preserves the submitted text, submission timestamp, user id, game, and team under a manual source identity scoped to the submitting user. It must not masquerade as X evidence or enter X timeline discovery.
   - The public games page exposes manual entry only to super admins through an unreported team badge. A Vue modal submits via AJAX and patches the matching game/team lineup without navigation.
   - The parent command queues one job per team and NHL game scheduled today or tomorrow without reading current lineups or contacting providers. Team jobs evaluate the requested timing window and existing coverage when they execute, recording ineligible work as skipped.
@@ -36,7 +40,10 @@ rules:
   - Default and outside-two-hours discovery include future games scheduled today and tomorrow in America/Toronto; within-two-hours discovery remains limited to today's games.
   - Discovery may accept a lineup post published on the game date or the immediately preceding calendar date when the post identifies the targeted game lineup.
   - The evidence window begins at 00:00 America/Toronto on the calendar day immediately preceding the game; older observations must be declined and must not satisfy scheduler coverage, current-lineup selection, public/API payloads, or prediction inputs.
-  - Only text-attributed lineup evidence is eligible; image-only posts are skipped.
+  - Date-eligible X photo attachments may supply lineup text through local Tesseract.js when the caption lacks a verified full roster. The engine and English language data are production npm dependencies, with no Python runtime, system OCR executable, or model downloads during imports. OCR output passes the existing text parser and canonical player verification; OCR never directly grants reported status.
+  - Image extraction preserves original captions separately from parsing text and records photo URLs, extracted rows, confidence, and failures in raw evidence and local audits. Multiple images from one post remain one publisher observation.
+  - OCR downloads allow only HTTPS pbs.twimg.com media URLs without redirects, have byte and pixel limits, use temporary files removed after processing, and run a bounded CPU subprocess without shell interpolation. Successful extraction is cached; errors are briefly cached and must remain visible in audits rather than fabricate players or abort valid caption processing.
+  - Low-confidence OCR text is withheld as a whole rather than dropping individual names and shifting lineup slots. Spatial row reconstruction is heuristic and never bypasses resolver or split-squad checks.
   - Observations retain source, post URL, post text, publication and observation times, engagement, game, team, normalized slots, and unresolved names.
   - Canonical team identity uses nhl_teams.nhl_id and also retains team abbreviation.
   - Each normalized observation-player row repeats canonical team id and abbreviation so direct table inspection remains understandable without a parent join.

@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Services\AdminImportSchedules;
 use App\Services\NhlAnticipatedLineupPayload;
 use App\Services\NhlAnticipatedLineupImporter;
+use App\Services\NhlLineupImageOcr;
 use App\Models\NhlGame;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
@@ -78,17 +79,25 @@ class NhlGamesController extends Controller
         abort_unless($this->canManageGameSync($request), 403);
         $input = $request->validate([
             'team_abbrev' => ['required', 'string', 'max:10'],
-            'text' => ['required', 'string', 'max:20000'],
+            'text' => ['nullable', 'required_without:image', 'string', 'max:20000'],
+            'image' => ['nullable', 'required_without:text', 'file', 'image', 'mimes:jpg,jpeg,png', 'max:10240'],
         ]);
 
-        return DB::transaction(function () use ($request, $nhlGameId, $input, $importer, $payload): JsonResponse {
+        // Reject invalid targets before OCR, and keep CPU work outside the database lock.
+        $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->firstOrFail();
+        $team = mb_strtoupper($input['team_abbrev']);
+        abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+        abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
+        $ocr = $request->hasFile('image') ? app(NhlLineupImageOcr::class)->extractUpload($request->file('image')) : null;
+
+        return DB::transaction(function () use ($request, $nhlGameId, $input, $importer, $payload, $ocr): JsonResponse {
             $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
             $team = mb_strtoupper($input['team_abbrev']);
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
             abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
             $teamId = DB::table('nhl_teams')->where('abbrev', $team)->value('nhl_id');
             abort_if($teamId === null, 422, 'The NHL team identity is missing.');
-            $importer->importManual($game, $team, (int) $teamId, trim($input['text']), (int) $request->user()->id);
+            $importer->importManual($game, $team, (int) $teamId, trim($input['text'] ?? ''), (int) $request->user()->id, $ocr);
 
             return response()->json(['lineup' => $payload->forGameTeam($nhlGameId, $team, false)]);
         });

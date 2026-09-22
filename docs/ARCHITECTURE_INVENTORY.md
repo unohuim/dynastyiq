@@ -3745,9 +3745,15 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+X photo attachments can provide text through `NhlLineupImageOcr` and the bounded
+Node `scripts/lineup-ocr.mjs` runner using npm-installed Tesseract.js and English language data. Extraction is cached and feeds the existing
+parser/resolver; original captions, image URLs, confidence and extracted text
+remain auditable. See `docs/integrations/LINEUP_OCR.md` for runtime details
+and `docs/architecture/imports/NhlAnticipatedLineups.yaml` for authority.
+
 Live `/games` presentation is separate from anticipated lineups: NHL boxscore JSON supplies all displayed game data and participating goalies, with database goalie avatars as the only enrichment. Missing provider data must not fall back to projected goalies or stored scores. See `docs/architecture/imports/NhlPublicGameLiveContext.yaml`.
 
-Super admins can paste a game/team lineup through its unreported badge on `/games`. The Vue modal posts to `POST /games/{nhlGameId}/lineup`, reusing text parsing, verified identity checks, and observation/current-lineup persistence without X requests. Evidence is attributed to a per-user manual source; invalid text and existing reported lineups are rejected. Cards update via AJAX.
+Super admins can paste lineup text or a clipboard image, or upload a JPEG/PNG, through an unreported team badge on `/games`. The Vue modal posts to `POST /games/{nhlGameId}/lineup`, reusing OCR when an image is supplied, text parsing, verified identity checks, and observation/current-lineup persistence without X requests. Evidence is attributed to a per-user manual source; invalid submissions and existing reported lineups are rejected. Cards update via AJAX.
 
 The parent import dispatches today's and tomorrow's game/team jobs without inspecting lineup coverage. Each job evaluates its timing window and coverage before provider calls. X timeline scanning is capped at six five-post pages per account per discovery attempt, continuing round-robin through other sources until complete coverage or exhaustion. Retries restart attempt-local pagination.
 
