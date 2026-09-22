@@ -17,6 +17,7 @@ class AdminImportSchedules
 
     public const DEFINITIONS = [
         'contracts' => ['current' => 86400],
+        'fantrax' => ['current' => 86400],
         'nhl-starting-goalies' => ['today' => 900, 'future' => 3600],
         'nhl-injuries' => ['current' => 900],
         self::ANTICIPATED_LINEUPS => ['within_two_hours' => 900, 'outside_two_hours' => 3600],
@@ -74,6 +75,14 @@ class AdminImportSchedules
                 'timezone' => $outside?->timezone ?: config('app.timezone', 'UTC'),
                 'outside_mode' => $outside?->recurrence_mode === 'once' ? 'once' : 'recurring',
                 'within_two_hours_enabled' => (bool) ($within?->lane_enabled ?? true),
+            ];
+        }
+
+        if (in_array($sourceKey, ['contracts', 'fantrax'], true)) {
+            $payload['timing'] = [
+                'daily_start_time' => $rows->first()->daily_start_time
+                    ? substr($rows->first()->daily_start_time, 0, 5) : null,
+                'timezone' => $rows->first()->timezone,
             ];
         }
 
@@ -139,6 +148,25 @@ class AdminImportSchedules
                 }
             }
 
+            if (in_array($sourceKey, ['contracts', 'fantrax'], true)) {
+                $time = array_key_exists('daily_start_time', $timing)
+                    ? $timing['daily_start_time'] : $row->daily_start_time;
+                $attributes['daily_start_time'] = $time ?: null;
+                $attributes['timezone'] = $timing['timezone'] ?? $row->timezone ?? config('app.timezone', 'UTC');
+                $now = CarbonImmutable::now();
+                $attributes['next_due_at'] = null;
+                if ($enabled) {
+                    if ($seconds === 86400 && $time) {
+                        $localNow = $now->setTimezone($attributes['timezone']);
+                        $anchor = CarbonImmutable::parse($localNow->toDateString() . ' ' . $time, $attributes['timezone']);
+                        $ranToday = $row->last_dispatched_at?->setTimezone($attributes['timezone'])->isSameDay($localNow);
+                        $attributes['next_due_at'] = ($ranToday ? $anchor->addDay() : $anchor)->utc();
+                    } else {
+                        $attributes['next_due_at'] = $row->last_dispatched_at?->toImmutable()->addSeconds($seconds) ?? $now;
+                    }
+                }
+            }
+
             $row->update($attributes);
         }
 
@@ -196,6 +224,18 @@ class AdminImportSchedules
     /** Persist the dispatch timestamp and calculate the lane's next due time. */
     public function markDispatched(AdminImportSchedule $schedule, CarbonImmutable $now): void
     {
+        if (in_array($schedule->source_key, ['contracts', 'fantrax'], true)
+            && $schedule->interval_seconds === 86400 && $schedule->daily_start_time) {
+            $timezone = $schedule->timezone ?: config('app.timezone', 'UTC');
+            $tomorrow = $now->setTimezone($timezone)->addDay()->toDateString();
+            $schedule->update([
+                'last_dispatched_at' => $now,
+                'next_due_at' => CarbonImmutable::parse($tomorrow . ' ' . $schedule->daily_start_time, $timezone)->utc(),
+            ]);
+
+            return;
+        }
+
         if ($schedule->source_key === self::GAME_BOXSCORES) {
             $schedule->update(['last_dispatched_at' => $now, 'next_due_at' => $now->addSecond()]);
 

@@ -51,6 +51,10 @@ class DispatchScheduledAdminImportsCommand extends Command
     /** @return array<string,mixed> */
     private function commandOptions(AdminImportSchedule $schedule): array
     {
+        if ($schedule->source_key === 'fantrax') {
+            return ['--players' => true];
+        }
+
         if ($schedule->source_key === 'contracts') {
             return ['--per-page' => 100, '--all' => true];
         }

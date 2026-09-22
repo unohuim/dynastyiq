@@ -7871,6 +7871,49 @@ it('initializes contracts sync disabled with a daily frequency', function () {
         ->and($payload['lanes']['current']['interval_seconds'])->toBe(86400);
 });
 
+it('schedules daily player imports at the selected local time on their own queue', function (string $source, string $queue, array $options) {
+    Bus::fake();
+    $this->travelTo(Carbon::parse('2026-09-22 14:22:00', 'UTC'));
+    try {
+        $this->actingAs(($this->makeSuperAdmin)())->putJson(
+            route('admin.imports.schedule.update', ['key' => $source]),
+            ['enabled' => true, 'intervals' => ['current' => 86400],
+                'timing' => ['daily_start_time' => '10:15', 'timezone' => 'America/Toronto']]
+        )->assertOk()->assertJsonPath('schedule.timing.daily_start_time', '10:15');
+        $this->assertDatabaseHas('admin_import_schedules', [
+            'source_key' => $source, 'interval_seconds' => 86400, 'timezone' => 'America/Toronto',
+        ]);
+        Artisan::call('admin:dispatch-scheduled-imports');
+        Bus::assertBatched(fn ($batch): bool => $batch->name === "scheduled-{$source}-import"
+            && $batch->options['queue'] === $queue
+            && $batch->jobs->first()->options === $options);
+        expect(AdminImportSchedule::query()->where('source_key', $source)->firstOrFail()
+            ->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-09-23 14:15:00');
+    } finally {
+        $this->travelBack();
+    }
+})->with([
+    ['fantrax', 'fantrax', ['--players' => true]],
+    ['contracts', 'default', ['--per-page' => 100, '--all' => true]],
+]);
+
+it('keeps daily import wall clock time across daylight saving changes', function (string $source) {
+    $schedule = app(AdminImportSchedules::class)->forSource($source)->first();
+    $schedule->update(['daily_start_time' => '10:15:00', 'timezone' => 'America/Toronto']);
+    app(AdminImportSchedules::class)->markDispatched($schedule, Carbon::parse('2026-10-31 14:15:00', 'UTC')->toImmutable());
+    expect($schedule->refresh()->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-11-01 15:15:00');
+})->with(['fantrax', 'contracts']);
+
+it('limits the scheduled admin import dispatcher overlap lock to one minute', function () {
+    $event = collect(app(\Illuminate\Console\Scheduling\Schedule::class)->events())
+        ->first(fn ($event): bool => str_contains((string) $event->command, 'admin:dispatch-scheduled-imports'));
+
+    expect($event)->not->toBeNull()
+        ->and($event->withoutOverlapping)->toBeTrue()
+        ->and($event->expiresAt)->toBe(1)
+        ->and($event->repeatSeconds)->toBe(1);
+});
+
 it('does not dispatch disabled admin import schedules', function () {
     Bus::fake();
     AdminImportSchedule::query()->create([

@@ -1593,11 +1593,18 @@ export default {
                                 </div>
                             </fieldset>
                         </template>
-                        <template v-else-if="scheduleSettings.importKey === 'contracts'">
+                        <template v-else-if="['contracts', 'fantrax'].includes(scheduleSettings.importKey)">
                             <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-700">
                                 Frequency (hours)
                                 <input v-model.number="scheduleSettings.lanes.current.hours" type="number" min="1" max="596523" step="1" required class="w-28 rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                             </label>
+                            <template v-if="scheduleSettings.lanes.current.hours === 24">
+                                <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-700">
+                                    Time of day (optional)
+                                    <input v-model="scheduleSettings.timing.daily_start_time" type="time" class="rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                </label>
+                                <p class="text-xs text-gray-500">{{ scheduleSettings.timing.timezone }}. Leave blank to repeat every 24 hours from dispatch.</p>
+                            </template>
                         </template>
                         <template v-else>
                             <div v-for="(lane, laneKey) in scheduleSettings.lanes" :key="laneKey">

@@ -904,7 +904,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `within_two_hours`
 - `outside_two_hours`
 
-`today` applies to starting goalies and today-game boxscore refreshes; `future` applies to starting goalies. `current` applies to game-independent injuries and contracts. `within_two_hours` and `outside_two_hours` apply to today's anticipated lineups relative to puck drop.
+`today` applies to starting goalies and today-game boxscore refreshes; `future` applies to starting goalies. `current` applies to game-independent injuries, contracts, and Fantrax Players. `within_two_hours` and `outside_two_hours` apply to today's anticipated lineups relative to puck drop.
 
 ### Admin Import Schedule Recurrence Mode
 

@@ -2865,8 +2865,8 @@ export default function adminHub(options = {}) {
                     }]
                 )),
                 timing: {
-                    daily_start_time: importItem.schedule.timing?.daily_start_time ?? '11:00',
-                    timezone: browserTimezone,
+                    daily_start_time: importItem.schedule.timing?.daily_start_time ?? (['contracts', 'fantrax'].includes(importItem.key) ? '' : '11:00'),
+                    timezone: importItem.schedule.timing?.timezone || browserTimezone,
                     outside_mode: importItem.schedule.timing?.outside_mode ?? 'recurring',
                     within_two_hours_enabled: importItem.schedule.timing?.within_two_hours_enabled ?? true,
                 },
@@ -2915,7 +2915,7 @@ export default function adminHub(options = {}) {
             try {
                 const intervals = Object.fromEntries(Object.entries(lanes).map(
                     ([key, lane]) => {
-                        if (importItem.key === 'contracts') {
+                        if (['contracts', 'fantrax'].includes(importItem.key)) {
                             const hours = Number(lane.hours);
                             if (!Number.isInteger(hours) || hours < 1 || hours > 596523) {
                                 throw new Error('Frequency must be a whole number of hours between 1 and 596523.');
@@ -2926,6 +2926,12 @@ export default function adminHub(options = {}) {
                     }
                 ));
                 const body = { enabled: Boolean(enabled), intervals };
+                if (['contracts', 'fantrax'].includes(importItem.key)) {
+                    body.timing = {
+                        daily_start_time: timing?.daily_start_time || null,
+                        timezone: timing?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+                    };
+                }
                 if (importItem.key === 'nhl-anticipated-lineups') {
                     body.timing = {
                         daily_start_time: timing?.daily_start_time ?? '11:00',
@@ -3387,7 +3393,10 @@ export default function adminHub(options = {}) {
                 return 'N/A';
             }
 
-            return this.formatSocialDate(date);
+            return date.toLocaleString(undefined, {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+            });
         },
 
         importElapsedText(key) {

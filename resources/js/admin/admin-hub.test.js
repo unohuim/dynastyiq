@@ -2165,7 +2165,8 @@ describe('admin-hub import listeners', () => {
         instance.scheduleSettings.lanes.current.hours = 48;
         await instance.saveImportScheduleSettings();
         expect(global.fetch).toHaveBeenCalledWith('/admin/imports/contracts/schedule',
-            expect.objectContaining({ body: JSON.stringify({ enabled: false, intervals: { current: 172800 } }) }));
+            expect.objectContaining({ body: JSON.stringify({ enabled: false, intervals: { current: 172800 },
+                timing: { daily_start_time: null, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } }) }));
         expect(instance.scheduleSettings.open).toBe(false);
         expect(instance.importItems[0].schedule.lanes.current.hours).toBe(48);
     });
@@ -2183,6 +2184,31 @@ describe('admin-hub import listeners', () => {
         expect(global.fetch).not.toHaveBeenCalled();
         expect(instance.scheduleSettings.open).toBe(true);
         expect(instance.importItems[0].schedule.error).toContain('whole number');
+    });
+
+    it.each(['fantrax', 'contracts'])('saves %s daily time and timezone through AJAX', async (key) => {
+        const adminHub = await loadAdminHub();
+        const schedule = { enabled: false, lanes: { current: { interval_seconds: 86400 } },
+            timing: { daily_start_time: '10:15', timezone: 'America/Toronto' } };
+        global.fetch = vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({ schedule }) }));
+        const instance = adminHub({ imports: [{ key, label: key,
+            schedule_url: `/admin/imports/${key}/schedule`, schedule }] });
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        await instance.saveImportScheduleSettings();
+        expect(global.fetch).toHaveBeenCalledWith(`/admin/imports/${key}/schedule`, expect.objectContaining({
+            body: JSON.stringify({ enabled: false, intervals: { current: 86400 }, timing: schedule.timing }),
+        }));
+        expect(instance.scheduleSettings.open).toBe(false);
+    });
+
+    it('formats last runs as browser-local dates with timezone labels', async () => {
+        const adminHub = await loadAdminHub();
+        const timestamp = '2026-09-22T14:15:00Z';
+        const instance = adminHub({ imports: [{ key: 'fantrax', last_run: timestamp }] });
+        expect(instance.formatLastRun('fantrax')).toBe(new Date(timestamp).toLocaleString(undefined, {
+            month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+        }));
+        expect(instance.formatLastRun('missing')).toBe('N/A');
     });
 
     it('normalizes import schedule timer fields back to bounded base seconds', async () => {

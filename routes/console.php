@@ -40,5 +40,5 @@ Schedule::command('fantrax:drafts:poll')
     ->timezone('America/Toronto');
 Schedule::command('admin:dispatch-scheduled-imports')
     ->everySecond()
-    ->withoutOverlapping()
+    ->withoutOverlapping(1)
     ->timezone('America/Toronto');

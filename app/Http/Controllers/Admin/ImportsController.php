@@ -98,7 +98,7 @@ class ImportsController extends Controller
         $data = $request->validate([
             'enabled' => ['required', 'boolean'],
             'intervals' => ['nullable', 'array'],
-            'intervals.*' => $key === 'contracts'
+            'intervals.*' => in_array($key, ['contracts', 'fantrax'], true)
                 ? ['integer', 'min:3600', 'max:2147482800', 'multiple_of:3600']
                 : ['integer', 'min:60', 'max:86400'],
             'timing' => ['nullable', 'array'],
@@ -124,7 +124,7 @@ class ImportsController extends Controller
                 $key,
                 (bool) $data['enabled'],
                 $intervals,
-                in_array($key, [AdminImportSchedules::ANTICIPATED_LINEUPS, AdminImportSchedules::GAME_BOXSCORES], true)
+                in_array($key, ['contracts', 'fantrax', AdminImportSchedules::ANTICIPATED_LINEUPS, AdminImportSchedules::GAME_BOXSCORES], true)
                     ? ($data['timing'] ?? []) : []
             ),
         ]);
