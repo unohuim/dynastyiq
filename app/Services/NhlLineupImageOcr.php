@@ -118,6 +118,38 @@ class NhlLineupImageOcr
         }
     }
 
+    /** Format every recognized row for human review, regardless of confidence or player resolution. */
+    public function reviewText(array $evidence): string
+    {
+        $lines = [];
+        foreach ($evidence['lines'] ?? [] as $line) {
+            $groups = [];
+            $previous = null;
+            foreach ($line['boxes'] ?? [] as $word) {
+                $box = $word['box'] ?? null;
+                $text = trim((string) ($word['text'] ?? ''));
+                if (! is_array($box) || count($box) !== 4 || $text === '') {
+                    continue;
+                }
+                if (in_array($text, ['-', '–', '—', '|'], true)) {
+                    $previous = null;
+                    continue;
+                }
+                // Large horizontal gaps separate player cells; retain spaces within full names.
+                $newGroup = $previous === null || $box[0] - $previous[2] > max(12, ($box[3] - $box[1]) * 0.75);
+                if ($newGroup) {
+                    $groups[] = $text;
+                } else {
+                    $groups[array_key_last($groups)] .= ' ' . $text;
+                }
+                $previous = $box;
+            }
+            $lines[] = $groups !== [] ? implode(' - ', $groups) : (string) ($line['text'] ?? '');
+        }
+
+        return trim($lines !== [] ? implode("\n", $lines) : (string) ($evidence['text'] ?? ''));
+    }
+
     /** Execute the same bounded OCR runner for remote photos and temporary uploads. @return array<string,mixed> */
     private function readImage(string $path, float $deadline): array
     {

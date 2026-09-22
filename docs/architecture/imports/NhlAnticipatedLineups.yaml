@@ -32,6 +32,7 @@ when_not_to_use:
 rules:
   - Super admins may submit pasted text, an uploaded or clipboard-pasted JPEG/PNG image, or both for an unreported participating game/team through POST /games/{nhlGameId}/lineup. Authorization and game/team membership are server-enforced; existing reported lineups cannot be overwritten through this endpoint.
   - Manual images are limited to 10 MiB and use the same bounded OCR runner as X photos without provider calls. OCR runs outside the database lock; target membership and reported status are rechecked under lock before writing. Uploaded bytes remain temporary; accepted evidence retains the content hash, MIME type, size, OCR output and submitting user.
+  - POST /games/{nhlGameId}/lineup/preview is super-admin-only and returns editable OCR rows without creating observations. All recognized words are shown regardless of confidence; spatial gaps separate player cells with hyphens. The modal requires review before Submit, sends image_reviewed with the edited text, and reviewed submissions must validate that text without falling back to OCR. Automated X image confidence handling is unchanged.
   - Manual submissions use NhlLineupTextParser, NhlLineupPlayerResolver verification, and NhlAnticipatedLineupImporter persistence without provider calls. A complete verified roster is required, including the existing F4/D3 exception; invalid submissions create no evidence. The Vue modal previews/removes selected images, uses multipart AJAX for images and JSON for text-only input, and retains input on validation errors.
   - Manual evidence preserves the submitted text, submission timestamp, user id, game, and team under a manual source identity scoped to the submitting user. It must not masquerade as X evidence or enter X timeline discovery.
   - The public games page exposes manual entry only to super admins through an unreported team badge. A Vue modal submits via AJAX and patches the matching game/team lineup without navigation.
@@ -96,6 +97,7 @@ rules:
   - X searches persist the query and returned-post count in integration usage logs without an application-owned daily search ceiling.
   - Each admin-triggered lineup run atomically accumulates its returned X posts and dedicated import_runs estimated cost using the configured current X rates; usage from other runs must not affect its progress display.
 public_interface:
+  - POST /games/{nhlGameId}/lineup/preview
   - POST /games/{nhlGameId}/lineup
   - nhl:import-anticipated-lineups
   - GET /api/nhl-anticipated-lineups

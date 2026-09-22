@@ -2636,6 +2636,60 @@ it('imports a super admin pasted lineup without provider requests and exposes it
     $this->travelBack();
 });
 
+it('previews uncertain manual image text without writing evidence and saves only reviewed text', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $corrected = $current->observation->players->groupBy('line_key')
+        ->map(fn ($group) => $group->pluck('player_name')->implode(' - '))->implode("\n");
+    $current->observation->delete();
+    $this->partialMock(\App\Services\NhlLineupImageOcr::class, function ($mock): void {
+        $mock->shouldReceive('extractUpload')->andReturn([
+            'status' => 'uncertain', 'text' => '', 'sha256' => 'test-image-hash',
+            'lines' => [['text' => 'Unknown name', 'boxes' => [
+                ['text' => 'Unknown', 'confidence' => 0.2, 'box' => [0, 0, 40, 10]],
+                ['text' => 'Name', 'confidence' => 0.4, 'box' => [100, 0, 140, 10]],
+                ['text' => 'Third', 'confidence' => 0.5, 'box' => [200, 0, 240, 10]],
+            ]]],
+        ]);
+    });
+    try {
+        $image = \Illuminate\Http\UploadedFile::fake()->image('lineup.png');
+        $this->actingAs($user)->post('/games/2026020099/lineup/preview', [
+            'team_abbrev' => 'TOR', 'image' => $image,
+        ], ['Accept' => 'application/json'])->assertOk()->assertJsonPath('text', 'Unknown - Name - Third');
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+        $this->post('/games/2026020099/lineup', [
+            'team_abbrev' => 'TOR', 'image' => $image, 'image_reviewed' => '1', 'text' => 'Unknown - Name - Third',
+        ], ['Accept' => 'application/json'])->assertUnprocessable()->assertJsonValidationErrors('text');
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+        $this->post('/games/2026020099/lineup', [
+            'team_abbrev' => 'TOR', 'image' => $image, 'image_reviewed' => '1', 'text' => $corrected,
+        ], ['Accept' => 'application/json'])->assertOk();
+        $observation = NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->firstOrFail();
+        expect($observation->post_text)->toBe($corrected)
+            ->and($observation->raw_evidence['ocr'][0]['reviewed'])->toBeTrue();
+        $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+            ->assertOk()->assertJsonPath('anticipated_lineups.0.evidence_status', 'reported');
+        Http::assertNothingSent();
+    } finally {
+        $this->travelBack();
+    }
+});
+
+it('restricts manual OCR preview to super admins', function (bool $signedIn): void {
+    $this->mock(\App\Services\NhlLineupImageOcr::class, fn ($mock) => $mock->shouldNotReceive('extractUpload'));
+    if ($signedIn) {
+        $this->actingAs(User::factory()->create());
+    }
+    $this->post('/games/2026020099/lineup/preview', [
+        'team_abbrev' => 'TOR', 'image' => \Illuminate\Http\UploadedFile::fake()->image('lineup.png'),
+    ], ['Accept' => 'application/json'])->assertStatus($signedIn ? 403 : 401);
+})->with([false, true]);
+
 it('imports a manually uploaded lineup image with optional caption through the same resolver', function (string $caption): void {
     $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
     $user = User::factory()->create();

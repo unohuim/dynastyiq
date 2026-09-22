@@ -179,10 +179,12 @@ describe('manual game lineup entry', () => {
         expect(submitted).toHaveBeenCalledWith(lineup);
     });
 
-    it('uploads an image alone as multipart data and emits the lineup', async () => {
+    it('previews an image then submits the reviewed text with its image evidence', async () => {
         const lineup = { team_abbrev: 'MTL', evidence_status: 'reported' };
         const submitted = vi.fn();
-        const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ lineup }) });
+        const fetcher = vi.fn()
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ text: 'Name - Name - Name' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ lineup }) });
         vi.stubGlobal('fetch', fetcher);
         app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL', onSubmitted: submitted });
         app.mount('#manual-test');
@@ -190,20 +192,29 @@ describe('manual game lineup entry', () => {
         const input = document.querySelector('input[type="file"]');
         Object.defineProperty(input, 'files', { value: [file], configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
         await nextTick();
         expect(document.querySelector('img').src).toBe('blob:lineup-preview');
-        expect(document.querySelector('textarea').required).toBe(false);
+        expect(document.querySelector('textarea').value).toBe('Name - Name - Name');
+        expect(fetcher.mock.calls[0][0]).toBe('/games/2026010001/lineup/preview');
+        expect(submitted).not.toHaveBeenCalled();
+        document.querySelector('textarea').value = 'Corrected - Names - Here';
+        document.querySelector('textarea').dispatchEvent(new Event('input', { bubbles: true }));
+        await nextTick();
         document.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         await settle();
-        const request = fetcher.mock.calls[0][1];
+        const request = fetcher.mock.calls[1][1];
         expect(request.body).toBeInstanceOf(FormData);
         expect(request.body.get('image').name).toBe('lineup.png');
         expect(request.body.get('team_abbrev')).toBe('MTL');
+        expect(request.body.get('text')).toBe('Corrected - Names - Here');
+        expect(request.body.get('image_reviewed')).toBe('1');
         expect(request.headers['Content-Type']).toBeUndefined();
         expect(submitted).toHaveBeenCalledWith(lineup);
     });
 
     it('accepts clipboard images in the text field and allows removing them', async () => {
+        vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
         app = createApp(ManualLineupModal, { gameId: 2026010001, team: 'MTL' });
         app.mount('#manual-test');
         const event = new Event('paste', { bubbles: true, cancelable: true });

@@ -69,6 +69,32 @@ class NhlGamesController extends Controller
         );
     }
 
+    /** Extract an editable manual draft without writing lineup observations. */
+    public function previewLineup(Request $request, int $nhlGameId, NhlLineupImageOcr $ocr, NhlAnticipatedLineupPayload $payload): JsonResponse
+    {
+        abort_unless($this->canManageGameSync($request), 403);
+        $input = $request->validate([
+            'team_abbrev' => ['required', 'string', 'max:10'],
+            'image' => ['required', 'file', 'image', 'mimes:jpg,jpeg,png', 'max:10240'],
+        ]);
+        $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->firstOrFail();
+        $team = mb_strtoupper($input['team_abbrev']);
+        abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+        abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
+        $evidence = $ocr->extractUpload($request->file('image'));
+        if (($evidence['status'] ?? 'error') === 'error') {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'image' => $evidence['reason'] ?? 'Unable to read the image.',
+            ]);
+        }
+        $text = $ocr->reviewText($evidence);
+        if (trim($text) === '') {
+            throw \Illuminate\Validation\ValidationException::withMessages(['image' => 'No text was found. You can enter the lineup manually.']);
+        }
+
+        return response()->json(['text' => $text]);
+    }
+
     /** Process super-admin pasted evidence for a participating team without contacting X. */
     public function storeLineup(
         Request $request,
@@ -79,8 +105,9 @@ class NhlGamesController extends Controller
         abort_unless($this->canManageGameSync($request), 403);
         $input = $request->validate([
             'team_abbrev' => ['required', 'string', 'max:10'],
-            'text' => ['nullable', 'required_without:image', 'string', 'max:20000'],
+            'text' => ['nullable', 'required_without:image', 'required_if:image_reviewed,1', 'string', 'max:20000'],
             'image' => ['nullable', 'required_without:text', 'file', 'image', 'mimes:jpg,jpeg,png', 'max:10240'],
+            'image_reviewed' => ['sometimes', 'boolean'],
         ]);
 
         // Reject invalid targets before OCR, and keep CPU work outside the database lock.
@@ -89,6 +116,9 @@ class NhlGamesController extends Controller
         abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
         abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
         $ocr = $request->hasFile('image') ? app(NhlLineupImageOcr::class)->extractUpload($request->file('image')) : null;
+        if ($ocr !== null) {
+            $ocr['reviewed'] = $request->boolean('image_reviewed');
+        }
 
         return DB::transaction(function () use ($request, $nhlGameId, $input, $importer, $payload, $ocr): JsonResponse {
             $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();

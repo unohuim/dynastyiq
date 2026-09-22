@@ -32,6 +32,14 @@ workers, rather than deploying only Vite's compiled browser assets.
 
 Super admins can also upload a JPEG/PNG or paste a clipboard image into the
 manual lineup modal on `/games`. Text is optional when an image is present.
+Selecting or pasting an image first calls `POST /games/{nhlGameId}/lineup/preview`
+and fills the editable text field with recognized rows, regardless of confidence.
+Large horizontal gaps between player cells become ` - ` separators while spaces
+within full names remain spaces. Unrecognized names and headings remain visible
+for correction. Preview writes no observations. Submit sends `image_reviewed=1`
+and validates only the edited text; it never silently replaces edits with OCR.
+The source image and OCR metadata still accompany an accepted observation.
+The preview endpoint uses the same super-admin, game, and team checks as saving.
 The existing manual endpoint accepts multipart `team_abbrev`, `text`, and `image`
 fields; JSON text submissions remain supported. The upload is processed with
 the same OCR runner, then the same full-lineup verification, without requesting

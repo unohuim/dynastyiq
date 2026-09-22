@@ -72,6 +72,8 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         ->name('games.show');
     Route::post('/games/{nhlGameId}/lineup', [NhlGamesController::class, 'storeLineup'])
         ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.store');
+    Route::post('/games/{nhlGameId}/lineup/preview', [NhlGamesController::class, 'previewLineup'])
+        ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.preview');
 
     // Discord Server joins
     Route::middleware('auth')

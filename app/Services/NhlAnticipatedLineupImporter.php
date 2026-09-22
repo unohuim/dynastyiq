@@ -40,7 +40,8 @@ class NhlAnticipatedLineupImporter
         $parser = app(NhlLineupTextParser::class);
         $lineupText = $text;
         $players = $parser->parse($text, $teamAbbrev);
-        if ($this->players->verifiedLineupIds($players) === null && ($imageEvidence['status'] ?? null) === 'ok') {
+        $reviewed = (bool) ($imageEvidence['reviewed'] ?? false);
+        if (! $reviewed && $this->players->verifiedLineupIds($players) === null && ($imageEvidence['status'] ?? null) === 'ok') {
             foreach ([$imageEvidence['text'], $text . "\n" . $imageEvidence['text']] as $candidateText) {
                 $imagePlayers = $parser->parse($candidateText, $teamAbbrev);
                 if ($this->players->verifiedLineupIds($imagePlayers) !== null) {
@@ -51,7 +52,7 @@ class NhlAnticipatedLineupImporter
             }
         }
         if ($this->players->verifiedLineupIds($players) === null) {
-            if ($imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
+            if (! $reviewed && $imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'image' => ($imageEvidence['status'] ?? '') === 'empty'
                         ? 'No readable lineup text was found in this image.'
