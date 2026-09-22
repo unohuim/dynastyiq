@@ -221,9 +221,6 @@ class AdminImportSchedules
             if ($schedule->recurrence_mode === 'once') {
                 $nextDue = $anchor->addDay();
             } else {
-                $elapsed = (int) max(0, $anchor->diffInSeconds($localNow, false));
-                $slot = intdiv($elapsed, $schedule->interval_seconds) + 1;
-                $nextDue = $anchor->addSeconds($slot * $schedule->interval_seconds);
                 if (! $nextDue->isSameDay($localNow)) {
                     $nextDue = $anchor->addDay();
                 }
@@ -286,15 +283,17 @@ class AdminImportSchedules
             return $anchor->utc();
         }
 
-        if ($attributes['recurrence_mode'] === 'once') {
-            $lastDispatchedAt = $schedule->last_dispatched_at?->setTimezone($timezone);
-
-            return $lastDispatchedAt?->isSameDay($localNow) ? $anchor->addDay()->utc() : $now;
+        $lastDispatchedAt = $schedule->last_dispatched_at?->toImmutable()->setTimezone($timezone);
+        if (! $lastDispatchedAt?->isSameDay($localNow)) {
+            // A missed first run stays due instead of advancing to a repeat slot.
+            return $now;
         }
 
-        $elapsed = (int) max(0, $anchor->diffInSeconds($localNow, false));
-        $slot = intdiv($elapsed, (int) $attributes['interval_seconds']) + 1;
-        $nextDue = $anchor->addSeconds($slot * (int) $attributes['interval_seconds']);
+        if ($attributes['recurrence_mode'] === 'once') {
+            return $anchor->addDay()->utc();
+        }
+
+        $nextDue = $lastDispatchedAt->addSeconds((int) $attributes['interval_seconds']);
 
         return ($nextDue->isSameDay($localNow) ? $nextDue : $anchor->addDay())->utc();
     }

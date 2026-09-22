@@ -35,6 +35,7 @@ rules:
   - Imports with dynamic discovery may increase total_records during the run as records become known.
   - Import keys must remain aligned with docs/ENUMS.md when enum-like.
   - Scheduled admin imports must use AdminImportSchedule and dispatch through the same queued AdminImports path as manual runs.
+  - The outside-two-hours lineup lane becomes due at its configured local daily start. If no dispatch occurred that local day, saving after the start makes it immediately due. Recurring intervals run from the last actual dispatch, not future clock slots; saving must preserve overdue eligibility. Once-only runs and repeats crossing midnight reset to the next local daily start.
   - The nhl-game-boxscores source checks per-game eligibility every second; non-final UTC-today and UTC-yesterday games inside the configured start-before-puck-drop window may sync so games survive midnight rollover. Defaults are a 30-minute start window, a 900-second pregame interval, and a 300-second live interval. There is no separate general or one-hour cadence. Each game's boxscore_synced_at controls its cadence.
 public_interface:
   - AdminImports::sources()

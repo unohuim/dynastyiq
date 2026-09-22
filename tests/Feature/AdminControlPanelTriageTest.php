@@ -7765,7 +7765,7 @@ it('does not dispatch anticipated lineups before the local daily start time', fu
     $this->travelBack();
 });
 
-it('anchors recurring anticipated lineup dispatches to the configured daily start', function () {
+it('counts recurring anticipated lineup intervals from the actual dispatch', function () {
     $schedule = AdminImportSchedule::query()->create([
         'source_key' => 'nhl-anticipated-lineups',
         'lane_key' => 'outside_two_hours',
@@ -7784,8 +7784,55 @@ it('anchors recurring anticipated lineup dispatches to the configured daily star
     );
 
     expect($schedule->refresh()->next_due_at->utc()->format('Y-m-d H:i:s'))
-        ->toBe('2026-09-19 18:00:00');
+        ->toBe('2026-09-19 19:00:00');
 });
+
+it('preserves the first lineup start and repeat eligibility when saving settings', function (
+    string $clock,
+    ?string $lastDispatch,
+    string $mode,
+    string $expected
+) {
+    $this->travelTo(Carbon::parse($clock, 'America/Toronto'));
+    try {
+        $service = app(AdminImportSchedules::class);
+        $schedule = $service->forSource(AdminImportSchedules::ANTICIPATED_LINEUPS)
+            ->firstWhere('lane_key', 'outside_two_hours');
+        $schedule->update([
+            'last_dispatched_at' => $lastDispatch ? Carbon::parse($lastDispatch, 'America/Toronto')->utc() : null,
+        ]);
+
+        $this->actingAs(($this->makeSuperAdmin)())->putJson(
+            route('admin.imports.schedule.update', ['key' => AdminImportSchedules::ANTICIPATED_LINEUPS]),
+            [
+                'enabled' => true,
+                'intervals' => ['outside_two_hours' => 1800, 'within_two_hours' => 900],
+                'timing' => [
+                    'daily_start_time' => '10:15', 'timezone' => 'America/Toronto',
+                    'outside_mode' => $mode, 'within_two_hours_enabled' => false,
+                ],
+            ]
+        )->assertOk()->assertJsonPath(
+            'schedule.lanes.outside_two_hours.next_due_at',
+            Carbon::parse($expected, 'America/Toronto')->utc()->toIso8601String()
+        );
+
+        expect($schedule->refresh()->next_due_at->utc()->toIso8601String())
+            ->toBe(Carbon::parse($expected, 'America/Toronto')->utc()->toIso8601String());
+    } finally {
+        $this->travelBack();
+    }
+})->with([
+    'before start' => ['2026-09-22 10:00', null, 'recurring', '2026-09-22 10:15'],
+    'exact start' => ['2026-09-22 10:15', null, 'recurring', '2026-09-22 10:15'],
+    'missed first run' => ['2026-09-22 10:22', null, 'recurring', '2026-09-22 10:22'],
+    'yesterday does not count' => ['2026-09-22 10:22', '2026-09-21 23:45', 'recurring', '2026-09-22 10:22'],
+    'repeat after actual run' => ['2026-09-22 10:25', '2026-09-22 10:22', 'recurring', '2026-09-22 10:52'],
+    'overdue repeat stays due' => ['2026-09-22 11:00', '2026-09-22 10:22', 'recurring', '2026-09-22 10:52'],
+    'once missed start' => ['2026-09-22 10:22', null, 'once', '2026-09-22 10:22'],
+    'once already ran' => ['2026-09-22 10:25', '2026-09-22 10:22', 'once', '2026-09-23 10:15'],
+    'repeat crosses midnight' => ['2026-09-22 23:50', '2026-09-22 23:45', 'recurring', '2026-09-23 10:15'],
+]);
 
 it('does not dispatch disabled admin import schedules', function () {
     Bus::fake();
