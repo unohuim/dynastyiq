@@ -39,6 +39,63 @@ const game = {
     },
 };
 
+describe('live game card scores and shots', () => {
+    let app;
+    afterEach(() => {
+        app?.unmount();
+        app = null;
+        document.body.innerHTML = '';
+    });
+
+    it.each(['LIVE', 'CRIT', 'INTERMISSION'])('replaces lineup evidence with scores and shots for %s', (state) => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: {
+            ...game, game_state: state,
+            away: { ...game.away, sog: 0 }, home: { ...game.home, sog: 17 },
+        }, canManageLineups: true });
+        app.mount('#live-card');
+        expect(document.querySelector('[aria-label="MTL score"]').textContent).toBe('2');
+        expect(document.querySelector('[aria-label="TOR score"]').textContent).toBe('4');
+        expect(document.body.textContent).toContain('SOG: 0');
+        expect(document.body.textContent).toContain('SOG: 17');
+        expect(document.body.textContent).not.toContain('Updated');
+        expect(document.body.textContent).not.toContain('Not Reported');
+        expect(document.body.textContent).not.toContain('Corroborated');
+        expect(document.querySelector('button[aria-label="Add MTL lineup"]')).toBeNull();
+    });
+
+    it('shows unavailable live shots as a dash rather than zero', () => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: { ...game, game_state: 'LIVE' } });
+        app.mount('#live-card');
+        expect(document.body.textContent).toContain('SOG: —');
+    });
+
+    it.each([[0, 0, 'GA: 0 · Saves: 0'], [2, 18, 'GA: 2 · Saves: 18'], [null, null, 'GA: — · Saves: —']])('keeps the live goalie identity and shows individual stats (%s, %s)', (goalsAgainst, saves, expected) => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: {
+            ...game, game_state: 'LIVE', away: { ...game.away, starting_goalie: {
+                name: 'Live Goalie', avatar_url: 'https://example.test/goalie.png', status: 'confirmed',
+                goals_against: goalsAgainst, saves,
+            } },
+        } });
+        app.mount('#live-card');
+        expect(document.querySelector('img[alt="Live Goalie"]').getAttribute('src')).toBe('https://example.test/goalie.png');
+        expect(document.body.textContent).toContain('Live Goalie');
+        expect(document.body.textContent).toContain(expected);
+        expect(document.body.textContent).not.toContain('Confirmed');
+    });
+
+    it.each(['FUT', 'PRE', 'FINAL'])('preserves existing lineup display for %s', (state) => {
+        document.body.innerHTML = '<div id="live-card"></div>';
+        app = createApp(GameCard, { game: { ...game, game_state: state } });
+        app.mount('#live-card');
+        expect(document.body.textContent).toContain('Corroborated');
+        expect(document.body.textContent).toContain('Updated');
+        expect(document.body.textContent).not.toContain('SOG:');
+    });
+});
+
 describe('manual game lineup entry', () => {
     let app;
     let originalShowModal;

@@ -30,14 +30,8 @@ class NhlAnticipatedLineupPayload
             ->orderBy('nhl_game_id')
             ->get();
         $scoreGameIds = $this->processedScoreGameIds($games);
-        $isToday = $date->toDateString() === Carbon::now('UTC')->toDateString();
-        $games = $games->map(function (NhlGame $game) use ($lineups, $scoreGameIds, $isToday): array {
-            $hasStoredScore = $game->away_team_score !== null && $game->home_team_score !== null;
-            $refreshLive = $game->game_state !== null
-                && ! in_array($game->game_state, ['FUT', 'PRE', 'FINAL'], true);
-            $live = $isToday && (! $hasStoredScore || $refreshLive)
-                ? $this->liveContext->forGame($game)
-                : $this->persistedFinalContext($game, $isToday);
+        $games = $games->map(function (NhlGame $game) use ($lineups, $scoreGameIds): array {
+            $live = $this->recentGameContext($game);
 
             return $this->game(
                 $game,
@@ -64,13 +58,7 @@ class NhlAnticipatedLineupPayload
         $lineups = collect($this->build($game->game_date, $nhlGameId)['anticipated_lineups'])
             ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
 
-        $isToday = $game->game_date->toDateString() === Carbon::now('UTC')->toDateString();
-        $hasStoredScore = $game->away_team_score !== null && $game->home_team_score !== null;
-        $refreshLive = $game->game_state !== null
-            && ! in_array($game->game_state, ['FUT', 'PRE', 'FINAL'], true);
-        $live = $isToday && (! $hasStoredScore || $refreshLive)
-            ? $this->liveContext->forGame($game)
-            : $this->persistedFinalContext($game, $isToday);
+        $live = $this->recentGameContext($game);
 
         return ['game' => $this->game($game, $lineups, (bool) ($live['show_score'] ?? false), $live)];
     }
@@ -230,6 +218,8 @@ class NhlAnticipatedLineupPayload
     ): array
     {
         $pregame = in_array($live['state'] ?? null, ['FUT', 'PRE'], true);
+        $state = $live['state'] ?? $game->game_state;
+        $showGoalie = $pregame || ($state !== null && $state !== '' && ! in_array($state, ['FUT', 'PRE', 'FINAL'], true));
 
         return [
             'nhl_game_id' => $game->nhl_game_id,
@@ -244,7 +234,8 @@ class NhlAnticipatedLineupPayload
                 'team_name' => $game->away_team_common_name,
                 'team_logo' => $game->away_team_logo,
                 'score' => $includeScore ? $game->away_team_score : null,
-                'starting_goalie' => $pregame ? ($live['away_goalie'] ?? null) : null,
+                'sog' => $includeScore ? $game->away_team_sog : null,
+                'starting_goalie' => $showGoalie ? ($live['away_goalie'] ?? null) : null,
                 'lineup' => $lineups->get($game->nhl_game_id . ':' . $game->away_team_abbrev),
             ],
             'home' => [
@@ -253,7 +244,8 @@ class NhlAnticipatedLineupPayload
                 'team_name' => $game->home_team_common_name,
                 'team_logo' => $game->home_team_logo,
                 'score' => $includeScore ? $game->home_team_score : null,
-                'starting_goalie' => $pregame ? ($live['home_goalie'] ?? null) : null,
+                'sog' => $includeScore ? $game->home_team_sog : null,
+                'starting_goalie' => $showGoalie ? ($live['home_goalie'] ?? null) : null,
                 'lineup' => $lineups->get($game->nhl_game_id . ':' . $game->home_team_abbrev),
             ],
         ];
@@ -299,17 +291,33 @@ class NhlAnticipatedLineupPayload
     }
 
     /** @return array<string,mixed>|null */
-    private function persistedFinalContext(NhlGame $game, bool $isToday): ?array
+    private function recentGameContext(NhlGame $game): ?array
     {
-        if (! $isToday || $game->game_state !== 'FINAL'
-            || $game->away_team_score === null || $game->home_team_score === null) {
+        $today = Carbon::now('UTC')->startOfDay();
+        if (! in_array($game->game_date->toDateString(), [
+            $today->toDateString(), $today->copy()->subDay()->toDateString(),
+        ], true)) {
             return null;
         }
 
+        if ($game->game_state !== 'FINAL') {
+            $context = $this->liveContext->forGame($game);
+            if ($context !== null && filled($context['state'] ?? null)) {
+                return $context;
+            }
+        }
+
+        $state = mb_strtoupper((string) $game->game_state);
         return [
-            'state' => 'FINAL',
-            'label' => 'Final',
-            'show_score' => true,
+            'state' => $state,
+            'label' => match ($state) {
+                'FUT' => 'Pregame',
+                'PRE' => 'Starting soon',
+                'FINAL' => 'Final',
+                default => $state === '' ? null : 'Live',
+            },
+            'show_score' => ! in_array($state, ['', 'FUT', 'PRE'], true)
+                && $game->away_team_score !== null && $game->home_team_score !== null,
         ];
     }
 }

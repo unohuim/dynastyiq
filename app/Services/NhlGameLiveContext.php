@@ -43,8 +43,10 @@ class NhlGameLiveContext
         if ($showScore) {
             $game->forceFill([
                 'game_state' => $state,
-                'away_team_score' => data_get($response, 'awayTeam.score'),
-                'home_team_score' => data_get($response, 'homeTeam.score'),
+                'away_team_score' => data_get($response, 'awayTeam.score', $game->away_team_score),
+                'home_team_score' => data_get($response, 'homeTeam.score', $game->home_team_score),
+                'away_team_sog' => data_get($response, 'awayTeam.sog', $game->away_team_sog),
+                'home_team_sog' => data_get($response, 'homeTeam.sog', $game->home_team_sog),
             ])->save();
         } elseif ($state !== '' && $game->game_state !== $state) {
             $game->forceFill(['game_state' => $state])->save();
@@ -69,8 +71,8 @@ class NhlGameLiveContext
     /** @param array<string,mixed> $response @return array<string,mixed>|null */
     private function goalie(array $response, string $side, NhlGame $game, string $teamAbbrev): ?array
     {
-        $starter = collect(data_get($response, "playerByGameStats.{$side}.goalies", []))
-            ->first(fn (mixed $goalie): bool => is_array($goalie) && ($goalie['starter'] ?? false) === true);
+        $rows = collect(data_get($response, "playerByGameStats.{$side}.goalies", []));
+        $starter = $rows->first(fn (mixed $goalie): bool => is_array($goalie) && ($goalie['starter'] ?? false) === true);
         if (is_array($starter) && isset($starter['playerId'])) {
             $selected = $this->goalies->select(
                 (int) $game->nhl_game_id,
@@ -84,9 +86,22 @@ class NhlGameLiveContext
                 'name' => $selected['name'] ?? data_get($starter, 'name.default') ?? (string) $starter['playerId'],
                 'status' => 'confirmed',
                 'selection_source' => 'nhl_boxscore',
+                'goals_against' => isset($starter['goalsAgainst']) ? (int) $starter['goalsAgainst'] : null,
+                'saves' => isset($starter['saves']) ? (int) $starter['saves'] : null,
             ];
         }
 
-        return $this->goalies->select((int) $game->nhl_game_id, $teamAbbrev);
+        $selected = $this->goalies->select((int) $game->nhl_game_id, $teamAbbrev);
+        if ($selected === null) {
+            return null;
+        }
+        $row = $rows->first(fn (mixed $goalie): bool => is_array($goalie)
+            && (int) ($goalie['playerId'] ?? 0) === (int) $selected['nhl_player_id']);
+
+        return [
+            ...$selected,
+            'goals_against' => isset($row['goalsAgainst']) ? (int) $row['goalsAgainst'] : null,
+            'saves' => isset($row['saves']) ? (int) $row['saves'] : null,
+        ];
     }
 }

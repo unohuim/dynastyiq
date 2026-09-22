@@ -2592,20 +2592,60 @@ it('treats every non-terminal non-pregame provider state as live', function (): 
         'away_team_abbrev' => 'BOS', 'home_team_abbrev' => 'NYR',
     ]);
     Http::fake(['*' => Http::response([
-        'gameState' => 'INTERMISSION', 'awayTeam' => ['score' => 2], 'homeTeam' => ['score' => 1],
+        'gameState' => 'INTERMISSION', 'awayTeam' => ['score' => 2, 'sog' => 15], 'homeTeam' => ['score' => 1, 'sog' => 0],
     ], 200)]);
 
     $this->getJson(route('games.payload', ['date' => '2026-09-21']))
         ->assertOk()
         ->assertJsonPath('games.0.game_state_label', 'Live')
         ->assertJsonPath('games.0.away.score', 2)
-        ->assertJsonPath('games.0.home.score', 1);
+        ->assertJsonPath('games.0.home.score', 1)
+        ->assertJsonPath('games.0.away.sog', 15)
+        ->assertJsonPath('games.0.home.sog', 0);
     $this->assertDatabaseHas('nhl_games', [
         'nhl_game_id' => 2026010302, 'game_state' => 'INTERMISSION',
         'away_team_score' => 2, 'home_team_score' => 1,
+        'away_team_sog' => 15, 'home_team_sog' => 0,
     ]);
     Carbon::setTestNow();
 });
+
+it('exposes live starter identity and individual goalie statistics', function (?int $goalsAgainst, ?int $saves): void {
+    $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
+    Player::query()->create([
+        'nhl_id' => 8489991, 'full_name' => 'Live Starter', 'position' => 'G',
+        'team_abbrev' => 'PHI', 'head_shot_url' => 'https://example.test/starter.png',
+    ]);
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010395, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH', 'game_state' => 'LIVE',
+    ]);
+    $starter = ['playerId' => 8489991, 'starter' => true, 'name' => ['default' => 'L. Starter']];
+    if ($goalsAgainst !== null) {
+        $starter['goalsAgainst'] = $goalsAgainst;
+    }
+    if ($saves !== null) {
+        $starter['saves'] = $saves;
+    }
+    Http::fake(['*' => Http::response([
+        'gameState' => 'LIVE', 'awayTeam' => ['score' => 1], 'homeTeam' => ['score' => 7],
+        'playerByGameStats' => ['awayTeam' => ['goalies' => [
+            ['playerId' => 8489992, 'starter' => false, 'goalsAgainst' => 5, 'saves' => 8], $starter,
+        ]]],
+    ])]);
+    $this->getJson('/games/payload?date=2026-09-21')->assertOk()
+        ->assertJsonPath('games.0.away.starting_goalie.nhl_player_id', 8489991)
+        ->assertJsonPath('games.0.away.starting_goalie.name', 'Live Starter')
+        ->assertJsonPath('games.0.away.starting_goalie.avatar_url', 'https://example.test/starter.png')
+        ->assertJsonPath('games.0.away.starting_goalie.goals_against', $goalsAgainst)
+        ->assertJsonPath('games.0.away.starting_goalie.saves', $saves);
+    $this->get('/games/2026010395')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('game.away.starting_goalie.goals_against', $goalsAgainst)
+        ->where('game.away.starting_goalie.saves', $saves));
+    $this->travelBack();
+})->with([[2, 14], [0, 0], [null, null]]);
 
 it('treats final as the terminal gamecenter state', function (): void {
     Carbon::setTestNow('2026-09-21 12:00:00 UTC');
@@ -2641,6 +2681,73 @@ it('does not request gamecenter for a date outside utc today', function (): void
         ->assertJsonPath('games.0.game_state_label', null);
     Http::assertNothingSent();
     Carbon::setTestNow();
+});
+
+it('refreshes unfinished games across utc midnight in index and detail payloads', function (string $state): void {
+    $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010390, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH',
+        'game_state' => $state, 'away_team_score' => 0, 'home_team_score' => 0,
+    ]);
+    Http::fake(['*' => Http::response([
+        'gameState' => 'LIVE', 'awayTeam' => ['score' => 2, 'sog' => 12],
+        'homeTeam' => ['score' => 0, 'sog' => 8],
+    ])]);
+    $this->getJson('/games/payload?date=2026-09-21')->assertOk()
+        ->assertJsonPath('games.0.game_state_label', 'Live')
+        ->assertJsonPath('games.0.away.score', 2)
+        ->assertJsonPath('games.0.home.score', 0)
+        ->assertJsonPath('games.0.away.sog', 12);
+    $this->assertDatabaseHas('nhl_games', [
+        'nhl_game_id' => 2026010390, 'game_state' => 'LIVE', 'away_team_score' => 2, 'home_team_sog' => 8,
+    ]);
+    $this->get('/games/2026010390')->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->where('game.away.score', 2)->where('game.home.sog', 8));
+    Http::assertSentCount(1);
+    $this->travelBack();
+})->with(['LIVE', 'PRE', 'FUT']);
+
+it('retains recent stored scores when the provider fails or the game is final', function (string $state): void {
+    $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
+    NhlGame::query()->create([
+        'nhl_game_id' => 2026010391, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-21', 'game_dow' => 'Monday', 'game_month' => 'September',
+        'start_time_utc' => Carbon::parse('2026-09-21 23:00:00 UTC'),
+        'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH', 'game_state' => $state,
+        'away_team_score' => 0, 'home_team_score' => 3, 'away_team_sog' => 9, 'home_team_sog' => 20,
+    ]);
+    Http::fake(['*' => Http::response([], 503)]);
+    $this->getJson('/games/payload?date=2026-09-21')->assertOk()
+        ->assertJsonPath('games.0.game_state_label', $state === 'FINAL' ? 'Final' : 'Live')
+        ->assertJsonPath('games.0.away.score', 0)->assertJsonPath('games.0.home.score', 3)
+        ->assertJsonPath('games.0.home.sog', 20);
+    if ($state === 'FINAL') {
+        Http::assertNothingSent();
+    }
+    $this->travelBack();
+})->with(['LIVE', 'FINAL']);
+
+it('keeps yesterday unfinished games on the scheduler while excluding final and older games', function (): void {
+    $now = Carbon::parse('2026-09-22 00:30:00 UTC')->toImmutable();
+    foreach ([['2026-09-21', 'LIVE'], ['2026-09-21', 'FINAL'], ['2026-09-20', 'LIVE']] as $index => [$date, $state]) {
+        NhlGame::query()->create([
+            'nhl_game_id' => 2026010392 + $index, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => $date, 'game_dow' => 'Monday', 'game_month' => 'September',
+            'start_time_utc' => Carbon::parse($date . ' 23:00:00 UTC'),
+            'away_team_abbrev' => 'PHI', 'home_team_abbrev' => 'WSH', 'game_state' => $state,
+        ]);
+    }
+    $schedule = new AdminImportSchedule([
+        'enabled' => true, 'lane_enabled' => true,
+        'game_sync_timing' => ['start_before_minutes' => 30, 'pregame_seconds' => 900, 'live_seconds' => 300],
+    ]);
+    expect(app(AdminImportSchedules::class)->dueBoxscoreGames($schedule, $now)->pluck('nhl_game_id')->all())
+        ->toBe([2026010392]);
+    NhlGame::query()->where('nhl_game_id', 2026010392)->update(['boxscore_synced_at' => $now]);
+    expect(app(AdminImportSchedules::class)->dueBoxscoreGames($schedule, $now))->toHaveCount(0);
 });
 
 it('resolves lineup acronym references through the canonical lineup resolver', function (): void {

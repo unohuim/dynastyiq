@@ -1,9 +1,10 @@
 <script setup>
 import { Link } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
 
-defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
+const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
+const isLive = computed(() => Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state));
 const emit = defineEmits(['lineup-submitted']);
 const manualTeam = ref(null);
 function submitted(lineup) {
@@ -43,11 +44,17 @@ const gameStateClass = (state) => state === 'FINAL'
         <div class="flex size-12 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-gray-50"><img v-if="game[side].team_logo" :src="game[side].team_logo" :alt="`${game[side].team_abbrev} logo`" class="size-9 object-contain"><span v-else>{{ game[side].team_abbrev }}</span></div>
         <div class="min-w-0 flex-1">
           <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">{{ side }} · {{ game[side].team_abbrev }}</p>
+          <template v-if="isLive">
+            <p class="mt-1 text-2xl font-semibold tabular-nums" :aria-label="`${game[side].team_abbrev} score`">{{ game[side].score ?? '—' }}</p>
+            <p class="mt-2 text-xs text-gray-500">SOG: {{ game[side].sog ?? '—' }}</p>
+          </template>
+          <template v-else>
           <div class="mt-1 flex items-center gap-2"><button v-if="canManageLineups && !game[side].lineup" type="button" :aria-label="`Add ${game[side].team_abbrev} lineup`" class="inline-flex rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-semibold text-gray-600 transition-colors duration-150 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" @click="manualTeam = game[side].team_abbrev">Not Reported</button><span v-else class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="statusClass(game[side].lineup?.evidence_status)">{{ label(game[side].lineup?.evidence_status) }}</span><span v-if="game[side].lineup" class="text-xs text-gray-500">{{ game[side].lineup.source_count }} source<span v-if="game[side].lineup.source_count !== 1">s</span></span></div>
           <p v-if="game[side].lineup?.last_observed_at" class="mt-2 text-xs text-gray-500">Updated {{ localDateTime(game[side].lineup.last_observed_at) }}</p>
+          </template>
         </div>
-        <div v-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
-        <span v-if="game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
+        <div v-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><p v-if="isLive" class="mt-1 text-xs tabular-nums text-gray-500">GA: {{ game[side].starting_goalie.goals_against ?? '—' }} · Saves: {{ game[side].starting_goalie.saves ?? '—' }}</p><span v-else class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
+        <span v-if="!isLive && game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
       </section>
     </div>
     <footer class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-right"><Link :href="`/games/${game.nhl_game_id}`" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">View current lineups →</Link></footer>

@@ -236,7 +236,7 @@ class AdminImportSchedules
         ]);
     }
 
-    /** Return UTC-today games whose own start window and refresh interval are due. */
+    /** Return today's and yesterday's unfinished games whose start window and cadence are due. */
     public function dueBoxscoreGames(AdminImportSchedule $schedule, CarbonImmutable $now): Collection
     {
         if (! $schedule->enabled || ! $schedule->lane_enabled) {
@@ -245,7 +245,7 @@ class AdminImportSchedules
 
         $timing = $schedule->game_sync_timing ?? [];
         return \App\Models\NhlGame::query()
-            ->whereDate('game_date', $now->utc()->toDateString())
+            ->whereBetween('game_date', [$now->utc()->subDay()->toDateString(), $now->utc()->toDateString()])
             ->whereNotNull('start_time_utc')
             ->where(fn ($query) => $query->whereNull('game_state')->orWhere('game_state', '<>', 'FINAL'))
             ->orderBy('start_time_utc')->get()
