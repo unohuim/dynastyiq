@@ -2148,6 +2148,43 @@ describe('admin-hub import listeners', () => {
         expect(lane).toMatchObject({ hours: 1, minutes: 1, seconds: 1 });
     });
 
+    it('saves contracts hours without the other import timers daily cap', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn(() => Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ schedule: {
+                enabled: false, lanes: { current: { interval_seconds: 172800 } },
+            } }),
+        }));
+        const instance = adminHub({ imports: [{
+            key: 'contracts', label: 'Contracts', schedule_url: '/admin/imports/contracts/schedule',
+            schedule: { enabled: false, lanes: { current: { interval_seconds: 86400 } } },
+        }] });
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        expect(instance.scheduleSettings.lanes.current.hours).toBe(24);
+        instance.scheduleSettings.lanes.current.hours = 48;
+        await instance.saveImportScheduleSettings();
+        expect(global.fetch).toHaveBeenCalledWith('/admin/imports/contracts/schedule',
+            expect.objectContaining({ body: JSON.stringify({ enabled: false, intervals: { current: 172800 } }) }));
+        expect(instance.scheduleSettings.open).toBe(false);
+        expect(instance.importItems[0].schedule.lanes.current.hours).toBe(48);
+    });
+
+    it('rejects fractional contracts hours without an API call', async () => {
+        const adminHub = await loadAdminHub();
+        global.fetch = vi.fn();
+        const instance = adminHub({ imports: [{
+            key: 'contracts', label: 'Contracts', schedule_url: '/admin/imports/contracts/schedule',
+            schedule: { enabled: false, lanes: { current: { interval_seconds: 86400 } } },
+        }] });
+        instance.openImportScheduleSettings(instance.importItems[0]);
+        instance.scheduleSettings.lanes.current.hours = 1.5;
+        await instance.saveImportScheduleSettings();
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(instance.scheduleSettings.open).toBe(true);
+        expect(instance.importItems[0].schedule.error).toContain('whole number');
+    });
+
     it('normalizes import schedule timer fields back to bounded base seconds', async () => {
         const adminHub = await loadAdminHub();
         const instance = adminHub();

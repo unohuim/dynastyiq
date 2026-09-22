@@ -2914,7 +2914,16 @@ export default function adminHub(options = {}) {
 
             try {
                 const intervals = Object.fromEntries(Object.entries(lanes).map(
-                    ([key, lane]) => [key, this.importScheduleSeconds(lane)]
+                    ([key, lane]) => {
+                        if (importItem.key === 'contracts') {
+                            const hours = Number(lane.hours);
+                            if (!Number.isInteger(hours) || hours < 1 || hours > 596523) {
+                                throw new Error('Frequency must be a whole number of hours between 1 and 596523.');
+                            }
+                            return [key, hours * 3600];
+                        }
+                        return [key, this.importScheduleSeconds(lane)];
+                    }
                 ));
                 const body = { enabled: Boolean(enabled), intervals };
                 if (importItem.key === 'nhl-anticipated-lineups') {

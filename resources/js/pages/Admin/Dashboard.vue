@@ -1593,6 +1593,12 @@ export default {
                                 </div>
                             </fieldset>
                         </template>
+                        <template v-else-if="scheduleSettings.importKey === 'contracts'">
+                            <label class="flex items-center justify-between gap-4 text-sm font-medium text-gray-700">
+                                Frequency (hours)
+                                <input v-model.number="scheduleSettings.lanes.current.hours" type="number" min="1" max="596523" step="1" required class="w-28 rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </label>
+                        </template>
                         <template v-else>
                             <div v-for="(lane, laneKey) in scheduleSettings.lanes" :key="laneKey">
                                 <div class="text-sm font-semibold text-gray-800">{{ importScheduleLaneLabel(laneKey) }}</div>

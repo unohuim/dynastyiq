@@ -16,6 +16,7 @@ class AdminImportSchedules
     public const GAME_BOXSCORES = 'nhl-game-boxscores';
 
     public const DEFINITIONS = [
+        'contracts' => ['current' => 86400],
         'nhl-starting-goalies' => ['today' => 900, 'future' => 3600],
         'nhl-injuries' => ['current' => 900],
         self::ANTICIPATED_LINEUPS => ['within_two_hours' => 900, 'outside_two_hours' => 3600],

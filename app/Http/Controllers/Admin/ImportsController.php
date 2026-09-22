@@ -98,7 +98,9 @@ class ImportsController extends Controller
         $data = $request->validate([
             'enabled' => ['required', 'boolean'],
             'intervals' => ['nullable', 'array'],
-            'intervals.*' => ['integer', 'min:60', 'max:86400'],
+            'intervals.*' => $key === 'contracts'
+                ? ['integer', 'min:3600', 'max:2147482800', 'multiple_of:3600']
+                : ['integer', 'min:60', 'max:86400'],
             'timing' => ['nullable', 'array'],
             'timing.daily_start_time' => ['nullable', 'date_format:H:i'],
             'timing.timezone' => ['nullable', 'string', function (string $attribute, mixed $value, \Closure $fail): void {

@@ -7834,6 +7834,43 @@ it('preserves the first lineup start and repeat eligibility when saving settings
     'repeat crosses midnight' => ['2026-09-22 23:50', '2026-09-22 23:45', 'recurring', '2026-09-23 10:15'],
 ]);
 
+it('saves contracts frequency in whole hours and dispatches the full import', function () {
+    Bus::fake();
+    $this->travelTo(Carbon::parse('2026-09-22 14:00:00', 'UTC'));
+    try {
+        $this->actingAs(($this->makeSuperAdmin)())->putJson(
+            route('admin.imports.schedule.update', ['key' => 'contracts']),
+            ['enabled' => true, 'intervals' => ['current' => 172800]]
+        )->assertOk()->assertJsonPath('schedule.lanes.current.interval_seconds', 172800);
+
+        $this->assertDatabaseHas('admin_import_schedules', [
+            'source_key' => 'contracts', 'lane_key' => 'current',
+            'enabled' => true, 'interval_seconds' => 172800,
+        ]);
+        Artisan::call('admin:dispatch-scheduled-imports');
+        Bus::assertBatched(fn ($batch): bool => $batch->name === 'scheduled-contracts-import'
+            && $batch->jobs->first()->command === 'cap:import'
+            && $batch->jobs->first()->options === ['--per-page' => 100, '--all' => true]);
+        expect(AdminImportSchedule::query()->where('source_key', 'contracts')->firstOrFail()
+            ->next_due_at->utc()->format('Y-m-d H:i:s'))->toBe('2026-09-24 14:00:00');
+    } finally {
+        $this->travelBack();
+    }
+});
+
+it('rejects contracts intervals that are not positive whole hours', function (int $seconds) {
+    $this->actingAs(($this->makeSuperAdmin)())->putJson(
+        route('admin.imports.schedule.update', ['key' => 'contracts']),
+        ['enabled' => true, 'intervals' => ['current' => $seconds]]
+    )->assertUnprocessable()->assertJsonValidationErrors('intervals.current');
+})->with([0, 60, 5400, 2147486400]);
+
+it('initializes contracts sync disabled with a daily frequency', function () {
+    $payload = app(AdminImportSchedules::class)->payload('contracts');
+    expect($payload['enabled'])->toBeFalse()
+        ->and($payload['lanes']['current']['interval_seconds'])->toBe(86400);
+});
+
 it('does not dispatch disabled admin import schedules', function () {
     Bus::fake();
     AdminImportSchedule::query()->create([
