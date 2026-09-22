@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Platform Offline</title>
+    @include('partials.site-icons')
 </head>
 <body style="font-family: sans-serif; text-align:center; padding:4rem;">
 <h1>Fresh install detected. Please run database seeders.</h1>

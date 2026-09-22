@@ -6,6 +6,7 @@
         <meta name="csrf-token" content="{{ csrf_token() }}" />
 
         <title inertia>{{ config('app.name', 'Laravel') }}</title>
+        @include('partials.site-icons')
 
         <link rel="preconnect" href="https://fonts.bunny.net" />
         <link
