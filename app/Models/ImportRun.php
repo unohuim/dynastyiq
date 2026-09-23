@@ -76,6 +76,33 @@ class ImportRun extends Model
         ]);
     }
 
+    /**
+     * Preserve targeted lineup review feedback alongside usage metadata atomically.
+     *
+     * @param array<string,mixed>|null $post
+     */
+    public function recordLineupReview(?string $activity = null, ?array $post = null): void
+    {
+        DB::transaction(function () use ($activity, $post): void {
+            $run = self::query()->whereKey($this->getKey())->lockForUpdate()->first();
+            if ($run === null || $run->source !== 'nhl-anticipated-lineups' || ! ($run->options['targeted_refresh'] ?? false)) {
+                return;
+            }
+            $meta = $run->meta ?? [];
+            $review = $meta['lineup_review'] ?? ['activity' => 'Queued for lineup search…', 'posts' => []];
+            if ($activity !== null) {
+                $review['activity'] = $activity;
+            }
+            if ($post !== null) {
+                $posts = collect($review['posts'])->keyBy('id');
+                $posts->put((string) $post['id'], $post);
+                $review['posts'] = $posts->values()->all();
+            }
+            $meta['lineup_review'] = $review;
+            $run->update(['meta' => $meta]);
+        });
+    }
+
     public function markFailed(Throwable|string $error): void
     {
         $finishedAt = now();

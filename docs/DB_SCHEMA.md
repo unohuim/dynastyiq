@@ -874,7 +874,7 @@ Migrations remain the **sole source of truth**.
 | progress_label | string | Yes | User-facing label for the progress unit |
 | error_message | text | Yes | Failure message when status is failed |
 | estimated_cost_usd | decimal(12,6) | No | Persisted estimated provider cost accumulated during the import run |
-| meta | json | Yes | Additional import metadata, including `work_batch_id` for child import batches and run-scoped X resource counts and rates for anticipated-lineup imports |
+| meta | json | Yes | Additional import metadata, including `work_batch_id` for child import batches, run-scoped X resource counts and rates, and `lineup_review` activity/post reviews for targeted lineup refreshes |
 | created_at | timestamp | Yes | Laravel timestamp |
 | updated_at | timestamp | Yes | Laravel timestamp |
 

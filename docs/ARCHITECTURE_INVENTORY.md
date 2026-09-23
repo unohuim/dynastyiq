@@ -3766,6 +3766,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Targeted `/games` refreshes open `LineupRefreshModal.vue`, an incrementally updated
+post-review accordion. ImportRun metadata retains activity and accepted/rejected
+post evidence for the existing super-admin-only status endpoint. Closing the modal
+does not cancel work. See `NhlAnticipatedLineups.yaml` and `ImportBroadcastStream.yaml`.
+
 Super admins can refresh a Not Reported game/team from `/games` with a green icon.
 The existing team job runs on `lineups` with a one-record ImportRun; authenticated
 status polling updates the card without navigation. Duplicate pending targeted

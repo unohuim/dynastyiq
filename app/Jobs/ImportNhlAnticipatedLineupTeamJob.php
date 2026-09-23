@@ -53,6 +53,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
             } elseif ($this->hasCompleteCurrentLineup($game)) {
                 $result = 'skipped';
             } else {
+                $this->importRun()?->recordLineupReview($this->teamAbbrev . ' | Checking NHL boxscore');
                 $official = $importer->importOfficial($game, $this->teamAbbrev, $this->teamId);
                 if ($official['available']) {
                     $result = $official['observed'] > 0 ? 'successful' : 'skipped';
@@ -63,6 +64,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
                     } else {
                         $lock = Cache::lock('nhl-lineup-x-search', 300);
                         if (! $lock->get()) {
+                            $this->importRun()?->recordLineupReview($this->teamAbbrev . ' | Waiting for the X search slot');
                             $this->release(5);
                             return;
                         }
@@ -88,6 +90,7 @@ class ImportNhlAnticipatedLineupTeamJob implements ShouldQueue
             }
         } catch (RequestException $exception) {
             if ($exception->response->status() === 429 && $this->attempts() < $this->tries) {
+                $this->importRun()?->recordLineupReview($this->teamAbbrev . ' | X rate limited this request; waiting to retry');
                 $this->release($this->retryAfterSeconds($exception));
                 return;
             }

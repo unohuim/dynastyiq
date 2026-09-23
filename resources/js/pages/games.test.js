@@ -41,6 +41,7 @@ const game = {
 
 describe('single team lineup refresh', () => {
     let app;
+    let originalShowModal;
     const settle = async () => {
         for (let index = 0; index < 8; index += 1) await Promise.resolve();
         await nextTick();
@@ -51,12 +52,16 @@ describe('single team lineup refresh', () => {
         app.mount('#refresh-card');
     };
     beforeEach(() => {
+        originalShowModal = HTMLDialogElement.prototype.showModal;
+        HTMLDialogElement.prototype.showModal = vi.fn();
         vi.useFakeTimers();
         vi.stubGlobal('fetch', vi.fn());
     });
     afterEach(() => {
         app?.unmount();
         app = null;
+        if (originalShowModal) HTMLDialogElement.prototype.showModal = originalShowModal;
+        else delete HTMLDialogElement.prototype.showModal;
         vi.useRealTimers();
         vi.unstubAllGlobals();
         document.body.innerHTML = '';
@@ -124,6 +129,43 @@ describe('single team lineup refresh', () => {
         expect(document.body.textContent).toContain('Forbidden');
         expect(document.querySelector('[aria-label="Refresh MTL lineup"]').disabled).toBe(false);
         expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('adds expandable post reviews live and keeps polling when the modal is closed', async () => {
+        const post = {
+            id: '123', author: 'Reporter', handle: 'reporter', published_at: '2026-09-20T14:00:00Z',
+            decision: 'declined', reason: 'Generic practice group.', context: 'posts 1-5',
+            text: '<script>bad()</script> Practice lines', url: 'javascript:bad()',
+            media: [{ url: 'https://untrusted.test/photo.png' }], ocr: [{ status: 'ok', text: 'Extracted player names' }],
+            players: [{ name: 'Player One', line_key: 'F1', nhl_player_id: 1 }], matched_players: [],
+        };
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_url: '/attempt/1' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'working', review: { activity: 'MTL | @reporter | posts 1-5', posts: [post] } }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', lineup: null, review: { posts: [post, { ...post, id: '124' }] } }) });
+        mount();
+        document.querySelector('[aria-label="Refresh MTL lineup"]').click();
+        await settle();
+        expect(document.querySelector('dialog[aria-label="MTL lineup search"]')).not.toBeNull();
+        expect(document.body.textContent).toContain('MTL | @reporter | posts 1-5');
+        const header = document.querySelector('[aria-controls="lineup-post-MTL-123"]');
+        expect(header.getAttribute('aria-expanded')).toBe('false');
+        header.click();
+        await nextTick();
+        expect(header.getAttribute('aria-expanded')).toBe('true');
+        expect(document.body.textContent).toContain('Extracted player names');
+        expect(document.querySelector('dialog script')).toBeNull();
+        expect(document.querySelector('a[href^="javascript:"]')).toBeNull();
+        expect(document.querySelector('img[src*="untrusted.test"]')).toBeNull();
+        document.querySelector('[aria-label="Close lineup search"]').click();
+        await nextTick();
+        expect(document.querySelector('dialog')).toBeNull();
+        await vi.advanceTimersByTimeAsync(3000);
+        await settle();
+        expect(fetch).toHaveBeenCalledTimes(3);
+        [...document.querySelectorAll('button')].find((button) => button.textContent === 'View search details').click();
+        await nextTick();
+        expect(document.querySelectorAll('dialog button[aria-expanded]')).toHaveLength(2);
+        expect(document.body.textContent).toContain('No reported lineup found.');
     });
 });
 

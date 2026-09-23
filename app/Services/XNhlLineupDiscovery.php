@@ -222,7 +222,7 @@ class XNhlLineupDiscovery
             (int) round($postsReturned * (float) config('services.x.post_read_cost_usd', 0.005) * 1_000_000)
         );
 
-        $candidates = collect($payload['data'] ?? [])->map(function (array $post) use ($users, $media, $teamAbbrev, $game): array {
+        $candidates = collect($payload['data'] ?? [])->map(function (array $post) use ($users, $media, $teamAbbrev, $game, $context, $requestType): array {
             $author = $users->get((string) ($post['author_id'] ?? ''), []);
             $username = trim((string) ($author['username'] ?? ''));
             $metrics = $post['public_metrics'] ?? [];
@@ -263,7 +263,7 @@ class XNhlLineupDiscovery
                 }
             }
 
-            return [
+            $candidate = [
                 'platform' => 'x',
                 'source_name' => (string) ($author['name'] ?? ($username ?: 'X')),
                 'source_handle' => $username !== '' ? $username : null,
@@ -290,7 +290,6 @@ class XNhlLineupDiscovery
                 'provider_post_id' => (string) $post['id'],
                 'raw_post' => $post,
             ];
-        })->map(function (array $candidate) use ($game, $teamAbbrev, $context, $requestType): array {
             $decision = $this->decision($candidate, $game, $teamAbbrev);
             $ocrProblems = collect($candidate['ocr'] ?? [])->filter(
                 fn (array $item): bool => ($item['status'] ?? '') !== 'ok'
@@ -300,6 +299,17 @@ class XNhlLineupDiscovery
             }
             $candidate['audit_decision'] = $decision['approved'] ? 'approved' : 'declined';
             $candidate['audit_reason'] = $decision['reason'];
+            if ($this->streamBatchId !== null) {
+                ImportRun::query()->find((int) $this->streamBatchId)?->recordLineupReview(null, [
+                    'id' => (string) $candidate['provider_post_id'],
+                    'author' => $candidate['source_name'], 'handle' => $candidate['source_handle'],
+                    'published_at' => $candidate['published_at'], 'url' => $candidate['post_url'],
+                    'text' => $candidate['post_text'], 'lineup_text' => $candidate['lineup_text'],
+                    'decision' => $candidate['audit_decision'], 'reason' => $candidate['audit_reason'],
+                    'context' => $context, 'media' => $candidate['media'], 'ocr' => $candidate['ocr'],
+                    'players' => $candidate['players'], 'matched_players' => $candidate['matched_players'],
+                ]);
+            }
             $this->writeLocalAudit($candidate, $game, $teamAbbrev, $context, $requestType);
 
             return $candidate;
@@ -456,6 +466,9 @@ class XNhlLineupDiscovery
 
     private function output(string $message): void
     {
+        if ($this->streamBatchId !== null) {
+            ImportRun::query()->find((int) $this->streamBatchId)?->recordLineupReview($message);
+        }
         if (! app()->environment('testing')) {
             (new ConsoleOutput())->writeln('[lineups] ' . $message);
         }

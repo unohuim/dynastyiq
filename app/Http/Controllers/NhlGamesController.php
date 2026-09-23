@@ -128,6 +128,7 @@ class NhlGamesController extends Controller
 
         return response()->json([
             'status' => $run->status,
+            'review' => $run->meta['lineup_review'] ?? ['activity' => 'Queued for lineup search…', 'posts' => []],
             'lineup' => $run->status === 'working' ? null
                 : $payload->forGameTeam($nhlGameId, (string) $run->options['team_abbrev'], false),
             'message' => $run->status === 'failed' ? 'The lineup search failed. See the import run in Admin for details.' : null,

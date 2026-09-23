@@ -2,11 +2,13 @@
 import { Link } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
+import LineupRefreshModal from './LineupRefreshModal.vue';
 
 const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
 const isLive = computed(() => props.game.live_mode || (Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state)));
 const emit = defineEmits(['lineup-submitted']);
 const manualTeam = ref(null);
+const refreshTeam = ref(null);
 const refreshes = reactive({});
 const timers = new Set();
 const controllers = new Set();
@@ -14,7 +16,9 @@ let disposed = false;
 
 async function refreshLineup(team) {
   if (refreshes[team]?.busy || !props.canManageLineups) return;
-  refreshes[team] = { busy: true, message: 'Queued for lineup search…', error: false };
+  manualTeam.value = null;
+  refreshTeam.value = team;
+  refreshes[team] = { busy: true, message: 'Queued for lineup search…', error: false, review: { posts: [] } };
   const controller = new AbortController();
   controllers.add(controller);
   try {
@@ -34,7 +38,7 @@ async function refreshLineup(team) {
 
 function refreshError(team, exception) {
   if (disposed) return;
-  refreshes[team] = { busy: false, error: true, message: exception instanceof Error ? exception.message : 'Unable to check the lineup search.' };
+  refreshes[team] = { ...refreshes[team], busy: false, error: true, message: exception instanceof Error ? exception.message : 'Unable to check the lineup search.' };
 }
 
 async function pollRefresh(team, url, controller) {
@@ -43,6 +47,7 @@ async function pollRefresh(team, url, controller) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.message ?? 'Unable to check the lineup search.');
     if (disposed) return;
+    refreshes[team].review = data.review ?? refreshes[team].review;
     if (data.status === 'working') {
       const timer = window.setTimeout(() => {
         timers.delete(timer);
@@ -53,6 +58,7 @@ async function pollRefresh(team, url, controller) {
     }
     controllers.delete(controller);
     refreshes[team] = {
+      ...refreshes[team],
       busy: false, error: data.status === 'failed',
       message: data.status === 'failed' ? data.message : data.lineup ? 'Lineup updated.' : 'No reported lineup found.',
     };
@@ -121,6 +127,7 @@ const gameStateClass = (state) => state === 'FINAL'
             <span v-if="game[side].lineup" class="text-xs text-gray-500">{{ game[side].lineup.source_count }} source<span v-if="game[side].lineup.source_count !== 1">s</span></span>
           </div>
           <p v-if="canManageLineups && refreshes[game[side].team_abbrev]?.message" role="status" class="mt-2 text-xs" :class="refreshes[game[side].team_abbrev]?.error ? 'text-red-600' : 'text-gray-500'">{{ refreshes[game[side].team_abbrev].message }}</p>
+          <button v-if="canManageLineups && refreshes[game[side].team_abbrev]" type="button" class="mt-1 text-xs text-indigo-600 hover:underline" @click="manualTeam = null; refreshTeam = game[side].team_abbrev">View search details</button>
           <p v-if="game[side].lineup?.last_observed_at" class="mt-2 text-xs text-gray-500">Updated {{ localDateTime(game[side].lineup.last_observed_at) }}</p>
           </template>
         </div>
@@ -138,4 +145,5 @@ const gameStateClass = (state) => state === 'FINAL'
     </template>
   </article>
   <ManualLineupModal v-if="manualTeam && !isLive" :game-id="Number(game.nhl_game_id)" :team="manualTeam" @close="manualTeam = null" @submitted="submitted" />
+  <LineupRefreshModal v-if="canManageLineups && refreshTeam" :team="refreshTeam" :state="refreshes[refreshTeam]" @close="refreshTeam = null" />
 </template>

@@ -2841,6 +2841,44 @@ describe('targeted game lineup refresh', function (): void {
         'missing game' => [9999999999, ['team_abbrev' => 'TOR'], 404],
     ]);
 
+    it('streams accepted and rejected post reviews only through the scoped admin status endpoint', function (): void {
+        config(['services.x.bearer_token' => 'test-key']);
+        $this->actingAs($this->refreshAdmin);
+        $url = $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus(202)->json('status_url');
+        $run = ImportRun::query()->firstOrFail();
+        $run->update(['meta' => ['retained_metadata' => 'keep']]);
+        $response = xLineupResponse([
+            lineupCandidate('practice_reporter', 'https://x.com/practice_reporter/status/120'),
+            lineupCandidate('game_reporter', 'https://x.com/game_reporter/status/121'),
+        ]);
+        $response['data'][0]['text'] = str_replace("Tonight's lineup", 'Practice groups', $response['data'][0]['text']);
+        Http::fake(['api.x.com/*' => Http::response($response)]);
+        $discovery = app(\App\Services\XNhlLineupDiscovery::class);
+        $game = NhlGame::query()->where('nhl_game_id', 2026020099)->firstOrFail();
+        $discovery->discover($game, 'TOR', (string) $run->id);
+
+        $this->getJson($url)->assertOk()->assertJsonPath('status', 'working')
+            ->assertJsonCount(2, 'review.posts')->assertJsonPath('review.posts.0.decision', 'declined')
+            ->assertJsonPath('review.posts.1.decision', 'approved')
+            ->assertJsonPath('review.posts.0.text', $response['data'][0]['text'])
+            ->assertJsonStructure(['review' => ['activity', 'posts' => [['reason', 'context', 'players', 'matched_players', 'media', 'ocr']]]]);
+        expect($run->refresh()->meta['retained_metadata'])->toBe('keep')
+            ->and($run->meta['x_posts_viewed'])->toBe(2);
+        $discovery->discover($game, 'TOR', (string) $run->id);
+        $this->getJson($url)->assertOk()->assertJsonCount(2, 'review.posts');
+        $this->getJson('/games/2026020000/lineup/refresh/' . $run->id)->assertNotFound();
+        $this->actingAs(User::factory()->create())->getJson($url)->assertForbidden();
+    });
+
+    it('does not retain post reviews on ordinary admin import runs', function (): void {
+        $run = ImportRun::query()->create([
+            'source' => 'nhl-anticipated-lineups', 'status' => 'working', 'ran_at' => now(), 'meta' => ['x_posts_viewed' => 3],
+        ]);
+        $run->recordLineupReview('Looking at a source', ['id' => '1', 'text' => 'A post']);
+        expect($run->refresh()->meta)->toBe(['x_posts_viewed' => 3]);
+        $this->actingAs($this->refreshAdmin)->getJson('/games/2026020099/lineup/refresh/' . $run->id)->assertNotFound();
+    });
+
     it('does not queue an already reported lineup', function (): void {
         createCurrentAnticipatedLineup();
         $this->actingAs($this->refreshAdmin)->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus(409);

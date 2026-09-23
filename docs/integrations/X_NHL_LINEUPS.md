@@ -110,6 +110,14 @@ today/tomorrow eligibility window. Repeated clicks reuse a pending targeted atte
 the browser polls its outcome and updates the lineup without reloading the page.
 Both dispatch and status endpoints require super-admin access.
 
+Refreshing from `/games` opens a live review modal. It shows the current source
+and five-post batch, then adds an accordion for each evaluated post, including
+rejected posts. Expanding a post reveals its complete text, publication time,
+decision/reason, attachments, OCR output, and player matches. The status response
+includes `review.activity` and `review.posts`, persisted in the targeted run's
+metadata. Closing the modal does not stop the job; View search details reopens it.
+Ordinary bulk imports do not persist this additional per-post review metadata.
+
 The existing Anticipated Lineups admin schedule remains authoritative:
 
 - `within_two_hours` defaults to 900 seconds and applies to each same-day game relative to puck drop.
