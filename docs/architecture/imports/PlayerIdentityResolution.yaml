@@ -30,7 +30,8 @@ when_not_to_use:
   - Storing league roster membership or fantasy-team assignment records.
   - Replacing provider-specific import tables that own provider-only payload semantics.
 rules:
-  - Explicit player-specific spelling aliases live in config/name_variants.php under player_name_aliases and are exposed by PlayerIdentityNormalizer::playerNameAliasReferences. Full aliases supply initial and surname references without changing canonical display names or globally rewriting surnames. NhlLineupPlayerResolver applies its existing unique-team preference and ambiguity rejection to these references; conflicting initials must not match.
+  - Exact user-reviewed typo or compound-initial references may be configured in name_variants.player_reference_aliases and returned by playerNameAliasReferences without deriving additional surname or first-initial aliases. Only these explicit references may override a conflicting initial; unique-team preference and ambiguity rejection still apply.
+  - Explicit player-specific spelling aliases live in config/name_variants.php under player_name_aliases and are exposed by PlayerIdentityNormalizer::playerNameAliasReferences. Full aliases supply initial and surname references without changing canonical display names or globally rewriting surnames. NhlLineupPlayerResolver applies its existing unique-team preference and ambiguity rejection to these references; conflicting initials must not match unless separately configured as an exact reviewed player_reference_aliases entry.
   - Provider player identities must be upserted before an import creates or updates a canonical player.
   - NHL is an authority provider and may create canonical players during import.
   - NHL roster and prospect discovery must remember run-level normalized-name plus position-type fingerprints so later draft discovery can avoid duplicate canonical player creation without per-pick database checks.

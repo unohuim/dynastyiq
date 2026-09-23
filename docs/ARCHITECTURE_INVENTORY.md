@@ -2080,6 +2080,10 @@ Preserve provider-sourced hockey player identities separately from canonical pla
 **When to Use:**
 Importing provider player records or resolving provider IDs to canonical DynastyIQ players.
 
+The shared name dictionary distinguishes spelling aliases from exact reviewed
+lineup references. Exact references do not generate surname or initial variants;
+canonical names and ambiguity safeguards remain unchanged.
+
 **When Not to Use:**
 Storing canonical player attributes, fantasy roster membership, or provider-only import payload semantics owned by another table.
 

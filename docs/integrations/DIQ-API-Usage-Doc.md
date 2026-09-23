@@ -744,6 +744,9 @@ even if the current injury table still lists the player as unavailable. An
 accepted reported roster must come from one post containing twelve forwards
 followed by six defensemen. Separate forward/defense posts are not combined.
 Headings may separate the groups; goalies and scratches are supplemental.
+Grouped posts use the first four forward lines and first three defense pairs;
+extra lines, extra pairs, and standalone extras are ignored rather than used to
+fill missing required slots. The selected eighteen still require validation.
 Player identities and slots are verified after the complete roster block is
 identified, retaining the documented F4/D3 exceptions. Historical combined-post
 lineups no longer qualify as reported or suppress further discovery.

@@ -415,6 +415,65 @@ it('preserves first seen and refreshes last seen on reimport', function () {
     expect($identity->last_seen_at->toDateTimeString())->toBe('2026-06-26 13:30:00');
 });
 
+it('parses the Ottawa roster with mixed separator spacing and configured references', function (?string $separator, bool $hyphenatedName = false, bool $extras = false): void {
+    $names = [
+        ['Andre', 'Burakovsky'], ['Tim', 'Stützle'], ['Drake', 'Batherson'],
+        ['Michael', 'Amadio'], ['Shane', 'Pinto'], ['Philip', 'Tomasino'],
+        ['Oskar', 'Pettersson'], ['Philippe', 'Daoust'], ['Hayden', 'Hodgson'],
+        ['Lucas', 'Ellinas'], ['Eskild', 'Bakke Olsen'], ['Kasper', 'Halttunen'],
+        ['Tyler', 'Kleven'], ['Carter', 'Yakemchuk'], ['Samuel', 'Bolduc'],
+        ['Nikolas', 'Matinpalo'], ['Scott', 'Harrington'], ['Christian', 'Kyrou'],
+    ];
+    if ($hyphenatedName) {
+        $names[0] = ['Jean-Gabriel', 'Pageau'];
+    }
+    foreach ($names as $index => [$first, $last]) {
+        Player::query()->create([
+            'nhl_id' => 8488000 + $index, 'first_name' => $first, 'last_name' => $last,
+            'full_name' => $first . ' ' . $last, 'team_abbrev' => 'OTT', 'position' => $index < 12 ? 'C' : 'D',
+        ]);
+    }
+    $text = "A. Burakovsky - T. Stützle - D. Batherson\nM. Amadio - S.Pinto - P. Tomasino\n"
+        . "O. Patterson - P. Daoust- H. Hodgson\nL. Elinas - EB Olsen - K. Halttunen\n\n"
+        . "T. Kleven - C. Yakemchuk\nS. Bolduc- S. Matinpalo\nS. Harrington - C. Kyrou\n\nL. Merilainen\nJ. Parsons";
+    if ($separator !== null) {
+        $text = preg_replace('/\s*-\s*/', $separator, $text);
+    }
+    if ($hyphenatedName) {
+        $text = str_replace('A. Burakovsky', 'Jean-Gabriel Pageau', $text);
+    }
+    if ($extras) {
+        $text = str_replace('T. Kleven', "A. Burakovsky - S. Pinto - D. Batherson\nMichael Amadio\nT. Kleven", $text);
+        $text = str_replace('S. Bolduc', "Scott Harrington\nS. Bolduc", $text);
+        $text = str_replace('L. Merilainen', "T. Kleven - C. Yakemchuk\nSamuel Bolduc\nL. Merilainen", $text);
+    }
+    $rows = app(\App\Services\NhlLineupTextParser::class)->parse($text, 'OTT');
+    $ids = app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($rows);
+    expect($ids)->not->toBeNull()->toHaveCount(18)
+        ->and(collect($rows)->where('line_key', 'F3')->pluck('nhl_player_id')->all())->toBe([8488006, 8488007, 8488008])
+        ->and(collect($rows)->where('line_key', 'D2')->pluck('nhl_player_id')->all())->toBe([8488014, 8488015]);
+})->with([
+    'original mixed spacing' => [null], 'both spaces' => [' - '],
+    'no spaces' => ['-'], 'left space' => [' -'], 'right space' => ['- '],
+    'preserves hyphenated first name' => [' - ', true],
+    'ignores fifth forward line standalone extras and fourth pair' => [null, false, true],
+    'ignores extras with tight roster separators' => ['-', false, true],
+]);
+
+it('does not fill a missing defensive pair from standalone extras', function (): void {
+    $text = "A One - B Two - C Three\nD Four - E Five - F Six\nG Seven - H Eight - I Nine\nJ Ten - K Eleven - L Twelve\n"
+        . "Defense\nM Thirteen - N Fourteen\nO Fifteen - P Sixteen\nQ Seventeen\nR Eighteen";
+    expect(app(\App\Services\NhlLineupTextParser::class)->parse($text, 'OTT'))->toBe([]);
+});
+
+it('limits reviewed incorrect initials to exact configured references', function (): void {
+    $normalizer = app(\App\Services\PlayerIdentityNormalizer::class);
+    expect($normalizer->playerNameAliasReferences('Oskar Pettersson'))
+        ->toContain('o patterson')->not->toContain('patterson')
+        ->and($normalizer->playerNameAliasReferences('Eskild Bakke Olsen'))
+        ->toContain('eb olsen', 'e b olsen')->not->toContain('olsen', 'e olsen');
+});
+
 it('resolves configured player spelling aliases through the shared lineup resolver', function (string $reference, bool $matches): void {
     $player = Player::query()->create([
         'nhl_id' => 8484994, 'first_name' => 'Igor', 'last_name' => 'Chernyshov',

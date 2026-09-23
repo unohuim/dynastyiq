@@ -102,6 +102,17 @@ class PlayerIdentityNormalizer
         }
 
         $references = [];
+        foreach ((array) config('name_variants.player_reference_aliases', []) as $name => $aliases) {
+            if ($this->normalizeName((string) $name) !== $canonical) {
+                continue;
+            }
+            foreach ((array) $aliases as $alias) {
+                $normalized = $this->normalizeName(is_string($alias) ? $alias : null);
+                if ($normalized !== null) {
+                    $references[] = $normalized;
+                }
+            }
+        }
         foreach ((array) config('name_variants.player_name_aliases', []) as $name => $aliases) {
             if ($this->normalizeName((string) $name) !== $canonical) {
                 continue;

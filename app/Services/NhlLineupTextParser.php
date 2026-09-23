@@ -37,6 +37,7 @@ class NhlLineupTextParser
         $invalid = false;
         $supplemental = false;
         $grouped = null;
+        $defenseStarted = false;
         foreach ($lines as $index => $line) {
             $line = trim($line);
             if ($line === '') {
@@ -45,6 +46,7 @@ class NhlLineupTextParser
             $heading = $this->heading($line);
             if ($heading === 'defense') {
                 $invalid = $invalid || count($names) !== 12;
+                $defenseStarted = true;
                 continue;
             }
             if ($heading !== null) {
@@ -54,21 +56,11 @@ class NhlLineupTextParser
                 $names = [];
                 $invalid = false;
                 $grouped = null;
+                $defenseStarted = false;
                 $supplemental = in_array($heading, ['scratch', 'goalie'], true);
                 continue;
             }
             if ($supplemental) {
-                continue;
-            }
-            $size = count($names) < 12 ? 3 : 2;
-            $cells = $this->rosterCells($line, $size, $grouped);
-            if ($cells === null) {
-                if ($names !== []) {
-                    $blocks[] = [$names, $invalid, $index];
-                }
-                $names = [];
-                $invalid = false;
-                $grouped = null;
                 continue;
             }
             if (count($names) === 18) {
@@ -77,6 +69,39 @@ class NhlLineupTextParser
                 $supplemental = true;
                 continue;
             }
+            if (count($names) === 12 && ! $defenseStarted) {
+                $extraForwards = $this->rosterCells($line, 3, $grouped);
+                if ($grouped === true && count($extraForwards ?? []) === 3) {
+                    continue;
+                }
+                // With individually listed names, an explicit defense heading defines
+                // the boundary; surplus forwards before it must not become defensemen.
+                if ($grouped === false) {
+                    $nextHeading = collect(array_slice($lines, $index))->map(fn (string $item): ?string => $this->heading(trim($item)))->filter()->first();
+                    if ($nextHeading === 'defense') {
+                        continue;
+                    }
+                }
+            }
+            $size = count($names) < 12 ? 3 : 2;
+            // Do not reinterpret a standalone full name as two bare surnames in
+            // an otherwise grouped, full-name roster.
+            $fullNameStyle = $grouped === true && collect($names)->contains(fn (string $name): bool => str_contains($name, ' '));
+            $cells = $this->rosterCells($line, $size, $grouped, ! $fullNameStyle);
+            if ($grouped === true && count($cells ?? []) === 1) {
+                continue;
+            }
+            if ($cells === null) {
+                if ($names !== []) {
+                    $blocks[] = [$names, $invalid, $index];
+                }
+                $names = [];
+                $invalid = false;
+                $grouped = null;
+                $defenseStarted = false;
+                continue;
+            }
+            $defenseStarted = $defenseStarted || count($names) >= 12;
             $boundary = count($names) < 12 ? 12 : 18;
             $grouped ??= count($cells) > 1;
             $invalid = $invalid || count($names) + count($cells) > $boundary;
@@ -102,14 +127,19 @@ class NhlLineupTextParser
     }
 
     /** Read name-shaped cells, not player mentions in sentences. @return array<int,string>|null */
-    private function rosterCells(string $line, int $size, ?bool $grouped = null): ?array
+    private function rosterCells(string $line, int $size, ?bool $grouped = null, bool $allowLooseWords = true): ?array
     {
         $line = preg_replace('/^(?:[FD]?[0-9]+[.):]|[FD][0-9]+\s*:)\s*/iu', '', $line) ?? $line;
-        $cells = preg_split('/\s+[-–—]\s+|\s*[–—,;|\t]\s*| {2,}/u', $line) ?: [];
-        if (count($cells) === 1 && $grouped !== false && substr_count($line, '-') === $size - 1) {
-            $cells = explode('-', $line);
+        $cells = preg_split('/\s+[-–—]\s*|\s*[-–—]\s+|\s*[–—,;|\t]\s*| {2,}/u', $line) ?: [];
+        if (count($cells) !== $size && $grouped !== false && str_contains($line, '-')) {
+            // Expand tight separators only when they produce exactly the expected group.
+            // Otherwise retain in-name hyphens rather than inventing extra roster slots.
+            $expanded = array_merge(...array_map(fn (string $cell): array => explode('-', $cell), $cells));
+            if (count($expanded) === $size) {
+                $cells = $expanded;
+            }
         }
-        if (count($cells) === 1 && $grouped !== false && ! str_contains($line, '-')) {
+        if ($allowLooseWords && count($cells) === 1 && $grouped !== false && ! str_contains($line, '-')) {
             $words = preg_split('/\s+/u', $line) ?: [];
             if (count($words) === $size && ($size === 3 || $grouped === true) && ! preg_match('/\d/', $line)) {
                 $cells = $words;
@@ -161,11 +191,11 @@ class NhlLineupTextParser
             if (count($forwardGroups) === 4 && count($defenseGroups) === 3
                 && ! in_array($section, ['scratch', 'goalie'], true)) {
                 $tailPlayers = $this->players->mentions($line, $teamAbbrev);
-                if ($tailPlayers !== [] && collect($tailPlayers)->contains(
-                    fn (array $player): bool => strtoupper((string) $player['position']) !== 'G'
-                )) {
-                    return ['players' => [], 'matched_players' => []];
-                }
+                $tailGoalies = array_values(array_filter($tailPlayers,
+                    fn (array $player): bool => strtoupper((string) $player['position']) === 'G'));
+                array_push($goalies, ...$tailGoalies);
+                array_push($matchedPlayers, ...$tailGoalies);
+                continue;
             }
 
             $segments = $this->structuredSegments($line);

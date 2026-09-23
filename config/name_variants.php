@@ -6,6 +6,15 @@ return [
     // Canonical display names remain unchanged; callers must still resolve ambiguity.
     'player_name_aliases' => [
         'Igor Chernyshov' => ['Igor Chernyshev'],
+        'Lucas Ellinas' => ['Lucas Elinas'],
+    ],
+
+    // Exact, user-reviewed lineup references. Do not derive surname or initial aliases
+    // from these: a typo such as O. Patterson must not become a general surname rewrite.
+    'player_reference_aliases' => [
+        'Oskar Pettersson' => ['O. Patterson'],
+        'Nikolas Matinpalo' => ['S. Matinpalo'],
+        'Eskild Bakke Olsen' => ['EB Olsen', 'E.B. Olsen', 'E. B. Olsen'],
     ],
 
     /*
