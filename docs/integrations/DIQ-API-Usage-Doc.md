@@ -1032,6 +1032,7 @@ inputs, while retaining the former for evidence provenance.
 - Lineup evidence may have `sources[].platform: manual`: a super admin pasted the text into DynastyIQ. It uses the same verification and prediction rules as imported text, is attributed to that admin, and is not an X post or official NHL evidence. Manual entry is a first-party authenticated UI action, not a partner API endpoint.
 - A `reported` lineup has valid slots and verified identities or eligible peer fallbacks, not merely eighteen parsed names. Duplicate identities and goalies in skater slots remain invalid. Unknown F1–F3/D1–D2 players are eligible only in preseason with a verified same-group peer. Invalid legacy lineups are omitted too.
 - Eligible unidentified players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the peer-average fallback; they are never presented as identified players.
+- A shared slot such as `Lemire/Kumpulainen` retains both names in `player_name` with null identity and `resolution_status: unresolved`, even when both alternatives can be matched individually. It represents one slot, not two selected players, and follows the same season-specific peer-average eligibility. Consumers must not select an alternative by name.
 - Persist `nhl_player_id`; do not join prediction players by name.
 - Record `inputs.*_lineup_source` with every imported prediction snapshot.
 - Use `teams.*.roster` to audit which players contributed to that prediction.

@@ -130,11 +130,26 @@ class NhlLineupTextParser
     private function rosterCells(string $line, int $size, ?bool $grouped = null, bool $allowLooseWords = true): ?array
     {
         $line = preg_replace('/^(?:[FD]?[0-9]+[.):]|[FD][0-9]+\s*:)\s*/iu', '', $line) ?? $line;
-        $cells = preg_split('/\s+[-–—]\s*|\s*[-–—]\s+|\s*[–—,;|\t]\s*| {2,}/u', $line) ?: [];
+        $line = preg_replace('~\s*[/⁄／]\s*~u', '/', $line) ?? $line;
+        $cells = preg_split('/\s+[-–—]+\s*|\s*[-–—]+\s+|\s*[–—,;|\t•·+&:]+\s*| {2,}/u', $line) ?: [];
         if (count($cells) !== $size && $grouped !== false && str_contains($line, '-')) {
             // Expand tight separators only when they produce exactly the expected group.
             // Otherwise retain in-name hyphens rather than inventing extra roster slots.
             $expanded = array_merge(...array_map(fn (string $cell): array => explode('-', $cell), $cells));
+            if (count($expanded) === $size) {
+                $cells = $expanded;
+            }
+        }
+        // A slash-only row separates slots. Within an already complete group,
+        // slash-separated names are alternatives for one slot, not extra skaters.
+        if (count($cells) !== $size && $grouped !== false && str_contains($line, '/')) {
+            $expanded = array_merge(...array_map(fn (string $cell): array => explode('/', $cell), $cells));
+            if (count($expanded) !== $size && str_contains($line, '-')) {
+                $expanded = array_merge(...array_map(
+                    fn (string $cell): array => preg_split('~[-/]~u', $cell) ?: [],
+                    $cells
+                ));
+            }
             if (count($expanded) === $size) {
                 $cells = $expanded;
             }
@@ -150,9 +165,11 @@ class NhlLineupTextParser
             return null;
         }
         foreach ($cells as $cell) {
-            if (! preg_match("/^[\pL\pN][\pL\pM\pN.'’`-]*(?: [\pL\pN][\pL\pM\pN.'’`-]*){0,3}$/u", $cell)
-                || preg_match('/\b(?:is|are|was|were|with|without|will|today|tomorrow|tonight|skating|playing|lines|lineup)\b/iu', $cell)) {
-                return null;
+            foreach (explode('/', $cell) as $reference) {
+                if (! preg_match("/^[\pL\pN][\pL\pM\pN.'’`-]*(?: [\pL\pN][\pL\pM\pN.'’`-]*){0,3}$/u", $reference)
+                    || preg_match('/\b(?:is|are|was|were|with|without|will|today|tomorrow|tonight|skating|playing|lines|lineup)\b/iu', $reference)) {
+                    return null;
+                }
             }
         }
 
@@ -336,8 +353,12 @@ class NhlLineupTextParser
         $matched = [];
 
         foreach ($segments as $segment) {
-            $resolved = $this->players->resolve($segment, $teamAbbrev);
-            if ($resolved !== null) {
+            $references = explode('/', $segment);
+            foreach ($references as $reference) {
+                $resolved = $this->players->resolve($reference, $teamAbbrev);
+                if ($resolved === null) {
+                    continue;
+                }
                 $player = [
                     'name' => (string) $resolved->full_name,
                     'position' => $resolved->position ? (string) $resolved->position : null,
@@ -345,11 +366,15 @@ class NhlLineupTextParser
                     'nhl_player_id' => $resolved->nhl_id,
                     'team_abbrev' => $resolved->team_abbrev,
                 ];
-                $group[] = $player;
                 $matched[] = $player;
-                continue;
+                if (count($references) === 1) {
+                    $group[] = $player;
+                    continue 2;
+                }
             }
 
+            // Keep every alternative in the reported name with no selected id.
+            // The normal same-group peer rules determine prediction eligibility.
             $group[] = [
                 'name' => $segment,
                 'position' => $fallbackPosition,

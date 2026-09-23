@@ -2556,6 +2556,138 @@ it('parses all eighteen names with headings before applying canonical slot verif
         ->and(collect($players)->firstWhere('line_key', 'D3')['name'])->toBe('Defense 5');
 })->with([false, true]);
 
+it('accepts varied roster separators without changing player punctuation or slots', function (string $separator): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    $current = createCurrentAnticipatedLineup();
+    $rows = $current->observation->players;
+    $first = $rows->firstWhere('line_key', 'F1');
+    // Tight hyphens cannot distinguish an in-name hyphen from a slot boundary.
+    $firstName = $separator === '-' ? 'Jean' : 'Jean-Gabriel';
+    $fullName = $firstName . ' O’Reilly';
+    Player::query()->whereKey($first->player_id)->update([
+        'full_name' => $fullName, 'first_name' => $firstName, 'last_name' => 'O’Reilly',
+    ]);
+    $first->player_name = $fullName;
+    $text = $rows->groupBy('line_key')->map(fn ($group): string => $group->pluck('player_name')->implode($separator))->implode("\n");
+
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse($text, 'TOR');
+
+    expect($players)->toHaveCount(18)
+        ->and($players[0]['name'])->toBe($fullName)
+        ->and($players[0]['nhl_player_id'])->toBe($first->nhl_player_id)
+        ->and(app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players))->toHaveCount(18);
+    $this->travelBack();
+})->with([' - ', '-', '- ', ' -', ' / ', '/', '／', ' | ', ',', ';', "\t", '  ', ' • ', ' · ', ' + ', ' & ', ' : ', ' — ', ' -- ']);
+
+it('parses the Wild post while preserving both alternatives in one forward slot', function (bool $mixedSeparators): void {
+    $names = ['Shaw', 'Stramel', 'Pitlick', 'Heidt', 'Haight', 'Kirkland', 'Lorenz', 'Sturm', 'Gambrell',
+        'Lemire', 'Kumpulainen', 'Bankier', 'Joshua', 'Hunt', 'Spacek', 'Gustafsson Nyberg', 'Lambos',
+        'Kiersted', 'Dexheimer', 'Wallstedt'];
+    foreach ($names as $index => $name) {
+        Player::query()->create([
+            'nhl_id' => 8488000 + $index, 'full_name' => 'Test ' . $name,
+            'first_name' => 'Test', 'last_name' => $name, 'team_abbrev' => 'MIN',
+            'position' => $index < 13 ? 'C' : ($name === 'Wallstedt' ? 'G' : 'D'),
+        ]);
+    }
+    $text = "Wild lines for tonight in Dallas\n\nShaw-Stramel-Pitlick\nHeidt-Haight-Kirkland\n"
+        . "Lorenz-Sturm-Gambrell\nLemire/Kumpulainen-Bankier-Joshua\n\nHunt-Spacek\n"
+        . "Gustafsson Nyberg-Lambos\nKiersted-Dexheimer\nKoster and Schmidt looked like extras\n\nWallstedt";
+    if ($mixedSeparators) {
+        $text = str_replace(['Shaw-Stramel-Pitlick', 'Heidt-Haight-Kirkland', 'Hunt-Spacek'],
+            ['Shaw/Stramel-Pitlick', 'Heidt • Haight | Kirkland', 'Hunt/Spacek'], $text);
+    }
+
+    $analysis = app(\App\Services\NhlLineupTextParser::class)->analyze($text, 'MIN');
+    $players = collect($analysis['players']);
+
+    expect($players->where('lineup_role', 'forward'))->toHaveCount(12)
+        ->and($players->where('lineup_role', 'defense'))->toHaveCount(6)
+        ->and($players->where('lineup_role', 'goalie'))->toHaveCount(1)
+        ->and($players->firstWhere('line_key', 'F2')['name'])->toBe('Test Heidt')
+        ->and($players->firstWhere('line_key', 'D2')['name'])->toBe('Test Gustafsson Nyberg')
+        ->and($players->firstWhere('line_key', 'F4')['name'])->toBe('Lemire/Kumpulainen')
+        ->and($players->firstWhere('line_key', 'F4')['nhl_player_id'])->toBeNull()
+        ->and(collect($analysis['matched_players'])->pluck('name')->all())->toContain('Test Lemire', 'Test Kumpulainen')
+        ->and(app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($analysis['players'], null, 1))->toHaveCount(17);
+})->with([false, true]);
+
+it('does not collapse slash alternatives to a canonical compound name', function (): void {
+    Player::query()->create([
+        'nhl_id' => 8488900, 'full_name' => 'Lemire Kumpulainen', 'first_name' => 'Lemire',
+        'last_name' => 'Kumpulainen', 'position' => 'C', 'team_abbrev' => 'MIN',
+    ]);
+
+    expect(app(\App\Services\NhlLineupPlayerResolver::class)->resolve('Lemire/Kumpulainen', 'MIN'))->toBeNull();
+});
+
+it('does not invent slots for empty alternatives or incomplete groups', function (string $fourthLine): void {
+    $resolver = \Mockery::mock(\App\Services\NhlLineupPlayerResolver::class);
+    $resolver->shouldNotReceive('resolve');
+    $resolver->shouldNotReceive('mentions');
+    $text = "Shaw-Stramel-Pitlick\nHeidt-Haight-Kirkland\nLorenz-Sturm-Gambrell\n{$fourthLine}\n"
+        . "Defense\nHunt-Spacek\nGustafsson Nyberg-Lambos\nKiersted-Dexheimer";
+
+    expect((new \App\Services\NhlLineupTextParser($resolver))->analyze($text, 'MIN'))
+        ->toBe(['players' => [], 'matched_players' => []]);
+})->with(['Lemire//Kumpulainen-Bankier-Joshua', 'Lemire/-Bankier-Joshua', 'Lemire/Kumpulainen']);
+
+it('keeps the existing season and peer requirements for alternative slots', function (): void {
+    $response = xLineupResponse([lineupCandidate('alternatives', 'https://x.com/alternatives/status/1011')]);
+    $text = str_replace('Forward 1 -', 'Forward 1 / Another Prospect -', $response['data'][0]['text']);
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse($text, 'TOR');
+    $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
+
+    expect($players[0]['name'])->toBe('Forward 1/Another Prospect')
+        ->and($players[0]['nhl_player_id'])->toBeNull()
+        ->and($resolver->verifiedLineupIds($players, null, 1))->toHaveCount(17)
+        ->and($resolver->verifiedLineupIds($players, null, 2))->toBeNull();
+    foreach ($players as &$player) {
+        if ($player['line_key'] === 'F1') {
+            $player['player_id'] = null;
+            $player['nhl_player_id'] = null;
+        }
+    }
+    unset($player);
+    expect($resolver->verifiedLineupIds($players, null, 1))->toBeNull();
+});
+
+it('persists and exposes alternatives without silently selecting a player', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $text = $current->observation->players->groupBy('line_key')
+        ->map(fn ($group): string => $group->pluck('player_name')->implode(' • '))->implode("\n");
+    Player::query()->create([
+        'nhl_id' => 8488901, 'full_name' => 'Alternate Forward', 'first_name' => 'Alternate',
+        'last_name' => 'Forward', 'position' => 'C', 'team_abbrev' => 'TOR',
+    ]);
+    $text = str_replace('Test Player 10', 'Test Player 10 / Alternate Forward', $text);
+
+    $this->actingAs($user)->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])
+        ->assertOk()->assertJsonPath('lineup.evidence_status', 'reported');
+    $observation = $current->fresh()->observation;
+    expect($observation->players)->toHaveCount(18);
+    $this->assertDatabaseHas('nhl_lineup_observation_players', [
+        'nhl_lineup_observation_id' => $observation->id,
+        'line_key' => 'F4', 'slot_index' => 1, 'player_name' => 'Test Player 10/Alternate Forward',
+        'player_id' => null, 'nhl_player_id' => null, 'resolution_status' => 'unresolved',
+    ]);
+    // A later import must not reconcile the alternatives to either individual.
+    app(NhlAnticipatedLineupImporter::class)->importFromX(NhlGame::query()->findOrFail(2026020099), 'TOR', 10);
+    $payload = $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+        ->assertOk()->json('anticipated_lineups.0');
+    $slot = collect($payload['players'])->firstWhere('player_name', 'Test Player 10/Alternate Forward');
+    expect($slot)->not->toBeNull()
+        ->and($slot['nhl_player_id'])->toBeNull()
+        ->and($slot['resolution_status'])->toBe('unresolved');
+    Http::assertNothingSent();
+    $this->travelBack();
+});
+
 it('does not report a historical lineup assembled from two different observations', function (): void {
     $current = createCurrentAnticipatedLineup();
     $other = $current->observation->replicate();

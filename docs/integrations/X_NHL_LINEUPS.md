@@ -67,7 +67,15 @@ An account supplying accepted lineup evidence is stored in `sources` and linked 
 
 ## Local parsing
 
-Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward names followed by six defense names in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the F4/D3 peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
+Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward slots followed by six defense slots in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the season-specific peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
+
+Rows support hyphens with varied spacing, slashes, pipes, commas, semicolons,
+tabs, multiple spaces, bullets, middle dots, plus signs, ampersands, and colons.
+In `Lemire/Kumpulainen-Bankier-Joshua`, both alternatives are checked for player
+matches, but `Lemire/Kumpulainen` remains one unresolved slot with null identity.
+Neither player is silently selected. That slot uses the existing same-group peer
+fallback where eligible. A row such as `Shaw/Stramel/Pitlick` instead defines three
+separate slots. Empty alternatives and incomplete groups remain invalid.
 
 When multiple players on the team share a surname, a reported first initial selects the matching player. For example, `B. Tkachuk` and `M. Tkachuk` resolve independently; a conflicting initial is not permitted to fall back to the wrong same-surname player.
 

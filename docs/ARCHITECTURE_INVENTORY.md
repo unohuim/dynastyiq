@@ -3766,6 +3766,10 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+The text parser accepts varied roster separators and preserves slash alternatives
+as one unresolved slot, without selecting either player. Existing same-group peer
+eligibility still governs reporting and predictions. See `NhlAnticipatedLineups.yaml`.
+
 Preseason exception: unresolved skaters on any line/pair can use resolved
 same-group peers' average projections; at least one peer must be resolved.
 The prior F4/D3-only restriction still applies to regular-season and playoff games.

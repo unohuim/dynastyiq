@@ -20,6 +20,12 @@ class NhlLineupPlayerResolver
 
     public function resolve(string $name, string $teamAbbrev): ?Player
     {
+        // A shared lineup slot names alternatives, not one canonical player.
+        // Never collapse them during persistence or later identity reconciliation.
+        if (preg_match('~[/⁄／]~u', $name)) {
+            return null;
+        }
+
         $normalized = $this->normalizer->normalizeName($name);
         if ($normalized === null) {
             return null;
