@@ -40,6 +40,8 @@ for correction. Preview writes no observations. Submit sends `image_reviewed=1`
 and validates only the edited text; it never silently replaces edits with OCR.
 The source image and OCR metadata still accompany an accepted observation.
 The preview endpoint uses the same super-admin, game, and team checks as saving.
+Reported lineups can also be replaced: a validated submission becomes the manual
+override for subsequent predictions, while previous observations remain intact.
 The existing manual endpoint accepts multipart `team_abbrev`, `text`, and `image`
 fields; JSON text submissions remain supported. The upload is processed with
 the same OCR runner, then the same full-lineup verification, without requesting

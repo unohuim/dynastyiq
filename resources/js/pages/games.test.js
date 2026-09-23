@@ -153,11 +153,15 @@ describe('manual game lineup entry', () => {
         expect(document.querySelector('button[aria-label="Add MTL lineup"]')).toBeNull();
     });
 
-    it('exposes only the unreported team badge to super admins', () => {
+    it('lets super admins open manual entry for reported and unreported teams', async () => {
         app = createApp(GameCard, { game, canManageLineups: true });
         app.mount('#manual-test');
         expect(document.querySelector('button[aria-label="Add MTL lineup"]')).not.toBeNull();
-        expect(document.querySelector('button[aria-label="Add TOR lineup"]')).toBeNull();
+        const update = document.querySelector('button[aria-label="Update TOR lineup"]');
+        expect(update).not.toBeNull();
+        update.click();
+        await nextTick();
+        expect(document.querySelector('textarea').getAttribute('placeholder')).toContain('TOR');
     });
 
     it('posts the selected game team and text and emits the returned lineup', async () => {

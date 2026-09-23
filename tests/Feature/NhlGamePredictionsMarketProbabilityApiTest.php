@@ -726,7 +726,7 @@ it('uses the resolved third-pair defenseman for an unresolved d3 projection', fu
         ->and($unresolved['nhl_player_id'])->toBeNull();
 });
 
-it('uses complete reported lineups for both teams in a preseason prediction', function (): void {
+it('uses complete reported or manual override lineups for both teams in a preseason prediction', function (bool $manualOverride): void {
     $token = ($this->seedPredictionInputs)(2.4, 3.2);
     DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
     $sourceId = DB::table('sources')->insertGetId([
@@ -767,6 +767,11 @@ it('uses complete reported lineups for both teams in a preseason prediction', fu
     ]);
     ($this->insertReportedLineup)('HOM', 2, 8482001, 'home');
 
+    if ($manualOverride) {
+        DB::table('nhl_lineup_observations')->where('id', $observationId)
+            ->update(['raw_evidence' => json_encode(['manual_override' => true])]);
+    }
+
     $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
     $simulator->shouldReceive('simulateWithRosters')->once()
         ->withArgs(fn (...$arguments): bool => count($arguments[9]) === 18 && count($arguments[10]) === 18)
@@ -798,8 +803,9 @@ it('uses complete reported lineups for both teams in a preseason prediction', fu
         ->assertJsonPath('prediction_available', true)
         ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
         ->assertJsonPath('inputs.home_lineup_source', 'anticipated_lineup')
+        ->assertJsonPath('anticipated_lineups.away.manual_override', $manualOverride)
         ->assertJsonCount(18, 'anticipated_lineups.away.players')
         ->assertJsonCount(18, 'anticipated_lineups.home.players')
         ->assertJsonCount(18, 'teams.away.roster')
         ->assertJsonPath('teams.away.roster.0.projection_source', 'replacement_level');
-});
+})->with([false, true]);

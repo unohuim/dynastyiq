@@ -58,8 +58,10 @@ class NhlGamePredictionPayload
 
         $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
         $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
-        $awayOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $awayTeam);
-        $homeOfficialRosterIds = $this->officialSkaterIds($nhlGameId, $homeTeam);
+        $awayOfficialRosterIds = ($awayLineup['manual_override'] ?? false)
+            ? null : $this->officialSkaterIds($nhlGameId, $awayTeam);
+        $homeOfficialRosterIds = ($homeLineup['manual_override'] ?? false)
+            ? null : $this->officialSkaterIds($nhlGameId, $homeTeam);
         $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
         $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
 

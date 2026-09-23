@@ -732,6 +732,7 @@ one game may use different source levels.
 
 Skater roster precedence:
 
+0. A validated super-admin manual override, when present (`anticipated_lineups.*.manual_override = true`). This is authoritative for prediction roster selection, retains manual source attribution, and is not overwritten by automated imports.
 1. A complete official NHL boxscore roster.
 2. A complete reported anticipated lineup whose 18 skaters resolve to 18
    unique NHL player ids.

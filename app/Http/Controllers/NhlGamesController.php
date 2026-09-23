@@ -80,7 +80,6 @@ class NhlGamesController extends Controller
         $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->firstOrFail();
         $team = mb_strtoupper($input['team_abbrev']);
         abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
-        abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
         $evidence = $ocr->extractUpload($request->file('image'));
         if (($evidence['status'] ?? 'error') === 'error') {
             throw \Illuminate\Validation\ValidationException::withMessages([
@@ -114,7 +113,6 @@ class NhlGamesController extends Controller
         $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->firstOrFail();
         $team = mb_strtoupper($input['team_abbrev']);
         abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
-        abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
         $ocr = $request->hasFile('image') ? app(NhlLineupImageOcr::class)->extractUpload($request->file('image')) : null;
         if ($ocr !== null) {
             $ocr['reviewed'] = $request->boolean('image_reviewed');
@@ -124,7 +122,6 @@ class NhlGamesController extends Controller
             $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
             $team = mb_strtoupper($input['team_abbrev']);
             abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
-            abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
             $teamId = DB::table('nhl_teams')->where('abbrev', $team)->value('nhl_id');
             abort_if($teamId === null, 422, 'The NHL team identity is missing.');
             $importer->importManual($game, $team, (int) $teamId, trim($input['text'] ?? ''), (int) $request->user()->id, $ocr);

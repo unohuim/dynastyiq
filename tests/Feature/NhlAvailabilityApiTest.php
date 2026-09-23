@@ -2662,8 +2662,42 @@ it('imports a super admin pasted lineup without provider requests and exposes it
         ->and($observation->players()->count())->toBe(18);
     $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
         ->assertOk()->assertJsonPath('anticipated_lineups.0.evidence_status', 'reported');
-    $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])->assertConflict();
-    expect(NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->count())->toBe(1);
+    $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])
+        ->assertOk()->assertJsonPath('lineup.manual_override', true);
+    expect(NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->count())->toBe(2);
+    $this->travelBack();
+});
+
+it('replaces a reported lineup manually and protects the override from paid discovery', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-22 12:00:00 America/Toronto'));
+    $user = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
+    $current = createCurrentAnticipatedLineup();
+    $originalId = $current->nhl_lineup_observation_id;
+    $groups = $current->observation->players->groupBy('line_key');
+    $text = $groups->map(fn ($group) => $group->pluck('player_name')->reverse()->implode(' - '))->implode("\n");
+
+    $this->actingAs($user)->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => $text])
+        ->assertOk()->assertJsonPath('lineup.manual_override', true);
+    $overrideId = $current->fresh()->nhl_lineup_observation_id;
+    expect($overrideId)->not->toBe($originalId);
+    $this->assertDatabaseHas('nhl_lineup_observations', ['id' => $originalId]);
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026020099')
+        ->assertOk()->assertJsonPath('anticipated_lineups.0.manual_override', true);
+
+    $this->postJson('/games/2026020099/lineup', ['team_abbrev' => 'TOR', 'text' => 'Not a roster'])
+        ->assertUnprocessable();
+    expect($current->fresh()->nhl_lineup_observation_id)->toBe($overrideId);
+    // Even a later automated observation cannot displace the manual selection.
+    $original = NhlLineupObservation::query()->findOrFail($originalId);
+    $original->update(['provider_published_at' => now()->addHour()]);
+    $this->mock(\App\Services\XNhlLineupDiscovery::class, fn ($mock) => $mock->shouldNotReceive('discover'));
+    $result = app(NhlAnticipatedLineupImporter::class)->importFromX(NhlGame::query()->findOrFail(2026020099), 'TOR', 10);
+    expect($result)->toBe(['observed' => 0, 'skipped' => 1])
+        ->and($current->fresh()->nhl_lineup_observation_id)->toBe($overrideId);
+    Http::assertNothingSent();
     $this->travelBack();
 });
 

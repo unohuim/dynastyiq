@@ -68,10 +68,10 @@ class NhlAnticipatedLineupImporter
             'platform' => 'manual', 'source_name' => 'Manual submission (user #' . $userId . ')',
             'source_handle' => 'user-' . $userId,
             'source_url' => route('games.index') . '#manual-user-' . $userId,
-            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . hash('sha256', $text . ($imageEvidence['sha256'] ?? '')),
+            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . Str::uuid(),
             'post_text' => $text, 'published_at' => now()->toIso8601String(),
             'lineup_text' => $lineupText, 'ocr' => $imageEvidence !== null ? [$imageEvidence] : [],
-            'submitted_by_user_id' => $userId, 'players' => $players,
+            'submitted_by_user_id' => $userId, 'manual_override' => true, 'players' => $players,
         ];
         $observed = 0;
         $skipped = 0;
@@ -125,6 +125,13 @@ class NhlAnticipatedLineupImporter
     ): array
     {
         $this->reconcileUnresolved((int) $game->nhl_game_id, $teamId, $teamAbbrev);
+        $current = NhlCurrentLineup::query()->with('observation')
+            ->where('nhl_game_id', $game->nhl_game_id)->where('team_id', $teamId)->first();
+        if ($current?->hasVerifiedPlayers()
+            && $current->observation->isEligibleForGameDate((string) $game->game_date)
+            && data_get($current->observation->raw_evidence, 'manual_override', false)) {
+            return ['observed' => 0, 'skipped' => 1];
+        }
         $observed = 0;
         $skipped = 0;
         $this->persistCandidates(
@@ -446,7 +453,8 @@ class NhlAnticipatedLineupImporter
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
             $this->players->verifiedLineupIds($observation->players->toArray()) !== null);
-        $forward = $observations->first();
+        $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
+            (bool) data_get($observation->raw_evidence, 'manual_override', false)) ?? $observations->first();
         $defense = $forward;
         if ($forward === null || $defense === null) {
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();

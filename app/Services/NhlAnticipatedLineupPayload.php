@@ -139,6 +139,7 @@ class NhlAnticipatedLineupPayload
             'team_id' => $row->team_id,
             'team_abbrev' => $row->team_abbrev,
             'evidence_status' => $row->evidence_status,
+            'manual_override' => (bool) data_get($observation->raw_evidence, 'manual_override', false),
             'source_count' => $row->source_count,
             'first_observed_at' => $row->first_observed_at?->toIso8601String(),
             'last_observed_at' => $row->last_observed_at?->toIso8601String(),
