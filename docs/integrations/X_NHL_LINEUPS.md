@@ -71,6 +71,14 @@ Every returned timeline post is read in full. Before resolving names, the parser
 
 When multiple players on the team share a surname, a reported first initial selects the matching player. For example, `B. Tkachuk` and `M. Tkachuk` resolve independently; a conflicting initial is not permitted to fall back to the wrong same-surname player.
 
+Explicit player-specific spelling aliases are maintained in `config/name_variants.php`
+under `player_name_aliases` and exposed through `PlayerIdentityNormalizer`.
+For example, `Igor Chernyshev`, `I. Chernyshev`, and `Chernyshev` can resolve to
+canonical `Igor Chernyshov` through the shared lineup resolver. Team preference
+and ambiguity checks still apply; no blanket Russian surname substitutions or
+unrestricted fuzzy matching are used. Add reviewed spellings to this dictionary,
+not to individual importers or the text parser.
+
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after the complete 12F-then-6D block is found and its players pass shared verification.

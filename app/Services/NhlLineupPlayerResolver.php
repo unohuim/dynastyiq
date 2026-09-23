@@ -133,6 +133,10 @@ class NhlLineupPlayerResolver
             return false;
         }
 
+        if (in_array($reference, $this->normalizer->playerNameAliasReferences($player->full_name), true)) {
+            return true;
+        }
+
         if ($reference === $full || $reference === $last) {
             return true;
         }

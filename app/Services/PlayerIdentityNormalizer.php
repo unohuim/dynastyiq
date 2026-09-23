@@ -88,6 +88,42 @@ class PlayerIdentityNormalizer
     }
 
     /**
+     * Return normalized, explicitly configured alternate references for one canonical player.
+     * Full aliases also support first-initial and surname references; callers retain team
+     * preference and must reject ambiguous results. Never rewrite canonical display names.
+     *
+     * @return array<int,string>
+     */
+    public function playerNameAliasReferences(?string $canonicalName): array
+    {
+        $canonical = $this->normalizeName($canonicalName);
+        if ($canonical === null) {
+            return [];
+        }
+
+        $references = [];
+        foreach ((array) config('name_variants.player_name_aliases', []) as $name => $aliases) {
+            if ($this->normalizeName((string) $name) !== $canonical) {
+                continue;
+            }
+            foreach ((array) $aliases as $alias) {
+                $normalized = $this->normalizeName(is_string($alias) ? $alias : null);
+                if ($normalized === null) {
+                    continue;
+                }
+                $references[] = $normalized;
+                $parts = explode(' ', $normalized, 2);
+                if (count($parts) === 2) {
+                    $references[] = mb_substr($parts[0], 0, 1) . ' ' . $parts[1];
+                    $references[] = $parts[1];
+                }
+            }
+        }
+
+        return array_values(array_unique($references));
+    }
+
+    /**
      * Determine whether two first names are compatible through exact or configured variant matching.
      */
     public function firstNamesAreCompatible(?string $firstName, ?string $otherFirstName): bool

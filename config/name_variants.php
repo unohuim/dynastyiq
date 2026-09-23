@@ -2,6 +2,12 @@
 
 return [
 
+    // Explicit player-specific spellings, not general Russian suffix substitutions.
+    // Canonical display names remain unchanged; callers must still resolve ambiguity.
+    'player_name_aliases' => [
+        'Igor Chernyshov' => ['Igor Chernyshev'],
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | First‑Name Variant Map

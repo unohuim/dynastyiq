@@ -415,6 +415,39 @@ it('preserves first seen and refreshes last seen on reimport', function () {
     expect($identity->last_seen_at->toDateTimeString())->toBe('2026-06-26 13:30:00');
 });
 
+it('resolves configured player spelling aliases through the shared lineup resolver', function (string $reference, bool $matches): void {
+    $player = Player::query()->create([
+        'nhl_id' => 8484994, 'first_name' => 'Igor', 'last_name' => 'Chernyshov',
+        'full_name' => 'Igor Chernyshov', 'team_abbrev' => 'SJS', 'position' => 'L',
+    ]);
+    $resolved = app(\App\Services\NhlLineupPlayerResolver::class)->resolve($reference, 'SJS');
+
+    expect($resolved?->id)->toBe($matches ? $player->id : null)
+        ->and($player->fresh()->full_name)->toBe('Igor Chernyshov');
+})->with([
+    ['Igor Chernyshev', true], ['I. Chernyshev', true], ['Chernyshev', true],
+    ['Igor Chernyshov', true], ['I. Chernyshov', true],
+    ['A. Chernyshev', false], ['Alex Chernyshev', false], ['Igor Chernysheff', false],
+]);
+
+it('leaves same-team alias collisions unresolved and prefers a unique team match', function (): void {
+    $igor = Player::query()->create([
+        'nhl_id' => 8484994, 'first_name' => 'Igor', 'last_name' => 'Chernyshov',
+        'full_name' => 'Igor Chernyshov', 'team_abbrev' => 'SJS', 'position' => 'L',
+    ]);
+    $other = Player::query()->create([
+        'nhl_id' => 8499998, 'first_name' => 'Ivan', 'last_name' => 'Chernyshev',
+        'full_name' => 'Ivan Chernyshev', 'team_abbrev' => 'SJS', 'position' => 'L',
+    ]);
+    $resolver = new \App\Services\NhlLineupPlayerResolver(app(PlayerIdentityNormalizer::class));
+    expect($resolver->resolve('I. Chernyshev', 'SJS'))->toBeNull();
+    $other->update(['team_abbrev' => 'NYR']);
+    $resolver = new \App\Services\NhlLineupPlayerResolver(app(PlayerIdentityNormalizer::class));
+    expect($resolver->resolve('I. Chernyshev', 'SJS')?->id)->toBe($igor->id)
+        ->and($resolver->resolve('I. Chernyshev', 'NYR')?->id)->toBe($other->id)
+        ->and($resolver->resolve('I. Chernyshev', 'TOR'))->toBeNull();
+});
+
 it('normalizes accented names for identity matching', function () {
     $normalizer = app(PlayerIdentityNormalizer::class);
 
