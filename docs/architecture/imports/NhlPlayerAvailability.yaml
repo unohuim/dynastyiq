@@ -19,23 +19,26 @@ when_not_to_use:
   - Treating a single inferred report as confirmed official availability.
   - Scheduling provider imports automatically without separate approval.
 rules:
+  - Super admins may list all team-associated goalie players, regardless of league or NHL-id availability, through GET /games/{nhlGameId}/goalies and select a starter through POST /games/{nhlGameId}/starting-goalie. Both endpoints enforce authorization and game/team scope; writes also verify the selected player belongs to the team and is identified by is_goalie or a G position field. Selection appends an attributed manual expected observation, with the latest explicit selection taking precedence over other provider evidence for that exact game/team. Request-specific API overrides remain first. Missing canonical NHL identity or a usable goalie model must not trigger substitution in predictions. Live game presentation remains NHL-owned.
+  - The super-admin Vue goalie picker opens from the non-live game card avatar/status, includes search, loading/error feedback and keyboard dismissal, saves immediately through AJAX, and patches the card without navigation. Public visitors cannot see or invoke editing controls. Dropdowns must not be clipped by card shells.
   - Injury observations are game independent and append only when normalized meaning changes.
   - Current injury state must be an upserted projection of the latest provider observations.
   - Current injury rows must retain last-seen time, anticipated-return evidence, and contributing sources.
   - RotoWire-only inferred injuries are suspected; explicit CBS reporting is reported; time-relevant agreement is corroborated.
   - Predictions exclude only out players with reported, corroborated, or confirmed-unavailable evidence.
   - Questionable, unknown, and suspected players remain eligible for projected rosters.
-  - Starting-goalie observations are append only. Reads first retain each provider's strongest status and latest observation within that status per game and team. Official confirmed starter evidence ranks first, then other confirmed evidence, game-specific public-lineup expected evidence, other expected evidence, and unknown evidence; ties use observation time and id descending.
+  - Starting-goalie observations are append only. Explicit manual starter selections rank ahead of provider evidence. For other providers, reads retain each provider's strongest status and latest observation within that status per game and team. Official confirmed starter evidence ranks first among provider reports, then other confirmed evidence, game-specific public-lineup expected evidence, other expected evidence, and unknown evidence; ties use observation time and id descending.
   - A RotoWire goalie assigned to multiple NHL game ids for the same team and date is ambiguous and must be excluded from current starter selection, including historical observations already stored. Conflict detection spans the full date even when the consumer requests one game, uses canonical or provider identity and shared normalized names, and does not discard the raw observations.
   - Public starting-goalie payloads and prediction starter selection share the same observation ranking and split-squad conflict rules. Without eligible game-specific starter evidence, a team playing multiple games on the date has no selected starter; team-level season or workload guesses must not assign the same default starter to both squads.
   - An anticipated-lineup G1 may create an expected public_lineup starting-goalie observation with the source post and publication timestamp; G2 remains backup context.
+  - Linked public_lineup starter evidence must belong to the currently selected verified, date-eligible game/team observation. Superseded and wrong-date observations remain historical only. Within expected evidence, the current manual lineup G1 takes precedence over automated lineup and generic expectations; official/confirmed evidence and explicit request overrides retain their higher priority. Manual evidence is marked in raw evidence without introducing a provider value.
   - An NHL boxscore goalie with `starter: true` creates confirmed nhl_boxscore starting-goalie evidence; another listed goalie remains backup context.
   - Starting-goalie provider rows must resolve against the complete scheduled team matchup, not either team in isolation.
   - Provider home and away orientation must resolve an exact NHL game before any inverse fallback; inverse fallback is allowed only when the date and team pair identify exactly one NHL game so split-squad games retain distinct NHL game ids.
   - When provider matchup orientation conflicts with a resolved NHL game, the NHL schedule is authoritative for home and away assignment.
   - Duplicate or inverse representations of the same provider matchup must produce at most one observation per game and team within an import run.
   - Starting-goalie reads preserve the existing flat observation collection and may additionally group those observations by NHL game for matchup-oriented consumers.
-  - Starting-goalie identity selection is shared by public game cards and predictions in this order: official starter, confirmed or expected observation, season projection, then workload projection.
+  - Starting-goalie identity selection is shared by public game cards and predictions in this order: explicit manual starter selection, official starter, confirmed or expected observation, season projection, then workload projection. Prediction request overrides precede this shared selection.
   - Canonical game start timestamps remain UTC in server payloads; browser presentation converts them to the user's local timezone and includes a timezone abbreviation.
   - Starting-goalie cards use regular-season goalie summaries for GAA, save percentage, and games played.
   - Preseason cards use the previous season's regular-season goalie summaries; regular-season and playoff cards use the game's current season regular-season summaries.
@@ -47,6 +50,8 @@ rules:
   - Provider imports may be manually initiated through Player Imports or dispatched by an explicitly enabled AdminImportSchedule.
   - Scheduled starting-goalie imports refresh today independently from the bounded future-date scan; scheduled injuries refresh current game-independent state.
 public_interface:
+  - GET /games/{nhlGameId}/goalies
+  - POST /games/{nhlGameId}/starting-goalie
   - nhl:import-injuries
   - nhl:import-starting-goalies
   - GET /injuries

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\NhlCurrentLineup;
+use App\Models\Player;
 use App\Models\NhlStartingGoalieObservation;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -30,12 +32,16 @@ class NhlStartingGoalieSelector
             return $this->result((int) $providedGoalieId, 'provided', 'projected');
         }
 
+        $observed = $this->observed($nhlGameId, $teamAbbrev);
+        if (($observed['provider'] ?? null) === 'manual') {
+            return $observed;
+        }
+
         $official = $this->official($nhlGameId, $teamAbbrev);
         if ($official !== null) {
             return $this->result($official, 'nhl_boxscore', 'confirmed');
         }
 
-        $observed = $this->observed($nhlGameId, $teamAbbrev);
         if ($observed !== null) {
             return $observed;
         }
@@ -85,6 +91,14 @@ class NhlStartingGoalieSelector
             : $this->result((int) $workload, 'workload_projection', 'projected');
     }
 
+    /** Return every canonical team goalie, including prospects outside the NHL. */
+    public function teamGoalies(string $teamAbbrev): Collection
+    {
+        return Player::query()->where('team_abbrev', mb_strtoupper($teamAbbrev))
+            ->where(fn ($query) => $query->where('is_goalie', true)->orWhere('position', 'G')->orWhere('pos_type', 'G'))
+            ->orderBy('full_name')->get(['id', 'nhl_id', 'full_name', 'head_shot_url', 'current_league_abbrev']);
+    }
+
     private function official(int $nhlGameId, string $teamAbbrev): ?int
     {
         if (! Schema::hasTable('nhl_game_summaries') || ! Schema::hasColumn('nhl_game_summaries', 'goalie_started')) {
@@ -119,11 +133,19 @@ class NhlStartingGoalieSelector
         $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date))
             ->first(fn (NhlStartingGoalieObservation $observation): bool => (int) $observation->nhl_game_id === $nhlGameId
                 && $observation->team_abbrev === $teamAbbrev
-                && $observation->nhl_player_id !== null
+                && ($observation->nhl_player_id !== null || $observation->provider === 'manual')
                 && in_array($observation->status, ['confirmed', 'expected'], true));
 
+        if ($row !== null && $row->provider === 'manual' && $row->nhl_player_id === null) {
+            return [
+                'nhl_player_id' => null, 'name' => $row->player_name,
+                'avatar_url' => Player::query()->whereKey($row->player_id)->value('head_shot_url'),
+                'status' => 'expected', 'selection_source' => 'manual_starter_override', 'provider' => 'manual',
+            ];
+        }
+
         return $row === null ? null : [
-            ...$this->result((int) $row->nhl_player_id, 'starting_goalie_observation', (string) $row->status),
+            ...$this->result((int) $row->nhl_player_id, $row->provider === 'manual' ? 'manual_starter_override' : 'starting_goalie_observation', (string) $row->status),
             'name' => $row->player_name,
             'provider' => $row->provider,
             'observed_at' => $row->getRawOriginal('fetched_at'),
@@ -142,7 +164,35 @@ class NhlStartingGoalieSelector
         $rows = NhlStartingGoalieObservation::query()
             ->whereDate('game_date', $date->toDateString())
             ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
-            ->orderByDesc('fetched_at')->orderByDesc('id')->get()
+            ->orderByDesc('fetched_at')->orderByDesc('id')->get();
+        $lineupIds = $rows->where('provider', 'public_lineup')->map(
+            fn (NhlStartingGoalieObservation $row) => data_get($row->raw_evidence, 'lineup_observation_id')
+        )->filter()->unique();
+        $currentLineups = NhlCurrentLineup::query()->with('observation.players')
+            ->whereIn('nhl_lineup_observation_id', $lineupIds)->get()
+            ->filter(fn (NhlCurrentLineup $current): bool => $current->observation !== null
+                && $current->observation->isEligibleForGameDate($date)
+                && $current->hasVerifiedPlayers())
+            ->keyBy('nhl_lineup_observation_id');
+        $rows = $rows->filter(function (NhlStartingGoalieObservation $row) use ($currentLineups): bool {
+            $lineupId = data_get($row->raw_evidence, 'lineup_observation_id');
+            if ($row->provider !== 'public_lineup' || ! $lineupId) {
+                return true;
+            }
+            $current = $currentLineups->get($lineupId);
+
+            return $current !== null && (int) $current->nhl_game_id === (int) $row->nhl_game_id
+                && $current->team_abbrev === $row->team_abbrev;
+        })->sortBy(fn (NhlStartingGoalieObservation $row): int => match (true) {
+            $row->provider === 'manual' => -1,
+            $row->provider === 'nhl_boxscore' && $row->status === 'confirmed' => 0,
+            $row->status === 'confirmed' => 1,
+            $row->provider === 'public_lineup' && $row->status === 'expected'
+                && (bool) data_get($currentLineups->get(data_get($row->raw_evidence, 'lineup_observation_id'))?->observation?->raw_evidence, 'manual_override', false) => 2,
+            $row->provider === 'public_lineup' && $row->status === 'expected' => 3,
+            $row->status === 'expected' => 4,
+            default => 5,
+        })
             ->unique(fn (NhlStartingGoalieObservation $row): string => $row->provider . ':'
                 . ($row->nhl_game_id ?? $row->game_date->toDateString()) . ':' . $row->team_abbrev);
 
@@ -176,14 +226,7 @@ class NhlStartingGoalieSelector
             }
         }
 
-        return $rows->reject(fn (NhlStartingGoalieObservation $row): bool => isset($conflicting[$row->id]))
-            ->sortBy(fn (NhlStartingGoalieObservation $row): int => match (true) {
-                $row->provider === 'nhl_boxscore' && $row->status === 'confirmed' => 0,
-                $row->status === 'confirmed' => 1,
-                $row->provider === 'public_lineup' && $row->status === 'expected' => 2,
-                $row->status === 'expected' => 3,
-                default => 4,
-            })->values();
+        return $rows->reject(fn (NhlStartingGoalieObservation $row): bool => isset($conflicting[$row->id]))->values();
     }
 
     /** @return array<string,mixed> */

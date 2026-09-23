@@ -395,6 +395,13 @@ class XNhlLineupDiscovery
 
         $completeText = (string) ($candidate['post_text'] ?? '') . "\n"
             . (string) ($candidate['lineup_text'] ?? '');
+        if (! NhlLineupObservation::relativeDateMatches(
+            $completeText,
+            filled($candidate['published_at'] ?? null) ? $publishedAt : null,
+            (string) $game->game_date
+        )) {
+            return ['approved' => false, 'reason' => 'The post publication date makes tonight/today/tomorrow refer to a different game date, or publication time is missing.'];
+        }
         if ((int) ($game->game_type ?? 0) === 1 && ! $this->hasPreseasonGameContext($completeText, $game, $teamAbbrev)) {
             return [
                 'approved' => false,
@@ -478,11 +485,11 @@ class XNhlLineupDiscovery
 
     /**
      * Recognize game-specific morning-skate reports without requiring one caption word.
-     * Date and opponent must both match when the report does not say tonight.
+     * Relative wording has already passed publication-date validation.
      */
     private function hasPreseasonGameContext(string $text, object $game, string $teamAbbrev): bool
     {
-        if (preg_match('/\btonight\b/iu', $text) === 1) {
+        if (preg_match('/\b(tonight|today|tomorrow)\b/iu', $text) === 1) {
             return true;
         }
 

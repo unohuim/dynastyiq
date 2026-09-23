@@ -234,8 +234,8 @@ class NhlGamePredictionPayload
                 'home' => $homeLineup,
             ],
             'teams' => [
-                'away' => $this->teamPayload($awaySide),
-                'home' => $this->teamPayload($homeSide),
+                'away' => $this->withDressedRoster($this->teamPayload($awaySide), $awayLineup, $awayGoalie),
+                'home' => $this->withDressedRoster($this->teamPayload($homeSide), $homeLineup, $homeGoalie),
             ],
             'reasons' => [
                 'away' => $this->reasonPayload($awaySide),
@@ -298,6 +298,8 @@ class NhlGamePredictionPayload
             $homeTeam,
             $homeRosterIds
         );
+        $awayGoalie = $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $awayTeam, $overrides['away_goalie_id'] ?? null, $nhlGameId);
+        $homeGoalie = $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $homeTeam, $overrides['home_goalie_id'] ?? null, $nhlGameId);
 
         return [
             'prediction_available' => false,
@@ -319,23 +321,23 @@ class NhlGamePredictionPayload
             'prediction' => null,
             'market_probabilities' => [],
             'goalies' => [
-                'away' => $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $awayTeam, $overrides['away_goalie_id'] ?? null, $nhlGameId),
-                'home' => $this->tryResolveGoalie($targetSeasonId, $goalieProjectionVersion, $homeTeam, $overrides['home_goalie_id'] ?? null, $nhlGameId),
+                'away' => $awayGoalie,
+                'home' => $homeGoalie,
             ],
             'anticipated_lineups' => ['away' => $awayLineup, 'home' => $homeLineup],
             'teams' => [
-                'away' => [
+                'away' => $this->withDressedRoster([
                     'team_abbrev' => $awayTeam,
                     'opponent_team_abbrev' => $homeTeam,
                     'lineup_source' => $awaySource,
                     'roster' => $awayRoster,
-                ],
-                'home' => [
+                ], $awayLineup, $awayGoalie),
+                'home' => $this->withDressedRoster([
                     'team_abbrev' => $homeTeam,
                     'opponent_team_abbrev' => $awayTeam,
                     'lineup_source' => $homeSource,
                     'roster' => $homeRoster,
-                ],
+                ], $homeLineup, $homeGoalie),
             ],
             'reasons' => [],
             'meta' => [
@@ -343,6 +345,51 @@ class NhlGamePredictionPayload
                 'source_fetched_at' => now()->toIso8601String(),
             ],
         ];
+    }
+
+    /**
+     * Expose dressed identities separately from the existing skater projections.
+     * A listed backup needs no performance projection and never enters simulation.
+     *
+     * @param array<string,mixed> $team
+     * @param array<string,mixed>|null $lineup
+     * @param array<string,mixed>|null $starter
+     * @return array<string,mixed>
+     */
+    private function withDressedRoster(array $team, ?array $lineup, ?array $starter): array
+    {
+        $goalies = collect($lineup['players'] ?? [])->where('lineup_role', 'goalie')
+            ->where('line_key', 'G')->whereIn('slot_index', [1, 2])->sortBy('slot_index')->values();
+        if (($starter['selection_source'] ?? null) === 'manual_starter_override') {
+            $listedStarter = $goalies->firstWhere('slot_index', 1);
+            $backup = $goalies->firstWhere('slot_index', 2);
+            if (($backup['nhl_player_id'] ?? null) === $starter['nhl_player_id']) {
+                $backup = $listedStarter;
+            }
+            $goalies = collect([[
+                'nhl_player_id' => $starter['nhl_player_id'], 'player_name' => $starter['name'],
+                'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1,
+            ]]);
+            if ($backup !== null && ($backup['nhl_player_id'] ?? null) !== $starter['nhl_player_id']) {
+                $goalies->push([...$backup, 'slot_index' => 2]);
+            }
+        }
+        if ($goalies->isEmpty() && $starter !== null) {
+            $goalies->push([
+                'nhl_player_id' => $starter['nhl_player_id'], 'player_name' => $starter['name'],
+                'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1,
+            ]);
+        }
+        $goalies = $goalies->map(fn (array $goalie): array => [
+            ...$goalie,
+            'position' => 'G',
+            'is_starter' => $starter !== null
+                ? ! empty($goalie['nhl_player_id']) && (int) $goalie['nhl_player_id'] === (int) $starter['nhl_player_id']
+                : (int) $goalie['slot_index'] === 1,
+        ]);
+        $team['dressed_roster'] = collect($team['roster'] ?? [])->concat($goalies)->values()->all();
+
+        return $team;
     }
 
     /** @param array<int, int>|null $officialIds @param array<int, int>|null $rosterIds */
@@ -621,6 +668,9 @@ class NhlGamePredictionPayload
         }
 
         $goalieId = (int) $selection['nhl_player_id'];
+        if ($goalieId <= 0) {
+            throw ValidationException::withMessages(['goalie' => "The selected {$team} starter has no canonical NHL player ID."]);
+        }
 
         $goalie = $this->goalieProjection($targetSeasonId, $goalieProjectionVersion, $team, $goalieId);
 

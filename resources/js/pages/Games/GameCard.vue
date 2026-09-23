@@ -3,10 +3,11 @@ import { Link } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
 import LineupRefreshModal from './LineupRefreshModal.vue';
+import GoaliePicker from './GoaliePicker.vue';
 
 const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
 const isLive = computed(() => props.game.live_mode || (Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state)));
-const emit = defineEmits(['lineup-submitted']);
+const emit = defineEmits(['lineup-submitted', 'goalie-selected']);
 const manualTeam = ref(null);
 const refreshTeam = ref(null);
 const refreshes = reactive({});
@@ -101,7 +102,7 @@ const gameStateClass = (state) => state === 'FINAL'
 </script>
 
 <template>
-  <article class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+  <article class="rounded-xl border border-gray-200 bg-white shadow-sm">
     <p v-if="game.live_data_unavailable" role="status" class="px-5 py-6 text-sm text-gray-500">Live NHL boxscore temporarily unavailable.</p>
     <template v-else>
     <header class="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
@@ -137,6 +138,7 @@ const gameStateClass = (state) => state === 'FINAL'
             <img v-if="goalie.avatar_url" :src="goalie.avatar_url" :alt="goalie.name ?? 'Goalie'" class="size-12 rounded-full border border-gray-200 object-cover">
           </div>
         </div>
+        <GoaliePicker v-else-if="canManageLineups" :game-id="Number(game.nhl_game_id)" :team="game[side].team_abbrev" :goalie="game[side].starting_goalie" @selected="emit('goalie-selected', $event)" />
         <div v-else-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
         <span v-if="!isLive && game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
       </section>

@@ -728,10 +728,46 @@ The `prediction` block contains the display headline:
 The response also includes `goalies.away` and `goalies.home` with the selected
 starters and their projected stats, including projected xGA/G, GA/G, and GSAx/G.
 
-Starter selection precedence is request override, official NHL starter, current
+`teams.away.dressed_roster[]` and `teams.home.dressed_roster[]` add the listed
+goalies to each team's skater roster. `teams.*.roster[]` remains skater-only for
+backward compatibility. Listed goalies have `lineup_role: goalie`, `line_key: G`,
+`slot_index: 1` (G1) or `2` (G2), `player_name`, `nhl_player_id`, `position: G`,
+and `is_starter`. Both listed goalies are included even if G2 has no performance
+projection. Only the selected starter affects goalie simulation; G2 is not a
+second starter. Unknown identities remain null. Without listed goalies, the
+selected starter is included when available, but no backup is invented.
+Evidence-only responses also return this field; projected roster previews remain
+previews, not confirmed dressed participants.
+
+Starter selection precedence is request override, explicit manual starter selection, official NHL starter, current
 starting-goalie observation, goalie season projection, then workload projection.
 Within observations, confirmed evidence outranks expected evidence, with newest
 evidence breaking ties.
+
+An explicit super-admin goalie-picker selection takes precedence immediately
+after a request override, ahead of provider starter evidence. It is returned with
+`selection_source: manual_starter_override` (and `provider: manual` in availability
+responses). It applies only to the selected game/team, persists until replaced by
+another explicit selection, and does not change live NHL-owned presentation.
+Unlike a manually submitted lineup's G1, this is an explicit starter decision.
+If the chosen player lacks an NHL ID or usable goalie model, predictions report
+the missing prerequisite rather than silently selecting another goalie.
+The prediction dressed roster uses this starter as G1; selecting the listed G2
+swaps the two goalie slots. Other changes preserve the listed backup where possible.
+
+The picker uses session-authenticated, super-admin-only browser endpoints (not
+partner API endpoints): `GET /games/{nhlGameId}/goalies?team_abbrev=TOR` lists
+`player_id`, nullable `nhl_player_id`, name, avatar, and league;
+`POST /games/{nhlGameId}/starting-goalie` accepts `team_abbrev` and the canonical
+local `player_id`, requires CSRF protection, and returns the updated
+`starting_goalie` plus game/team identity. It includes prospects regardless of
+league assignment and preserves an attributed, append-only selection history.
+
+A validated manual lineup's G1 is expected starter evidence and outranks generic
+expected/projected choices for that specific game, including split-squad games.
+Official/confirmed starters and explicit API goalie overrides retain precedence.
+Superseded or wrong-date lineup-derived observations cannot select a starter.
+Live game presentation remains sourced from the NHL boxscore.
 
 When a complete official or reported lineup is used, `teams.away.roster[]` and
 `teams.home.roster[]` contain all 18 skaters actually used. Each row includes
@@ -781,11 +817,12 @@ lineups no longer qualify as reported or suppress further discovery.
 Goalie precedence:
 
 1. `away_goalie_id` or `home_goalie_id` request override.
-2. Official NHL starter evidence.
-3. Imported starting-goalie observation, preferring `confirmed` over
+2. Explicit super-admin goalie-picker selection for this game/team.
+3. Official NHL starter evidence.
+4. Imported starting-goalie observation, preferring `confirmed` over
    `expected`, then preferring the newest observation within that status.
-4. Highest-start goalie from the selected goalie season projection.
-5. Highest-start goalie from the workload projection.
+5. Highest-start goalie from the selected goalie season projection.
+6. Highest-start goalie from the workload projection.
 
 Read `goalies.away.selection_source` and `goalies.home.selection_source` rather
 than inferring how the goalie was selected. Current values are `provided`,
@@ -1030,6 +1067,7 @@ inputs, while retaining the former for evidence provenance.
 ### Lineup-Aware Consumption Guidance
 
 - Lineup evidence may have `sources[].platform: manual`: a super admin pasted the text into DynastyIQ. It uses the same verification and prediction rules as imported text, is attributed to that admin, and is not an X post or official NHL evidence. Manual entry is a first-party authenticated UI action, not a partner API endpoint.
+- X posts saying “tonight” or “today” apply to their publication date; “tomorrow” applies to the next day, using America/Toronto calendar dates. They must match the target game date, including when reading older stored observations. Yesterday's explicitly dated report for today's opponent remains eligible. Relative wording without a publication timestamp is rejected; manual and official evidence are exempt.
 - A `reported` lineup has valid slots and verified identities or eligible peer fallbacks, not merely eighteen parsed names. Duplicate identities and goalies in skater slots remain invalid. Unknown F1–F3/D1–D2 players are eligible only in preseason with a verified same-group peer. Invalid legacy lineups are omitted too.
 - Eligible unidentified players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the peer-average fallback; they are never presented as identified players.
 - A shared slot such as `Lemire/Kumpulainen` retains both names in `player_name` with null identity and `resolution_status: unresolved`, even when both alternatives can be matched individually. It represents one slot, not two selected players, and follows the same season-specific peer-average eligibility. Consumers must not select an alternative by name.

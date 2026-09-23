@@ -30,6 +30,12 @@ function applyManualLineup(lineup) {
   const side = ['away', 'home'].find((key) => game[key].team_abbrev === lineup.team_abbrev);
   if (side) game[side].lineup = lineup;
 }
+function applyGoalie(selection) {
+  const game = payload.value.games.find((item) => Number(item.nhl_game_id) === Number(selection.nhl_game_id));
+  if (!game) return;
+  const side = ['away', 'home'].find((key) => game[key].team_abbrev === selection.team_abbrev);
+  if (side) game[side].starting_goalie = selection.starting_goalie;
+}
 const toggleSaving = ref(false);
 const frequencySaving = ref(false);
 const error = ref('');
@@ -101,7 +107,7 @@ onBeforeUnmount(() => window.clearTimeout(frequencySaveTimer));
       </div>
     </div>
     <p v-if="loading" class="mb-4 text-sm text-gray-500">Loading games…</p>
-    <div v-if="sortedGames.length" class="grid gap-5 lg:grid-cols-2"><GameCard v-for="game in sortedGames" :key="game.nhl_game_id" :game="game" :can-manage-lineups="canManageGameSync" @lineup-submitted="applyManualLineup" /></div>
+    <div v-if="sortedGames.length" class="grid gap-5 lg:grid-cols-2"><GameCard v-for="game in sortedGames" :key="game.nhl_game_id" :game="game" :can-manage-lineups="canManageGameSync" @lineup-submitted="applyManualLineup" @goalie-selected="applyGoalie" /></div>
     <div v-else class="rounded-lg border border-gray-200 bg-white px-4 py-10 text-center text-sm text-gray-600">No NHL games are scheduled for this date.</div>
 
     <Teleport to="body"><div v-if="drawerOpen" class="fixed inset-0 z-[100]" role="dialog" aria-modal="true"><button class="absolute inset-0 bg-gray-950/40" aria-label="Close settings" @click="drawerOpen = false"></button><aside class="absolute inset-y-0 right-0 w-full max-w-md overflow-y-auto bg-white p-6 shadow-2xl"><div class="flex items-center justify-between"><div><h2 class="text-lg font-semibold">Game settings</h2><p class="mt-1 text-sm text-gray-500">NHL gamecenter synchronization</p></div><button class="text-2xl text-gray-500" @click="drawerOpen = false">×</button></div><div class="mt-8 space-y-6"><div class="flex items-center justify-between gap-4"><span class="text-sm font-medium text-gray-900">Sync</span><ToggleSwitch :model-value="enabled" :disabled="toggleSaving" label="Sync" @update:model-value="toggleSync" /></div><p v-if="frequencySaving" class="text-xs text-gray-500" role="status">Saving…</p><fieldset v-for="timer in [{ label: 'Pregame', value: pregame }, { label: 'Live', value: live }]" :key="timer.label">

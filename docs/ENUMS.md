@@ -2675,7 +2675,8 @@ least one resolved peer in the same line or pair.
 - Injury evidence levels: `suspected`, `reported`, `corroborated`, `confirmed_unavailable`, `confirmed_available`.
 - Anticipated-return precision: `exact_date`, `not_before`, `season_start`, `indefinite`, `unknown`.
 - Starting-goalie observation status: `confirmed`, `expected`, `unknown`.
-- Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`.
+- Starting-goalie observation provider: `rotowire`, `public_lineup`, `nhl_boxscore`, `manual` (explicit super-admin game-specific starter selection).
+- Starting-goalie selection source: `provided`, `manual_starter_override`, `nhl_boxscore`, `starting_goalie_observation`, `goalie_projection`, `workload_projection`.
 
 The following enum-like areas are intentionally documented because they are not fully constrained in the database or are inconsistent across code paths:
 

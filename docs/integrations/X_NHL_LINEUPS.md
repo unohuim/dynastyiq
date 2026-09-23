@@ -69,6 +69,13 @@ An account supplying accepted lineup evidence is stored in `sources` and linked 
 
 Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward slots followed by six defense slots in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the season-specific peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
 
+Relative wording uses the post's publication date in America/Toronto: tonight and
+today mean that day, tomorrow means the next day. A September 22 “tonight” post
+cannot supply September 23 lineups or goalies, including if already stored.
+A September 22 “tomorrow” post or explicit September 23/opponent report may qualify.
+Missing publication timestamps cannot validate relative wording. Manual overrides
+and official NHL evidence are exempt from this X-post rule.
+
 Rows support hyphens with varied spacing, slashes, pipes, commas, semicolons,
 tabs, multiple spaces, bullets, middle dots, plus signs, ampersands, and colons.
 In `Lemire/Kumpulainen-Bankier-Joshua`, both alternatives are checked for player

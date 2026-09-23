@@ -71,6 +71,53 @@ class NhlGamesController extends Controller
         );
     }
 
+    /** List canonical team goalies for the super-admin starter picker. */
+    public function goalieOptions(Request $request, int $nhlGameId, \App\Services\NhlStartingGoalieSelector $selector): JsonResponse
+    {
+        abort_unless($this->canManageGameSync($request), 403);
+        $input = $request->validate(['team_abbrev' => ['required', 'string', 'max:10']]);
+        $team = mb_strtoupper(trim($input['team_abbrev']));
+        $game = NhlGame::query()->findOrFail($nhlGameId);
+        abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+
+        return response()->json(['goalies' => $selector->teamGoalies($team)->map(fn ($player): array => [
+            'player_id' => $player->id, 'nhl_player_id' => $player->nhl_id === null ? null : (int) $player->nhl_id, 'name' => $player->full_name ?: 'Player #' . $player->id,
+            'avatar_url' => $player->head_shot_url, 'league' => $player->current_league_abbrev,
+        ])]);
+    }
+
+    /** Append a game-specific manual starter decision without changing lineup history. */
+    public function storeGoalie(Request $request, int $nhlGameId, \App\Services\NhlStartingGoalieSelector $selector): JsonResponse
+    {
+        abort_unless($this->canManageGameSync($request), 403);
+        $input = $request->validate([
+            'team_abbrev' => ['required', 'string', 'max:10'], 'player_id' => ['required', 'integer', 'min:1'],
+        ]);
+        $team = mb_strtoupper(trim($input['team_abbrev']));
+
+        return DB::transaction(function () use ($request, $nhlGameId, $selector, $input, $team): JsonResponse {
+            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+            $player = $selector->teamGoalies($team)->firstWhere('id', (int) $input['player_id']);
+            abort_if($player === null, 422, 'Select a goalie belonging to this team.');
+            $isHome = $team === $game->home_team_abbrev;
+            \App\Models\NhlStartingGoalieObservation::query()->create([
+                'nhl_game_id' => $nhlGameId, 'game_date' => $game->game_date,
+                'team_abbrev' => $team, 'opponent_abbrev' => $isHome ? $game->away_team_abbrev : $game->home_team_abbrev,
+                'is_home' => $isHome, 'player_id' => $player->id, 'nhl_player_id' => $player->nhl_id,
+                'player_name' => $player->full_name ?: 'Player #' . $player->id, 'provider' => 'manual', 'status' => 'expected',
+                'provider_published_at' => now(), 'fetched_at' => now(),
+                'source_url' => route('games.show', $nhlGameId),
+                'raw_evidence' => ['manual_starter_override' => true, 'submitted_by_user_id' => $request->user()->id],
+            ]);
+
+            return response()->json([
+                'nhl_game_id' => $nhlGameId, 'team_abbrev' => $team,
+                'starting_goalie' => $selector->select($nhlGameId, $team),
+            ]);
+        });
+    }
+
     /** Queue one missing game/team lineup using the existing importer and run ledger. */
     public function refreshLineup(Request $request, int $nhlGameId, NhlAnticipatedLineupPayload $payload): JsonResponse
     {

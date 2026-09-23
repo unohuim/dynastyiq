@@ -47,6 +47,42 @@ class NhlLineupObservation extends Model
     {
         $timestamp = $this->provider_published_at ?? $this->observed_at;
 
-        return $timestamp !== null && $timestamp->gte(self::evidenceCutoff($gameDate));
+        if ($timestamp === null || $timestamp->lt(self::evidenceCutoff($gameDate))) {
+            return false;
+        }
+        if (data_get($this->raw_evidence, 'manual_override', false)
+            || data_get($this->raw_evidence, 'official', false)) {
+            return true;
+        }
+
+        return self::relativeDateMatches(
+            (string) $this->post_text . "\n" . (string) data_get($this->raw_evidence, 'lineup_text', ''),
+            $this->provider_published_at,
+            $gameDate
+        );
+    }
+
+    /** Anchor relative wording to publication, never to the time of ingestion. */
+    public static function relativeDateMatches(string $text, ?Carbon $publishedAt, string|Carbon $gameDate): bool
+    {
+        preg_match_all('/\b(tonight|today|tomorrow)\b/iu', $text, $matches);
+        if ($matches[1] === []) {
+            return true;
+        }
+        if ($publishedAt === null) {
+            return false;
+        }
+        $target = Carbon::parse($gameDate)->toDateString();
+        foreach (array_unique(array_map('strtolower', $matches[1])) as $word) {
+            $date = $publishedAt->copy()->setTimezone('America/Toronto')->startOfDay();
+            if ($word === 'tomorrow') {
+                $date->addDay();
+            }
+            if ($date->toDateString() !== $target) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

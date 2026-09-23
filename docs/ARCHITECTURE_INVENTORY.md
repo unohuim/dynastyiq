@@ -3766,6 +3766,17 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+`Games/GoaliePicker.vue` provides super-admin-only, immediate AJAX starter
+selection from all team-associated goalies, including prospects. Append-only
+manual observations take precedence in the shared starter selector for that game;
+live NHL presentation is unchanged. Authority: `NhlPlayerAvailability.yaml`.
+
+Relative X dates are anchored to publication in America/Toronto, including reads
+of already-stored observations. Wrong-date evidence cannot suppress discovery or
+provide lineup-derived goalies. Manual G1 supplies game-specific expected starter
+evidence; prediction `teams.*.dressed_roster` includes listed G1/G2 separately from
+the skater-only `roster`. See the lineup, availability, and matchup architecture.
+
 The text parser accepts varied roster separators and preserves slash alternatives
 as one unresolved slot, without selecting either player. Existing same-group peer
 eligibility still governs reporting and predictions. See `NhlAnticipatedLineups.yaml`.

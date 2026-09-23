@@ -33,6 +33,90 @@ use Inertia\Testing\AssertableInertia as Assert;
 
 uses(RefreshDatabase::class);
 
+describe('super admin goalie picker', function (): void {
+    beforeEach(function (): void {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+        NhlGame::query()->create([
+            'nhl_game_id' => 2026010098, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+            'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL', 'game_state' => 'PRE',
+        ]);
+        $this->pickerGoalie = Player::query()->create([
+            'full_name' => 'Prospect Goalie', 'team_abbrev' => 'TOR', 'position' => 'G',
+            'is_goalie' => false, 'current_league_abbrev' => 'AHL', 'nhl_id' => 8489911,
+        ]);
+        $this->pickerAdmin = User::factory()->create();
+        $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+        $this->pickerAdmin->roles()->attach($role->id, ['organization_id' => null]);
+    });
+    afterEach(function (): void { $this->travelBack(); });
+
+    it('protects both picker endpoints', function (string $method, bool $signedIn): void {
+        if ($signedIn) $this->actingAs(User::factory()->create());
+        $url = '/games/2026010098/' . ($method === 'GET' ? 'goalies' : 'starting-goalie');
+        $this->json($method, $url, ['team_abbrev' => 'TOR', 'player_id' => $this->pickerGoalie->id])
+            ->assertStatus($signedIn ? 403 : 401);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+    })->with([['GET', false], ['GET', true], ['POST', false], ['POST', true]]);
+
+    it('lists prospects and unidentified goalies but not skaters or another team', function (): void {
+        $unknown = Player::query()->create(['full_name' => 'Unsigned Goalie', 'team_abbrev' => 'TOR', 'pos_type' => 'G']);
+        Player::query()->create(['full_name' => 'Other Goalie', 'team_abbrev' => 'MTL', 'position' => 'G']);
+        Player::query()->create(['full_name' => 'Skater', 'team_abbrev' => 'TOR', 'position' => 'C']);
+        $response = $this->actingAs($this->pickerAdmin)->getJson('/games/2026010098/goalies?team_abbrev=TOR')
+            ->assertOk()->assertJsonCount(2, 'goalies');
+        expect(collect($response->json('goalies'))->pluck('player_id')->all())->toContain($unknown->id, $this->pickerGoalie->id);
+    });
+
+    it('rejects mismatched teams players and missing games without writing', function (string $scenario): void {
+        $id = $scenario === 'missing game' ? 999 : 2026010098;
+        $team = $scenario === 'wrong team' ? 'LAK' : 'TOR';
+        if ($scenario === 'skater') $this->pickerGoalie->update(['position' => 'C']);
+        if ($scenario === 'opponent') $this->pickerGoalie->update(['team_abbrev' => 'MTL']);
+        $this->actingAs($this->pickerAdmin)->postJson("/games/{$id}/starting-goalie", [
+            'team_abbrev' => $team, 'player_id' => $scenario === 'missing player' ? 999999 : $this->pickerGoalie->id,
+        ])->assertStatus($scenario === 'missing game' ? 404 : 422);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+    })->with(['wrong team', 'opponent', 'skater', 'missing player', 'missing game']);
+
+    it('persists a starter and returns the same manual choice in public reads', function (): void {
+        createGoalieObservation([
+            'nhl_game_id' => 2026010098, 'nhl_player_id' => 8489912, 'provider' => 'nhl_boxscore', 'status' => 'confirmed',
+        ]);
+        $this->actingAs($this->pickerAdmin)->postJson('/games/2026010098/starting-goalie', [
+            'team_abbrev' => 'TOR', 'player_id' => $this->pickerGoalie->id,
+        ])->assertOk()->assertJsonPath('starting_goalie.nhl_player_id', 8489911)
+            ->assertJsonPath('starting_goalie.selection_source', 'manual_starter_override');
+        $manual = NhlStartingGoalieObservation::query()->where('provider', 'manual')->firstOrFail();
+        expect($manual->raw_evidence['submitted_by_user_id'])->toBe($this->pickerAdmin->id);
+        $this->getJson('/starting-goalies/payload?date=2026-09-23&nhl_game_id=2026010098')
+            ->assertOk()->assertJsonPath('starting_goalies.0.nhl_player_id', 8489911);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 2);
+        Http::assertNothingSent();
+    });
+
+    it('allows a missing NHL identity without silently selecting another goalie', function (): void {
+        $this->pickerGoalie->update(['nhl_id' => null]);
+        $this->actingAs($this->pickerAdmin)->postJson('/games/2026010098/starting-goalie', [
+            'team_abbrev' => 'TOR', 'player_id' => $this->pickerGoalie->id,
+        ])->assertOk()->assertJsonPath('starting_goalie.nhl_player_id', null)
+            ->assertJsonPath('starting_goalie.name', 'Prospect Goalie');
+    });
+
+    it('validates list targets and preserves repeated selections as scoped history', function (): void {
+        $this->actingAs($this->pickerAdmin)->getJson('/games/2026010098/goalies?team_abbrev=LAK')->assertUnprocessable();
+        $this->getJson('/games/999/goalies?team_abbrev=TOR')->assertNotFound();
+        $next = Player::query()->create(['full_name' => 'Next Starter', 'team_abbrev' => 'TOR', 'is_goalie' => true, 'nhl_id' => 8489913]);
+        foreach ([$this->pickerGoalie, $next] as $player) {
+            $this->postJson('/games/2026010098/starting-goalie', ['team_abbrev' => 'TOR', 'player_id' => $player->id])->assertOk();
+        }
+        $selector = app(\App\Services\NhlStartingGoalieSelector::class);
+        expect($selector->select(2026010098, 'TOR')['nhl_player_id'])->toBe(8489913);
+        $this->assertDatabaseCount('nhl_starting_goalie_observations', 2);
+        expect($selector->rankedObservations(today())->where('nhl_game_id', 2026010099))->toBeEmpty();
+    });
+});
+
 beforeEach(function (): void {
     Cache::flush();
     Http::fake();
@@ -1088,6 +1172,66 @@ it('recognizes the Ducks morning skate caption as context for the scheduled King
         $game,
         'ANA'
     ))->toBeTrue();
+});
+
+it('anchors relative lineup wording to publication rather than import time', function (string $text, ?string $publishedAt, bool $accepted): void {
+    expect(NhlLineupObservation::relativeDateMatches(
+        $text, $publishedAt === null ? null : Carbon::parse($publishedAt), '2026-09-23'
+    ))->toBe($accepted);
+})->with([
+    'yesterday tonight' => ['Tonight’s Kings lines', '2026-09-22T18:00:00-04:00', false],
+    'today tonight' => ['Tonight’s Kings lines', '2026-09-23T18:00:00-04:00', true],
+    'yesterday today' => ['Today’s Kings lines', '2026-09-22T18:00:00-04:00', false],
+    'yesterday tomorrow' => ['Tomorrow’s Kings lines', '2026-09-22T18:00:00-04:00', true],
+    'today tomorrow' => ['Tomorrow’s Kings lines', '2026-09-23T18:00:00-04:00', false],
+    'UTC next day is still yesterday locally' => ['Tonight’s lines', '2026-09-23T02:00:00Z', false],
+    'Toronto midnight' => ['Tonight’s lines', '2026-09-23T04:00:00Z', true],
+    'missing publication time' => ['Tonight’s lines', null, false],
+    'explicit game date is not publication date' => ['9/23 vs LAK', '2026-09-22T18:00:00-04:00', true],
+]);
+
+it('rejects previous night X lineups but accepts tomorrow and explicit next game reports', function (string $caption, bool $accepted): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026010035, 'season_id' => '20262027', 'game_type' => 1,
+        'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-23 23:00:00', 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $response = xLineupResponse([lineupCandidate('date_reporter', 'https://x.com/date_reporter/status/126')]);
+    $response['data'][0]['created_at'] = '2026-09-22T18:00:00-04:00';
+    $response['data'][0]['text'] = str_replace("Tonight's lineup", $caption, $response['data'][0]['text']);
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    app(NhlAnticipatedLineupImporter::class)->importFromX($game, 'TOR', 10);
+
+    $this->assertDatabaseCount('nhl_lineup_observations', $accepted ? 1 : 0);
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026010035')
+        ->assertOk()->assertJsonCount($accepted ? 1 : 0, 'anticipated_lineups');
+    $this->travelBack();
+})->with([
+    ['Tonight’s lines', false], ['Tomorrow’s lines', true], ['September 23 vs MTL', true],
+]);
+
+it('withholds historical wrong date lineups and their derived goalie evidence without deleting history', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    $current = createCurrentAnticipatedLineup();
+    $current->observation->update(['post_text' => 'Tonight’s lines', 'provider_published_at' => now()->subDay()]);
+    createGoalieObservation([
+        'nhl_game_id' => $current->nhl_game_id, 'provider' => 'public_lineup',
+        'raw_evidence' => ['lineup_observation_id' => $current->nhl_lineup_observation_id],
+    ]);
+
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=' . $current->nhl_game_id)
+        ->assertOk()->assertJsonCount(0, 'anticipated_lineups');
+    expect(app(\App\Services\NhlStartingGoalieSelector::class)->rankedObservations(today()))->toBeEmpty();
+    $this->assertDatabaseHas('nhl_lineup_observations', ['id' => $current->nhl_lineup_observation_id]);
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 1);
+
+    $current->observation->update(['raw_evidence' => ['manual_override' => true]]);
+    $this->getJson('/api/nhl-anticipated-lineups?nhl_game_id=' . $current->nhl_game_id)
+        ->assertOk()->assertJsonCount(1, 'anticipated_lineups');
+    $this->travelBack();
 });
 
 it('imports a preseason X lineup with an unresolved first line player but not a regular season one', function (int $gameType): void {
@@ -2388,6 +2532,7 @@ it('rejects timeline posts older than the day before the target game', function 
     ]);
     $eligible['data'][0]['author_id'] = 'window-source';
     $eligible['data'][0]['created_at'] = '2026-09-19T04:00:00Z';
+    $eligible['data'][0]['text'] = str_replace("Tonight's", "Tomorrow's", $eligible['data'][0]['text']);
     Http::fake(['api.x.com/*' => Http::sequence()->push($old)->push($eligible)]);
 
     $candidates = app(\App\Services\XNhlLineupDiscovery::class)->discover($game, 'TOR');
@@ -2736,9 +2881,11 @@ it('derives an expected starting goalie observation from a newly observed G1', f
     ]);
     $candidate = lineupCandidate('goalie_reporter', 'https://x.com/goalie_reporter/status/1');
     $candidate['published_at'] = '2026-09-19T19:00:00-04:00';
+    $response = xLineupResponse([$candidate]);
+    $response['data'][0]['text'] = str_replace("Tonight's", "Tomorrow's", $response['data'][0]['text']);
     Http::fake([
         'api-web.nhle.com/*' => Http::response([]),
-        'api.x.com/*' => Http::response(xLineupResponse([$candidate])),
+        'api.x.com/*' => Http::response($response),
     ]);
 
     app(NhlAnticipatedLineupImporter::class)->import($game, 'TOR', 10);

@@ -72,6 +72,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         ->name('games.show');
     Route::post('/games/{nhlGameId}/lineup', [NhlGamesController::class, 'storeLineup'])
         ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.store');
+    Route::get('/games/{nhlGameId}/goalies', [NhlGamesController::class, 'goalieOptions'])
+        ->middleware('auth')->whereNumber('nhlGameId')->name('games.goalies');
+    Route::post('/games/{nhlGameId}/starting-goalie', [NhlGamesController::class, 'storeGoalie'])
+        ->middleware('auth')->whereNumber('nhlGameId')->name('games.starting-goalie.store');
     Route::post('/games/{nhlGameId}/lineup/preview', [NhlGamesController::class, 'previewLineup'])
         ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.preview');
     Route::post('/games/{nhlGameId}/lineup/refresh', [NhlGamesController::class, 'refreshLineup'])

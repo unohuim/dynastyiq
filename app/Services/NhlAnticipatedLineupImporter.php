@@ -428,6 +428,7 @@ class NhlAnticipatedLineupImporter
             'source_url' => (string) $candidate['post_url'],
             'raw_evidence' => [
                 'lineup_observation_id' => $observation->id,
+                'manual_override' => (bool) ($candidate['manual_override'] ?? false),
                 'source_id' => $observation->source_id,
                 'line_key' => 'G',
                 'slot_index' => 1,
@@ -456,7 +457,8 @@ class NhlAnticipatedLineupImporter
                     ->where('observed_at', '>=', $eligibleFrom)))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
-            $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null);
+            $observation->isEligibleForGameDate((string) $gameDate)
+            && $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null);
         $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
             (bool) data_get($observation->raw_evidence, 'manual_override', false)) ?? $observations->first();
         $defense = $forward;

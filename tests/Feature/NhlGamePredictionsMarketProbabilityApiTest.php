@@ -217,6 +217,111 @@ it('requires a scoped API client for game prediction market probabilities', func
         ->assertStatus(Response::HTTP_UNAUTHORIZED);
 });
 
+it('uses manual G1 and includes unprojected G2 in the dressed prediction roster', function (bool $missingPreseasonOpponent): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 12:00:00 America/Toronto'));
+    Http::fake();
+    $token = ($this->seedPredictionInputs)();
+    DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update([
+        'game_type' => $missingPreseasonOpponent ? 1 : 2,
+        'start_time_utc' => '2026-10-10 23:00:00',
+    ]);
+    DB::table('nhl_teams')->insert([
+        ['nhl_id' => 1, 'abbrev' => 'AWY'], ['nhl_id' => 2, 'abbrev' => 'HOM'],
+    ]);
+    $names = [];
+    foreach (range(1, 18) as $index) {
+        $name = 'Skater ' . $index;
+        $names[] = $name;
+        \App\Models\Player::query()->create([
+            'nhl_id' => 8483000 + $index, 'full_name' => $name, 'first_name' => 'Skater',
+            'last_name' => (string) $index, 'team_abbrev' => 'AWY', 'position' => $index <= 12 ? 'C' : 'D',
+        ]);
+    }
+    foreach ([9001 => 'Starter Test', 9003 => 'Backup Test'] as $id => $name) {
+        \App\Models\Player::query()->create([
+            'nhl_id' => $id, 'full_name' => $name, 'first_name' => explode(' ', $name)[0],
+            'last_name' => 'Test', 'team_abbrev' => 'AWY', 'position' => 'G',
+        ]);
+    }
+    $text = collect(array_chunk(array_slice($names, 0, 12), 3))->map(fn ($line): string => implode(' - ', $line))->implode("\n")
+        . "\nDefense\n" . collect(array_chunk(array_slice($names, 12), 2))->map(fn ($line): string => implode(' - ', $line))->implode("\n")
+        . "\nGoalies\nStarter Test\nBackup Test";
+    $user = \App\Models\User::factory()->create();
+    $role = \App\Models\Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
+    $user->roles()->attach($role->id, ['organization_id' => null]);
+    $this->actingAs($user)->postJson('/games/2026020001/lineup', ['team_abbrev' => 'AWY', 'text' => $text])->assertOk();
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', [
+        'nhl_game_id' => 2026020001, 'team_abbrev' => 'AWY', 'nhl_player_id' => 9001,
+        'provider' => 'public_lineup', 'status' => 'expected',
+    ]);
+    $this->assertDatabaseHas('nhl_lineup_observation_players', [
+        'nhl_player_id' => 9003, 'line_key' => 'G', 'slot_index' => 2,
+    ]);
+    $this->assertDatabaseMissing('nhl_goalie_season_projections', ['goalie_player_id' => 9003]);
+    if (! $missingPreseasonOpponent) {
+        $this->postJson('/games/2026020001/starting-goalie', [
+            'team_abbrev' => 'AWY', 'player_id' => \App\Models\Player::query()->where('nhl_id', 9001)->value('id'),
+        ])->assertOk()->assertJsonPath('starting_goalie.selection_source', 'manual_starter_override');
+    }
+    // Even newer generic expectations cannot replace the accepted manual G1.
+    foreach ([2026020001, 2026020002] as $gameId) {
+        \App\Models\NhlStartingGoalieObservation::query()->create([
+            'nhl_game_id' => $gameId, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
+            'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => $gameId === 2026020001 ? 9004 : 9005,
+            'player_name' => 'Other Goalie ' . $gameId, 'provider' => 'rotowire', 'status' => 'expected',
+            'fetched_at' => now()->addMinute(), 'raw_evidence' => [],
+        ]);
+    }
+    expect(app(\App\Services\NhlStartingGoalieSelector::class)->select(2026020002, 'AWY')['nhl_player_id'])->toBe(9005);
+    $simulator = \Mockery::mock(NhlProjectedTeamMatchupSimulator::class);
+    if ($missingPreseasonOpponent) {
+        $simulator->shouldNotReceive('simulateWithRosters');
+        $simulator->shouldNotReceive('simulate');
+    } else {
+        $simulator->shouldReceive('simulateWithRosters')->once()
+            ->withArgs(fn (...$args): bool => $args[7] === 9001 && count($args[9]) === 18 && ! in_array(9003, $args[9], true))
+            ->andReturn(['is_available' => true, 'sides' => [
+                ['offense_team' => 'AWY', 'defense_team' => 'HOM', 'summary' => [
+                    'total_goalie_adjusted_xgf_per_game' => 2.4, 'total_goalie_adjustment_per_game' => 0.0,
+                ], 'roster' => []],
+                ['offense_team' => 'HOM', 'defense_team' => 'AWY', 'summary' => [
+                    'total_goalie_adjusted_xgf_per_game' => 3.2, 'total_goalie_adjustment_per_game' => 0.0,
+                ], 'roster' => []],
+            ]]);
+    }
+    app()->instance(NhlProjectedTeamMatchupSimulator::class, $simulator);
+    $response = $this->withHeader('Authorization', 'Bearer ' . $token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'home_goalie_id' => 9002,
+    ]))->assertOk()->assertJsonPath('prediction_available', ! $missingPreseasonOpponent)
+        ->assertJsonPath('goalies.away.nhl_player_id', 9001)
+        ->assertJsonCount(18, 'teams.away.roster')->assertJsonCount(20, 'teams.away.dressed_roster');
+    $goalies = collect($response->json('teams.away.dressed_roster'))->where('lineup_role', 'goalie');
+    if (! $missingPreseasonOpponent) {
+        $response->assertJsonPath('goalies.away.selection_source', 'manual_starter_override');
+    }
+    expect($goalies)->toHaveCount(2)
+        ->and($goalies->firstWhere('nhl_player_id', 9001)['is_starter'])->toBeTrue()
+        ->and($goalies->firstWhere('nhl_player_id', 9003)['is_starter'])->toBeFalse()
+        ->and($goalies->firstWhere('nhl_player_id', 9003)['slot_index'])->toBe(2);
+    $this->travelBack();
+})->with([false, true]);
+
+it('reconciles the dressed goalie slots after an explicit starter selection', function (int $chosen, int $backup): void {
+    $method = new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'withDressedRoster');
+    $result = $method->invoke(app(\App\Services\NhlGamePredictionPayload::class), ['roster' => []], ['players' => [
+        ['nhl_player_id' => 11, 'player_name' => 'First Goalie', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 1],
+        ['nhl_player_id' => 12, 'player_name' => 'Second Goalie', 'lineup_role' => 'goalie', 'line_key' => 'G', 'slot_index' => 2],
+    ]], ['nhl_player_id' => $chosen, 'name' => 'Chosen Goalie', 'selection_source' => 'manual_starter_override']);
+    expect($result['dressed_roster'])->toHaveCount(2)
+        ->and($result['dressed_roster'][0]['nhl_player_id'])->toBe($chosen)
+        ->and($result['dressed_roster'][0]['is_starter'])->toBeTrue()
+        ->and($result['dressed_roster'][1]['nhl_player_id'])->toBe($backup)
+        ->and($result['dressed_roster'][1]['slot_index'])->toBe(2)
+        ->and($result['dressed_roster'][1]['is_starter'])->toBeFalse();
+})->with(['promote backup' => [12, 11], 'select different goalie' => [13, 12]]);
+
 it('rejects API clients without the NHL stats scope', function (): void {
     ($this->bindMatchupSimulator)();
     $token = ($this->createNhlStatsApiToken)(['nhl-reference:read']);
