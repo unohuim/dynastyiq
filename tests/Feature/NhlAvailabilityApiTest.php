@@ -2932,12 +2932,12 @@ describe('public game detail roster previews', function (): void {
             ->has('game.home.predictions', 18));
     });
 
-    it('uses same-model bucket rates and game minutes without goalie projections', function (int $gameType, float $sat, float $sog, float $goals): void {
+    it('uses same-model bucket rates and game minutes without goalie projections', function (int $gameType, float $sat, float $sog, float $goals, ?string $evaluationSeason, bool $withToi = true): void {
         NhlGame::query()->whereKey(2026010900)->update(['game_type' => $gameType]);
         $model = \App\Models\NhlModelRun::query()->create([
             'run_key' => 'detail-model', 'name' => 'Detail model', 'model_family' => 'sat',
             'workflow_stage' => 'training', 'model_version' => 'test', 'status' => 'complete',
-            'target_season_id' => '20262027', 'train_season_ids' => ['20252026'],
+            'target_season_id' => $evaluationSeason, 'train_season_ids' => ['20232024', '20242025'],
             'metrics' => [
                 'rate_projections_completed_at' => '2026-09-23T10:00:00Z',
                 'toi_projections_completed_at' => '2026-09-23T10:00:00Z',
@@ -2948,15 +2948,23 @@ describe('public game detail roster previews', function (): void {
         DB::table('nhl_expected_goals_models')->insert([
             'model_run_id' => $model->id, 'name' => 'Detail goal model', 'version' => 'test', 'prediction_target' => 'goal',
         ]);
-        $identity = ['model_run_id' => $model->id, 'source_season_ids' => '["20252026"]',
+        $identity = ['model_run_id' => $model->id, 'source_season_ids' => '["20232024","20242025"]',
             'profile_type' => 'skater_offense', 'entity_key' => 'player:8489001', 'entity_id' => 8489001];
         DB::table('nhl_sat_model_entity_rate_projection_buckets')->insert([
-            ...$identity, 'matched_bucket_key' => 'test', 'projected_xsat_per_60' => 12,
+            ...$identity, 'matched_bucket_key' => 'test', 'projected_xsat_per_60' => 12, 'source_xsat_per_60' => 99,
             'sat_probability' => 0.5, 'goal_probability' => 0.1,
         ]);
-        DB::table('nhl_sat_model_entity_toi_projections')->insert([
-            ...$identity, 'target_season_id' => '20262027', 'projected_toi_per_game_seconds' => 1080,
-        ]);
+        if ($withToi) {
+            DB::table('nhl_season_stats')->insert([
+                'season_id' => '20252026', 'nhl_player_id' => 8489001, 'nhl_team_id' => 10,
+                'game_type' => 2, 'gp' => 10, 'toi' => 3000,
+            ]);
+            DB::table('nhl_sat_model_entity_toi_projections')->insert([
+                ...$identity, 'target_season_id' => $evaluationSeason, 'projected_toi_per_game_seconds' => 1080,
+            ]);
+        } else {
+            $model->update(['metrics' => collect($model->metrics)->reject(fn ($value, string $key): bool => str_starts_with($key, 'toi_'))->all()]);
+        }
         $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
             ->where('game.home.predictions.0.projection_source', 'sat_model')
             ->where('game.home.predictions.0.model_run_id', $model->id)
@@ -2964,7 +2972,36 @@ describe('public game detail roster previews', function (): void {
             ->where('game.home.predictions.0.projected_sog', fn ($value): bool => abs($value - $sog) < 0.0001)
             ->where('game.home.predictions.0.projected_goals', fn ($value): bool => abs($value - $goals) < 0.0001));
         $this->assertDatabaseCount('nhl_goalie_season_projections', 0);
-    })->with([[1, 4.0, 2.0, 0.2], [2, 3.6, 1.8, 0.18]]);
+    })->with([
+        'same-season preseason' => [1, 3.6, 1.8, 0.18, '20262027'],
+        'same-season regular' => [2, 3.6, 1.8, 0.18, '20262027'],
+        'earlier evaluation season preseason' => [1, 3.6, 1.8, 0.18, '20252026'],
+        'earlier evaluation season regular' => [2, 3.6, 1.8, 0.18, '20252026'],
+        'no evaluation season' => [2, 3.6, 1.8, 0.18, null],
+        'rate remains usable without any model TOI' => [2, 4.0, 2.0, 0.2, '20252026', false],
+    ]);
+
+    it('uses prior-season TOI then independent linemates then line estimates', function (): void {
+        foreach ([8489001 => 600, 8489002 => 1200] as $id => $seconds) {
+            DB::table('nhl_season_stats')->insert([
+                'season_id' => '20252026', 'nhl_player_id' => $id, 'nhl_team_id' => 10,
+                'game_type' => 2, 'gp' => 10, 'toi' => $seconds * 10,
+            ]);
+        }
+        // Wrong-season values must not enter the previous regular-season average.
+        DB::table('nhl_season_stats')->insert([
+            'season_id' => '20242025', 'nhl_player_id' => 8489003, 'nhl_team_id' => 10,
+            'game_type' => 2, 'gp' => 10, 'toi' => 15000,
+        ]);
+        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('game.home.predictions.0.game_projected_toi_seconds', 600)
+            ->where('game.home.predictions.0.toi_source', 'previous_season')
+            ->where('game.home.predictions.1.game_projected_toi_seconds', 1200)
+            ->where('game.home.predictions.2.game_projected_toi_seconds', 900)
+            ->where('game.home.predictions.2.toi_source', 'linemate_average')
+            ->where('game.home.predictions.3.game_projected_toi_seconds', 990)
+            ->where('game.home.predictions.3.toi_source', 'line_estimate'));
+    });
 });
 
 it('returns not found for an unknown public game', function (): void {

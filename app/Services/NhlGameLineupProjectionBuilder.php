@@ -106,14 +106,16 @@ final class NhlGameLineupProjectionBuilder
                 'projection_source' => null,
                 'game_projected_toi_seconds' => $player['baseline_toi_seconds'] ?? null,
             ])->values()->all();
-        if ($modelId !== null) {
-            $predictions = $this->applySatModel($predictions, $modelId, $targetSeasonId, $gameType);
-        }
+        $predictions = $this->applySatModel($predictions, $modelId, $targetSeasonId, $gameType);
 
         return ['display_lineup' => $lineup, 'is_projected' => $projected, 'predictions' => $predictions];
     }
 
-    /** Select the newest completed model with both rate and opportunity outputs for this season. */
+    /**
+     * Select the newest completed model with usable rate outputs; TOI is optional.
+     * The request season is retained for caller compatibility, not model eligibility:
+     * a model run's target_season_id identifies its evaluation season.
+     */
     public function latestUsableSatModelId(string $targetSeasonId): ?int
     {
         foreach (['nhl_model_runs', 'nhl_expected_goals_models', 'nhl_sat_model_entity_rate_projection_buckets', 'nhl_sat_model_entity_toi_projections'] as $table) {
@@ -122,10 +124,10 @@ final class NhlGameLineupProjectionBuilder
             }
         }
         $runs = NhlModelRun::query()->where('model_family', 'sat')->where('status', 'complete')
-            ->where('target_season_id', $targetSeasonId)->orderByDesc('created_at')->orderByDesc('id')->get();
+            ->orderByDesc('created_at')->orderByDesc('id')->get();
         foreach ($runs as $run) {
             $metrics = $run->metrics ?? [];
-            foreach (['rate', 'toi'] as $stage) {
+            foreach (['rate'] as $stage) {
                 $done = $metrics[$stage . '_projections_completed_at'] ?? null;
                 $started = $metrics[$stage . '_projections_started_at'] ?? null;
                 if (! $done || ($started && strtotime($done) < strtotime($started))
@@ -140,7 +142,7 @@ final class NhlGameLineupProjectionBuilder
                 ->where('prediction_target', 'goal')->exists()) {
                 continue;
             }
-            if ($this->satPlayerInputs((int) $run->id, $targetSeasonId)->isNotEmpty()) {
+            if ($this->satPlayerInputs((int) $run->id)->isNotEmpty()) {
                 return (int) $run->id;
             }
         }
@@ -154,30 +156,71 @@ final class NhlGameLineupProjectionBuilder
      * @param array<int,array<string,mixed>> $players
      * @return array<int,array<string,mixed>>
      */
-    public function applySatModel(array $players, int $modelId, string $targetSeasonId, int $gameType): array
+    public function applySatModel(array $players, ?int $modelId, string $targetSeasonId, int $gameType): array
     {
-        $inputs = $this->satPlayerInputs($modelId, $targetSeasonId);
-        $rows = collect($players)->map(function (array $player) use ($inputs, $modelId, $gameType): array {
+        $inputs = $modelId === null ? collect() : $this->satPlayerInputs($modelId);
+        $modelToi = $modelId === null ? collect() : DB::table('nhl_sat_model_entity_toi_projections')
+            ->where('model_run_id', $modelId)->where('profile_type', 'skater_offense')->where('game_type', 2)
+            ->where('projected_toi_per_game_seconds', '>', 0)
+            ->pluck('projected_toi_per_game_seconds', 'entity_id');
+        $previousYear = (int) substr($targetSeasonId, 0, 4) - 1;
+        $previousSeason = (string) $previousYear . ($previousYear + 1);
+        $nhlIdFor = fn (array $player): ?int => isset($player['nhl_player_id']) ? (int) $player['nhl_player_id']
+            : (array_key_exists('nhl_player_id', $player) ? null : ($player['player_id'] ?? null));
+        $history = DB::table('nhl_season_stats')->where('season_id', $previousSeason)->where('game_type', 2)
+            ->whereIn('nhl_player_id', collect($players)->map($nhlIdFor)->filter()->all())
+            ->where('gp', '>', 0)->where('toi', '>', 0)
+            ->selectRaw('nhl_player_id, SUM(toi) * 1.0 / SUM(gp) AS seconds')->groupBy('nhl_player_id')
+            ->pluck('seconds', 'nhl_player_id');
+        // Resolve independent anchors first so inferred linemates never feed each other.
+        $anchors = collect($players)->map(function (array $player) use ($nhlIdFor, $modelToi, $history): array {
+            $id = $nhlIdFor($player);
+            $modelSeconds = $id === null ? 0.0 : (float) $modelToi->get($id, 0);
+            $historicalSeconds = $id === null ? 0.0 : (float) $history->get($id, 0);
+
+            return ['line_key' => $player['line_key'] ?? null,
+                'seconds' => $modelSeconds > 0 ? $modelSeconds : $historicalSeconds,
+                'source' => $modelSeconds > 0 ? 'sat_model' : 'previous_season'];
+        });
+        $rows = collect($players)->map(function (array $player, int $index) use ($inputs, $modelId, $modelToi, $anchors): array {
             $nhlId = array_key_exists('nhl_player_id', $player) ? $player['nhl_player_id'] : ($player['player_id'] ?? null);
             $input = $nhlId === null ? null : $inputs->get((int) $nhlId);
+            $anchor = $anchors->get($index);
+            $seconds = (float) $anchor['seconds'];
+            $source = $anchor['source'];
+            if ($seconds <= 0) {
+                $peers = $anchors->filter(fn (array $peer, int $key): bool => $key !== $index
+                    && $anchor['line_key'] !== null && $peer['line_key'] === $anchor['line_key'] && $peer['seconds'] > 0);
+                $seconds = (float) $peers->avg('seconds');
+                $source = 'linemate_average';
+            }
+            if ($seconds <= 0) {
+                $seconds = match ($player['line_key'] ?? null) {
+                    'F1' => 1200.0, 'F2' => 990.0, 'F3' => 810.0, 'F4' => 510.0,
+                    'D1' => 1440.0, 'D2' => 1200.0, 'D3' => 960.0,
+                    default => 900.0,
+                };
+                $source = 'line_estimate';
+            }
+            $oldSeconds = (float) ($player['game_projected_toi_seconds'] ?? 0);
+            foreach (['projected_goals', 'adjusted_xgf_per_game', 'projected_assists', 'projected_sog', 'projected_sat'] as $field) {
+                if ($oldSeconds > 0 && isset($player[$field])) {
+                    $player[$field] = round((float) $player[$field] * $seconds / $oldSeconds, 4);
+                }
+            }
+            $player['toi_source'] = $source;
+            $player['model_projected_toi_per_game_seconds'] = $nhlId !== null && $modelToi->has($nhlId)
+                ? (float) $modelToi->get($nhlId) : null;
+            $player['game_projected_toi_seconds'] = (int) round($seconds);
+            $player['game_projected_toi'] = sprintf('%d:%02d', intdiv((int) round($seconds), 60), (int) round($seconds) % 60);
             if ($input === null || in_array($player['projection_source'] ?? null, ['nhle_non_nhl_history', 'line_peer_average'], true)) {
                 return $player;
             }
-            $seconds = (float) $input->toi_seconds;
-            if ($gameType === 1) {
-                $seconds = match ($player['line_key'] ?? null) {
-                    'F1' => 1200.0, 'F2' => 990.0, 'F3' => 810.0, 'F4' => 510.0,
-                    default => (float) ($player['game_projected_toi_seconds'] ?? $seconds),
-                };
-            }
             $player['projection_source'] = 'sat_model';
             $player['model_run_id'] = $modelId;
-            $player['model_projected_toi_per_game_seconds'] = (float) $input->toi_seconds;
             $player['projected_sat_per_60'] = (float) $input->sat_rate;
             $player['projected_sog_per_60'] = (float) $input->sog_rate;
             $player['projected_goals_per_60'] = (float) $input->goal_rate;
-            $player['game_projected_toi_seconds'] = (int) round($seconds);
-            $player['game_projected_toi'] = sprintf('%d:%02d', intdiv((int) round($seconds), 60), (int) round($seconds) % 60);
             $player['projected_sat'] = round((float) $input->sat_rate * $seconds / 3600, 3);
             $player['projected_sog'] = round((float) $input->sog_rate * $seconds / 3600, 3);
             $player['projected_goals'] = round((float) $input->goal_rate * $seconds / 3600, 4);
@@ -189,21 +232,14 @@ final class NhlGameLineupProjectionBuilder
         return $this->applyFinalPeerAverages($rows)->all();
     }
 
-    /** Join same-run, same-entity buckets and standalone TOI; never sum different profile types. */
-    private function satPlayerInputs(int $modelId, string $targetSeasonId): Collection
+    /** Read same-run rate buckets independently of optional TOI rows. */
+    private function satPlayerInputs(int $modelId): Collection
     {
         return DB::table('nhl_sat_model_entity_rate_projection_buckets as rates')
-            ->join('nhl_sat_model_entity_toi_projections as toi', function ($join): void {
-                $join->on('toi.model_run_id', '=', 'rates.model_run_id')
-                    ->on('toi.profile_type', '=', 'rates.profile_type')
-                    ->on('toi.entity_key', '=', 'rates.entity_key')
-                    ->on('toi.entity_id', '=', 'rates.entity_id');
-            })
             ->where('rates.model_run_id', $modelId)->where('rates.profile_type', 'skater_offense')
-            ->where('rates.game_type', 2)->where('toi.game_type', 2)
-            ->where('toi.target_season_id', $targetSeasonId)->whereNotNull('rates.entity_id')
-            ->where('toi.projected_toi_per_game_seconds', '>', 0)
-            ->selectRaw('rates.entity_id, MAX(toi.projected_toi_per_game_seconds) AS toi_seconds')
+            ->where('rates.game_type', 2)
+            ->whereNotNull('rates.entity_id')
+            ->select('rates.entity_id')
             ->selectRaw('SUM(rates.projected_xsat_per_60) AS sat_rate')
             ->selectRaw('SUM(rates.projected_xsat_per_60 * rates.sat_probability) AS sog_rate')
             ->selectRaw('SUM(rates.projected_xsat_per_60 * rates.sat_probability * rates.goal_probability) AS goal_rate')

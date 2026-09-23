@@ -3572,8 +3572,10 @@ WHERE target_season_id = '20262027';
 **Purpose:**
 Simulate team-vs-team projected skater offense and assemble partner predictions. Missing preseason roster evidence triggers a bounded NHL gamecenter lookup through the existing official-lineup importer so complete official rosters are persisted and reused before prediction availability is decided.
 
-Explicit game rosters can use the newest usable target-season SAT model's paired
-bucket SAT/60 and standalone TOI/GP outputs. Trained bucket probabilities convert
+Explicit game rosters can use the newest usable SAT model's
+bucket SAT/60 regardless of its evaluation season. TOI uses that model, previous-season
+average, independent linemate averages, then line estimates; missing model TOI does
+not discard rates. Trained bucket probabilities convert
 attempts to SOG and goals; API rows expose the applied model and rates. Rookie
 NHLe, depth-player averages, and missing-model fallbacks remain available. See
 `docs/architecture/stats/NhlProjectedTeamMatchups.yaml` for the governing rules.

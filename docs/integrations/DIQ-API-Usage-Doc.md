@@ -778,15 +778,17 @@ and do not change this API's `prediction_available` rules. SAT, SOG and G are
 shown per 60 and per game; unavailable inputs render as dashes.
 
 For complete official or reported rosters, DynastyIQ selects the newest created
-completed SAT model for `target_season_id` with successfully completed **both**
-Build /60 and Build TOI outputs, a run-scoped goal model, and usable paired skater
-rows. A newer unfinished model does not displace a usable one. Selection is
-automatic; no additional API parameter is required.
+completed SAT model with successfully completed Build /60 outputs, a run-scoped
+goal model, and usable skater rate rows. Model TOI is optional; missing TOI does
+not discard usable SAT rates. A newer unfinished model does not displace a usable one. Selection is
+automatic; no additional API parameter is required. The SAT model's stored
+`target_season_id` is its evaluation/test season and does not have to match the
+game's season. Request-season filtering still applies to legacy season projections.
 
 `inputs.sat_model_run_id` identifies the selected model, or is null when none
 qualifies. Selection does not mean every skater used that model: inspect each
 roster row's `projection_source` and `model_run_id` for actual application.
-Players without usable paired outputs keep their existing fallback. Projected
+Players without usable rate outputs keep their production fallback. Projected
 rosters without an official or reported lineup retain the existing simulator
 path. Legacy simulator and goalie projection prerequisites still apply.
 
@@ -796,14 +798,19 @@ For a model-backed skater, each bucket contributes:
 - SOG: attempts multiplied by the bucket's trained attempt-to-SOG probability.
 - Goals: expected SOG multiplied by its trained SOG-to-goal probability.
 
-The contributions are summed across buckets. Both rates and TOI come from the
-same model and player. Diagnostic `projected_xsog_per_60` and
+The contributions are summed across buckets. Model-supplied rates and TOI come
+from the same model and player; unavailable model TOI uses the ladder below.
+Diagnostic `projected_xsog_per_60` and
 `projected_xg_per_60` storage columns are not used as prediction inputs.
-Regular/postseason model-backed skaters use model TOI/GP. Preseason forwards
-use line midpoints: F1 20, F2 16.5, F3 13.5, F4 8.5 minutes; defense retains
-existing game TOI. Assists, NHLe rookies, and goalie adjustments retain their
-existing treatment. Eligible unresolved depth players receive their linemates'
-averages after model application.
+For all game types, TOI uses the selected model's projected TOI/GP first, then
+the player's previous NHL regular-season average (total TOI divided by GP), then
+the average of available same-line teammates (the other two forwards or defensive
+partner). Only model or historical teammate TOI can supply that average, avoiding
+circular estimates. If no anchor exists, estimates are F1 20, F2 16.5, F3 13.5,
+F4 8.5, D1 24, D2 20, D3 16 minutes. Positive TOI is required at each step.
+This also applies without a usable SAT model and replaces the preseason override.
+Fallback production is rescaled to the chosen TOI; rookie NHLe and depth-peer
+production rules remain intact. Goalie adjustments are unchanged.
 
 When `inputs.*_lineup_source` is `nhl_boxscore` or `anticipated_lineup`,
 DynastyIQ builds a game-specific input for every resolved skater. For players
@@ -812,9 +819,8 @@ using the existing fallback rather than the SAT model:
 - The reported forward or defense pair determines the player's base game role.
 - Explicit PP1, PP2, PK1, and PK2 evidence adjusts that role. Null special-team
   values mean the source did not report the unit and are not inferred.
-- The role target is blended with the player's season TOI projection. A player
-  reported in a smaller role therefore receives less game TOI than their normal
-  season rate, while a promoted player receives more.
+- Final game TOI follows the model, previous-season, linemate, then line-estimate
+  ladder above, rather than blending line estimates into an available model value.
 - G, A, and SOG rates are scaled to the resulting game TOI.
 - A player with fewer than 25 career NHL regular-season games uses their prior
   season non-NHL production and the versioned NHLe league factor when those
@@ -861,7 +867,8 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `nhl_games_played` | integer | Career NHL regular-season GP used for the 25-game experience threshold. |
 | `projection_source` | string | Player-rate source: `sat_model`, `nhl_projection`, `nhle_non_nhl_history`, `replacement_level`, or `line_peer_average`. |
 | `model_run_id` | integer | Applied SAT model id; present on model-backed rows. |
-| `model_projected_toi_per_game_seconds` | number | Same-model TOI/GP before any preseason line override; model-backed rows only. |
+| `model_projected_toi_per_game_seconds` | number/null | Selected model's TOI/GP; null when unavailable. |
+| `toi_source` | string | Chosen TOI source: `sat_model`, `previous_season`, `linemate_average`, or `line_estimate`. |
 | `projected_sat_per_60` | number | Sum of model bucket SAT/60; model-backed rows only. |
 | `projected_sog_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG probability; model-backed rows only. |
 | `projected_goals_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG and SOG-to-goal probabilities; model-backed rows only. |

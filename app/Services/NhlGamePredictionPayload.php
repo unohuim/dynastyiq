@@ -168,13 +168,11 @@ class NhlGamePredictionPayload
 
         $awaySide = $result['sides'][0] ?? [];
         $homeSide = $result['sides'][1] ?? [];
-        if ($satModelId !== null) {
-            if ($awayGamePlayers !== null) {
-                $awayGamePlayers = $this->lineupProjections->applySatModel($awayGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
-            }
-            if ($homeGamePlayers !== null) {
-                $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
-            }
+        if ($awayGamePlayers !== null) {
+            $awayGamePlayers = $this->lineupProjections->applySatModel($awayGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+        }
+        if ($homeGamePlayers !== null) {
+            $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
         }
         $awaySide = $this->applyGameLineupProjection($awaySide, $awayGamePlayers);
         $homeSide = $this->applyGameLineupProjection($homeSide, $homeGamePlayers);
