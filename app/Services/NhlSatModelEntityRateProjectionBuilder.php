@@ -924,7 +924,7 @@ SQL;
         $latestTrainingSeasonId = max($seasonIds);
         $trainSeasonCount = max(1, count($seasonIds));
         $trainSeasonPlaceholders = implode(', ', array_fill(0, count($seasonIds), '?'));
-        $targetSeasonId = (string) ($run->target_season_id ?? $latestTrainingSeasonId);
+        $targetSeasonId = (string) ($run->projectionSeasonId() ?? $latestTrainingSeasonId);
         $gameType = (int) ($run->game_type ?? 2);
         $now = now();
         $entityWhereSql = $entityKey === null ? '' : 'AND projection_entities.entity_key = ?';

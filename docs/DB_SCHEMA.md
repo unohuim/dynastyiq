@@ -3127,7 +3127,7 @@ Migrations remain the **sole source of truth**.
 | season_weights | json | Yes | Optional per-season training weights |
 | target_season_id | string(8) | Yes | Stored test season for later scoring/evaluation |
 | status | string(32) | No | Model status; defaults to `draft` |
-| run_config | json | Yes | Model configuration metadata |
+| run_config | json | Yes | Model configuration metadata, including optional `projection_season_id` independent of the stored test season |
 | metrics | json | Yes | Model training/evaluation metrics |
 | notes | text | Yes | Operator notes |
 | started_at | timestamp | Yes | Execution start timestamp |
@@ -3466,7 +3466,7 @@ Migrations remain the **sole source of truth**.
 | source_season_ids | json | No | Training seasons used by the SAT model |
 | prior_training_season_id | string(8) | Yes | First training season used for S1 context |
 | latest_training_season_id | string(8) | Yes | Latest training season used for S2 context |
-| target_season_id | string(8) | Yes | SAT model target/test season, stored for review only |
+| target_season_id | string(8) | Yes | Resolved SAT forecast season for newly built TOI projections; older rows may retain the model's test season |
 | game_type | unsignedTinyInteger | No | NHL game type, regular season by default |
 | profile_type | string(40) | No | Entity profile type |
 | entity_key | string(120) | No | Stable entity/context key |

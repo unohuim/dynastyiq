@@ -102,7 +102,7 @@ class NhlSatModelEntityToiProjectionBuilder
         $targetRoleBucket = $this->roleBucket((string) ($anchor->position ?? ''), $latest?->team_points_rank === null ? null : (int) $latest->team_points_rank);
         $sourceRoleBucket ??= $targetRoleBucket;
         $targetRoleBucket ??= $sourceRoleBucket;
-        $age = $this->ageAtTargetSeason($anchor->dob ?? null, (string) ($run->target_season_id ?? $latestSeasonId ?? ''));
+        $age = $this->ageAtTargetSeason($anchor->dob ?? null, (string) ($run->projectionSeasonId() ?? $latestSeasonId ?? ''));
         $ageAdjustment = $this->ageAdjustmentSeconds($age, $targetRoleBucket);
         $roleAdjustment = $this->roleAdjustmentSeconds($sourceRoleBucket, $targetRoleBucket);
         $sourceToiPerGame = $this->toiPerGame($latest) ?? $trainToiPerGame;
@@ -148,7 +148,7 @@ class NhlSatModelEntityToiProjectionBuilder
             'source_season_ids' => json_encode($seasonIds, JSON_THROW_ON_ERROR),
             'prior_training_season_id' => $priorSeasonId,
             'latest_training_season_id' => $latestSeasonId,
-            'target_season_id' => $run->target_season_id === null ? null : (string) $run->target_season_id,
+            'target_season_id' => $run->projectionSeasonId(),
             'game_type' => self::REGULAR_SEASON_GAME_TYPE,
             'profile_type' => $profileType,
             'entity_key' => $entityKey,

@@ -1223,6 +1223,34 @@ it('shows NHL shot attempt factor rows from raw facts', function () {
         ->assertJsonCount(0, 'values');
 });
 
+it('keeps SAT forecast season independent of optional evaluation season', function (?string $testSeason, ?string $projectionSeason, string $expected): void {
+    $admin = ($this->makeSuperAdmin)();
+    $this->actingAs($admin)->postJson(route('admin.nhl-sat-models.store'), [
+        'name' => 'Forecast with latest training', 'model_version' => 'forecast-v1',
+        'train_season_ids' => ['20242025', '20252026'],
+        'test_season_id' => $testSeason, 'projection_season_id' => $projectionSeason,
+    ])->assertSuccessful();
+    $run = NhlModelRun::query()->firstOrFail();
+    expect($run->target_season_id)->toBe($testSeason)
+        ->and($run->run_config['projection_season_id'])->toBe($projectionSeason)
+        ->and($run->projectionSeasonId())->toBe($expected);
+    $this->assertDatabaseHas('nhl_model_runs', ['id' => $run->id, 'target_season_id' => $testSeason]);
+    $this->get(route('admin.nhl-sat-models.index'))->assertOk()->assertSee('Projection: ' . $expected);
+})->with([
+    'no test explicit forecast' => [null, '20262027', '20262027'],
+    'no test automatic forecast' => [null, null, '20262027'],
+    'legacy evaluation default' => ['20262027', null, '20262027'],
+    'distinct forecast and test' => ['20262027', '20272028', '20272028'],
+]);
+
+it('rejects malformed forecast seasons without creating a SAT model', function (): void {
+    $this->actingAs(($this->makeSuperAdmin)())->postJson(route('admin.nhl-sat-models.store'), [
+        'name' => 'Invalid forecast', 'model_version' => 'v1',
+        'train_season_ids' => ['20252026'], 'projection_season_id' => '2026-27',
+    ])->assertUnprocessable()->assertJsonValidationErrors('projection_season_id');
+    $this->assertDatabaseCount('nhl_model_runs', 0);
+});
+
 it('creates draft NHL SAT models from the admin workflow', function () {
     $admin = ($this->makeSuperAdmin)();
 

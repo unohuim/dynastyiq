@@ -79,6 +79,7 @@ class NhlModelRunController extends Controller
             'train_season_ids' => ['required', 'array', 'min:1'],
             'train_season_ids.*' => ['required', 'digits:8'],
             'test_season_id' => ['nullable', 'digits:8'],
+            'projection_season_id' => ['nullable', 'digits:8'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -99,6 +100,7 @@ class NhlModelRunController extends Controller
             'run_config' => [
                 'created_from' => 'admin_nhl_sat_models',
                 'execution_attached' => false,
+                'projection_season_id' => $input['projection_season_id'] ?? null,
             ],
             'notes' => $input['notes'] ?? null,
         ]);

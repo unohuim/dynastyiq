@@ -195,6 +195,12 @@
                     </label>
 
                     <label class="block">
+                        <span class="text-sm font-medium text-gray-700">Projection Season</span>
+                        <input type="text" name="projection_season_id" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="20262027" value="{{ old('projection_season_id') }}" class="mt-1 block min-h-10 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <span class="mt-1 block text-xs text-gray-500">Optional. Defaults to the test season, or the season after the latest training season when Test Season is None.</span>
+                    </label>
+
+                    <label class="block">
                         <span class="text-sm font-medium text-gray-700">Notes</span>
                         <textarea name="notes" rows="4" class="mt-1 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">{{ old('notes') }}</textarea>
                     </label>

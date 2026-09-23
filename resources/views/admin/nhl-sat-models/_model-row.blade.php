@@ -28,7 +28,7 @@
     </td>
     <td class="whitespace-nowrap px-4 py-3 font-medium text-gray-700">{{ $run->model_version }}</td>
     <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $trainingSeasons !== '' ? $trainingSeasons : 'None' }}</td>
-    <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $run->target_season_id ?? 'None' }}</td>
+    <td class="whitespace-nowrap px-4 py-3 text-gray-700">{{ $run->target_season_id ?? 'None' }}<span class="mt-1 block text-xs text-gray-500">Projection: {{ $run->projectionSeasonId() ?? 'None' }}</span></td>
     <td class="whitespace-nowrap px-4 py-3">
         @if($totalSog !== null && (int) $totalSog > 0)
             <div class="font-medium text-gray-950">{{ number_format(((float) $excludedRate) * 100, 1) }}%</div>

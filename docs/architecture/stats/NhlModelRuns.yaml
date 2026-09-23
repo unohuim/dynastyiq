@@ -58,6 +58,7 @@ when_not_to_use:
   - Replacing domain-specific prediction, profile, or projection output tables.
   - Modeling non-SAT stats before those aggregate/modeling workflows exist.
 rules:
+  - Projection season is independent of held-out evaluation season. Store an optional explicit projection_season_id in run_config; resolve it first, then the existing test season, then the season following the latest training season. A null test season permits production forecasting without comparison labels. Projection ages and standalone TOI output season use this resolution; comparison queries continue to use the held-out test season.
   - SAT models are immutable experiment anchors; adding a new training season must create a new comparable model instead of overwriting prior model outputs.
   - A SAT model must identify model version, training seasons, optional test season, status, configuration, and metrics.
   - Multi-season training windows must be represented by `train_season_ids`; `train_start_season_id` and `train_end_season_id` are query helpers, not complete authority.
