@@ -21,6 +21,117 @@ class NhlLineupTextParser
     /** @return array{players:array<int,array<string,mixed>>,matched_players:array<int,array<string,mixed>>} */
     public function analyze(string $text, string $teamAbbrev): array
     {
+        $roster = $this->rosterBlock($text);
+
+        return $roster === null
+            ? ['players' => [], 'matched_players' => []]
+            : $this->analyzeRoster($roster, $teamAbbrev);
+    }
+
+    /** Find exactly twelve forward names followed by six defense names before any identity lookup. */
+    private function rosterBlock(string $text): ?string
+    {
+        $lines = preg_split('/\R/u', html_entity_decode($text, ENT_QUOTES | ENT_HTML5)) ?: [];
+        $blocks = [];
+        $names = [];
+        $invalid = false;
+        $supplemental = false;
+        $grouped = null;
+        foreach ($lines as $index => $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $heading = $this->heading($line);
+            if ($heading === 'defense') {
+                $invalid = $invalid || count($names) !== 12;
+                continue;
+            }
+            if ($heading !== null) {
+                if ($names !== []) {
+                    $blocks[] = [$names, $invalid, $index];
+                }
+                $names = [];
+                $invalid = false;
+                $grouped = null;
+                $supplemental = in_array($heading, ['scratch', 'goalie'], true);
+                continue;
+            }
+            if ($supplemental) {
+                continue;
+            }
+            $size = count($names) < 12 ? 3 : 2;
+            $cells = $this->rosterCells($line, $size, $grouped);
+            if ($cells === null) {
+                if ($names !== []) {
+                    $blocks[] = [$names, $invalid, $index];
+                }
+                $names = [];
+                $invalid = false;
+                $grouped = null;
+                continue;
+            }
+            if (count($names) === 18) {
+                $blocks[] = [$names, $invalid, $index];
+                $names = [];
+                $supplemental = true;
+                continue;
+            }
+            $boundary = count($names) < 12 ? 12 : 18;
+            $grouped ??= count($cells) > 1;
+            $invalid = $invalid || count($names) + count($cells) > $boundary;
+            array_push($names, ...$cells);
+        }
+        $blocks[] = [$names, $invalid, count($lines)];
+        $blocks = array_values(array_filter($blocks, fn (array $block): bool =>
+            ! $block[1] && count($block[0]) === 18));
+        if (count($blocks) !== 1) {
+            return null;
+        }
+        [$names, , $end] = $blocks[0];
+        $roster = ['Forwards'];
+        foreach (array_chunk(array_slice($names, 0, 12), 3) as $group) {
+            $roster[] = implode(' | ', $group);
+        }
+        $roster[] = 'Defense';
+        foreach (array_chunk(array_slice($names, 12), 2) as $group) {
+            $roster[] = implode(' | ', $group);
+        }
+
+        return implode("\n", array_merge($roster, array_slice($lines, $end)));
+    }
+
+    /** Read name-shaped cells, not player mentions in sentences. @return array<int,string>|null */
+    private function rosterCells(string $line, int $size, ?bool $grouped = null): ?array
+    {
+        $line = preg_replace('/^(?:[FD]?[0-9]+[.):]|[FD][0-9]+\s*:)\s*/iu', '', $line) ?? $line;
+        $cells = preg_split('/\s+[-–—]\s+|\s*[–—,;|\t]\s*| {2,}/u', $line) ?: [];
+        if (count($cells) === 1 && $grouped !== false && substr_count($line, '-') === $size - 1) {
+            $cells = explode('-', $line);
+        }
+        if (count($cells) === 1 && $grouped !== false && ! str_contains($line, '-')) {
+            $words = preg_split('/\s+/u', $line) ?: [];
+            if (count($words) === $size && ($size === 3 || $grouped === true) && ! preg_match('/\d/', $line)) {
+                $cells = $words;
+            }
+        }
+        $cells = array_map('trim', $cells);
+        if (! in_array(count($cells), [1, $size], true)) {
+            return null;
+        }
+        foreach ($cells as $cell) {
+            if (! preg_match("/^[\pL\pN][\pL\pM\pN.'’`-]*(?: [\pL\pN][\pL\pM\pN.'’`-]*){0,3}$/u", $cell)
+                || preg_match('/\b(?:is|are|was|were|with|without|will|today|tomorrow|tonight|skating|playing|lines|lineup)\b/iu', $cell)) {
+                return null;
+            }
+        }
+
+        return $cells;
+    }
+
+    /** Resolve names only after a complete single-post roster block has been identified. @return array<string,array> */
+    private function analyzeRoster(string $text, string $teamAbbrev): array
+    {
         $decoded = html_entity_decode($text, ENT_QUOTES | ENT_HTML5);
         $decoded = preg_replace(
             '/\b(forwards?|forward lines?|defen[cs]e|defen[cs]emen|d pairs?|pairings?|goalies?|goaltenders?|scratches?|extras?)\s*:\s*/iu',
@@ -47,8 +158,18 @@ class NhlLineupTextParser
                 continue;
             }
 
+            if (count($forwardGroups) === 4 && count($defenseGroups) === 3
+                && ! in_array($section, ['scratch', 'goalie'], true)) {
+                $tailPlayers = $this->players->mentions($line, $teamAbbrev);
+                if ($tailPlayers !== [] && collect($tailPlayers)->contains(
+                    fn (array $player): bool => strtoupper((string) $player['position']) !== 'G'
+                )) {
+                    return ['players' => [], 'matched_players' => []];
+                }
+            }
+
             $segments = $this->structuredSegments($line);
-            if (count($segments) === 3 && count($forwardGroups) < 4) {
+            if ($section !== 'scratch' && $section !== 'goalie' && count($segments) === 3 && count($forwardGroups) < 4) {
                 $group = $this->structuredGroup($segments, $teamAbbrev, 'F');
                 if ($group !== null) {
                     $forwardGroups[] = $group['players'];
@@ -56,7 +177,7 @@ class NhlLineupTextParser
                     continue;
                 }
             }
-            if (count($segments) === 2 && ($section === 'defense' || count($forwardGroups) >= 4)) {
+            if ($section !== 'scratch' && $section !== 'goalie' && count($segments) === 2 && count($defenseGroups) < 3 && ($section === 'defense' || count($forwardGroups) >= 4)) {
                 $group = $this->structuredGroup($segments, $teamAbbrev, 'D');
                 if ($group !== null) {
                     $defenseGroups[] = $group['players'];
@@ -161,7 +282,9 @@ class NhlLineupTextParser
     /** @return array<int,string> */
     private function structuredSegments(string $line): array
     {
-        $segments = preg_split('/\s*[-\x{2013}\x{2014}]\s*/u', trim($line)) ?: [];
+        $segments = str_contains($line, '|')
+            ? explode('|', $line)
+            : (preg_split('/\s*[-\x{2013}\x{2014}]\s*/u', trim($line)) ?: []);
 
         return collect($segments)
             ->map(fn (string $segment): string => trim($segment, " \t\n\r\0\x0B|,;:"))
@@ -214,8 +337,8 @@ class NhlLineupTextParser
         $normalized = mb_strtolower(trim($line, " \t\n\r\0\x0B:-–—|"));
 
         return match (true) {
-            preg_match('/^(forwards?|forward lines?|lines?)$/u', $normalized) === 1 => 'forward',
-            preg_match('/^(defen[cs]e|defen[cs]emen|d pairs?|pairings?)$/u', $normalized) === 1 => 'defense',
+            preg_match('/^(f|forwards?|forards|forward lines?|lines?)$/u', $normalized) === 1 => 'forward',
+            preg_match('/^(d|defen[cs]e|defen[cs]emen|d pairs?|pairings?)$/u', $normalized) === 1 => 'defense',
             preg_match('/^(goalies?|goaltenders?|in goal)$/u', $normalized) === 1 => 'goalie',
             preg_match('/^(scratches?|extras?)$/u', $normalized) === 1 => 'scratch',
             default => null,

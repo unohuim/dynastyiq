@@ -395,7 +395,7 @@ class XNhlLineupDiscovery
         $counts = $players->countBy('lineup_role');
         $forwardCount = (int) ($counts['forward'] ?? 0);
         $defenseCount = (int) ($counts['defense'] ?? 0);
-        if ($forwardCount < 12 && $defenseCount < 6) {
+        if ($forwardCount !== 12 || $defenseCount !== 6) {
             return [
                 'approved' => false,
                 'reason' => sprintf(
@@ -442,10 +442,7 @@ class XNhlLineupDiscovery
         $resolver = app(NhlLineupPlayerResolver::class);
         $players = $candidate['players'] ?? [];
 
-        return array_values(array_filter([
-            $resolver->verifiedLineupIds($players, 'forward') !== null ? 'forwards' : null,
-            $resolver->verifiedLineupIds($players, 'defense') !== null ? 'defense' : null,
-        ]));
+        return $resolver->verifiedLineupIds($players) !== null ? ['forwards', 'defense'] : [];
     }
 
     private function output(string $message): void

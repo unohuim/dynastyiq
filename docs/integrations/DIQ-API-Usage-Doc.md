@@ -740,10 +740,12 @@ Skater roster precedence:
 A complete official or reported game roster is newer, game-specific evidence
 than the injury table. A player explicitly present in that roster is retained
 even if the current injury table still lists the player as unavailable. An
-accepted reported roster may combine a complete twelve-forward post and a
-complete six-defense post, including posts from different sources. Smaller
-fragments remain evidence only. A combined lineup containing unresolved or
-duplicate skaters does not replace the projected roster.
+accepted reported roster must come from one post containing twelve forwards
+followed by six defensemen. Separate forward/defense posts are not combined.
+Headings may separate the groups; goalies and scratches are supplemental.
+Player identities and slots are verified after the complete roster block is
+identified, retaining the documented F4/D3 exceptions. Historical combined-post
+lineups no longer qualify as reported or suppress further discovery.
 
 | `inputs.*_lineup_source` | Meaning |
 | --- | --- |

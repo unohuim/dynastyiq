@@ -929,6 +929,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 - `sources.platform` additionally supports `manual` for super-admin pasted lineup evidence. Handles use `user-{id}`; the original submitting id is retained as `raw_evidence.submitted_by_user_id`.
 - `nhl_lineup_observations.completeness`: `full`, `forwards`, `defense`, `partial`.
+  Only `full` observations are newly accepted as lineup evidence. `forwards`, `defense`, and `partial` remain historical values and cannot establish current reported lineups.
 - `nhl_lineup_observation_players.lineup_role`: `forward`, `defense`, `goalie`, `scratch`.
 - `nhl_lineup_observation_players.line_key`: `F1`, `F2`, `F3`, `F4`, `D1`, `D2`, `D3`, `G`, `SCR`.
 - `nhl_lineup_observation_players.resolution_status`: `resolved`, `unresolved`.

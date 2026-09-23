@@ -1317,7 +1317,7 @@ it('writes approved and declined X post audits only for local troubleshooting', 
         ->toContain('- Timeline page: `timeline:@timeline_test_source posts 1-5`', '- Results returned: 2');
 });
 
-it('recognizes target team player groups throughout complete post text', function (): void {
+it('does not assemble lineup groups from player mentions in prose', function (): void {
     foreach ([
         [8484101, 'Alpha One', 'C', 'TOR'],
         [8484102, 'Bravo Two', 'LW', 'TOR'],
@@ -1345,11 +1345,7 @@ it('recognizes target team player groups throughout complete post text', functio
         'TOR'
     );
 
-    expect($players)->toHaveCount(5)
-        ->and(collect($players)->where('line_key', 'F1')->pluck('name')->all())
-        ->toBe(['Alpha One', 'Bravo Two', 'Charlie Three'])
-        ->and(collect($players)->where('line_key', 'D1')->pluck('name')->all())
-        ->toBe(['Delta Four', 'Echo Five']);
+    expect($players)->toBe([]);
 });
 
 it('retains unresolved prospect names inside structurally complete lineup groups', function (): void {
@@ -1414,13 +1410,9 @@ it('recognizes apostrophe variants in reported player names', function (string $
         ]);
     }
 
-    $players = app(\App\Services\NhlLineupTextParser::class)->parse(
-        "Geekie-{$reportedSurname}-Rautiainen",
-        'TBL'
-    );
-
-    expect($players)->toHaveCount(3)
-        ->and(collect($players)->pluck('name')->all())
+    $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
+    expect(collect(['Geekie', $reportedSurname, 'Rautiainen'])
+        ->map(fn (string $name): ?string => $resolver->resolve($name, 'TBL')?->full_name)->all())
         ->toBe(['Conor Geekie', "Ryan O'Reilly", 'Benjamin Rautiainen']);
 })->with([
     'straight apostrophe' => "O'Reilly",
@@ -1496,16 +1488,9 @@ it('uses reported first initials to distinguish same-team players with the same 
         ]);
     }
 
-    $players = app(\App\Services\NhlLineupTextParser::class)->parse(implode("\n", [
-        'Forwards',
-        'B. Tkachuk - Center One - Wing One',
-        'Wing Two - Center Two - M. Tkachuk',
-    ]), 'FLA');
-
-    expect(collect($players)->pluck('name')->all())->toBe([
-        'Brady Tkachuk', 'Center One', 'Wing One',
-        'Wing Two', 'Center Two', 'Matthew Tkachuk',
-    ]);
+    $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
+    expect($resolver->resolve('B. Tkachuk', 'FLA')?->full_name)->toBe('Brady Tkachuk')
+        ->and($resolver->resolve('M. Tkachuk', 'FLA')?->full_name)->toBe('Matthew Tkachuk');
 });
 
 it('does not infer special teams units from an X lineup post', function (): void {
@@ -2201,7 +2186,7 @@ it('declines a partial lineup and continues to the next stored source', function
         && $event->message === 'TOR | @partial_reporter | posts 1-5');
 });
 
-it('combines complete forward and defense posts into one current lineup', function (): void {
+it('rejects separate forward and defense posts instead of combining a lineup', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
     createTimelineSource('TOR', 10, 'forward_reporter', 'forward-source');
     createTimelineSource('TOR', 10, 'defense_reporter', 'defense-source');
@@ -2238,24 +2223,13 @@ it('combines complete forward and defense posts into one current lineup', functi
     $payload = app(\App\Services\NhlAnticipatedLineupPayload::class)
         ->forGameTeam(2026010126, 'TOR', false);
 
-    expect($result['observed'])->toBe(2)
-        ->and($payload)->not->toBeNull()
-        ->and($payload['players'])->toHaveCount(18)
-        ->and(collect($payload['players'])->where('lineup_role', 'forward'))->toHaveCount(12)
-        ->and(collect($payload['players'])->where('lineup_role', 'defense'))->toHaveCount(6)
-        ->and($payload['sources'])->toHaveCount(2);
-    $this->assertDatabaseHas('nhl_lineup_observations', ['completeness' => 'forwards'])
-        ->assertDatabaseHas('nhl_lineup_observations', ['completeness' => 'defense'])
-        ->assertDatabaseCount('nhl_current_lineup_components', 2)
-        ->assertDatabaseHas('nhl_current_lineups', [
-            'nhl_game_id' => 2026010126,
-            'team_id' => 10,
-            'evidence_status' => 'reported',
-            'source_count' => 2,
-        ]);
+    expect($result['observed'])->toBe(0)->and($payload)->toBeNull();
+    $this->assertDatabaseCount('nhl_lineup_observations', 0)
+        ->assertDatabaseCount('nhl_current_lineup_components', 0)
+        ->assertDatabaseCount('nhl_current_lineups', 0);
 });
 
-it('replaces only the current component supplied by a newer complete group', function (): void {
+it('retains the full roster when a newer post contains only forwards', function (): void {
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026010127, 'season_id' => '20262027', 'game_type' => 1,
         'game_date' => '2026-09-20', 'game_dow' => 'Sunday', 'game_month' => 'September',
@@ -2291,10 +2265,67 @@ it('replaces only the current component supplied by a newer complete group', fun
         ->forGameTeam(2026010127, 'TOR', false);
 
     expect(collect($payload['players'])->where('lineup_role', 'forward')->pluck('nhl_player_id')->first())
-        ->toBe(8483000)
+        ->toBe(8481000)
         ->and(collect($payload['players'])->where('lineup_role', 'defense')->pluck('nhl_player_id')->first())
         ->toBe(8481012);
     $this->assertDatabaseCount('nhl_current_lineup_components', 2);
+});
+
+it('requires a single ordered roster block before resolving any names', function (string $scenario): void {
+    $forwards = collect(range(1, 12))->map(fn (int $i): string => "Forward {$i}")
+        ->chunk(3)->map(fn ($group): string => $group->implode(' - '))->implode("\n");
+    $defense = collect(range(1, 6))->map(fn (int $i): string => "Defense {$i}")
+        ->chunk(2)->map(fn ($group): string => $group->implode(' - '))->implode("\n");
+    $full = "Forwards\n{$forwards}\nDefense\n{$defense}";
+    $text = match ($scenario) {
+        'forwards only' => "Forwards\n{$forwards}",
+        'defense only' => "Defense\n{$defense}",
+        'reversed' => "Defense\n{$defense}\nForwards\n{$forwards}",
+        'scratch replacement' => "Forwards\n" . implode("\n", array_slice(explode("\n", $forwards), 0, 3))
+            . "\nScratches\nForward 10 - Forward 11 - Forward 12\nDefense\n{$defense}",
+        'two rosters' => $full . "\n" . $full,
+        'too many forwards' => "Forwards\n{$forwards}\nExtra A - Extra B - Extra C\nDefense\n{$defense}",
+        'prose' => 'Forward 1 and Forward 2 are playing with Forward 3 tonight.',
+    };
+    $resolver = \Mockery::mock(\App\Services\NhlLineupPlayerResolver::class);
+    $resolver->shouldNotReceive('resolve');
+    $resolver->shouldNotReceive('mentions');
+
+    expect((new \App\Services\NhlLineupTextParser($resolver))->analyze($text, 'TOR'))
+        ->toBe(['players' => [], 'matched_players' => []]);
+})->with(['forwards only', 'defense only', 'reversed', 'scratch replacement', 'two rosters', 'too many forwards', 'prose']);
+
+it('parses all eighteen names with headings before applying canonical slot verification', function (bool $individualNames): void {
+    $response = xLineupResponse([lineupCandidate('complete_reporter', 'https://x.com/complete_reporter/status/1010')]);
+    $text = $response['data'][0]['text'];
+    if ($individualNames) {
+        $text = str_replace(' - ', "\n", $text);
+    }
+    $players = app(\App\Services\NhlLineupTextParser::class)->parse($text, 'TOR');
+
+    expect(app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players))->toHaveCount(18)
+        ->and(collect($players)->where('lineup_role', 'forward'))->toHaveCount(12)
+        ->and(collect($players)->where('lineup_role', 'defense'))->toHaveCount(6)
+        ->and(collect($players)->firstWhere('line_key', 'F4')['name'])->toBe('Forward 10')
+        ->and(collect($players)->firstWhere('line_key', 'D3')['name'])->toBe('Defense 5');
+})->with([false, true]);
+
+it('does not report a historical lineup assembled from two different observations', function (): void {
+    $current = createCurrentAnticipatedLineup();
+    $other = $current->observation->replicate();
+    $other->post_url .= '-other';
+    $other->save();
+    foreach (['forwards' => $current->nhl_lineup_observation_id, 'defense' => $other->id] as $type => $observationId) {
+        $current->components()->create([
+            'component_type' => $type,
+            'nhl_lineup_observation_id' => $observationId,
+            'is_representative' => true,
+        ]);
+    }
+
+    expect($current->fresh()->hasVerifiedPlayers())->toBeFalse()
+        ->and(app(\App\Services\NhlAnticipatedLineupPayload::class)
+            ->forGameTeam($current->nhl_game_id, $current->team_abbrev, false))->toBeNull();
 });
 
 it('does not call X when a team has no stored timeline sources', function (): void {

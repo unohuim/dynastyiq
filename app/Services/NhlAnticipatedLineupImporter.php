@@ -183,7 +183,7 @@ class NhlAnticipatedLineupImporter
             }
             $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
             $completeness = $this->completeness($normalized);
-            if ($completeness === 'partial') {
+            if ($completeness !== 'full') {
                 $skipped++;
                 continue;
             }
@@ -439,17 +439,15 @@ class NhlAnticipatedLineupImporter
         $eligibleFrom = NhlLineupObservation::evidenceCutoff((string) $gameDate);
         $observations = NhlLineupObservation::query()->with('players')
             ->where('nhl_game_id', $gameId)->where('team_id', $teamId)
-            ->whereIn('completeness', ['full', 'forwards', 'defense'])
+            ->where('completeness', 'full')
             ->where(fn ($query) => $query->where('provider_published_at', '>=', $eligibleFrom)
                 ->orWhere(fn ($fallback) => $fallback->whereNull('provider_published_at')
                     ->where('observed_at', '>=', $eligibleFrom)))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
-        $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
-            in_array($observation->completeness, ['full', 'forwards'], true)
-            && $this->players->verifiedLineupIds($observation->players->toArray(), 'forward') !== null);
-        $defense = $observations->first(fn (NhlLineupObservation $observation): bool =>
-            in_array($observation->completeness, ['full', 'defense'], true)
-            && $this->players->verifiedLineupIds($observation->players->toArray(), 'defense') !== null);
+        $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
+            $this->players->verifiedLineupIds($observation->players->toArray()) !== null);
+        $forward = $observations->first();
+        $defense = $forward;
         if ($forward === null || $defense === null) {
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
             return;
@@ -457,9 +455,9 @@ class NhlAnticipatedLineupImporter
         $forwardHash = $this->componentHash($forward, 'forward');
         $defenseHash = $this->componentHash($defense, 'defense');
         $forwardSupport = $observations->filter(fn (NhlLineupObservation $observation): bool =>
-            $this->componentHash($observation, 'forward') === $forwardHash);
-        $defenseSupport = $observations->filter(fn (NhlLineupObservation $observation): bool =>
-            $this->componentHash($observation, 'defense') === $defenseHash);
+            $this->componentHash($observation, 'forward') === $forwardHash
+            && $this->componentHash($observation, 'defense') === $defenseHash);
+        $defenseSupport = $forwardSupport;
         $supporting = $forwardSupport->concat($defenseSupport)->unique('id');
         $sourceCount = $supporting->pluck('source_id')->unique()->count();
         $componentSourceCount = min(

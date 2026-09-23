@@ -39,6 +39,15 @@ class NhlCurrentLineup extends Model
     {
         $this->loadMissing('observation.players', 'components.observation.players');
         $components = $this->components->where('is_representative', true);
+        // Historical component unions must not suppress discovery or qualify for predictions.
+        if ($this->observation?->completeness !== 'full'
+            || ($components->isNotEmpty() && (
+                $components->count() !== 2
+                || $components->pluck('nhl_lineup_observation_id')->unique()->count() !== 1
+                || (int) $components->first()->nhl_lineup_observation_id !== (int) $this->nhl_lineup_observation_id
+            ))) {
+            return false;
+        }
         $players = $components->isEmpty()
             ? collect($this->observation?->players ?? [])
             : collect($components->firstWhere('component_type', 'forwards')?->observation?->players ?? [])

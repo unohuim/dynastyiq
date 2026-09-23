@@ -67,15 +67,15 @@ An account supplying accepted lineup evidence is stored in `sources` and linked 
 
 ## Local parsing
 
-Every returned timeline post is read in full. The parser scans each post line by line, resolves apparent names against canonical players belonging to the target team through `PlayerIdentityNormalizer`, and then looks for lineup-shaped groups. Straight apostrophes, curly apostrophes, backticks, and omitted apostrophes are equivalent for matching while stored display names remain unchanged. A hyphen-delimited group of three names forms a forward line and a group of two names forms a defense pair when at least one name establishes that the group belongs to the target team. Reported prospect names that do not yet resolve are retained as unresolved evidence rather than discarded. It maps four forward groups to `F1` through `F4`, three defense pairs to `D1` through `D3`, and ordered goalies to `G1` and `G2` when present.
+Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward names followed by six defense names in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the F4/D3 peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
 
 When multiple players on the team share a surname, a reported first initial selects the matching player. For example, `B. Tkachuk` and `M. Tkachuk` resolve independently; a conflicting initial is not permitted to fall back to the wrong same-surname player.
 
 Parsing is intentionally conservative:
 
-- A post becomes a lineup candidate only after at least one target-team player group is resolved; unrelated and single-name posts are skipped after their complete text has been evaluated.
-- A complete twelve-forward group or complete six-defense group is accepted and persisted independently. Smaller fragments remain discovery-audit-only. Photo text passes the same parser and verification as captions; original captions, OCR text, confidence, and image URLs remain separate evidence.
-- Current truth combines the newest accepted forward and defense groups, including groups from different posts or sources. Discovery continues while either group is missing.
+- A post becomes a lineup candidate only after the complete 12F-then-6D block is found and its players pass shared verification.
+- Forward-only and defense-only posts remain discovery-audit-only. Photo text passes the same parser and verification as captions; original captions, OCR text, confidence, and image URLs remain separate evidence.
+- Current truth selects one complete observation. Corroboration requires matching the whole roster; separate posts never contribute different halves. Historical combined-post records cannot qualify as reported or stop discovery. Existing date eligibility checks remain in force.
 - Missing players are never invented from roster history or hockey knowledge.
 - Special-teams assignments remain empty unless a future deterministic parser explicitly supports them.
 - On split-squad dates, extracted players and opponent context must identify the targeted game; ambiguous evidence is not attached to either game.
