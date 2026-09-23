@@ -3766,6 +3766,13 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Preseason exception: unresolved skaters on any line/pair can use resolved
+same-group peers' average projections; at least one peer must be resolved.
+The prior F4/D3-only restriction still applies to regular-season and playoff games.
+The shared resolver applies this season-aware rule to imports, reporting, queue
+skip checks and predictions; names and null NHL ids remain explicit.
+Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
 Targeted `/games` refreshes open `LineupRefreshModal.vue`, an incrementally updated
 post-review accordion. ImportRun metadata retains activity and accepted/rejected
 post evidence for the existing super-admin-only status endpoint. Closing the modal

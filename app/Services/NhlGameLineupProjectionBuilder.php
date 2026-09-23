@@ -99,7 +99,7 @@ final class NhlGameLineupProjectionBuilder
         }
         $sourceSeason = (string) ($projection?->source_season_id
             ?? ((int) substr($targetSeasonId, 0, 4) - 1) . substr($targetSeasonId, 0, 4));
-        $predictions = $this->build($lineup, $sourceSeason, $targetSeasonId, (string) ($projection?->projection_version ?? ''), $toiVersion);
+        $predictions = $this->build($lineup, $sourceSeason, $targetSeasonId, (string) ($projection?->projection_version ?? ''), $toiVersion, $gameType);
         // Partial projected rosters remain visible without inventing legacy production inputs.
         $predictions ??= collect($lineup['players'])->whereIn('lineup_role', ['forward', 'defense'])
             ->map(fn (array $player): array => [...$player,
@@ -257,10 +257,11 @@ final class NhlGameLineupProjectionBuilder
         string $sourceSeasonId,
         string $targetSeasonId,
         string $projectionVersion,
-        string $toiProjectionVersion
+        string $toiProjectionVersion,
+        int $gameType = 2
     ): ?array {
         $players = collect($lineup['players'] ?? [])->whereIn('lineup_role', ['forward', 'defense'])->values();
-        if (! $this->hasUsableLineup($players)) {
+        if (! $this->hasUsableLineup($players, $gameType)) {
             return null;
         }
 
@@ -367,18 +368,18 @@ final class NhlGameLineupProjectionBuilder
     }
 
     /** @param Collection<int,array<string,mixed>> $players */
-    private function hasUsableLineup(Collection $players): bool
+    private function hasUsableLineup(Collection $players, int $gameType = 2): bool
     {
         if ($players->count() !== 18) {
             return false;
         }
 
         $unresolved = $players->filter(fn (array $player): bool => empty($player['nhl_player_id']));
-        if ($unresolved->contains(fn (array $player): bool => ! in_array($player['line_key'] ?? null, ['F4', 'D3'], true))) {
+        if ($gameType !== 1 && $unresolved->contains(fn (array $player): bool => ! in_array($player['line_key'] ?? null, ['F4', 'D3'], true))) {
             return false;
         }
 
-        foreach (['F4' => 3, 'D3' => 2] as $lineKey => $expected) {
+        foreach (['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3, 'D1' => 2, 'D2' => 2, 'D3' => 2] as $lineKey => $expected) {
             $group = $players->where('line_key', $lineKey);
             if ($group->count() !== $expected || $group->pluck('nhl_player_id')->filter()->isEmpty()) {
                 return false;
@@ -428,6 +429,10 @@ final class NhlGameLineupProjectionBuilder
                     : round((float) $peers->avg($field), $field === 'projected_sog' ? 3 : 4);
             }
             $seconds = (int) $row['game_projected_toi_seconds'];
+            foreach (['projected_sat', 'projected_sat_per_60', 'projected_sog_per_60', 'projected_goals_per_60'] as $field) {
+                $values = $peers->pluck($field)->filter(fn ($value): bool => $value !== null);
+                $row[$field] = $values->isEmpty() ? null : round((float) $values->avg(), 4);
+            }
             $row['game_projected_toi'] = sprintf('%d:%02d', intdiv($seconds, 60), $seconds % 60);
 
             return $row;

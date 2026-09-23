@@ -63,8 +63,8 @@ class NhlGamePredictionPayload
             ? null : $this->officialSkaterIds($nhlGameId, $awayTeam);
         $homeOfficialRosterIds = ($homeLineup['manual_override'] ?? false)
             ? null : $this->officialSkaterIds($nhlGameId, $homeTeam);
-        $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
-        $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+        $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup, (int) $game->game_type);
+        $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup, (int) $game->game_type);
 
         if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
             && ($awayRosterIds === null || $homeRosterIds === null)) {
@@ -77,8 +77,8 @@ class NhlGamePredictionPayload
             );
             $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
             $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
-            $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup);
-            $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup);
+            $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup, (int) $game->game_type);
+            $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup, (int) $game->game_type);
         }
 
         $awayOfficial = $awayOfficialRosterIds !== null || $this->isOfficialLineup($awayLineup);
@@ -89,7 +89,8 @@ class NhlGamePredictionPayload
             $sourceSeasonId,
             $targetSeasonId,
             $projectionVersion,
-            $toiProjectionVersion
+            $toiProjectionVersion,
+            (int) $game->game_type
         );
         $homeGamePlayers = $this->gamePlayerProjections(
             $homeLineup,
@@ -97,7 +98,8 @@ class NhlGamePredictionPayload
             $sourceSeasonId,
             $targetSeasonId,
             $projectionVersion,
-            $toiProjectionVersion
+            $toiProjectionVersion,
+            (int) $game->game_type
         );
 
         if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
@@ -411,14 +413,14 @@ class NhlGamePredictionPayload
      * @param array<string,mixed>|null $lineup
      * @return array<int,int>|null
      */
-    private function resolvedSkaterIds(?array $lineup): ?array
+    private function resolvedSkaterIds(?array $lineup, int $gameType = 2): ?array
     {
         if ($lineup === null) {
             return null;
         }
 
         return app(NhlLineupPlayerResolver::class)->verifiedLineupIds(
-            collect($lineup['players'] ?? [])->values()->all()
+            collect($lineup['players'] ?? [])->values()->all(), null, $gameType
         );
     }
 
@@ -435,7 +437,8 @@ class NhlGamePredictionPayload
         string $sourceSeasonId,
         string $targetSeasonId,
         string $projectionVersion,
-        string $toiProjectionVersion
+        string $toiProjectionVersion,
+        int $gameType = 2
     ): ?array {
         if ($rosterIds === null) {
             return null;
@@ -447,7 +450,8 @@ class NhlGamePredictionPayload
                 $sourceSeasonId,
                 $targetSeasonId,
                 $projectionVersion,
-                $toiProjectionVersion
+                $toiProjectionVersion,
+                $gameType
             )
             : $this->lineupProjections->buildFromRosterIds(
                 $rosterIds,

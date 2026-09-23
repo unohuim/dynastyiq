@@ -40,18 +40,19 @@ class NhlAnticipatedLineupImporter
         $parser = app(NhlLineupTextParser::class);
         $lineupText = $text;
         $players = $parser->parse($text, $teamAbbrev);
+        $gameType = (int) ($game->game_type ?? 2);
         $reviewed = (bool) ($imageEvidence['reviewed'] ?? false);
-        if (! $reviewed && $this->players->verifiedLineupIds($players) === null && ($imageEvidence['status'] ?? null) === 'ok') {
+        if (! $reviewed && $this->players->verifiedLineupIds($players, null, $gameType) === null && ($imageEvidence['status'] ?? null) === 'ok') {
             foreach ([$imageEvidence['text'], $text . "\n" . $imageEvidence['text']] as $candidateText) {
                 $imagePlayers = $parser->parse($candidateText, $teamAbbrev);
-                if ($this->players->verifiedLineupIds($imagePlayers) !== null) {
+                if ($this->players->verifiedLineupIds($imagePlayers, null, $gameType) !== null) {
                     $players = $imagePlayers;
                     $lineupText = $candidateText;
                     break;
                 }
             }
         }
-        if ($this->players->verifiedLineupIds($players) === null) {
+        if ($this->players->verifiedLineupIds($players, null, $gameType) === null) {
             if (! $reviewed && $imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
                 throw \Illuminate\Validation\ValidationException::withMessages([
                     'image' => ($imageEvidence['status'] ?? '') === 'empty'
@@ -60,7 +61,9 @@ class NhlAnticipatedLineupImporter
                 ]);
             }
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'text' => 'A verified lineup needs 12 forwards and 6 defensemen with no duplicates or invalid positions. Unknown players are allowed only on F4/D3 with a verified linemate.',
+                'text' => 'A verified lineup needs 12 forwards and 6 defensemen with no duplicates or invalid positions. '
+                    . ($gameType === 1 ? 'Unknown players need a verified linemate on the same line or pairing.'
+                        : 'Unknown players are allowed only on F4/D3 with a verified linemate.'),
             ]);
         }
         $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);
@@ -189,7 +192,7 @@ class NhlAnticipatedLineupImporter
                 continue;
             }
             $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
-            $completeness = $this->completeness($normalized);
+            $completeness = $this->completeness($normalized, (int) ($game->game_type ?? 2));
             if ($completeness !== 'full') {
                 $skipped++;
                 continue;
@@ -362,10 +365,10 @@ class NhlAnticipatedLineupImporter
     }
 
     /** @param array<int,array<string,mixed>> $players */
-    private function completeness(array $players): string
+    private function completeness(array $players, int $gameType = 2): string
     {
-        $forwardsComplete = $this->players->verifiedLineupIds($players, 'forward') !== null;
-        $defenseComplete = $this->players->verifiedLineupIds($players, 'defense') !== null;
+        $forwardsComplete = $this->players->verifiedLineupIds($players, 'forward', $gameType) !== null;
+        $defenseComplete = $this->players->verifiedLineupIds($players, 'defense', $gameType) !== null;
 
         return match (true) {
             $forwardsComplete && $defenseComplete => 'full',
@@ -444,6 +447,7 @@ class NhlAnticipatedLineupImporter
             return;
         }
         $eligibleFrom = NhlLineupObservation::evidenceCutoff((string) $gameDate);
+        $gameType = (int) DB::table('nhl_games')->where('nhl_game_id', $gameId)->value('game_type');
         $observations = NhlLineupObservation::query()->with('players')
             ->where('nhl_game_id', $gameId)->where('team_id', $teamId)
             ->where('completeness', 'full')
@@ -452,7 +456,7 @@ class NhlAnticipatedLineupImporter
                     ->where('observed_at', '>=', $eligibleFrom)))
             ->orderByRaw('COALESCE(provider_published_at, observed_at) DESC')->latest('id')->get();
         $observations = $observations->filter(fn (NhlLineupObservation $observation): bool =>
-            $this->players->verifiedLineupIds($observation->players->toArray()) !== null);
+            $this->players->verifiedLineupIds($observation->players->toArray(), null, $gameType) !== null);
         $forward = $observations->first(fn (NhlLineupObservation $observation): bool =>
             (bool) data_get($observation->raw_evidence, 'manual_override', false)) ?? $observations->first();
         $defense = $forward;
@@ -460,11 +464,11 @@ class NhlAnticipatedLineupImporter
             NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_id', $teamId)->delete();
             return;
         }
-        $forwardHash = $this->componentHash($forward, 'forward');
-        $defenseHash = $this->componentHash($defense, 'defense');
+        $forwardHash = $this->componentHash($forward, 'forward', $gameType);
+        $defenseHash = $this->componentHash($defense, 'defense', $gameType);
         $forwardSupport = $observations->filter(fn (NhlLineupObservation $observation): bool =>
-            $this->componentHash($observation, 'forward') === $forwardHash
-            && $this->componentHash($observation, 'defense') === $defenseHash);
+            $this->componentHash($observation, 'forward', $gameType) === $forwardHash
+            && $this->componentHash($observation, 'defense', $gameType) === $defenseHash);
         $defenseSupport = $forwardSupport;
         $supporting = $forwardSupport->concat($defenseSupport)->unique('id');
         $sourceCount = $supporting->pluck('source_id')->unique()->count();
@@ -508,13 +512,13 @@ class NhlAnticipatedLineupImporter
         }
     }
 
-    private function componentHash(NhlLineupObservation $observation, string $role): ?string
+    private function componentHash(NhlLineupObservation $observation, string $role, int $gameType = 2): ?string
     {
         $expected = $role === 'forward' ? 12 : 6;
         $players = $observation->players->where('lineup_role', $role)
             ->sortBy(fn ($player): string => sprintf('%s:%02d', $player->line_key, $player->slot_index));
         if ($players->count() !== $expected
-            || $this->players->verifiedLineupIds($players->values()->toArray(), $role) === null) {
+            || $this->players->verifiedLineupIds($players->values()->toArray(), $role, $gameType) === null) {
             return null;
         }
 

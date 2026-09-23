@@ -231,6 +231,68 @@ function lineupCandidate(string $handle, string $postUrl, string $postText = 'Fu
     ];
 }
 
+it('applies preseason peer eligibility consistently to reporting and projections', function (int $gameType, string $line, int $unknownCount, bool $allowed): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    $current = createCurrentAnticipatedLineup();
+    NhlGame::query()->where('nhl_game_id', $current->nhl_game_id)->update(['game_type' => $gameType]);
+    $current->observation->players()->where('line_key', $line)->where('slot_index', '<=', $unknownCount)
+        ->update(['player_id' => null, 'nhl_player_id' => null, 'resolution_status' => 'unresolved']);
+    $rows = $current->fresh()->observation->players->toArray();
+    expect($current->fresh()->hasVerifiedPlayers())->toBe($allowed);
+    $gate = new ReflectionMethod(\App\Services\NhlGamePredictionPayload::class, 'resolvedSkaterIds');
+    expect($gate->invoke(app(\App\Services\NhlGamePredictionPayload::class), ['players' => $rows], $gameType) !== null)->toBe($allowed);
+    $builder = app(\App\Services\NhlGameLineupProjectionBuilder::class);
+    $built = $builder->build(['players' => $rows], '20252026', '20262027', 'test', 'test', $gameType);
+    expect($built !== null)->toBe($allowed);
+    if ($allowed) {
+        $final = collect($builder->applySatModel($built, null, '20262027', $gameType));
+        $peers = $final->where('line_key', $line)->where('projection_source', '!=', 'line_peer_average');
+        $unknown = $final->where('line_key', $line)->firstWhere('projection_source', 'line_peer_average');
+        expect($final)->toHaveCount(18)
+            ->and($unknown['nhl_player_id'])->toBeNull()
+            ->and($unknown['player_name'])->not->toBeEmpty()
+            ->and($unknown['projected_goals'])->toBe(round((float) $peers->avg('projected_goals'), 4))
+            ->and($unknown['projected_sog'])->toBe(round((float) $peers->avg('projected_sog'), 3))
+            ->and($unknown['game_projected_toi_seconds'])->toBe((int) round((float) $peers->avg('game_projected_toi_seconds')));
+    }
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=' . $current->nhl_game_id)
+        ->assertOk()->assertJsonCount($allowed ? 1 : 0, 'anticipated_lineups');
+    $this->travelBack();
+})->with([
+    'preseason first line' => [1, 'F1', 1, true],
+    'preseason second line' => [1, 'F2', 1, true],
+    'preseason third line' => [1, 'F3', 1, true],
+    'preseason first pair' => [1, 'D1', 1, true],
+    'preseason second pair' => [1, 'D2', 1, true],
+    'one resolved forward remains' => [1, 'F1', 2, true],
+    'no resolved forward remains' => [1, 'F1', 3, false],
+    'no resolved defender remains' => [1, 'D1', 2, false],
+    'regular core remains blocked' => [2, 'F1', 1, false],
+    'playoff core remains blocked' => [3, 'D1', 1, false],
+    'regular depth remains allowed' => [2, 'F4', 1, true],
+    'playoff depth remains allowed' => [3, 'D3', 1, true],
+]);
+
+it('averages final peer rates without using unresolved players as inputs', function (): void {
+    $rows = collect([
+        ['projection_source' => 'sat_model', 'line_key' => 'F1', 'game_projected_toi_seconds' => 900,
+            'projected_goals' => 0.1, 'adjusted_xgf_per_game' => 0.1, 'projected_assists' => 0.2, 'projected_sog' => 1.0,
+            'projected_sat' => 2.0, 'projected_sat_per_60' => 8.0, 'projected_sog_per_60' => 4.0, 'projected_goals_per_60' => 0.4],
+        ['projection_source' => 'sat_model', 'line_key' => 'F1', 'game_projected_toi_seconds' => 1200,
+            'projected_goals' => 0.3, 'adjusted_xgf_per_game' => 0.3, 'projected_assists' => 0.4, 'projected_sog' => 3.0,
+            'projected_sat' => 4.0, 'projected_sat_per_60' => 12.0, 'projected_sog_per_60' => 9.0, 'projected_goals_per_60' => 0.9],
+        ['projection_source' => 'line_peer_average', 'line_key' => 'F1', 'nhl_player_id' => null, 'player_name' => 'Unknown', 'projected_goals' => 999],
+    ]);
+    $method = new ReflectionMethod(\App\Services\NhlGameLineupProjectionBuilder::class, 'applyFinalPeerAverages');
+    $unknown = $method->invoke(app(\App\Services\NhlGameLineupProjectionBuilder::class), $rows)->last();
+    expect($unknown)->toMatchArray([
+        'player_name' => 'Unknown', 'nhl_player_id' => null, 'game_projected_toi_seconds' => 1050,
+        'projected_goals' => 0.2, 'projected_assists' => 0.3, 'projected_sog' => 2.0,
+        'projected_sat' => 3.0, 'projected_sat_per_60' => 10.0, 'projected_sog_per_60' => 6.5,
+        'projected_goals_per_60' => 0.65,
+    ]);
+});
+
 it('uses verified identities consistently for reporting predictions and discovery skips', function (string $scenario, bool $reportable): void {
     $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
     $current = createCurrentAnticipatedLineup(['evidence_status' => 'reported', 'source_count' => 1]);
@@ -1027,6 +1089,33 @@ it('recognizes the Ducks morning skate caption as context for the scheduled King
         'ANA'
     ))->toBeTrue();
 });
+
+it('imports a preseason X lineup with an unresolved first line player but not a regular season one', function (int $gameType): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026010035, 'season_id' => '20262027', 'game_type' => $gameType,
+        'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-23 23:00:00', 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $response = xLineupResponse([lineupCandidate('prospect_reporter', 'https://x.com/prospect_reporter/status/119')]);
+    $response['data'][0]['text'] = str_replace('Forward 1 -', 'Mystery Prospect -', $response['data'][0]['text']);
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+    app(NhlAnticipatedLineupImporter::class)->importFromX($game, 'TOR', 10);
+    $this->assertDatabaseCount('nhl_current_lineups', $gameType === 1 ? 1 : 0);
+    if ($gameType === 1) {
+        $this->assertDatabaseHas('nhl_lineup_observation_players', [
+            'line_key' => 'F1', 'player_name' => 'Mystery Prospect', 'nhl_player_id' => null, 'resolution_status' => 'unresolved',
+        ]);
+        $importer = Mockery::mock(NhlAnticipatedLineupImporter::class);
+        $importer->shouldNotReceive('importOfficial');
+        $importer->shouldNotReceive('importFromX');
+        (new ImportNhlAnticipatedLineupTeamJob(2026010035, 'TOR', 10))->handle($importer);
+    }
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026010035')
+        ->assertOk()->assertJsonCount($gameType === 1 ? 1 : 0, 'anticipated_lineups');
+    $this->travelBack();
+})->with([1, 2]);
 
 it('treats twelve forwards and six defensemen as reported without goalies', function (): void {
     config(['services.x.bearer_token' => 'test-key']);

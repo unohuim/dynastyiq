@@ -80,7 +80,7 @@ class XNhlLineupDiscovery
                     foreach ($page['candidates'] as $candidate) {
                         $acceptedComponents = array_values(array_unique([
                             ...$acceptedComponents,
-                            ...$this->candidateComponents($candidate),
+                            ...$this->candidateComponents($candidate, (int) ($game->game_type ?? 2)),
                         ]));
                     }
                     if (count($acceptedComponents) === 2) {
@@ -238,7 +238,7 @@ class XNhlLineupDiscovery
             $imageText = '';
             $eligibleDate = ! empty($post['created_at']) && Carbon::parse($post['created_at'])
                 ->gte(NhlLineupObservation::evidenceCutoff((string) $game->game_date));
-            if ($eligibleDate && count($this->candidateComponents(['players' => $analysis['players']])) < 2) {
+            if ($eligibleDate && count($this->candidateComponents(['players' => $analysis['players']], (int) ($game->game_type ?? 2))) < 2) {
                 foreach (array_slice($attachments, 0, (int) config('lineup_ocr.max_images_per_post', 4)) as $attachment) {
                     if (($attachment['type'] ?? '') !== 'photo' || empty($attachment['url'])) {
                         continue;
@@ -255,8 +255,8 @@ class XNhlLineupDiscovery
                 // Try image-only and combined evidence; never replace better caption coverage.
                 foreach ([trim($imageText), $postText . "\n" . trim($imageText)] as $text) {
                     $imageAnalysis = $this->parser->analyze($text, $teamAbbrev);
-                    if (count($this->candidateComponents(['players' => $imageAnalysis['players']]))
-                        > count($this->candidateComponents(['players' => $analysis['players']]))) {
+                    if (count($this->candidateComponents(['players' => $imageAnalysis['players']], (int) ($game->game_type ?? 2)))
+                        > count($this->candidateComponents(['players' => $analysis['players']], (int) ($game->game_type ?? 2)))) {
                         $analysis = $imageAnalysis;
                         $lineupText = $text;
                     }
@@ -425,10 +425,10 @@ class XNhlLineupDiscovery
             ];
         }
 
-        if ($this->candidateComponents($candidate) === []) {
+        if ($this->candidateComponents($candidate, (int) ($game->game_type ?? 2)) === []) {
             return [
                 'approved' => false,
-                'reason' => 'Player verification failed: unresolved core slots, duplicate identities, invalid positions, or missing depth-line peers.',
+                'reason' => 'Player verification failed: unresolved slots without an eligible same-line peer fallback, duplicate identities, or invalid positions.',
             ];
         }
 
@@ -456,12 +456,12 @@ class XNhlLineupDiscovery
     }
 
     /** @param array<string,mixed> $candidate @return array<int,string> */
-    private function candidateComponents(array $candidate): array
+    private function candidateComponents(array $candidate, int $gameType = 2): array
     {
         $resolver = app(NhlLineupPlayerResolver::class);
         $players = $candidate['players'] ?? [];
 
-        return $resolver->verifiedLineupIds($players) !== null ? ['forwards', 'defense'] : [];
+        return $resolver->verifiedLineupIds($players, null, $gameType) !== null ? ['forwards', 'defense'] : [];
     }
 
     private function output(string $message): void

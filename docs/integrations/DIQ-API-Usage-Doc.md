@@ -769,7 +769,7 @@ Grouped posts use the first four forward lines and first three defense pairs;
 extra lines, extra pairs, and standalone extras are ignored rather than used to
 fill missing required slots. The selected eighteen still require validation.
 Player identities and slots are verified after the complete roster block is
-identified, retaining the documented F4/D3 exceptions. Historical combined-post
+identified or covered by the documented game-type-specific peer fallback. Historical combined-post
 lineups no longer qualify as reported or suppress further discovery.
 
 | `inputs.*_lineup_source` | Meaning |
@@ -855,12 +855,13 @@ using the existing fallback rather than the SAT model:
 - If neither a usable NHL projection nor translatable non-NHL history exists,
   DynastyIQ retains the player with an explicit low-confidence
   `replacement_level` rate. Resolved lineup players are never silently dropped.
-- An unresolved player is permitted only on `F4` or `D3` when at least one
-  teammate in that exact line or pair resolves canonically. The unresolved row
+- In preseason, an unresolved player is permitted on any forward line or defense
+  pair when at least one teammate in that exact group resolves canonically.
+  Regular-season and playoff exceptions remain limited to `F4`/`D3`. The unresolved row
   retains its reported name and null NHL id, uses `line_peer_average`, and
-  receives the average projected TOI, goals, assists, and SOG of its resolved
-  peers. Unresolved players in `F1`-`F3` or `D1`-`D2` still make a preseason
-  lineup prediction-ineligible.
+  receives the average projected TOI, goals, assists, SOG, and available SAT and
+  per-sixty rates of its resolved peers. A line or pairing with no resolved peer
+  remains prediction-ineligible. Unknown players never serve as peers for each other.
 
 Official NHL authority changes the roster evidence source, not the player-rate
 fallback ladder. Official-boxscore rookies therefore receive the same NHLe or
@@ -881,7 +882,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `player_id` | integer/null | Internal DynastyIQ player id. |
-| `nhl_player_id` | integer/null | Canonical NHL player id; null only for an eligible unresolved F4/D3 peer-average row. |
+| `nhl_player_id` | integer/null | Canonical NHL player id; null for an eligible peer-average row (any preseason line/pair, otherwise F4/D3 only). |
 | `player_name` | string | Display name captured with the reported lineup. |
 | `position` | string | Normalized lineup group: `forward` or `defense`. |
 | `line_key` | string | Reported line or pair: `F1`-`F4` or `D1`-`D3`. |
@@ -1029,8 +1030,8 @@ inputs, while retaining the former for evidence provenance.
 ### Lineup-Aware Consumption Guidance
 
 - Lineup evidence may have `sources[].platform: manual`: a super admin pasted the text into DynastyIQ. It uses the same verification and prediction rules as imported text, is attributed to that admin, and is not an X post or official NHL evidence. Manual entry is a first-party authenticated UI action, not a partner API endpoint.
-- A `reported` lineup has verified canonical core skaters and valid slots, not merely eighteen parsed names. Duplicate identities, goalies in skater slots, or unresolved F1–F3/D1–D2 players prevent publication as a current reported lineup. Invalid legacy lineups are omitted too.
-- Unidentified F4/D3 players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the existing peer-average fallback; they are never presented as identified players.
+- A `reported` lineup has valid slots and verified identities or eligible peer fallbacks, not merely eighteen parsed names. Duplicate identities and goalies in skater slots remain invalid. Unknown F1–F3/D1–D2 players are eligible only in preseason with a verified same-group peer. Invalid legacy lineups are omitted too.
+- Eligible unidentified players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the peer-average fallback; they are never presented as identified players.
 - Persist `nhl_player_id`; do not join prediction players by name.
 - Record `inputs.*_lineup_source` with every imported prediction snapshot.
 - Use `teams.*.roster` to audit which players contributed to that prediction.

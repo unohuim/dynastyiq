@@ -55,6 +55,8 @@ class NhlCurrentLineup extends Model
                 ->concat(collect($components->firstWhere('component_type', 'defense')?->observation?->players ?? [])
                     ->where('lineup_role', 'defense'));
 
-        return app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players->values()->toArray()) !== null;
+        $gameType = (int) NhlGame::query()->where('nhl_game_id', $this->nhl_game_id)->value('game_type');
+
+        return app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players->values()->toArray(), null, $gameType) !== null;
     }
 }

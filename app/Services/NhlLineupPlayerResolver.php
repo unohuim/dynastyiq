@@ -37,12 +37,12 @@ class NhlLineupPlayerResolver
     }
 
     /**
-     * Verify canonical skater identities and slots, allowing only depth-line peer fallbacks.
+     * Verify skater slots, allowing same-group peer fallbacks on every preseason line.
      *
      * @param array<int,array<string,mixed>> $rows
      * @return array<int,int>|null Verified NHL ids, or null when the group is not reportable.
      */
-    public function verifiedLineupIds(array $rows, ?string $role = null): ?array
+    public function verifiedLineupIds(array $rows, ?string $role = null, int $gameType = 2): ?array
     {
         $groups = $role === 'forward' ? ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3]
             : ($role === 'defense' ? ['D1' => 2, 'D2' => 2, 'D3' => 2]
@@ -69,7 +69,7 @@ class NhlLineupPlayerResolver
                     return null;
                 }
                 if (empty($row['nhl_player_id'])) {
-                    if (! in_array($line, ['F4', 'D3'], true)) {
+                    if ($gameType !== 1 && ! in_array($line, ['F4', 'D3'], true)) {
                         return null;
                     }
                     continue;
