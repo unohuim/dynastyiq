@@ -82,6 +82,7 @@ not to individual importers or the text parser.
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after the complete 12F-then-6D block is found and its players pass shared verification.
+- During preseason, automated X candidates must also explicitly contain the word “tonight” (case-insensitive), anywhere before or after the roster in the complete caption or extracted lineup text. Practice-only posts and other posts without that word are declined with an audit reason. Manual submissions and official NHL rosters are exempt; regular-season and playoff discovery are unchanged. This filter applies to newly evaluated candidates and does not rewrite previously stored lineups.
 - Forward-only and defense-only posts remain discovery-audit-only. Photo text passes the same parser and verification as captions; original captions, OCR text, confidence, and image URLs remain separate evidence.
 - Current truth selects one complete observation. Corroboration requires matching the whole roster; separate posts never contribute different halves. Historical combined-post records cannot qualify as reported or stop discovery. Existing date eligibility checks remain in force.
 - Missing players are never invented from roster history or hockey knowledge.

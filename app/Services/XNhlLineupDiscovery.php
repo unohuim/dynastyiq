@@ -383,6 +383,15 @@ class XNhlLineupDiscovery
             ];
         }
 
+        $completeText = (string) ($candidate['post_text'] ?? '') . "\n"
+            . (string) ($candidate['lineup_text'] ?? '');
+        if ((int) ($game->game_type ?? 0) === 1 && preg_match('/\btonight\b/iu', $completeText) !== 1) {
+            return [
+                'approved' => false,
+                'reason' => 'Preseason X lineup posts must explicitly say "tonight"; practice-only or unspecified lineups are not accepted.',
+            ];
+        }
+
         $matchedCount = count($candidate['matched_players'] ?? []);
         if ($matchedCount === 0) {
             return ['approved' => false, 'reason' => 'No target-team players were recognized in the complete post.'];
@@ -414,7 +423,7 @@ class XNhlLineupDiscovery
         }
 
         $gameDecision = $this->gameDecision(
-            (string) $candidate['post_text'] . "\n" . (string) ($candidate['lineup_text'] ?? ''),
+            $completeText,
             $game,
             $teamAbbrev
         );

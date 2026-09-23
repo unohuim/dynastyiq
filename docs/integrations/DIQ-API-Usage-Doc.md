@@ -323,6 +323,20 @@ This endpoint returns the latest projected or confirmed starting-goalie
 observation for each team and game on the requested date. It exposes both flat
 goalie rows and matchup-grouped game rows from the same underlying observations.
 
+Selection preserves confirmed-over-expected priority. Official confirmed starters
+rank first; within expected reports, game-specific lineup G1 evidence takes
+precedence over RotoWire expectations, even if RotoWire was fetched more recently.
+Within the same priority, the most recently fetched observation wins, with its
+record id breaking timestamp ties.
+
+For split-squad dates, RotoWire observations assigning the same goalie to more
+than one game for that team are withheld as ambiguous. This check also applies
+when requesting a single `nhl_game_id`. Raw observations remain stored, but an
+ambiguous row is not returned as an expected or confirmed starter. A missing row
+means no eligible observation, not that the team has no goalie. Predictions and
+game cards use the same evidence rules and do not use team-level workload guesses
+to fill missing starters when the team plays multiple games on the date.
+
 ```http
 GET /api/nhl-starting-goalies?date=2026-09-19
 Accept: application/json
@@ -564,6 +578,12 @@ Authorization: Bearer <DYNASTYIQ_API_TOKEN>
 `team_id` is the canonical `nhl_teams.nhl_id`. Use `nhl_game_id + team_id` as the current-lineup upsert key and `nhl_player_id` as the durable player identity. `official` means the NHL gamecenter boxscore supplied a complete game roster, `reported` means one public source, `corroborated` means two distinct public sources, and `strongly_corroborated` means at least three. Unresolved names remain in the payload and must not be silently substituted.
 
 Before searching X, DynastyIQ checks `GET https://api-web.nhle.com/v1/gamecenter/{game-id}/boxscore` for each queued team. A complete official roster of twelve forwards and six defensemen is persisted as `official` and suppresses X discovery for that game/team. A goalie carrying the NHL `starter: true` flag is recorded as confirmed starting-goalie evidence. The X fallback runs only when that official roster is absent or incomplete.
+
+For preseason games, newly evaluated X lineup posts must explicitly say “tonight”
+somewhere in the full caption or extracted lineup text, before or after the roster.
+Posts without it are not accepted as game lineups. Manual submissions and official
+NHL rosters are exempt; regular-season and playoff discovery are unchanged.
+This discovery filter does not retroactively rewrite existing observations.
 
 The prediction endpoint accepts an `official`, `reported`, `corroborated`, or `strongly_corroborated` lineup when all eighteen skaters resolve uniquely. Otherwise DynastyIQ uses its existing projected-roster fallback. Explicitly reported PP/PK units are returned as `power_play_unit` and `penalty_kill_unit`; null means the source did not report the unit.
 

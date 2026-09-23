@@ -41,11 +41,8 @@ class NhlAvailabilityPayload
     /** @return array<string,mixed> */
     public function goalies(Carbon $date, ?int $nhlGameId = null): array
     {
-        $rows = NhlStartingGoalieObservation::query()
-            ->whereDate('game_date', $date->toDateString())
-            ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
-            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
-            ->orderByDesc('fetched_at')->orderByDesc('id')->get()
+        $rows = app(NhlStartingGoalieSelector::class)->rankedObservations($date)
+            ->when($nhlGameId, fn (Collection $rows): Collection => $rows->where('nhl_game_id', $nhlGameId))
             ->unique(fn (NhlStartingGoalieObservation $row): string => ($row->nhl_game_id ?? $row->game_date->toDateString()) . ':' . $row->team_abbrev)
             ->sortBy([['game_date', 'asc'], ['nhl_game_id', 'asc'], ['is_home', 'asc']])->values();
 

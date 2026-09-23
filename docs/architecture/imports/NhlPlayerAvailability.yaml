@@ -25,7 +25,9 @@ rules:
   - RotoWire-only inferred injuries are suspected; explicit CBS reporting is reported; time-relevant agreement is corroborated.
   - Predictions exclude only out players with reported, corroborated, or confirmed-unavailable evidence.
   - Questionable, unknown, and suspected players remain eligible for projected rosters.
-  - Starting-goalie observations are append only; confirmed evidence outranks expected and unknown evidence, then the latest evidence within that status drives reads.
+  - Starting-goalie observations are append only. Reads first retain each provider's strongest status and latest observation within that status per game and team. Official confirmed starter evidence ranks first, then other confirmed evidence, game-specific public-lineup expected evidence, other expected evidence, and unknown evidence; ties use observation time and id descending.
+  - A RotoWire goalie assigned to multiple NHL game ids for the same team and date is ambiguous and must be excluded from current starter selection, including historical observations already stored. Conflict detection spans the full date even when the consumer requests one game, uses canonical or provider identity and shared normalized names, and does not discard the raw observations.
+  - Public starting-goalie payloads and prediction starter selection share the same observation ranking and split-squad conflict rules. Without eligible game-specific starter evidence, a team playing multiple games on the date has no selected starter; team-level season or workload guesses must not assign the same default starter to both squads.
   - An anticipated-lineup G1 may create an expected public_lineup starting-goalie observation with the source post and publication timestamp; G2 remains backup context.
   - An NHL boxscore goalie with `starter: true` creates confirmed nhl_boxscore starting-goalie evidence; another listed goalie remains backup context.
   - Starting-goalie provider rows must resolve against the complete scheduled team matchup, not either team in isolation.

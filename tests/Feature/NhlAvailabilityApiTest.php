@@ -181,7 +181,7 @@ function xLineupResponse(array $observations): array
         ])->filter()->implode("\n");
         $posts[] = [
             'id' => $postId,
-            'text' => $observation['post_text'] === '' ? '' : $lineupText,
+            'text' => $observation['post_text'] === '' ? '' : "Tonight's lineup\n" . $lineupText,
             'author_id' => 'author-' . $index,
             'created_at' => $observation['published_at'],
             'public_metrics' => [
@@ -602,6 +602,107 @@ it('keeps split squad matchups as separate nhl games', function (): void {
         ->assertJsonPath('games.1.nhl_game_id', 2026010002);
 });
 
+it('withholds duplicate split squad goalie reports and accepts a corrected provider response', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 UTC'));
+    foreach ([2026010035 => ['TOR', 'OTT'], 2026010036 => ['OTT', 'TOR']] as $id => [$home, $away]) {
+        NhlGame::query()->create([
+            'nhl_game_id' => $id, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+            'start_time_utc' => '2026-09-23 23:00:00', 'home_team_abbrev' => $home, 'away_team_abbrev' => $away,
+        ]);
+    }
+    $rows = [
+        ['hometeam' => 'TOR', 'visitteam' => 'OTT', 'homePlayer' => 'Anthony Stolarz',
+            'visitPlayer' => 'Linus Ullmark', 'homeStatus' => 'Expected', 'visitStatus' => 'Expected'],
+        ['hometeam' => 'OTT', 'visitteam' => 'TOR', 'homePlayer' => 'Linus Ullmark',
+            'visitPlayer' => 'Anthony Stolarz', 'homeStatus' => 'Expected', 'visitStatus' => 'Expected'],
+    ];
+    Http::fake(['www.rotowire.com/hockey/tables/projected-goalies.php*' => Http::response($rows)]);
+    app(NhlStartingGoalieImporter::class)->import(Carbon::parse('2026-09-23'));
+
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 4);
+    $this->getJson('/starting-goalies/payload?date=2026-09-23')->assertOk()->assertJsonCount(0, 'starting_goalies');
+    $this->withToken(availabilityToken())->getJson('/api/nhl-starting-goalies?nhl_game_id=2026010035')
+        ->assertOk()->assertJsonCount(0, 'starting_goalies');
+
+    $this->travelTo(Carbon::parse('2026-09-23 12:15:00 UTC'));
+    $rows[1]['homePlayer'] = 'Leevi Merilainen';
+    $rows[1]['visitPlayer'] = 'Joseph Woll';
+    Http::fake(['www.rotowire.com/hockey/tables/projected-goalies.php*' => Http::response($rows)]);
+    app(NhlStartingGoalieImporter::class)->import(Carbon::parse('2026-09-23'));
+
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 8);
+    $this->getJson('/starting-goalies/payload?date=2026-09-23')->assertOk()
+        ->assertJsonCount(4, 'starting_goalies')->assertJsonCount(2, 'games')
+        ->assertJsonPath('games.1.away_goalie.player_name', 'Joseph Woll')
+        ->assertJsonPath('games.1.home_goalie.player_name', 'Leevi Merilainen');
+    $this->travelBack();
+});
+
+it('shares goalie evidence priority between public payloads and prediction selection', function (string $provider, string $status, string $expected): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 UTC'));
+    createGoalieObservation([
+        'game_date' => '2026-09-23', 'provider' => 'public_lineup', 'status' => 'expected',
+        'player_name' => 'Lineup Goalie', 'nhl_player_id' => 8480001, 'fetched_at' => now()->subHour(),
+    ]);
+    createGoalieObservation([
+        'game_date' => '2026-09-23', 'provider' => $provider, 'status' => $status,
+        'player_name' => 'Other Goalie', 'nhl_player_id' => 8480002, 'fetched_at' => now(),
+    ]);
+    $this->getJson('/starting-goalies/payload?date=2026-09-23')->assertOk()
+        ->assertJsonPath('starting_goalies.0.player_name', $expected);
+    expect(app(\App\Services\NhlStartingGoalieSelector::class)->select(2026020001, 'TOR')['name'])->toBe($expected);
+    $this->travelBack();
+})->with([
+    'lineup beats newer expectation' => ['rotowire', 'expected', 'Lineup Goalie'],
+    'confirmation still wins' => ['rotowire', 'confirmed', 'Other Goalie'],
+    'official starter wins' => ['nhl_boxscore', 'confirmed', 'Other Goalie'],
+    'newer lineup replaces older lineup' => ['public_lineup', 'expected', 'Other Goalie'],
+]);
+
+it('filters stored split squad conflicts by canonical provider or normalized name identity', function (?int $nhlId, ?string $providerId, string $firstName, string $secondName): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 UTC'));
+    foreach ([2026010035 => $firstName, 2026010036 => $secondName] as $gameId => $name) {
+        createGoalieObservation([
+            'nhl_game_id' => $gameId, 'game_date' => '2026-09-23', 'player_name' => $name,
+            'nhl_player_id' => $nhlId, 'provider_player_key' => $providerId, 'status' => 'confirmed',
+        ]);
+    }
+    $this->getJson('/starting-goalies/payload?date=2026-09-23')->assertOk()->assertJsonCount(0, 'starting_goalies');
+    expect(app(\App\Services\NhlStartingGoalieSelector::class)->select(2026010035, 'TOR'))->toBeNull();
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 2);
+    $this->travelBack();
+})->with([
+    'canonical NHL id' => [8480001, null, 'Anthony Stolarz', 'A. Stolarz'],
+    'provider id before resolution' => [null, '123', 'Anthony Stolarz', 'A. Stolarz'],
+    'normalized unresolved name' => [null, null, 'Leevi Meriläinen', 'LEEVI MERILAINEN'],
+]);
+
+it('does not use a team workload guess for two split squads without starter evidence', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 UTC'));
+    foreach ([2026010035 => ['TOR', 'OTT'], 2026010036 => ['OTT', 'TOR']] as $id => [$home, $away]) {
+        NhlGame::query()->create([
+            'nhl_game_id' => $id, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+            'home_team_abbrev' => $home, 'away_team_abbrev' => $away,
+        ]);
+    }
+    DB::table('nhl_goalie_workload_projections')->insert([
+        'projection_version' => 'test', 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'goalie_player_id' => 8480001, 'target_team_abbrev' => 'TOR', 'projected_starts' => 50,
+    ]);
+    $selector = app(\App\Services\NhlStartingGoalieSelector::class);
+    expect($selector->select(2026010035, 'TOR', '20262027'))->toBeNull()
+        ->and($selector->select(2026010036, 'TOR', '20262027'))->toBeNull();
+    createGoalieObservation([
+        'nhl_game_id' => 2026010036, 'game_date' => '2026-09-23', 'provider' => 'public_lineup',
+        'nhl_player_id' => 8480002, 'player_name' => 'Game Specific Goalie',
+    ]);
+    expect($selector->select(2026010036, 'TOR', '20262027')['nhl_player_id'])->toBe(8480002)
+        ->and($selector->select(2026010035, 'TOR', '20262027'))->toBeNull();
+    $this->travelBack();
+});
+
 it('resolves an nhl owned preseason goalie with a current ahl league assignment', function (): void {
     NhlGame::query()->create([
         'nhl_game_id' => 2026010005,
@@ -870,6 +971,37 @@ it('stores two matching lineup sources as corroborated current truth', function 
         ->assertJsonCount(2, 'anticipated_lineups.0.sources');
     Http::assertSentCount(2);
 });
+
+it('requires tonight anywhere in automated preseason lineup posts only', function (int $gameType, string $before, string $after, bool $accepted): void {
+    $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+    config(['services.x.bearer_token' => 'test-key']);
+    $game = NhlGame::query()->create([
+        'nhl_game_id' => 2026010035, 'season_id' => '20262027', 'game_type' => $gameType,
+        'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+        'start_time_utc' => '2026-09-23 23:00:00', 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+    ]);
+    $response = xLineupResponse([lineupCandidate('tonight_reporter', 'https://x.com/tonight_reporter/status/123')]);
+    $roster = substr($response['data'][0]['text'], strlen("Tonight's lineup\n"));
+    $response['data'][0]['text'] = $before . "\n" . $roster . "\n" . $after;
+    Http::fake(['api.x.com/*' => Http::response($response)]);
+
+    app(NhlAnticipatedLineupImporter::class)->importFromX($game, 'TOR', 10);
+
+    $this->assertDatabaseCount('nhl_lineup_observations', $accepted ? 1 : 0);
+    $this->assertDatabaseCount('nhl_current_lineups', $accepted ? 1 : 0);
+    $this->withToken(availabilityToken())->getJson('/api/nhl-anticipated-lineups?nhl_game_id=2026010035')
+        ->assertOk()->assertJsonCount($accepted ? 1 : 0, 'anticipated_lineups');
+    $this->travelBack();
+})->with([
+    'tonight before roster' => [1, 'Lines for tonight', '', true],
+    'tonight after roster' => [1, '', 'These are the lines for TONIGHT.', true],
+    'possessive tonight' => [1, "Tonight's lineup", '', true],
+    'practice only' => [1, 'Practice lines', '', false],
+    'no context' => [1, '', '', false],
+    'not a standalone word' => [1, 'tonightly', '', false],
+    'regular season unchanged' => [2, 'Practice lines', '', true],
+    'playoffs unchanged' => [3, 'Practice lines', '', true],
+]);
 
 it('treats twelve forwards and six defensemen as reported without goalies', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
@@ -2639,13 +2771,14 @@ it('restricts manual lineup submissions to super admins', function (bool $signed
     Http::assertNothingSent();
 })->with([false, true]);
 
-it('imports a super admin pasted lineup without provider requests and exposes it publicly', function (): void {
+it('imports a super admin pasted lineup without provider requests and exposes it publicly', function (int $gameType): void {
     $this->travelTo(Carbon::parse('2026-09-21 12:00:00 America/Toronto'));
     $user = User::factory()->create();
     $role = Role::query()->create(['name' => 'Super Admin', 'slug' => 'super-admin', 'level' => 99]);
     $user->roles()->attach($role->id, ['organization_id' => null]);
     DB::table('nhl_teams')->insert(['nhl_id' => 10, 'abbrev' => 'TOR']);
     $current = createCurrentAnticipatedLineup();
+    NhlGame::query()->where('nhl_game_id', 2026020099)->update(['game_type' => $gameType]);
     $text = $current->observation->players->groupBy('line_key')
         ->map(fn ($group) => $group->pluck('player_name')->implode(' - '))->implode("\n");
     $current->observation->delete();
@@ -2666,7 +2799,7 @@ it('imports a super admin pasted lineup without provider requests and exposes it
         ->assertOk()->assertJsonPath('lineup.manual_override', true);
     expect(NhlLineupObservation::query()->where('nhl_game_id', 2026020099)->count())->toBe(2);
     $this->travelBack();
-});
+})->with(['manual preseason without tonight' => [1], 'manual regular season' => [2]]);
 
 it('replaces a reported lineup manually and protects the override from paid discovery', function (): void {
     $this->travelTo(Carbon::parse('2026-09-22 12:00:00 America/Toronto'));

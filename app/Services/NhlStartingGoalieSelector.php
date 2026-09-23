@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\NhlStartingGoalieObservation;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -35,6 +38,16 @@ class NhlStartingGoalieSelector
         $observed = $this->observed($nhlGameId, $teamAbbrev);
         if ($observed !== null) {
             return $observed;
+        }
+
+        // Team-level workload cannot identify which split squad a goalie belongs to.
+        $gameDate = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->value('game_date');
+        if ($gameDate !== null && DB::table('nhl_games')
+            ->whereDate('game_date', $gameDate)
+            ->where(fn ($query) => $query->where('home_team_abbrev', $teamAbbrev)
+                ->orWhere('away_team_abbrev', $teamAbbrev))
+            ->count() > 1) {
+            return null;
         }
 
         $targetSeasonId ??= $this->latestTargetSeasonId();
@@ -99,21 +112,78 @@ class NhlStartingGoalieSelector
             return null;
         }
 
-        $row = DB::table('nhl_starting_goalie_observations')
+        $date = DB::table('nhl_starting_goalie_observations')
             ->where('nhl_game_id', $nhlGameId)
             ->where('team_abbrev', $teamAbbrev)
-            ->whereIn('status', ['confirmed', 'expected'])
-            ->whereNotNull('nhl_player_id')
-            ->orderByRaw("CASE WHEN status = 'confirmed' THEN 0 ELSE 1 END")
-            ->orderByDesc('fetched_at')
-            ->first();
+            ->value('game_date');
+        $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date))
+            ->first(fn (NhlStartingGoalieObservation $observation): bool => (int) $observation->nhl_game_id === $nhlGameId
+                && $observation->team_abbrev === $teamAbbrev
+                && $observation->nhl_player_id !== null
+                && in_array($observation->status, ['confirmed', 'expected'], true));
 
         return $row === null ? null : [
             ...$this->result((int) $row->nhl_player_id, 'starting_goalie_observation', (string) $row->status),
             'name' => $row->player_name,
             'provider' => $row->provider,
-            'observed_at' => $row->fetched_at,
+            'observed_at' => $row->getRawOriginal('fetched_at'),
         ];
+    }
+
+    /**
+     * Rank current provider evidence consistently for public payloads and predictions.
+     * Inspect the entire date before filtering a game: a split-squad conflict may
+     * exist only in the other game's row. Historical evidence remains immutable.
+     *
+     * @return Collection<int, NhlStartingGoalieObservation>
+     */
+    public function rankedObservations(Carbon $date): Collection
+    {
+        $rows = NhlStartingGoalieObservation::query()
+            ->whereDate('game_date', $date->toDateString())
+            ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
+            ->orderByDesc('fetched_at')->orderByDesc('id')->get()
+            ->unique(fn (NhlStartingGoalieObservation $row): string => $row->provider . ':'
+                . ($row->nhl_game_id ?? $row->game_date->toDateString()) . ':' . $row->team_abbrev);
+
+        $identities = [];
+        $normalizer = app(PlayerIdentityNormalizer::class);
+        foreach ($rows as $row) {
+            if ($row->provider !== 'rotowire' || $row->nhl_game_id === null) {
+                continue;
+            }
+
+            // Either canonical/provider identity or normalized name can expose a
+            // duplicate, including observations recorded before name resolution.
+            $keys = array_filter([
+                $row->nhl_player_id ? 'nhl:' . $row->nhl_player_id : null,
+                $row->provider_player_key ? 'provider:' . $row->provider_player_key : null,
+                ($name = $normalizer->compactNormalizedName($row->player_name)) ? 'name:' . $name : null,
+            ]);
+            foreach ($keys as $key) {
+                $identities[$row->team_abbrev . ':' . $key][$row->nhl_game_id][] = $row->id;
+            }
+        }
+
+        $conflicting = [];
+        foreach ($identities as $games) {
+            if (count($games) > 1) {
+                foreach ($games as $ids) {
+                    foreach ($ids as $id) {
+                        $conflicting[$id] = true;
+                    }
+                }
+            }
+        }
+
+        return $rows->reject(fn (NhlStartingGoalieObservation $row): bool => isset($conflicting[$row->id]))
+            ->sortBy(fn (NhlStartingGoalieObservation $row): int => match (true) {
+                $row->provider === 'nhl_boxscore' && $row->status === 'confirmed' => 0,
+                $row->status === 'confirmed' => 1,
+                $row->provider === 'public_lineup' && $row->status === 'expected' => 2,
+                $row->status === 'expected' => 3,
+                default => 4,
+            })->values();
     }
 
     /** @return array<string,mixed> */

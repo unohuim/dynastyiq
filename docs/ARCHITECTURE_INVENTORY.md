@@ -3766,6 +3766,18 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Automated preseason X discovery requires “tonight” somewhere in the full caption
+or extracted lineup text, before or after the roster. Manual submissions and
+official NHL rosters are exempt. Authority:
+`docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
+Starting-goalie public/API reads and prediction selection share
+`NhlStartingGoalieSelector` evidence ranking. Conflicting RotoWire assignments of
+one goalie to multiple same-day games are withheld without deleting observations;
+game-specific expected G1 reports outrank RotoWire expectations. Split-squad games
+without eligible starter evidence do not fall back to team-level workload guesses.
+Authority: `docs/architecture/imports/NhlPlayerAvailability.yaml`.
+
 X photo attachments can provide text through `NhlLineupImageOcr` and the bounded
 Node `scripts/lineup-ocr.mjs` runner using npm-installed Tesseract.js and English language data. Extraction is cached and feeds the existing
 parser/resolver; original captions, image URLs, confidence and extracted text
