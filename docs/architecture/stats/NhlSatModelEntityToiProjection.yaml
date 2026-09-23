@@ -23,6 +23,7 @@ when_not_to_use:
   - Feeding held-out test-season values into model-run opportunity projections.
   - Publishing season-volume skater projections before a separate opportunity-to-volume workflow exists.
 rules:
+  - The approved request-time game prediction integration may combine these standalone TOI/GP rows with the same run's skater offense SAT/60 buckets under NhlProjectedTeamMatchups.yaml; it does not write season-volume outputs or use held-out actuals.
   - Build TOI must run only after Build Profiles has produced skater entity profiles for the SAT model.
   - Build TOI must use the SAT model train_season_ids as its source seasons and must not use the optional target test season as an input.
   - Build TOI must persist one row per model_run_id, profile_type, and entity_key for skater_offense and skater_defense entities only.

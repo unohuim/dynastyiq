@@ -2870,6 +2870,103 @@ it('exposes game sync settings only to a super admin', function (): void {
             ])));
 });
 
+describe('public game detail roster previews', function (): void {
+    beforeEach(function (): void {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00', 'UTC'));
+        NhlGame::query()->create([
+            'nhl_game_id' => 2026010900, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-24', 'game_dow' => 'Thursday', 'game_month' => 'September',
+            'game_state' => 'FUT', 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
+        ]);
+        foreach (range(1, 19) as $index) {
+            $id = 8489000 + $index;
+            $position = $index <= 13 ? 'C' : 'D';
+            Player::query()->create(['nhl_id' => $id, 'full_name' => 'Preview Player ' . $index,
+                'first_name' => 'Preview', 'last_name' => 'Player ' . $index, 'position' => $position, 'team_abbrev' => 'TOR']);
+            DB::table('nhl_player_toi_projections')->insert([
+                'player_id' => $id, 'projection_version' => 'detail-toi', 'source_season_id' => '20252026',
+                'target_season_id' => '20262027', 'target_team_abbrev' => 'TOR', 'position' => $position,
+                'projected_toi_per_game_seconds' => 1200 - $index, 'projected_at' => '2026-09-23 10:00:00',
+            ]);
+        }
+    });
+
+    it('shows an injury-filtered projected roster to guests without creating observations', function (): void {
+        createCurrentInjury(['nhl_player_id' => 8489001, 'player_name' => 'Preview Player 1']);
+        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->component('Games/Show')->where('game.home.lineup', null)
+            ->where('game.home.is_projected', true)
+            ->where('game.home.display_lineup.evidence_status', 'projected')
+            ->has('game.home.display_lineup.players', 18)
+            ->where('game.home.display_lineup.players.0.nhl_player_id', 8489002)
+            ->where('game.home.display_lineup.players.11.line_key', 'F4')
+            ->where('game.home.display_lineup.players.12.line_key', 'D1')
+            ->where('game.home.injuries.0.nhl_player_id', 8489001)
+            ->has('game.home.predictions', 18)
+            ->where('game.home.predictions.0.nhl_player_id', 8489002));
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+        $this->assertDatabaseCount('nhl_current_lineups', 0);
+        Http::assertNothingSent();
+    });
+
+    it('retains questionable players under the existing availability rule', function (): void {
+        createCurrentInjury(['nhl_player_id' => 8489001, 'availability' => 'questionable']);
+        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('game.home.display_lineup.players.0.nhl_player_id', 8489001)
+            ->where('game.home.injuries.0.availability', 'questionable'));
+    });
+
+    it('shows an empty projected roster for teams without TOI inputs', function (): void {
+        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('game.away.is_projected', true)
+            ->has('game.away.display_lineup.players', 0)->has('game.away.predictions', 0));
+    });
+
+    it('preserves a reported roster instead of replacing it with projected players', function (): void {
+        $current = createCurrentAnticipatedLineup();
+        NhlGame::query()->whereKey($current->nhl_game_id)->update(['game_date' => '2026-09-24', 'game_state' => 'FUT']);
+        $this->get('/games/' . $current->nhl_game_id)->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('game.home.is_projected', false)
+            ->where('game.home.display_lineup.evidence_status', 'corroborated')
+            ->where('game.home.display_lineup.players.0.player_name', 'Test Player 13')
+            ->has('game.home.predictions', 18));
+    });
+
+    it('uses same-model bucket rates and game minutes without goalie projections', function (int $gameType, float $sat, float $sog, float $goals): void {
+        NhlGame::query()->whereKey(2026010900)->update(['game_type' => $gameType]);
+        $model = \App\Models\NhlModelRun::query()->create([
+            'run_key' => 'detail-model', 'name' => 'Detail model', 'model_family' => 'sat',
+            'workflow_stage' => 'training', 'model_version' => 'test', 'status' => 'complete',
+            'target_season_id' => '20262027', 'train_season_ids' => ['20252026'],
+            'metrics' => [
+                'rate_projections_completed_at' => '2026-09-23T10:00:00Z',
+                'toi_projections_completed_at' => '2026-09-23T10:00:00Z',
+                'rate_projection_entities_queued' => 1, 'rate_projection_entities_completed' => 1,
+                'toi_projection_entities_queued' => 1, 'toi_projection_entities_completed' => 1,
+            ],
+        ]);
+        DB::table('nhl_expected_goals_models')->insert([
+            'model_run_id' => $model->id, 'name' => 'Detail goal model', 'version' => 'test', 'prediction_target' => 'goal',
+        ]);
+        $identity = ['model_run_id' => $model->id, 'source_season_ids' => '["20252026"]',
+            'profile_type' => 'skater_offense', 'entity_key' => 'player:8489001', 'entity_id' => 8489001];
+        DB::table('nhl_sat_model_entity_rate_projection_buckets')->insert([
+            ...$identity, 'matched_bucket_key' => 'test', 'projected_xsat_per_60' => 12,
+            'sat_probability' => 0.5, 'goal_probability' => 0.1,
+        ]);
+        DB::table('nhl_sat_model_entity_toi_projections')->insert([
+            ...$identity, 'target_season_id' => '20262027', 'projected_toi_per_game_seconds' => 1080,
+        ]);
+        $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+            ->where('game.home.predictions.0.projection_source', 'sat_model')
+            ->where('game.home.predictions.0.model_run_id', $model->id)
+            ->where('game.home.predictions.0.projected_sat', fn ($value): bool => abs($value - $sat) < 0.0001)
+            ->where('game.home.predictions.0.projected_sog', fn ($value): bool => abs($value - $sog) < 0.0001)
+            ->where('game.home.predictions.0.projected_goals', fn ($value): bool => abs($value - $goals) < 0.0001));
+        $this->assertDatabaseCount('nhl_goalie_season_projections', 0);
+    })->with([[1, 4.0, 2.0, 0.2], [2, 3.6, 1.8, 0.18]]);
+});
+
 it('returns not found for an unknown public game', function (): void {
     $this->get(route('games.show', ['nhlGameId' => 2999999999]))->assertNotFound();
 });

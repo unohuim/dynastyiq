@@ -770,8 +770,44 @@ than inferring how the goalie was selected. Current values are `provided`,
 
 ### Game-Specific Lineup TOI and Production Inputs
 
+The public `/games/{nhlGameId}` detail page also offers per-team Lineup and
+Prediction tabs. An unreported team receives a clearly labeled, injury-filtered
+projected-roster preview. Its player projections can be viewed even when a full
+game prediction is withheld. These browser previews are not reported evidence
+and do not change this API's `prediction_available` rules. SAT, SOG and G are
+shown per 60 and per game; unavailable inputs render as dashes.
+
+For complete official or reported rosters, DynastyIQ selects the newest created
+completed SAT model for `target_season_id` with successfully completed **both**
+Build /60 and Build TOI outputs, a run-scoped goal model, and usable paired skater
+rows. A newer unfinished model does not displace a usable one. Selection is
+automatic; no additional API parameter is required.
+
+`inputs.sat_model_run_id` identifies the selected model, or is null when none
+qualifies. Selection does not mean every skater used that model: inspect each
+roster row's `projection_source` and `model_run_id` for actual application.
+Players without usable paired outputs keep their existing fallback. Projected
+rosters without an official or reported lineup retain the existing simulator
+path. Legacy simulator and goalie projection prerequisites still apply.
+
+For a model-backed skater, each bucket contributes:
+
+- Attempts: `SAT/60 × game TOI seconds / 3600`.
+- SOG: attempts multiplied by the bucket's trained attempt-to-SOG probability.
+- Goals: expected SOG multiplied by its trained SOG-to-goal probability.
+
+The contributions are summed across buckets. Both rates and TOI come from the
+same model and player. Diagnostic `projected_xsog_per_60` and
+`projected_xg_per_60` storage columns are not used as prediction inputs.
+Regular/postseason model-backed skaters use model TOI/GP. Preseason forwards
+use line midpoints: F1 20, F2 16.5, F3 13.5, F4 8.5 minutes; defense retains
+existing game TOI. Assists, NHLe rookies, and goalie adjustments retain their
+existing treatment. Eligible unresolved depth players receive their linemates'
+averages after model application.
+
 When `inputs.*_lineup_source` is `nhl_boxscore` or `anticipated_lineup`,
-DynastyIQ builds a game-specific input for every resolved skater:
+DynastyIQ builds a game-specific input for every resolved skater. For players
+using the existing fallback rather than the SAT model:
 
 - The reported forward or defense pair determines the player's base game role.
 - Explicit PP1, PP2, PK1, and PK2 evidence adjusts that role. Null special-team
@@ -823,7 +859,13 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `power_play_unit` | integer/null | Explicitly reported PP unit, `1` or `2`; null means unreported. |
 | `penalty_kill_unit` | integer/null | Explicitly reported PK unit, `1` or `2`; null means unreported. |
 | `nhl_games_played` | integer | Career NHL regular-season GP used for the 25-game experience threshold. |
-| `projection_source` | string | Player-rate source: `nhl_projection`, `nhle_non_nhl_history`, `replacement_level`, or `line_peer_average`. |
+| `projection_source` | string | Player-rate source: `sat_model`, `nhl_projection`, `nhle_non_nhl_history`, `replacement_level`, or `line_peer_average`. |
+| `model_run_id` | integer | Applied SAT model id; present on model-backed rows. |
+| `model_projected_toi_per_game_seconds` | number | Same-model TOI/GP before any preseason line override; model-backed rows only. |
+| `projected_sat_per_60` | number | Sum of model bucket SAT/60; model-backed rows only. |
+| `projected_sog_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG probability; model-backed rows only. |
+| `projected_goals_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG and SOG-to-goal probabilities; model-backed rows only. |
+| `projected_sat` | number | Expected game shot attempts at the applied game TOI; model-backed rows only. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
 | `confidence_score` | number | Numeric `0`-`1` confidence input used by prediction confidence weighting. |

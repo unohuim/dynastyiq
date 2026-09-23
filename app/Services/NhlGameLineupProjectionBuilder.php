@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\NhlModelRun;
 use App\Support\Stats\NhleLeagueFactorResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /** Builds complete, game-specific skater inputs from a reported lineup. */
 final class NhlGameLineupProjectionBuilder
@@ -16,6 +18,201 @@ final class NhlGameLineupProjectionBuilder
 
     public function __construct(private readonly NhleLeagueFactorResolver $factors)
     {
+    }
+
+    /**
+     * Select the existing TOI-ranked roster without importing or declaring reported evidence.
+     *
+     * @param array<int,int>|null $rosterIds
+     * @return array<int,array<string,mixed>>
+     */
+    public function projectedRosterPreview(string $targetSeasonId, string $toiProjectionVersion, string $team, ?array $rosterIds = null): array
+    {
+        $rows = DB::table('nhl_player_toi_projections as toi')
+            ->leftJoin('players', 'players.nhl_id', '=', 'toi.player_id')
+            ->where('toi.target_season_id', $targetSeasonId)
+            ->where('toi.projection_version', $toiProjectionVersion)
+            ->where('toi.target_team_abbrev', $team)
+            ->when($rosterIds !== null, fn ($query) => $query->whereIn('toi.player_id', $rosterIds))
+            ->when($rosterIds === null, fn ($query) => $query->whereNotIn('toi.player_id', $this->unavailablePlayerIds($team)))
+            ->whereRaw("UPPER(COALESCE(toi.position, '')) <> 'G'")
+            ->orderByDesc('toi.projected_toi_per_game_seconds')->orderBy('toi.player_id')
+            ->get(['toi.player_id', 'players.id as dynasty_player_id', 'players.full_name as player_name',
+                'toi.position', 'toi.projected_toi_per_game_seconds', 'toi.confidence_score', 'toi.confidence_bucket']);
+        $forwards = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) !== 'D')->take(12);
+        $defense = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) === 'D')->take(6);
+
+        return $forwards->concat($defense)->map(fn (object $row): array => [
+            'player_id' => $row->dynasty_player_id === null ? null : (int) $row->dynasty_player_id,
+            'nhl_player_id' => (int) $row->player_id,
+            'player_name' => $row->player_name ?? (string) $row->player_id,
+            'position' => $row->position,
+            'projection_source' => $rosterIds === null ? 'projected_roster' : 'nhl_boxscore',
+            'baseline_toi_seconds' => $row->projected_toi_per_game_seconds === null
+                ? null : round((float) $row->projected_toi_per_game_seconds, 2),
+            'confidence_score' => $row->confidence_score === null ? null : round((float) $row->confidence_score, 4),
+            'confidence' => $row->confidence_bucket,
+        ])->values()->all();
+    }
+
+    /** @return array<int,int> */
+    public function unavailablePlayerIds(string $team): array
+    {
+        if (! Schema::hasTable('nhl_player_injuries')) {
+            return [];
+        }
+
+        return DB::table('nhl_player_injuries')->where('team_abbrev', $team)
+            ->where('availability', 'out')
+            ->whereIn('evidence_level', ['reported', 'corroborated', 'confirmed_unavailable'])
+            ->whereNotNull('nhl_player_id')->pluck('nhl_player_id')
+            ->map(fn (mixed $id): int => (int) $id)->all();
+    }
+
+    /**
+     * Read-only per-team preview, independent of goalie models and game-prediction eligibility.
+     *
+     * @param array<string,mixed>|null $lineup
+     * @return array<string,mixed>
+     */
+    public function teamPreview(?array $lineup, string $team, string $targetSeasonId, int $gameType, ?int $modelId): array
+    {
+        $projection = DB::table('nhl_player_season_projections')->where('target_season_id', $targetSeasonId)
+            ->orderByDesc('projected_at')->orderByDesc('projection_version')->first();
+        $toiVersion = (string) DB::table('nhl_player_toi_projections')->where('target_season_id', $targetSeasonId)
+            ->orderByDesc('projected_at')->orderByDesc('projection_version')->value('projection_version');
+        $projected = $lineup === null;
+        if ($projected) {
+            $positions = ['forward' => 0, 'defense' => 0];
+            $players = collect($this->projectedRosterPreview($targetSeasonId, $toiVersion, $team))
+                ->map(function (array $player) use (&$positions): array {
+                    $role = mb_strtoupper((string) $player['position']) === 'D' ? 'defense' : 'forward';
+                    $index = $positions[$role]++;
+                    $size = $role === 'defense' ? 2 : 3;
+
+                    return [...$player, 'lineup_role' => $role,
+                        'line_key' => ($role === 'defense' ? 'D' : 'F') . (intdiv($index, $size) + 1),
+                        'slot_index' => ($index % $size) + 1,
+                        'resolution_status' => $player['player_id'] === null ? 'unresolved' : 'resolved'];
+                })->all();
+            $lineup = ['evidence_status' => 'projected', 'players' => $players, 'sources' => [], 'source_count' => 0];
+        }
+        $sourceSeason = (string) ($projection?->source_season_id
+            ?? ((int) substr($targetSeasonId, 0, 4) - 1) . substr($targetSeasonId, 0, 4));
+        $predictions = $this->build($lineup, $sourceSeason, $targetSeasonId, (string) ($projection?->projection_version ?? ''), $toiVersion);
+        // Partial projected rosters remain visible without inventing legacy production inputs.
+        $predictions ??= collect($lineup['players'])->whereIn('lineup_role', ['forward', 'defense'])
+            ->map(fn (array $player): array => [...$player,
+                'projection_source' => null,
+                'game_projected_toi_seconds' => $player['baseline_toi_seconds'] ?? null,
+            ])->values()->all();
+        if ($modelId !== null) {
+            $predictions = $this->applySatModel($predictions, $modelId, $targetSeasonId, $gameType);
+        }
+
+        return ['display_lineup' => $lineup, 'is_projected' => $projected, 'predictions' => $predictions];
+    }
+
+    /** Select the newest completed model with both rate and opportunity outputs for this season. */
+    public function latestUsableSatModelId(string $targetSeasonId): ?int
+    {
+        foreach (['nhl_model_runs', 'nhl_expected_goals_models', 'nhl_sat_model_entity_rate_projection_buckets', 'nhl_sat_model_entity_toi_projections'] as $table) {
+            if (! Schema::hasTable($table)) {
+                return null;
+            }
+        }
+        $runs = NhlModelRun::query()->where('model_family', 'sat')->where('status', 'complete')
+            ->where('target_season_id', $targetSeasonId)->orderByDesc('created_at')->orderByDesc('id')->get();
+        foreach ($runs as $run) {
+            $metrics = $run->metrics ?? [];
+            foreach (['rate', 'toi'] as $stage) {
+                $done = $metrics[$stage . '_projections_completed_at'] ?? null;
+                $started = $metrics[$stage . '_projections_started_at'] ?? null;
+                if (! $done || ($started && strtotime($done) < strtotime($started))
+                    || (int) ($metrics[$stage . '_projection_entities_queued'] ?? 0) < 1
+                    || (int) ($metrics[$stage . '_projection_entities_completed'] ?? 0)
+                        !== (int) $metrics[$stage . '_projection_entities_queued']) {
+                    continue 2;
+                }
+            }
+            // A missing goal model must not be interpreted as a genuine zero scoring rate.
+            if (! DB::table('nhl_expected_goals_models')->where('model_run_id', $run->id)
+                ->where('prediction_target', 'goal')->exists()) {
+                continue;
+            }
+            if ($this->satPlayerInputs((int) $run->id, $targetSeasonId)->isNotEmpty()) {
+                return (int) $run->id;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Apply model-run SAT rates and TOI to an already selected roster, never selecting different players.
+     *
+     * @param array<int,array<string,mixed>> $players
+     * @return array<int,array<string,mixed>>
+     */
+    public function applySatModel(array $players, int $modelId, string $targetSeasonId, int $gameType): array
+    {
+        $inputs = $this->satPlayerInputs($modelId, $targetSeasonId);
+        $rows = collect($players)->map(function (array $player) use ($inputs, $modelId, $gameType): array {
+            $nhlId = array_key_exists('nhl_player_id', $player) ? $player['nhl_player_id'] : ($player['player_id'] ?? null);
+            $input = $nhlId === null ? null : $inputs->get((int) $nhlId);
+            if ($input === null || in_array($player['projection_source'] ?? null, ['nhle_non_nhl_history', 'line_peer_average'], true)) {
+                return $player;
+            }
+            $seconds = (float) $input->toi_seconds;
+            if ($gameType === 1) {
+                $seconds = match ($player['line_key'] ?? null) {
+                    'F1' => 1200.0, 'F2' => 990.0, 'F3' => 810.0, 'F4' => 510.0,
+                    default => (float) ($player['game_projected_toi_seconds'] ?? $seconds),
+                };
+            }
+            $player['projection_source'] = 'sat_model';
+            $player['model_run_id'] = $modelId;
+            $player['model_projected_toi_per_game_seconds'] = (float) $input->toi_seconds;
+            $player['projected_sat_per_60'] = (float) $input->sat_rate;
+            $player['projected_sog_per_60'] = (float) $input->sog_rate;
+            $player['projected_goals_per_60'] = (float) $input->goal_rate;
+            $player['game_projected_toi_seconds'] = (int) round($seconds);
+            $player['game_projected_toi'] = sprintf('%d:%02d', intdiv((int) round($seconds), 60), (int) round($seconds) % 60);
+            $player['projected_sat'] = round((float) $input->sat_rate * $seconds / 3600, 3);
+            $player['projected_sog'] = round((float) $input->sog_rate * $seconds / 3600, 3);
+            $player['projected_goals'] = round((float) $input->goal_rate * $seconds / 3600, 4);
+            $player['adjusted_xgf_per_game'] = $player['projected_goals'];
+
+            return $player;
+        });
+
+        return $this->applyFinalPeerAverages($rows)->all();
+    }
+
+    /** Join same-run, same-entity buckets and standalone TOI; never sum different profile types. */
+    private function satPlayerInputs(int $modelId, string $targetSeasonId): Collection
+    {
+        return DB::table('nhl_sat_model_entity_rate_projection_buckets as rates')
+            ->join('nhl_sat_model_entity_toi_projections as toi', function ($join): void {
+                $join->on('toi.model_run_id', '=', 'rates.model_run_id')
+                    ->on('toi.profile_type', '=', 'rates.profile_type')
+                    ->on('toi.entity_key', '=', 'rates.entity_key')
+                    ->on('toi.entity_id', '=', 'rates.entity_id');
+            })
+            ->where('rates.model_run_id', $modelId)->where('rates.profile_type', 'skater_offense')
+            ->where('rates.game_type', 2)->where('toi.game_type', 2)
+            ->where('toi.target_season_id', $targetSeasonId)->whereNotNull('rates.entity_id')
+            ->where('toi.projected_toi_per_game_seconds', '>', 0)
+            ->selectRaw('rates.entity_id, MAX(toi.projected_toi_per_game_seconds) AS toi_seconds')
+            ->selectRaw('SUM(rates.projected_xsat_per_60) AS sat_rate')
+            ->selectRaw('SUM(rates.projected_xsat_per_60 * rates.sat_probability) AS sog_rate')
+            ->selectRaw('SUM(rates.projected_xsat_per_60 * rates.sat_probability * rates.goal_probability) AS goal_rate')
+            ->groupBy('rates.entity_id')
+            ->havingRaw('COUNT(*) = COUNT(rates.projected_xsat_per_60)')
+            ->havingRaw('MIN(rates.projected_xsat_per_60) >= 0')
+            ->havingRaw('MIN(rates.sat_probability) >= 0 AND MAX(rates.sat_probability) <= 1')
+            ->havingRaw('MIN(rates.goal_probability) >= 0 AND MAX(rates.goal_probability) <= 1')
+            ->get()->keyBy('entity_id');
     }
 
     /** @param array<string,mixed>|null $lineup @return array<int,array<string,mixed>>|null */

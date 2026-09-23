@@ -55,6 +55,7 @@ class NhlGamePredictionPayload
         $goalieProjectionVersion = (string) ($overrides['goalie_projection_version'] ?? $this->latestGoalieProjectionVersion($targetSeasonId));
 
         $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
+        $satModelId = $this->lineupProjections->latestUsableSatModelId($targetSeasonId);
 
         $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
         $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
@@ -167,6 +168,14 @@ class NhlGamePredictionPayload
 
         $awaySide = $result['sides'][0] ?? [];
         $homeSide = $result['sides'][1] ?? [];
+        if ($satModelId !== null) {
+            if ($awayGamePlayers !== null) {
+                $awayGamePlayers = $this->lineupProjections->applySatModel($awayGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+            }
+            if ($homeGamePlayers !== null) {
+                $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+            }
+        }
         $awaySide = $this->applyGameLineupProjection($awaySide, $awayGamePlayers);
         $homeSide = $this->applyGameLineupProjection($homeSide, $homeGamePlayers);
         $awayGoals = (float) data_get($awaySide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
@@ -192,6 +201,7 @@ class NhlGamePredictionPayload
             'prediction_available' => true,
             'game' => $this->gamePayload($game),
             'inputs' => [
+                'sat_model_run_id' => $satModelId,
                 'source_season_id' => $sourceSeasonId,
                 'target_season_id' => $targetSeasonId,
                 'projection_version' => $projectionVersion,
@@ -379,38 +389,7 @@ class NhlGamePredictionPayload
         string $team,
         ?array $rosterIds
     ): array {
-        $rows = DB::table('nhl_player_toi_projections as toi')
-            ->leftJoin('players', 'players.nhl_id', '=', 'toi.player_id')
-            ->where('toi.target_season_id', $targetSeasonId)
-            ->where('toi.projection_version', $toiProjectionVersion)
-            ->where('toi.target_team_abbrev', $team)
-            ->when($rosterIds !== null, fn ($query) => $query->whereIn('toi.player_id', $rosterIds))
-            ->when($rosterIds === null, fn ($query) => $query->whereNotIn('toi.player_id', $this->unavailablePlayerIds($team)))
-            ->whereRaw("UPPER(COALESCE(toi.position, '')) <> 'G'")
-            ->orderByDesc('toi.projected_toi_per_game_seconds')
-            ->get([
-                'toi.player_id',
-                'players.id as dynasty_player_id',
-                'players.full_name as player_name',
-                'toi.position',
-                'toi.projected_toi_per_game_seconds',
-                'toi.confidence_score',
-                'toi.confidence_bucket',
-            ]);
-        $forwards = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) !== 'D')->take(12);
-        $defense = $rows->filter(fn (object $row): bool => mb_strtoupper((string) $row->position) === 'D')->take(6);
-
-        return $forwards->concat($defense)->map(fn (object $row): array => [
-            'player_id' => $row->dynasty_player_id === null ? null : (int) $row->dynasty_player_id,
-            'nhl_player_id' => (int) $row->player_id,
-            'player_name' => $row->player_name ?? (string) $row->player_id,
-            'position' => $row->position,
-            'projection_source' => $rosterIds === null ? 'projected_roster' : 'nhl_boxscore',
-            'baseline_toi_seconds' => $row->projected_toi_per_game_seconds === null
-                ? null : round((float) $row->projected_toi_per_game_seconds, 2),
-            'confidence_score' => $row->confidence_score === null ? null : round((float) $row->confidence_score, 4),
-            'confidence' => $row->confidence_bucket,
-        ])->values()->all();
+        return $this->lineupProjections->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $team, $rosterIds);
     }
 
     /** @return array<string, mixed>|null */
@@ -426,21 +405,6 @@ class NhlGamePredictionPayload
         } catch (ValidationException) {
             return null;
         }
-    }
-
-    /** @return array<int, int> */
-    private function unavailablePlayerIds(string $team): array
-    {
-        if (! Schema::hasTable('nhl_player_injuries')) {
-            return [];
-        }
-
-        return DB::table('nhl_player_injuries')
-            ->where('team_abbrev', $team)
-            ->where('availability', 'out')
-            ->whereIn('evidence_level', ['reported', 'corroborated', 'confirmed_unavailable'])
-            ->whereNotNull('nhl_player_id')
-            ->pluck('nhl_player_id')->map(fn (mixed $id): int => (int) $id)->all();
     }
 
     /**

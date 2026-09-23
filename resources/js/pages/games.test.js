@@ -1,7 +1,7 @@
 /* @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, nextTick } from 'vue';
+import { createApp, h, nextTick } from 'vue';
 import ManualLineupModal from './Games/ManualLineupModal.vue';
 import ToggleSwitch from '../components/ToggleSwitch.vue';
 import GameCard from './Games/GameCard.vue';
@@ -569,6 +569,92 @@ describe('Vue game presentation', () => {
         };
         createApp(LineupTeam, { team, side: 'Home' }).mount('#vue-game');
         expect(document.querySelector('a[href="https://x.com/reporter/status/1"]')?.textContent).toContain('@reporter');
+    });
+});
+
+describe('game detail lineup and prediction tabs', () => {
+    let app;
+    const team = {
+        team_abbrev: 'TOR', is_projected: true, lineup: null,
+        display_lineup: { evidence_status: 'projected', sources: [], players: [
+            { nhl_player_id: 1, player_name: 'Projected Skater', line_key: 'F1', slot_index: 1 },
+        ] },
+        injuries: [{ nhl_player_id: 2, player_name: 'Injured Skater', availability: 'out', body_part: 'Hip' }],
+        predictions: [{ nhl_player_id: 1, player_name: 'Projected Skater', line_key: 'F1',
+            projection_source: 'sat_model', model_run_id: 7, game_projected_toi_seconds: 1200,
+            projected_sat: 4, projected_sog: 2, projected_goals: 0.2,
+            projected_sat_per_60: 12, projected_sog_per_60: 6, projected_goals_per_60: 0.6 }],
+    };
+    beforeEach(() => { document.body.innerHTML = '<div id="detail-tabs"></div>'; });
+    afterEach(() => { app?.unmount(); document.body.innerHTML = ''; });
+
+    it('defaults to the projected lineup and lists injuries below it', () => {
+        app = createApp(LineupTeam, { team, side: 'Home' });
+        app.mount('#detail-tabs');
+        expect(document.querySelector('#team-home-lineup').getAttribute('aria-selected')).toBe('true');
+        expect(document.querySelector('#team-home-lineup-panel').style.display).not.toBe('none');
+        expect(document.querySelector('#team-home-prediction-panel').style.display).toBe('none');
+        expect(document.querySelector('#team-home-lineup-panel').textContent).toContain('Projected Skater');
+        expect(document.querySelector('[aria-label="Injured players"]').textContent).toContain('Injured Skater');
+        expect(document.querySelector('header').textContent).toContain('Projected');
+    });
+
+    it('switches in place and displays all six model rates', async () => {
+        app = createApp(LineupTeam, { team, side: 'Home' });
+        app.mount('#detail-tabs');
+        document.querySelector('#team-home-prediction').click();
+        await nextTick();
+        expect(document.querySelector('#team-home-prediction-panel').style.display).not.toBe('none');
+        expect([...document.querySelectorAll('tbody td')].slice(1).map((cell) => cell.textContent))
+            .toEqual(['12.00', '4.00', '6.00', '2.00', '0.60', '0.20']);
+        expect(document.querySelector('tbody').textContent).not.toContain('Injured Skater');
+    });
+
+    it('keeps the other team on its selected tab', async () => {
+        app = createApp({ render: () => [h(LineupTeam, { team, side: 'Away' }), h(LineupTeam, { team, side: 'Home' })] });
+        app.mount('#detail-tabs');
+        document.querySelector('#team-home-prediction').click();
+        await nextTick();
+        expect(document.querySelector('#team-home-prediction').getAttribute('aria-selected')).toBe('true');
+        expect(document.querySelector('#team-away-lineup').getAttribute('aria-selected')).toBe('true');
+    });
+
+    it('preserves zero while rendering missing rates as unavailable', () => {
+        app = createApp(LineupTeam, { team: { ...team, predictions: [{ player_name: 'Zero Skater',
+            projected_goals: 0, game_projected_toi_seconds: 900 }] }, side: 'Home' });
+        app.mount('#detail-tabs');
+        expect([...document.querySelectorAll('tbody td')].slice(1).map((cell) => cell.textContent))
+            .toEqual(['—', '—', '—', '—', '0.00', '0.00']);
+    });
+
+    it('sorts numeric rates both directions without replacing the lineup', async () => {
+        app = createApp(LineupTeam, { team: { ...team, predictions: [...team.predictions,
+            { player_name: 'Lower Rate', projected_sat: 1 }] }, side: 'Home' });
+        app.mount('#detail-tabs');
+        const button = [...document.querySelectorAll('th button')].find((node) => node.textContent === 'SAT/GP');
+        button.click();
+        await nextTick();
+        expect(document.querySelector('tbody tr').textContent).toContain('Lower Rate');
+        button.click();
+        await nextTick();
+        expect(document.querySelector('tbody tr').textContent).toContain('Projected Skater');
+        expect(document.querySelector('#team-home-lineup-panel').textContent).toContain('Projected Skater');
+    });
+
+    it('supports keyboard tab selection and focus', async () => {
+        app = createApp(LineupTeam, { team, side: 'Home' });
+        app.mount('#detail-tabs');
+        document.querySelector('#team-home-lineup').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+        await nextTick();
+        expect(document.activeElement.id).toBe('team-home-prediction');
+        expect(document.querySelector('#team-home-prediction').getAttribute('aria-selected')).toBe('true');
+    });
+
+    it('shows an empty prediction state without inventing players', () => {
+        app = createApp(LineupTeam, { team: { team_abbrev: 'TOR' }, side: 'Home' });
+        app.mount('#detail-tabs');
+        expect(document.querySelector('#team-home-prediction-panel').textContent).toContain('No player projections');
+        expect(document.querySelector('tbody')).toBeNull();
     });
 });
 

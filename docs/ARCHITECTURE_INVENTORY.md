@@ -3572,6 +3572,17 @@ WHERE target_season_id = '20262027';
 **Purpose:**
 Simulate team-vs-team projected skater offense and assemble partner predictions. Missing preseason roster evidence triggers a bounded NHL gamecenter lookup through the existing official-lineup importer so complete official rosters are persisted and reused before prediction availability is decided.
 
+Explicit game rosters can use the newest usable target-season SAT model's paired
+bucket SAT/60 and standalone TOI/GP outputs. Trained bucket probabilities convert
+attempts to SOG and goals; API rows expose the applied model and rates. Rookie
+NHLe, depth-player averages, and missing-model fallbacks remain available. See
+`docs/architecture/stats/NhlProjectedTeamMatchups.yaml` for the governing rules.
+
+The non-live game-detail Vue team component exposes independent Lineup and
+Prediction tabs. Missing reports use the shared injury-filtered projected roster
+preview without creating evidence. Per-player /60 and /GP previews do not depend
+on full-game prediction eligibility; injuries are listed below each lineup.
+
 **When to Use:**
  Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs, explaining high-level xSAT/xSOG/EV xGF/PK xG/total expected-goals matchup changes through composed roster chance profiles and projected goalie bucket adjustments, blending attacking offense shape with defending chance-allowed shape into a 70/30 adjusted goalie environment while preserving attacking offense totals, anchoring selected goalie impact to projected season EV/PK GA/xGA even when exact bucket evidence is sparse, showing goalie reasons directly below the adjusted environment as rolled-up EV and PP coverage groups with represented xSAT/xSOG/xG totals, percentages, row-level xSOG share, child bucket counts, GSAx/G, GA/G, and goalie response, computing per-game rates from projected games with an 84-game fallback, exposing partner-facing moneyline, puckline, and total market probabilities from the projected score distribution, or testing matchup methodology before persisting team profile buckets.
 

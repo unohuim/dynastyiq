@@ -15,8 +15,11 @@ use Illuminate\Support\Facades\DB;
 class NhlAnticipatedLineupPayload
 {
     /** Create the payload builder with official live-game enrichment. */
-    public function __construct(private readonly NhlGameLiveContext $liveContext)
-    {
+    public function __construct(
+        private readonly NhlGameLiveContext $liveContext,
+        private readonly NhlGameLineupProjectionBuilder $projections,
+        private readonly NhlAvailabilityPayload $availability,
+    ) {
     }
 
     /** @return array<string,mixed> */
@@ -60,7 +63,20 @@ class NhlAnticipatedLineupPayload
 
         $live = $this->recentGameContext($game);
 
-        return ['game' => $this->game($game, $lineups, (bool) ($live['show_score'] ?? false), $live)];
+        $detail = $this->game($game, $lineups, (bool) ($live['show_score'] ?? false), $live);
+        if (! ($detail['live_mode'] ?? false)) {
+            $season = (string) $game->season_id;
+            $modelId = $this->projections->latestUsableSatModelId($season);
+            foreach (['away', 'home'] as $side) {
+                $team = (string) $detail[$side]['team_abbrev'];
+                $detail[$side] = [...$detail[$side], ...$this->projections->teamPreview(
+                    $detail[$side]['lineup'], $team, $season, (int) $game->game_type, $modelId
+                )];
+                $detail[$side]['injuries'] = $team === '' ? [] : $this->availability->injuries($team)['injuries'];
+            }
+        }
+
+        return ['game' => $detail];
     }
 
     /** @return array<string,mixed> */

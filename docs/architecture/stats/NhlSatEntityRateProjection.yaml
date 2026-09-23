@@ -19,6 +19,7 @@ when_not_to_use:
   - Building historical entity profiles or single-season entity snapshots.
   - Projecting full-season volume, future TOI, games played, opportunity, SOG, or goals before those strategies are separately validated.
 rules:
+  - Approved game prediction integration consumes projected SAT/60 bucket shape and the bucket's trained SAT-to-SOG and SOG-to-goal probabilities with same-run standalone TOI. This does not promote comparison-only SOG/60 or goal/60 projections or establish new backtest validation claims. Game assembly is governed by NhlProjectedTeamMatchups.yaml.
   - Build /60 projections must not use the SAT model target season or held-out test-season profile rows as inputs.
   - Build /60 and Compare /60 currently queue and persist only `skater_offense` entities; other profile types may still have profile rows, but they are intentionally excluded from this projection/evaluation pass until profile-type-specific strategies are documented and approved.
   - Skater-offense SAT /60 projections must use only the model training seasons, training profile rows, training-season snapshots, and skater production from nhl_game_summaries for those same training seasons.
