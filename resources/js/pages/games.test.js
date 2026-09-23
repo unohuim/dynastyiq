@@ -39,6 +39,94 @@ const game = {
     },
 };
 
+describe('single team lineup refresh', () => {
+    let app;
+    const settle = async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+        await nextTick();
+    };
+    const mount = (props = {}) => {
+        document.body.innerHTML = '<div id="refresh-card"></div>';
+        app = createApp(GameCard, { game, canManageLineups: true, ...props });
+        app.mount('#refresh-card');
+    };
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+    afterEach(() => {
+        app?.unmount();
+        app = null;
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        document.body.innerHTML = '';
+    });
+
+    it('shows a green refresh only for a missing lineup and a super admin', () => {
+        mount({ canManageLineups: false });
+        expect(document.querySelector('[aria-label="Refresh MTL lineup"]')).toBeNull();
+        app.unmount();
+        mount();
+        expect(document.querySelector('[aria-label="Refresh MTL lineup"]').classList.contains('text-green-400')).toBe(true);
+        expect(document.querySelector('[aria-label="Refresh TOR lineup"]')).toBeNull();
+    });
+
+    it('queues only that game and team and blocks repeat clicks while polling', async () => {
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_url: '/attempt/1' }) })
+            .mockResolvedValue({ ok: true, json: async () => ({ status: 'working' }) });
+        mount();
+        const button = document.querySelector('[aria-label="Refresh MTL lineup"]');
+        button.click();
+        button.click();
+        await settle();
+        expect(fetch.mock.calls[0][0]).toBe('/games/2026010001/lineup/refresh');
+        expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ team_abbrev: 'MTL' });
+        expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(1);
+        expect(button.disabled).toBe(true);
+        expect(button.getAttribute('aria-busy')).toBe('true');
+        app.unmount();
+        app = null;
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('emits the new lineup from the completed attempt without navigation', async () => {
+        const lineup = { nhl_game_id: 2026010001, team_abbrev: 'MTL', evidence_status: 'reported' };
+        const submitted = vi.fn();
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_url: '/attempt/1' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'working' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'completed', lineup }) });
+        mount({ onLineupSubmitted: submitted });
+        document.querySelector('[aria-label="Refresh MTL lineup"]').click();
+        await settle();
+        await vi.advanceTimersByTimeAsync(3000);
+        await settle();
+        expect(submitted).toHaveBeenCalledWith(lineup);
+        expect(document.body.textContent).toContain('Lineup updated.');
+        expect(document.querySelector('[aria-label="Refresh MTL lineup"]').disabled).toBe(false);
+    });
+
+    it.each(['failed', 'completed'])('shows the %s no-lineup outcome and allows retry', async (status) => {
+        fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ status_url: '/attempt/1' }) })
+            .mockResolvedValueOnce({ ok: true, json: async () => ({ status, lineup: null, message: 'Search failed.' }) });
+        mount();
+        document.querySelector('[aria-label="Refresh MTL lineup"]').click();
+        await settle();
+        expect(document.body.textContent).toContain(status === 'failed' ? 'Search failed.' : 'No reported lineup found.');
+        expect(document.querySelector('[aria-label="Refresh MTL lineup"]').disabled).toBe(false);
+    });
+
+    it('shows an HTTP failure without leaving the button pending', async () => {
+        fetch.mockResolvedValueOnce({ ok: false, json: async () => ({ message: 'Forbidden' }) });
+        mount();
+        document.querySelector('[aria-label="Refresh MTL lineup"]').click();
+        await settle();
+        expect(document.body.textContent).toContain('Forbidden');
+        expect(document.querySelector('[aria-label="Refresh MTL lineup"]').disabled).toBe(false);
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('live game card scores and shots', () => {
     let app;
     afterEach(() => {

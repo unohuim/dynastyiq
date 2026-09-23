@@ -579,9 +579,10 @@ Authorization: Bearer <DYNASTYIQ_API_TOKEN>
 
 Before searching X, DynastyIQ checks `GET https://api-web.nhle.com/v1/gamecenter/{game-id}/boxscore` for each queued team. A complete official roster of twelve forwards and six defensemen is persisted as `official` and suppresses X discovery for that game/team. A goalie carrying the NHL `starter: true` flag is recorded as confirmed starting-goalie evidence. The X fallback runs only when that official roster is absent or incomplete.
 
-For preseason games, newly evaluated X lineup posts must explicitly say “tonight”
-somewhere in the full caption or extracted lineup text, before or after the roster.
-Posts without it are not accepted as game lineups. Manual submissions and official
+For preseason games, newly evaluated X lineup posts must identify game context:
+“tonight” or a matching explicit game date and opponent somewhere in the full
+caption or extracted text, before or after the roster. Game-specific morning-skate
+reports qualify; generic practice groups do not. Manual submissions and official
 NHL rosters are exempt; regular-season and playoff discovery are unchanged.
 This discovery filter does not retroactively rewrite existing observations.
 

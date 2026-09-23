@@ -1,12 +1,73 @@
 <script setup>
 import { Link } from '@inertiajs/vue3';
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
 
 const props = defineProps({ game: { type: Object, required: true }, canManageLineups: { type: Boolean, default: false } });
 const isLive = computed(() => props.game.live_mode || (Boolean(props.game.game_state) && !['FUT', 'PRE', 'FINAL'].includes(props.game.game_state)));
 const emit = defineEmits(['lineup-submitted']);
 const manualTeam = ref(null);
+const refreshes = reactive({});
+const timers = new Set();
+const controllers = new Set();
+let disposed = false;
+
+async function refreshLineup(team) {
+  if (refreshes[team]?.busy || !props.canManageLineups) return;
+  refreshes[team] = { busy: true, message: 'Queued for lineup search…', error: false };
+  const controller = new AbortController();
+  controllers.add(controller);
+  try {
+    const response = await fetch(`/games/${props.game.nhl_game_id}/lineup/refresh`, {
+      method: 'POST', signal: controller.signal,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' },
+      body: JSON.stringify({ team_abbrev: team }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.errors?.team_abbrev?.[0] ?? data.message ?? 'Unable to queue the lineup search.');
+    if (!disposed) await pollRefresh(team, data.status_url, controller);
+  } catch (exception) {
+    refreshError(team, exception);
+    controllers.delete(controller);
+  }
+}
+
+function refreshError(team, exception) {
+  if (disposed) return;
+  refreshes[team] = { busy: false, error: true, message: exception instanceof Error ? exception.message : 'Unable to check the lineup search.' };
+}
+
+async function pollRefresh(team, url, controller) {
+  try {
+    const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message ?? 'Unable to check the lineup search.');
+    if (disposed) return;
+    if (data.status === 'working') {
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        void pollRefresh(team, url, controller);
+      }, 3000);
+      timers.add(timer);
+      return;
+    }
+    controllers.delete(controller);
+    refreshes[team] = {
+      busy: false, error: data.status === 'failed',
+      message: data.status === 'failed' ? data.message : data.lineup ? 'Lineup updated.' : 'No reported lineup found.',
+    };
+    if (data.lineup) emit('lineup-submitted', data.lineup);
+  } catch (exception) {
+    controllers.delete(controller);
+    refreshError(team, exception);
+  }
+}
+
+onBeforeUnmount(() => {
+  disposed = true;
+  timers.forEach((timer) => window.clearTimeout(timer));
+  controllers.forEach((controller) => controller.abort());
+});
 function submitted(lineup) {
   emit('lineup-submitted', lineup);
   manualTeam.value = null;
@@ -51,7 +112,15 @@ const gameStateClass = (state) => state === 'FINAL'
             <p class="mt-2 text-xs text-gray-500">SOG: {{ game[side].sog ?? '—' }}</p>
           </template>
           <template v-else>
-          <div class="mt-1 flex items-center gap-2"><button v-if="canManageLineups" type="button" :aria-label="`${game[side].lineup ? 'Update' : 'Add'} ${game[side].team_abbrev} lineup`" class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors duration-150 hover:brightness-95 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="statusClass(game[side].lineup?.evidence_status)" @click="manualTeam = game[side].team_abbrev">{{ game[side].lineup?.manual_override ? 'Manual Override' : label(game[side].lineup?.evidence_status) }}</button><span v-else class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="statusClass(game[side].lineup?.evidence_status)">{{ game[side].lineup?.manual_override ? 'Manual Override' : label(game[side].lineup?.evidence_status) }}</span><span v-if="game[side].lineup" class="text-xs text-gray-500">{{ game[side].lineup.source_count }} source<span v-if="game[side].lineup.source_count !== 1">s</span></span></div>
+          <div class="mt-1 flex items-center gap-2">
+            <button v-if="canManageLineups" type="button" :aria-label="`${game[side].lineup ? 'Update' : 'Add'} ${game[side].team_abbrev} lineup`" class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors duration-150 hover:brightness-95 focus-visible:ring-2 focus-visible:ring-indigo-500 motion-reduce:transition-none" :class="statusClass(game[side].lineup?.evidence_status)" @click="manualTeam = game[side].team_abbrev">{{ game[side].lineup?.manual_override ? 'Manual Override' : label(game[side].lineup?.evidence_status) }}</button>
+            <span v-else class="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold" :class="statusClass(game[side].lineup?.evidence_status)">{{ game[side].lineup?.manual_override ? 'Manual Override' : label(game[side].lineup?.evidence_status) }}</span>
+            <button v-if="canManageLineups && (!game[side].lineup || game[side].lineup.evidence_status === 'not_reported')" type="button" :aria-label="`Refresh ${game[side].team_abbrev} lineup`" :aria-busy="Boolean(refreshes[game[side].team_abbrev]?.busy)" :disabled="refreshes[game[side].team_abbrev]?.busy" class="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-green-400 text-green-400 transition-colors duration-150 hover:bg-green-50 focus-visible:ring-2 focus-visible:ring-green-400 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none" @click="refreshLineup(game[side].team_abbrev)">
+              <svg aria-hidden="true" class="size-4" :class="{ 'animate-spin motion-reduce:animate-none': refreshes[game[side].team_abbrev]?.busy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.023 9.348h4.992V4.356M2.985 19.644v-4.992h4.992M3.9 9a8.25 8.25 0 0 1 13.65-4.15l3.465 4.498M20.1 15a8.25 8.25 0 0 1-13.65 4.15l-3.465-4.498" /></svg>
+            </button>
+            <span v-if="game[side].lineup" class="text-xs text-gray-500">{{ game[side].lineup.source_count }} source<span v-if="game[side].lineup.source_count !== 1">s</span></span>
+          </div>
+          <p v-if="canManageLineups && refreshes[game[side].team_abbrev]?.message" role="status" class="mt-2 text-xs" :class="refreshes[game[side].team_abbrev]?.error ? 'text-red-600' : 'text-gray-500'">{{ refreshes[game[side].team_abbrev].message }}</p>
           <p v-if="game[side].lineup?.last_observed_at" class="mt-2 text-xs text-gray-500">Updated {{ localDateTime(game[side].lineup.last_observed_at) }}</p>
           </template>
         </div>

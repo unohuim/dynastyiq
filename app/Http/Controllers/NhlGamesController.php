@@ -9,6 +9,8 @@ use App\Services\NhlAnticipatedLineupPayload;
 use App\Services\NhlAnticipatedLineupImporter;
 use App\Services\NhlLineupImageOcr;
 use App\Models\NhlGame;
+use App\Models\ImportRun;
+use App\Jobs\ImportNhlAnticipatedLineupTeamJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -67,6 +69,69 @@ class NhlGamesController extends Controller
             $user->roles()->where('slug', 'super-admin')->exists()
             || $user->roles()->where('level', '>=', 99)->exists()
         );
+    }
+
+    /** Queue one missing game/team lineup using the existing importer and run ledger. */
+    public function refreshLineup(Request $request, int $nhlGameId, NhlAnticipatedLineupPayload $payload): JsonResponse
+    {
+        abort_unless($this->canManageGameSync($request), 403);
+        $input = $request->validate(['team_abbrev' => ['required', 'string', 'max:10']]);
+        $team = mb_strtoupper(trim($input['team_abbrev']));
+
+        [$run, $created, $teamId] = DB::transaction(function () use ($nhlGameId, $team, $payload): array {
+            $game = NhlGame::query()->where('nhl_game_id', $nhlGameId)->lockForUpdate()->firstOrFail();
+            abort_unless(in_array($team, [$game->home_team_abbrev, $game->away_team_abbrev], true), 422, 'Team is not playing in this game.');
+            $today = Carbon::now('America/Toronto')->startOfDay();
+            abort_unless(in_array(Carbon::parse($game->game_date)->toDateString(), [
+                $today->toDateString(), $today->copy()->addDay()->toDateString(),
+            ], true) && filled($game->start_time_utc), 422, 'Lineup imports support games scheduled today or tomorrow.');
+            abort_if($payload->forGameTeam($nhlGameId, $team, false) !== null, 409, 'This team already has a reported lineup.');
+            $teamId = DB::table('nhl_teams')->where('abbrev', $team)->value('nhl_id');
+            abort_if($teamId === null, 422, 'The NHL team identity is missing.');
+            $run = ImportRun::query()->where('source', 'nhl-anticipated-lineups')->where('status', 'working')
+                ->where('options->nhl_game_id', $nhlGameId)->where('options->team_abbrev', $team)
+                ->where('options->targeted_refresh', true)->latest('id')->first();
+            if ($run !== null) {
+                return [$run, false, (int) $teamId];
+            }
+            $run = ImportRun::query()->create([
+                'source' => 'nhl-anticipated-lineups', 'status' => 'working',
+                'ran_at' => now(), 'started_at' => now(), 'total_records' => 1,
+                'progress_label' => 'Team lineup search',
+                'options' => ['targeted_refresh' => true, 'nhl_game_id' => $nhlGameId, 'team_abbrev' => $team],
+            ]);
+
+            return [$run, true, (int) $teamId];
+        });
+
+        if ($created) {
+            try {
+                ImportNhlAnticipatedLineupTeamJob::dispatch($nhlGameId, $team, $teamId, $run->id);
+            } catch (\Throwable $exception) {
+                $run->markFailed($exception);
+                throw $exception;
+            }
+        }
+
+        return response()->json([
+            'status_url' => route('games.lineup.refresh-status', ['nhlGameId' => $nhlGameId, 'run' => $run->id]),
+        ], 202);
+    }
+
+    /** Read a targeted attempt's terminal state and the latest verified team lineup. */
+    public function refreshLineupStatus(Request $request, int $nhlGameId, ImportRun $run, NhlAnticipatedLineupPayload $payload): JsonResponse
+    {
+        abort_unless($this->canManageGameSync($request), 403);
+        abort_unless($run->source === 'nhl-anticipated-lineups'
+            && ($run->options['targeted_refresh'] ?? false)
+            && (int) ($run->options['nhl_game_id'] ?? 0) === $nhlGameId, 404);
+
+        return response()->json([
+            'status' => $run->status,
+            'lineup' => $run->status === 'working' ? null
+                : $payload->forGameTeam($nhlGameId, (string) $run->options['team_abbrev'], false),
+            'message' => $run->status === 'failed' ? 'The lineup search failed. See the import run in Admin for details.' : null,
+        ]);
     }
 
     /** Extract an editable manual draft without writing lineup observations. */

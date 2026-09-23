@@ -972,7 +972,7 @@ it('stores two matching lineup sources as corroborated current truth', function 
     Http::assertSentCount(2);
 });
 
-it('requires tonight anywhere in automated preseason lineup posts only', function (int $gameType, string $before, string $after, bool $accepted): void {
+it('requires game specific context anywhere in automated preseason lineup posts only', function (int $gameType, string $before, string $after, bool $accepted): void {
     $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
@@ -996,12 +996,37 @@ it('requires tonight anywhere in automated preseason lineup posts only', functio
     'tonight before roster' => [1, 'Lines for tonight', '', true],
     'tonight after roster' => [1, '', 'These are the lines for TONIGHT.', true],
     'possessive tonight' => [1, "Tonight's lineup", '', true],
+    'morning skate for matching date and opponent' => [1, 'Morning skate lines 9/23 vs. MTL:', '', true],
+    'matching context after roster' => [1, '', 'Morning skate lines 09/23 vs. MTL.', true],
+    'ISO game date' => [1, 'Morning skate 2026-09-23 vs MTL', '', true],
+    'written month' => [1, 'Sept. 23 vs MTL', '', true],
+    'full written date' => [1, 'September 23, 2026 vs MTL', '', true],
+    'explicit slash year' => [1, '9/23/2026 vs MTL', '', true],
+    'wrong game date' => [1, 'Morning skate 9/22 vs MTL', '', false],
+    'wrong explicit year' => [1, '9/23/2025 vs MTL', '', false],
+    'wrong written year' => [1, 'September 23, 2025 vs MTL', '', false],
+    'wrong opponent' => [1, 'Morning skate 9/23 vs LAK', '', false],
+    'date without opponent' => [1, 'Practice lines 9/23', '', false],
+    'opponent without date' => [1, 'Practice lines vs MTL', '', false],
     'practice only' => [1, 'Practice lines', '', false],
     'no context' => [1, '', '', false],
     'not a standalone word' => [1, 'tonightly', '', false],
     'regular season unchanged' => [2, 'Practice lines', '', true],
     'playoffs unchanged' => [3, 'Practice lines', '', true],
 ]);
+
+it('recognizes the Ducks morning skate caption as context for the scheduled Kings game', function (): void {
+    $game = (object) [
+        'game_date' => '2026-09-23', 'home_team_abbrev' => 'ANA', 'away_team_abbrev' => 'LAK',
+    ];
+    $context = new ReflectionMethod(\App\Services\XNhlLineupDiscovery::class, 'hasPreseasonGameContext');
+    expect($context->invoke(
+        app(\App\Services\XNhlLineupDiscovery::class),
+        'Anaheim Ducks morning skate lines 9/23 vs. LAK:',
+        $game,
+        'ANA'
+    ))->toBeTrue();
+});
 
 it('treats twelve forwards and six defensemen as reported without goalies', function (): void {
     config(['services.x.bearer_token' => 'test-key']);
@@ -2760,6 +2785,91 @@ it('groups current players and exposes supporting sources on lineup detail', fun
             ->where('game.home.lineup.players.19.player_name', 'Healthy Scratch')
             ->where('game.home.lineup.sources.0.post_url', 'https://x.com/testreporter/status/1')
             ->where('game.away.lineup', null));
+});
+
+describe('targeted game lineup refresh', function (): void {
+    beforeEach(function (): void {
+        $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
+        Queue::fake();
+        $this->refreshAdmin = User::factory()->create();
+        $role = Role::query()->firstOrCreate(['slug' => 'super-admin'], ['name' => 'Super Admin', 'level' => 99]);
+        $this->refreshAdmin->roles()->attach($role->id, ['organization_id' => null]);
+        DB::table('nhl_teams')->updateOrInsert(['nhl_id' => 10], ['abbrev' => 'TOR']);
+        NhlGame::query()->create([
+            'nhl_game_id' => 2026020099, 'season_id' => '20262027', 'game_type' => 1,
+            'game_date' => '2026-09-23', 'game_dow' => 'Wednesday', 'game_month' => 'September',
+            'start_time_utc' => '2026-09-23 23:00:00', 'home_team_abbrev' => 'TOR', 'away_team_abbrev' => 'MTL',
+        ]);
+    });
+
+    afterEach(function (): void {
+        $this->travelBack();
+    });
+
+    it('denies non super admins on both refresh endpoints', function (bool $signedIn): void {
+        if ($signedIn) {
+            $this->actingAs(User::factory()->create());
+        }
+        $run = ImportRun::query()->create(['source' => 'nhl-anticipated-lineups', 'status' => 'working', 'ran_at' => now()]);
+        $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus($signedIn ? 403 : 401);
+        $this->getJson('/games/2026020099/lineup/refresh/' . $run->id)->assertStatus($signedIn ? 403 : 401);
+        Queue::assertNothingPushed();
+    })->with([false, true]);
+
+    it('queues only the requested game team and deduplicates pending clicks', function (): void {
+        $this->actingAs($this->refreshAdmin);
+        $url = $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'tor'])
+            ->assertStatus(202)->json('status_url');
+        $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])
+            ->assertStatus(202)->assertJsonPath('status_url', $url);
+        $this->assertDatabaseCount('import_runs', 1);
+        $this->assertDatabaseHas('import_runs', ['source' => 'nhl-anticipated-lineups', 'total_records' => 1, 'status' => 'working']);
+        Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 1);
+        Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, fn ($job): bool =>
+            $job->nhlGameId === 2026020099 && $job->teamAbbrev === 'TOR' && $job->teamId === 10 && $job->queue === 'lineups');
+        $this->getJson($url)->assertOk()->assertJsonPath('status', 'working')->assertJsonPath('lineup', null);
+        Http::assertNothingSent();
+    });
+
+    it('rejects invalid targets without queuing searches', function (int $gameId, array $input, int $status): void {
+        $this->actingAs($this->refreshAdmin)->postJson("/games/{$gameId}/lineup/refresh", $input)->assertStatus($status);
+        Queue::assertNothingPushed();
+        $this->assertDatabaseCount('import_runs', 0);
+    })->with([
+        'missing team' => [2026020099, [], 422],
+        'another team' => [2026020099, ['team_abbrev' => 'ANA'], 422],
+        'missing game' => [9999999999, ['team_abbrev' => 'TOR'], 404],
+    ]);
+
+    it('does not queue an already reported lineup', function (): void {
+        createCurrentAnticipatedLineup();
+        $this->actingAs($this->refreshAdmin)->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus(409);
+        Queue::assertNothingPushed();
+    });
+
+    it('exposes the updated lineup when the single team job completes', function (): void {
+        $this->actingAs($this->refreshAdmin);
+        $url = $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus(202)->json('status_url');
+        $run = ImportRun::query()->firstOrFail();
+        $importer = Mockery::mock(NhlAnticipatedLineupImporter::class);
+        $importer->shouldReceive('importOfficial')->once()->andReturnUsing(function (): array {
+            createCurrentAnticipatedLineup();
+            return ['available' => true, 'observed' => 1];
+        });
+        $importer->shouldNotReceive('importFromX');
+        (new ImportNhlAnticipatedLineupTeamJob(2026020099, 'TOR', 10, $run->id))->handle($importer);
+        $this->assertDatabaseHas('import_runs', ['id' => $run->id, 'status' => 'completed', 'processed_records' => 1]);
+        $this->getJson($url)->assertOk()->assertJsonPath('status', 'completed')->assertJsonPath('lineup.team_abbrev', 'TOR');
+        $this->getJson('/games/2026020000/lineup/refresh/' . $run->id)->assertNotFound();
+    });
+
+    it('returns terminal failure or no result without pretending a lineup was found', function (string $status): void {
+        $this->actingAs($this->refreshAdmin);
+        $url = $this->postJson('/games/2026020099/lineup/refresh', ['team_abbrev' => 'TOR'])->assertStatus(202)->json('status_url');
+        $run = ImportRun::query()->firstOrFail();
+        $status === 'failed' ? $run->markFailed('Provider unavailable') : $run->markCompleted();
+        $this->getJson($url)->assertOk()->assertJsonPath('status', $status)->assertJsonPath('lineup', null);
+    })->with(['failed', 'completed']);
 });
 
 it('restricts manual lineup submissions to super admins', function (bool $signedIn): void {

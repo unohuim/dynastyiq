@@ -385,10 +385,10 @@ class XNhlLineupDiscovery
 
         $completeText = (string) ($candidate['post_text'] ?? '') . "\n"
             . (string) ($candidate['lineup_text'] ?? '');
-        if ((int) ($game->game_type ?? 0) === 1 && preg_match('/\btonight\b/iu', $completeText) !== 1) {
+        if ((int) ($game->game_type ?? 0) === 1 && ! $this->hasPreseasonGameContext($completeText, $game, $teamAbbrev)) {
             return [
                 'approved' => false,
-                'reason' => 'Preseason X lineup posts must explicitly say "tonight"; practice-only or unspecified lineups are not accepted.',
+                'reason' => 'Preseason lineup evidence needs tonight or a matching game date and opponent; generic practice groups are not accepted.',
             ];
         }
 
@@ -461,6 +461,46 @@ class XNhlLineupDiscovery
         }
 
         ImportStreamEvent::dispatch('nhl-anticipated-lineups', $message, 'output', $this->streamBatchId);
+    }
+
+    /**
+     * Recognize game-specific morning-skate reports without requiring one caption word.
+     * Date and opponent must both match when the report does not say tonight.
+     */
+    private function hasPreseasonGameContext(string $text, object $game, string $teamAbbrev): bool
+    {
+        if (preg_match('/\btonight\b/iu', $text) === 1) {
+            return true;
+        }
+
+        $date = Carbon::parse((string) $game->game_date);
+        $month = '0?' . $date->format('n');
+        $day = '0?' . $date->format('j');
+        $year = $date->format('Y');
+        $monthName = $date->format('n') === '9'
+            ? 'Sep(?:t(?:ember)?)?'
+            : preg_quote($date->format('M'), '/') . '(?:' . preg_quote(substr($date->format('F'), 3), '/') . ')?';
+        $datePatterns = [
+            '/(?<![\pL\pN])' . $year . '-' . $month . '-' . $day . '(?![\pL\pN])/iu',
+            '/(?<![\pL\pN])' . $month . '\/' . $day . '(?:\/' . $year . ')?(?![\pL\pN\/])/iu',
+            '/(?<![\pL\pN])' . $monthName . '\.?\s+' . $day . '(?:st|nd|rd|th)?(?:,?\s+' . $year . ')?(?![\pL\pN]|,?\s+\d{4})/iu',
+        ];
+        if (! collect($datePatterns)->contains(fn (string $pattern): bool => preg_match($pattern, $text) === 1)) {
+            return false;
+        }
+
+        $opponentAbbrev = mb_strtoupper((string) ($game->home_team_abbrev === $teamAbbrev
+            ? $game->away_team_abbrev : $game->home_team_abbrev));
+        $opponent = NhlTeam::query()->where('abbrev', $opponentAbbrev)->first();
+        $identifiers = array_filter([
+            $opponentAbbrev, $opponent?->common_name, $opponent?->full_name, $opponent?->place_name,
+            $opponentAbbrev === 'LAK' ? 'LA' : null,
+        ]);
+
+        return collect($identifiers)->contains(fn (string $identifier): bool => preg_match(
+            '/(?<![\pL\pN])' . preg_quote($identifier, '/') . '(?![\pL\pN])/iu',
+            $text
+        ) === 1);
     }
 
     /** @return array{approved:bool,reason:string} */

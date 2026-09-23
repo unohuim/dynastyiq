@@ -30,7 +30,8 @@ when_not_to_use:
   - Replacing an official NHL game roster or boxscore lineup.
   - Treating multiple posts from the same publisher as independent corroboration.
 rules:
-  - Automated preseason X lineup candidates must contain the standalone word tonight, case-insensitively, anywhere in the complete post caption or extracted lineup text, including after the roster. Practice-only and otherwise unspecified posts without that word are declined with an audit reason. This discovery restriction does not apply to manual submissions, official NHL rosters, or regular-season and playoff games; existing date, game identity, and player verification checks still apply.
+  - Super admins may request one missing game/team lineup from the public games card through POST /games/{nhlGameId}/lineup/refresh. Authorization and target membership are enforced server-side. The existing today/tomorrow team job runs on lineups with one ImportRun tracking its outcome; concurrent targeted requests reuse the working attempt. The Vue card polls the authenticated game-scoped status endpoint, patches returned lineup state without navigation, and stops timers and requests on unmount. Reported lineups are not refreshed through this action.
+  - Automated preseason X lineup candidates must identify game-specific context anywhere in the complete caption or extracted lineup text, including after the roster. Accept tonight or a matching explicit game date and opponent, including morning-skate reports; generic practice groups without that context are declined with an audit reason. This discovery restriction does not apply to manual submissions, official NHL rosters, or regular-season and playoff games; existing date, game identity, and player verification checks still apply.
   - Grouped roster text uses the first four forward lines and first three defense pairs. Ignore surplus forward lines, surplus defense pairs, and standalone extras without using them to fill required grouped slots. Individually listed rosters remain supported; an explicit defense heading separates surplus individually listed forwards from defense. Ignored skater extras after a complete roster must not invalidate it or become goalie evidence. The selected eighteen still pass all identity, position, uniqueness, and depth-exception checks.
   - Roster separators accept spaced, unspaced, and one-sided-spaced hyphens, including mixed styles in one line. In-name hyphens in otherwise separated names must be preserved; tight separator expansion must produce the expected group size before names are resolved.
   - Non-live game detail displays each team's Lineup and Prediction tabs independently, defaulting to Lineup. Verified evidence remains authoritative; otherwise a separate display-only projected lineup is shown, with current injury statuses below it and shared unavailable-player exclusions applied before selecting the projected roster. Questionable and suspected statuses retain the existing availability rules.
@@ -103,6 +104,8 @@ rules:
   - X searches persist the query and returned-post count in integration usage logs without an application-owned daily search ceiling.
   - Each admin-triggered lineup run atomically accumulates its returned X posts and dedicated import_runs estimated cost using the configured current X rates; usage from other runs must not affect its progress display.
 public_interface:
+  - POST /games/{nhlGameId}/lineup/refresh
+  - GET /games/{nhlGameId}/lineup/refresh/{run}
   - POST /games/{nhlGameId}/lineup/preview
   - POST /games/{nhlGameId}/lineup
   - nhl:import-anticipated-lineups

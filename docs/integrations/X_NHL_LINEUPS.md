@@ -82,7 +82,7 @@ not to individual importers or the text parser.
 Parsing is intentionally conservative:
 
 - A post becomes a lineup candidate only after the complete 12F-then-6D block is found and its players pass shared verification.
-- During preseason, automated X candidates must also explicitly contain the word “tonight” (case-insensitive), anywhere before or after the roster in the complete caption or extracted lineup text. Practice-only posts and other posts without that word are declined with an audit reason. Manual submissions and official NHL rosters are exempt; regular-season and playoff discovery are unchanged. This filter applies to newly evaluated candidates and does not rewrite previously stored lineups.
+- During preseason, automated X candidates must identify the game: “tonight” or a matching explicit game date and opponent anywhere before or after the roster in the complete caption or extracted lineup text. Morning-skate reports such as “9/23 vs. LAK” qualify; generic practice groups without game context do not. Dates support month/day, optional full year, ISO dates, and English month names. Manual submissions and official NHL rosters are exempt; regular-season and playoff discovery are unchanged. This filter applies to newly evaluated candidates and does not rewrite previously stored lineups.
 - Forward-only and defense-only posts remain discovery-audit-only. Photo text passes the same parser and verification as captions; original captions, OCR text, confidence, and image URLs remain separate evidence.
 - Current truth selects one complete observation. Corroboration requires matching the whole roster; separate posts never contribute different halves. Historical combined-post records cannot qualify as reported or stop discovery. Existing date eligibility checks remain in force.
 - Missing players are never invented from roster history or hockey knowledge.
@@ -102,6 +102,13 @@ The Markdown file starts with the approval or decline reason and includes the ta
 Before each local import writes new audits, it recursively deletes every generated `.md` file beneath `docs/troubleshooting/lineups/` while preserving `README.md` and all directories. The import then writes `import_YYYYMMDD_HHMMSS_UUUUUU.md`, listing every eligible team/game job and whether it was dispatched or skipped, and creates `docs/troubleshooting/lineups/{TEAM_ABBREV}/search.md` for every eligible team. Each subsequent X request appends the exact query and all returned results to that file; an empty X response is written as zero results rather than leaving the search invisible.
 
 ## Scheduling
+
+On `/games`, super admins can refresh a single Not Reported team using its green
+refresh button. The action queues the existing game/team job on `lineups`, checks
+NHL before X, and tracks the result and cost in `import_runs`. It keeps the existing
+today/tomorrow eligibility window. Repeated clicks reuse a pending targeted attempt;
+the browser polls its outcome and updates the lineup without reloading the page.
+Both dispatch and status endpoints require super-admin access.
 
 The existing Anticipated Lineups admin schedule remains authoritative:
 

@@ -74,6 +74,10 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
         ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.store');
     Route::post('/games/{nhlGameId}/lineup/preview', [NhlGamesController::class, 'previewLineup'])
         ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.preview');
+    Route::post('/games/{nhlGameId}/lineup/refresh', [NhlGamesController::class, 'refreshLineup'])
+        ->middleware('auth')->whereNumber('nhlGameId')->name('games.lineup.refresh');
+    Route::get('/games/{nhlGameId}/lineup/refresh/{run}', [NhlGamesController::class, 'refreshLineupStatus'])
+        ->middleware('auth')->whereNumber(['nhlGameId', 'run'])->name('games.lineup.refresh-status');
 
     // Discord Server joins
     Route::middleware('auth')

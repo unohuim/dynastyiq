@@ -3766,8 +3766,14 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
-Automated preseason X discovery requires “tonight” somewhere in the full caption
-or extracted lineup text, before or after the roster. Manual submissions and
+Super admins can refresh a Not Reported game/team from `/games` with a green icon.
+The existing team job runs on `lineups` with a one-record ImportRun; authenticated
+status polling updates the card without navigation. Duplicate pending targeted
+attempts are reused. See `NhlAnticipatedLineups.yaml` for the endpoint contract.
+
+Automated preseason X discovery requires game context: “tonight” or a matching
+date and opponent in the full caption or extracted text, before or after the
+roster. Game-specific morning-skate reports qualify. Manual submissions and
 official NHL rosters are exempt. Authority:
 `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 
