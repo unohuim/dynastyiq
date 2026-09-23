@@ -55,7 +55,7 @@ const localDateTime = (value) => value
   ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
   : '';
 const statusClass = (status) => ({
-  reported: 'border-amber-200 bg-amber-50 text-amber-700',
+  reported: 'border-green-200 bg-green-50 text-green-700',
   corroborated: 'border-sky-200 bg-sky-50 text-sky-700',
   official: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   strongly_corroborated: 'border-emerald-200 bg-emerald-50 text-emerald-700',
