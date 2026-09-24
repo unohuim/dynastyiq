@@ -58,7 +58,7 @@ class NhlAnticipatedLineupImporter
                 }
             }
         }
-        $teamErrors = $this->players->teamMembershipErrors($players, $teamAbbrev);
+        $teamErrors = $gameType === 1 ? [] : $this->players->teamMembershipErrors($players, $teamAbbrev);
         if ($teamErrors !== []) {
             throw \Illuminate\Validation\ValidationException::withMessages(['text' => $teamErrors]);
         }
@@ -206,8 +206,9 @@ class NhlAnticipatedLineupImporter
                 continue;
             }
             $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
-            // Membership is an admission rule for incoming evidence, never a historical read gate.
-            if ($this->players->teamMembershipErrors($normalized, $teamAbbrev) !== []) {
+            // Preseason permits cross-team assignments; never recheck historical membership.
+            if ((int) ($game->game_type ?? 2) !== 1
+                && $this->players->teamMembershipErrors($normalized, $teamAbbrev) !== []) {
                 $skipped++;
                 continue;
             }

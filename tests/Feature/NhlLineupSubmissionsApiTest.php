@@ -122,13 +122,27 @@ it('uses reported skater slots rather than usual forward or defense position', f
         ->assertJsonPath('games.0.teams.home.lineup_status', 'manual');
 });
 
-it('rejects recognized players from another team including depth slots and goalies', function (int $id): void {
+it('rejects recognized wrong-team players outside preseason including depth slots and goalies', function (int $id, int $gameType): void {
+    NhlGame::query()->whereKey(2026010088)->update(['game_type' => $gameType]);
     Player::query()->where('nhl_id', $id)->update(['team_abbrev' => 'STL']);
     $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
         ->assertUnprocessable()->assertJsonValidationErrors('text');
     expect(implode(' ', $response->json('errors.text')))->toContain('STL, not TOR');
     $this->assertDatabaseCount('nhl_lineup_observations', 0);
     $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+})->with([8488001, 8488012, 8488018, 8488019])->with([2, 3]);
+
+it('accepts recognized cross-team players in preseason without changing canonical assignments', function (int $id): void {
+    Player::query()->where('nhl_id', $id)->update(['team_abbrev' => 'STL']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertCreated()->assertJsonCount(20, 'lineup.players');
+    $this->assertDatabaseHas('players', ['nhl_id' => $id, 'team_abbrev' => 'STL']);
+    $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => $id, 'team_abbrev' => 'TOR']);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'games.0.teams.home.players')
+        ->assertJsonPath('games.0.teams.home.starting_goalie.nhl_player_id', 8488019);
 })->with([8488001, 8488012, 8488018, 8488019]);
 
 it('accepts same-team prospects without requiring an NHL assignment', function (): void {

@@ -5,7 +5,7 @@ tables, filtering to the target team and inferring lines/pairs and goalie order
 from the retained printed order. Ordinary line-combination validation is unchanged.
 
 Lineup verification treats reported forward/defense deployment independently of
-usual skater position. New evidence rejects known different-team assignments but
+usual skater position. New evidence outside preseason rejects known different-team assignments but
 allows unassigned players and prospects; reads do not apply this rule retroactively. See
 `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
 

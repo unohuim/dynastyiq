@@ -87,11 +87,14 @@ or ordinary line-post wrong-team rejection.
 
 Reported F/D slots control game deployment, so a normally listed defenseman may
 play forward (and vice versa). Goalies remain excluded from skater slots. Resolved
-players in new submissions must not have a known different canonical team;
+players in new regular-season/playoff submissions must not have a known different canonical team;
 blank assignments are allowed, and league assignment does not exclude prospects.
 Cross-team identity matches are retained for explicit manual rejection messages,
 never accepted as unresolved fallback slots. This admission check is not applied
 retroactively to accepted lineups during reads, current selection, or predictions.
+Preseason submissions allow recognized cross-team skaters and goalies without
+rewriting canonical team assignments. Sectioned mixed-team tables still filter
+opponent columns in preseason; this exception only bypasses admission rejection.
 
 Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward slots followed by six defense slots in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the season-specific peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
 
