@@ -12,6 +12,7 @@ use App\Services\NhlAnticipatedLineupImporter;
 use App\Services\NhlAnticipatedLineupPayload;
 use App\Services\NhlLineupImageOcr;
 use App\Services\NhlStartingGoalieSelector;
+use App\Services\XNhlLineupDiscovery;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,7 +27,8 @@ class NhlLineupSubmissionsController extends Controller
         NhlAnticipatedLineupImporter $importer,
         NhlAnticipatedLineupPayload $payload,
         NhlLineupImageOcr $ocr,
-        NhlStartingGoalieSelector $goalies
+        NhlStartingGoalieSelector $goalies,
+        XNhlLineupDiscovery $x
     ): JsonResponse {
         $client = $request->attributes->get('api_client');
         abort_unless($client instanceof ApiClient && $client->hasScope('nhl-lineups:write'), 403);
@@ -36,8 +38,9 @@ class NhlLineupSubmissionsController extends Controller
             $input = $request->validate([
                 'nhl_game_id' => ['required', 'integer'],
                 'team_abbrev' => ['required', 'string', 'max:10'],
-                'text' => ['nullable', 'required_without:image', 'required_if:image_reviewed,1', 'string', 'max:20000'],
-                'image' => ['nullable', 'required_without:text', 'file', 'image', 'mimes:jpg,jpeg,png', 'max:10240'],
+                'text' => ['nullable', 'required_without_all:image,post_url', 'required_if:image_reviewed,1', 'string', 'max:20000'],
+                'image' => ['nullable', 'required_without_all:text,post_url', 'file', 'image', 'mimes:jpg,jpeg,png', 'max:10240'],
+                'post_url' => ['nullable', 'required_without_all:text,image', 'string', 'url', 'max:2048'],
                 'image_reviewed' => ['sometimes', 'boolean'],
             ]);
             $gameId = (int) $input['nhl_game_id'];
@@ -45,16 +48,41 @@ class NhlLineupSubmissionsController extends Controller
             $text = trim($input['text'] ?? '');
             $game = NhlGame::query()->findOrFail($gameId);
             $this->validateTeam($game, $team);
+            $post = filled($input['post_url'] ?? null)
+                ? $x->submittedPost($input['post_url'], $game, $team) : null;
+            if ($text === '' && $post !== null) {
+                $text = $post['post_text'];
+            }
             // Reuse the existing bounded uploader; never fetch arbitrary image URLs.
             $image = $request->hasFile('image') ? $ocr->extractUpload($request->file('image')) : null;
             if ($image !== null) {
                 $image['reviewed'] = $request->boolean('image_reviewed');
             }
+            // Caption/text stays first choice. Only fetch linked photos when it lacks a roster.
+            if ($post !== null && $image === null && ! $request->boolean('image_reviewed')
+                && app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds(
+                    app(\App\Services\NhlLineupTextParser::class)->parse($text, $team), null, (int) $game->game_type
+                ) === null) {
+                $extractions = [];
+                $deadline = microtime(true) + (int) config('lineup_ocr.discovery_budget_seconds', 120);
+                foreach (array_slice($post['media'], 0, (int) config('lineup_ocr.max_images_per_post', 4)) as $media) {
+                    if (($media['type'] ?? '') === 'photo' && filled($media['url'] ?? null)) {
+                        $extractions[] = $ocr->extract($media['url'], $deadline);
+                    }
+                }
+                if ($extractions !== []) {
+                    $usable = collect($extractions)->where('status', 'ok')->pluck('text')->implode("\n");
+                    $image = ['status' => trim($usable) !== '' ? 'ok' : 'error', 'text' => $usable,
+                        'reason' => 'The X photos could not supply a readable lineup. Submit reviewed text instead.',
+                        'extractions' => $extractions];
+                }
+                $post['ocr'] = $extractions;
+            }
 
-            return DB::transaction(function () use ($gameId, $team, $text, $client, $image, $importer, $payload, $goalies): JsonResponse {
+            return DB::transaction(function () use ($gameId, $team, $text, $client, $image, $post, $importer, $payload, $goalies): JsonResponse {
                 $game = NhlGame::query()->where('nhl_game_id', $gameId)->lockForUpdate()->firstOrFail();
                 $teamId = $this->validateTeam($game, $team);
-                $importer->importManual($game, $team, $teamId, $text, null, $image, $client);
+                $importer->importManual($game, $team, $teamId, $text, null, $image, $client, $post);
                 $current = NhlCurrentLineup::query()->where('nhl_game_id', $gameId)->where('team_abbrev', $team)->firstOrFail();
 
                 return response()->json([
@@ -66,9 +94,14 @@ class NhlLineupSubmissionsController extends Controller
                 ], 201);
             });
         } catch (ValidationException $exception) {
+            $interpretedText = $image !== null ? $ocr->reviewText($image) : $text;
+            if (! empty($image['extractions'])) {
+                $interpretedText = collect($image['extractions'])->map(fn (array $item): string => $ocr->reviewText($item))
+                    ->filter()->implode("\n");
+            }
             return response()->json([
                 'success' => false, 'message' => $exception->getMessage(), 'errors' => $exception->errors(),
-                'interpreted_text' => $image !== null ? $ocr->reviewText($image) : $text,
+                'interpreted_text' => $interpretedText,
             ], 422);
         }
     }

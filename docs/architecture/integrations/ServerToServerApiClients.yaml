@@ -30,6 +30,7 @@ when_not_to_use:
   - Public unauthenticated API endpoints.
   - Bot runtime commands that belong in the Discord bot service.
 rules:
+  - Authorized manual API submissions may supply post_url. Only HTTPS X/Twitter status links are accepted; the extracted numeric identifier is fetched from the fixed X API host without redirects, timeline scans, or automatic retries. Existing X credentials and bounded photo OCR are reused outside the game lock. Fetched evidence is retained under manual API-client attribution, server save order governs authority, and retrieval failures do not alter current lineups.
   - GET /api/nhl/lineups requires nhl-stats:read and an explicit calendar date. It returns every scheduled game with both teams using the shared verified current-lineup payload and starting-goalie selector. Missing eligible lineups return empty players, not projected rosters. Reads never trigger provider discovery or prediction assembly; projected goalie selections remain explicitly labelled.
   - docs/integrations/DIQ-API-Usage-Doc.md is the canonical consumer-facing usage contract for all partner API endpoints and must be updated whenever authentication, parameters, response fields, or consumption guidance changes.
   - API clients must store only hashed bearer tokens.

@@ -20,6 +20,16 @@ The bearer token must never be committed. The X developer project must have prep
 
 ## Request
 
+Authorized partner manual submissions can provide `post_url` to
+`POST /api/nhl-lineups`. `XNhlLineupDiscovery::submittedPost` uses
+`GET https://api.x.com/2/tweets/{id}` with the existing bearer token and requests
+full post text, publication/author/engagement metadata, and photo expansions.
+It performs no search or timeline scan. Only actual attachments may reach the
+existing allowlisted photo OCR service. Usage is logged as
+`nhl_lineup_post_lookup`. The submission remains a human-authorized manual override,
+not an automatically discovered source; see the official [API guide](DIQ-API-Usage-Doc.md).
+Endpoint reference: [X post lookup](https://docs.x.com/x-api/posts/get-post-by-id).
+
 Before spending X credits, each queued team job requests:
 
 ```http

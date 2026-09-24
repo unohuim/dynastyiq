@@ -151,8 +151,9 @@ out of browser bundles, logs, and source control. Do not use a `VITE_` variable.
 | --- | --- | --- |
 | `nhl_game_id` | Yes | Exact scheduled NHL game ID; required to distinguish split squads. |
 | `team_abbrev` | Yes | Participating team, such as `TOR`; normalized to uppercase. |
-| `text` | Unless uploading an image | Full lineup text, maximum 20,000 characters. |
-| `image` | Unless sending text | Multipart JPEG/PNG upload, maximum 10 MiB. URLs, base64 strings, PDFs and arbitrary files are not accepted. |
+| `text` | Unless providing an image or post URL | Full lineup text, maximum 20,000 characters. |
+| `image` | Unless providing text or a post URL | Multipart JPEG/PNG upload, maximum 10 MiB. Image URLs, base64 strings, PDFs and arbitrary files are not accepted. |
+| `post_url` | Unless providing text or an image | HTTPS X/Twitter status URL. Fetches that exact post through DynastyIQ's configured X API token. |
 | `image_reviewed` | No | Send `true`/`1` with reviewed text to validate that text without substituting OCR output. Text is then required. |
 
 Send JSON for text only, or `multipart/form-data` for uploads (let the HTTP client
@@ -182,6 +183,46 @@ manual starter, G2 remains the dressed backup. The latest manual goalie decision
 (UI, API, or explicit goalie picker) takes precedence over provider expectations
 and confirmations for prediction selection. Explicit prediction request goalie
 overrides remain first; live NHL boxscore presentation stays unchanged.
+
+### Submit An X Post URL
+
+```json
+{
+  "nhl_game_id": 2026010036,
+  "team_abbrev": "TOR",
+  "post_url": "https://x.com/reporter/status/1234567890123456789"
+}
+```
+
+`post_url` is optional; at least one of text, image, or post URL is required.
+Only HTTPS X/Twitter status links are accepted (including `i/status` and
+`i/web/status` forms). Profile/search links and shortened URLs are not followed.
+The service extracts the numeric post ID and calls the fixed X API host once,
+without timeline searches, redirects, or automatic retries. This can incur an X
+Post Read charge using the existing DynastyIQ `X_BEARER_TOKEN`; the partner still
+sends its DynastyIQ write key, never the X token.
+
+When a URL is supplied it is always fetched. Explicit nonempty `text` remains
+the preferred lineup input; otherwise the full fetched post text is used.
+An uploaded image takes priority over post attachments. If no upload is supplied
+and the text lacks a valid full roster, attached photos use the existing bounded
+OCR path (up to four photos). `image_reviewed=1` with explicit text suppresses
+automatic OCR substitution. Low-confidence OCR is returned for correction but
+cannot bypass player/roster validation. Videos and linked articles are not read.
+
+Accepted URL submissions remain **manual overrides attributed to the API client**,
+not automatically trusted X-source discoveries. The explicit game/team is the
+manual target; automated discovery's date/context restrictions are not applied.
+Server save time determines manual ordering, not the X publication timestamp.
+The original post, author ID, publication time, metrics, media, and URL remain in
+raw evidence. Source links point to the fetched post with a unique submission
+fragment, so submitting the same URL again creates a fresh manual observation.
+
+Invalid URLs, missing X configuration, unavailable/private/deleted posts, provider
+access/credit errors, rate limits, and network failures return `422` with
+`errors.post_url`; the existing lineup is unchanged. OCR/roster validation still
+returns `errors.image` or `errors.text`. Usage is recorded separately as
+`nhl_lineup_post_lookup`, not attributed to an admin import run.
 
 ### Responses
 
@@ -221,8 +262,9 @@ For parsing/OCR failures, `errors.text` or `errors.image` explains the rejection
 can offer correction and resubmission. Low-confidence images do not bypass roster
 validation. Other errors use standard JSON `message` responses: `401` missing
 Bearer token, `403` invalid/revoked/wrong-scope token, `404` unknown game. Uploads
-rejected by the web server before Laravel may return `413`. No Twitter or OpenAI
-requests are made for these submissions.
+rejected by the web server before Laravel may return `413`. Text/upload-only
+submissions make no X requests; `post_url` submissions fetch that specific post.
+No OpenAI requests are made.
 
 ## NHL Season Stats Endpoint
 

@@ -27,6 +27,7 @@ class NhlAnticipatedLineupImporter
      * Import validated human or authorized partner text through the same observation pipeline.
      *
      * @param array<string,mixed>|null $imageEvidence Server-produced OCR evidence, never raw request fields.
+     * @param array<string,mixed>|null $postEvidence Server-fetched X evidence for an authorized URL submission.
      * @return array{observed:int,skipped:int}
      */
     public function importManual(
@@ -36,7 +37,8 @@ class NhlAnticipatedLineupImporter
         string $text,
         ?int $userId,
         ?array $imageEvidence = null,
-        ?\App\Models\ApiClient $apiClient = null
+        ?\App\Models\ApiClient $apiClient = null,
+        ?array $postEvidence = null
     ): array {
         if (($userId === null) === ($apiClient === null)) {
             throw new \InvalidArgumentException('A manual submission requires exactly one submitting user or API client.');
@@ -77,11 +79,12 @@ class NhlAnticipatedLineupImporter
                 ? 'API submission (' . $apiClient->name . ')' : 'Manual submission (user #' . $userId . ')',
             'source_handle' => $actor,
             'source_url' => route('games.index') . '#manual-' . $actor,
-            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $actor . '-' . Str::uuid(),
+            'post_url' => ($postEvidence['post_url'] ?? $url) . '#manual-' . $teamAbbrev . '-' . $actor . '-' . Str::uuid(),
             'post_text' => $text, 'published_at' => now()->toIso8601String(),
             'lineup_text' => $lineupText, 'ocr' => $imageEvidence !== null ? [$imageEvidence] : [],
             'submitted_by_user_id' => $userId, 'manual_override' => true, 'players' => $players,
             'submitted_by_api_client_id' => $apiClient?->id,
+            'submitted_post' => $postEvidence,
         ];
         $observed = 0;
         $skipped = 0;

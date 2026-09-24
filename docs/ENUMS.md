@@ -2692,3 +2692,7 @@ The following enum-like areas are intentionally documented because they are not 
 - Stats period values differ in casing/naming between current stats validation (`lastWeek`, `thisWeek`, `past30days`) and legacy/Discord metadata (`lastweek`, `thisweek`, `last30`).
 
 **End of ENUMS**
+
+### Partner X post lookup usage
+
+- `integration_api_usage_logs.operation`: `nhl_lineup_post_lookup` records a targeted X post retrieval for a manual partner lineup submission, distinct from timeline discovery usage.

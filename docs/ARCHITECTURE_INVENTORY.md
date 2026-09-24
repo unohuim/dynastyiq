@@ -1,5 +1,9 @@
 # Architecture Inventory
 
+Manual partner lineup submissions also accept X post URLs through the existing
+X discovery service's targeted lookup, retaining manual attribution and reusing
+bounded photo OCR. See `ServerToServerApiClients.yaml` and the official API guide.
+
 Partner date lineup reads use `GET /api/nhl/lineups` and
 `NhlAnticipatedLineupPayload::schedule` to expose both scheduled teams, verified
 lineups, and the shared starting-goalie selection without imports or predictions.

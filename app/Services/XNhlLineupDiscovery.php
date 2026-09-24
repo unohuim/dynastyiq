@@ -29,6 +29,69 @@ class XNhlLineupDiscovery
     {
     }
 
+    /**
+     * Fetch one explicitly submitted post without discovery or automatic trust promotion.
+     *
+     * @return array<string,mixed> Server-fetched evidence, never caller-owned metadata.
+     */
+    public function submittedPost(string $url, object $game, string $teamAbbrev): array
+    {
+        $parts = parse_url($url);
+        if (! is_array($parts) || ($parts['scheme'] ?? '') !== 'https'
+            || ! in_array(strtolower($parts['host'] ?? ''), ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'], true)
+            || isset($parts['user']) || isset($parts['pass']) || isset($parts['port'])
+            || ! preg_match('~^/(?:[A-Za-z0-9_]{1,15}/status|i/status|i/web/status)/([0-9]{1,25})(?:/(?:photo|video)/[1-4])?/?$~', $parts['path'] ?? '', $matches)) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['post_url' => 'Provide an HTTPS X/Twitter post URL containing a status ID.']);
+        }
+        $id = $matches[1];
+        $token = (string) config('services.x.bearer_token');
+        if ($token === '') {
+            throw \Illuminate\Validation\ValidationException::withMessages(['post_url' => 'X post retrieval is not configured on DynastyIQ.']);
+        }
+        try {
+            $response = Http::withToken($token)->acceptJson()
+                ->withOptions(['allow_redirects' => false])
+                ->timeout((int) config('services.x.timeout_seconds', 30))
+                ->get('https://api.x.com/2/tweets/' . $id, [
+                    'tweet.fields' => 'id,text,note_tweet,author_id,created_at,public_metrics,attachments',
+                    'expansions' => 'attachments.media_keys',
+                    'media.fields' => 'media_key,type,url,alt_text',
+                ]);
+        } catch (\Illuminate\Http\Client\ConnectionException $exception) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['post_url' => 'X could not be reached. Retry the submission later.']);
+        }
+        $post = $response->json('data');
+        DB::table('integration_api_usage_logs')->insert([
+            'provider' => 'x', 'operation' => 'nhl_lineup_post_lookup',
+            'provider_request_id' => $response->header('x-request-id'),
+            'input_tokens' => 0, 'output_tokens' => 0, 'tool_calls' => 1,
+            'metadata' => json_encode(['nhl_game_id' => $game->nhl_game_id, 'team_abbrev' => $teamAbbrev,
+                'post_id' => $id, 'http_status' => $response->status(), 'posts_returned' => is_array($post) && isset($post['id']) ? 1 : 0]),
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        if (! $response->successful() || ! is_array($post) || (string) ($post['id'] ?? '') !== $id) {
+            $reason = match ($response->status()) {
+                429 => 'X rate limited this lookup. Retry later.',
+                401, 402, 403 => 'X denied access to this post. Check post visibility and DynastyIQ X access/credits.',
+                404 => 'The X post was not found or is unavailable.',
+                default => 'X did not return the requested post. Retry later or submit lineup text.',
+            };
+            throw \Illuminate\Validation\ValidationException::withMessages(['post_url' => $reason]);
+        }
+        $keys = data_get($post, 'attachments.media_keys', []);
+
+        return [
+            'post_url' => 'https://x.com/i/status/' . $id,
+            'submitted_url' => $url,
+            'post_text' => (string) data_get($post, 'note_tweet.text', data_get($post, 'note_post.text', $post['text'] ?? '')),
+            'published_at' => $post['created_at'] ?? null,
+            'raw_post' => $post,
+            'media' => collect($response->json('includes.media', []))
+                ->filter(fn (array $media): bool => in_array($media['media_key'] ?? null, $keys, true))
+                ->values()->all(),
+        ];
+    }
+
     /** @return array<int,array<string,mixed>> */
     public function discover(object $game, string $teamAbbrev, ?string $streamBatchId = null): array
     {

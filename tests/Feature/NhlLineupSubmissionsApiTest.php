@@ -53,6 +53,110 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+it('fetches a submitted X post once and preserves manual attribution and original evidence', function (string $url): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    Http::fake(['api.x.com/2/tweets/123456*' => Http::response(['data' => [
+        'id' => '123456', 'text' => 'Truncated caption', 'note_tweet' => ['text' => $this->text],
+        'author_id' => '987', 'created_at' => '2026-09-22T15:00:00Z',
+    ]])]);
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => $url,
+    ])->assertCreated()->assertJsonPath('lineup.manual_override', true)
+        ->assertJsonCount(20, 'lineup.players')->assertJsonPath('starting_goalie.nhl_player_id', 8488019);
+    $observation = NhlLineupObservation::query()->findOrFail($response->json('submission_id'));
+    expect(data_get($observation->raw_evidence, 'submitted_post.raw_post.id'))->toBe('123456')
+        ->and(data_get($observation->raw_evidence, 'submitted_post.published_at'))->toBe('2026-09-22T15:00:00Z')
+        ->and($observation->raw_evidence['submitted_by_api_client_id'])->toBe($this->client->id)
+        ->and($observation->source->platform)->toBe('manual');
+    Http::assertSentCount(1);
+    Http::assertSent(fn ($request): bool => str_starts_with($request->url(), 'https://api.x.com/2/tweets/123456?')
+        && $request->hasHeader('Authorization', 'Bearer test-x-token'));
+    $this->assertDatabaseHas('integration_api_usage_logs', ['operation' => 'nhl_lineup_post_lookup']);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'games.0.teams.home.players');
+})->with(['https://x.com/reporter/status/123456?s=20', 'https://twitter.com/reporter/status/123456', 'https://x.com/i/web/status/123456']);
+
+it('rejects unsafe or non-post URLs without a provider request', function (string $url): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => $url,
+    ])->assertUnprocessable()->assertJsonValidationErrors('post_url');
+    Http::assertNothingSent();
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+})->with(['https://example.com/user/status/123456', 'https://x.com.evil.test/user/status/123456',
+    'http://x.com/user/status/123456', 'https://x.com/user', 'https://user:pass@x.com/user/status/123456']);
+
+it('preserves the current lineup when X cannot return the requested post', function (int $status): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    $original = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated()->json('submission_id');
+    Http::fake(['api.x.com/*' => Http::response(['errors' => [['detail' => 'Unavailable']]], $status)]);
+    $this->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => 'https://x.com/user/status/123456',
+    ])->assertUnprocessable()->assertJsonPath('success', false)->assertJsonValidationErrors('post_url');
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_lineup_observation_id' => $original]);
+    Http::assertSentCount(1);
+})->with([200, 403, 404, 429, 500]);
+
+it('uses bounded photo OCR for an image-only submitted post', function (): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    Http::fake(['api.x.com/*' => Http::response([
+        'data' => ['id' => '123456', 'text' => 'Tonight', 'attachments' => ['media_keys' => ['photo1']]],
+        'includes' => ['media' => [['media_key' => 'photo1', 'type' => 'photo', 'url' => 'https://pbs.twimg.com/media/lineup.png']]],
+    ])]);
+    $text = $this->text;
+    $this->mock(NhlLineupImageOcr::class, function ($mock) use ($text): void {
+        $mock->shouldReceive('extract')->once()->with('https://pbs.twimg.com/media/lineup.png', \Mockery::type('float'))
+            ->andReturn(['status' => 'ok', 'text' => $text]);
+        $mock->shouldNotReceive('extractUpload');
+    });
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => 'https://x.com/user/status/123456',
+    ])->assertCreated()->assertJsonCount(20, 'lineup.players');
+    Http::assertSentCount(1);
+});
+
+it('checks authorization and team membership before fetching submitted URLs', function (): void {
+    $body = ['nhl_game_id' => 2026010088, 'team_abbrev' => 'DET', 'post_url' => 'https://x.com/user/status/123456'];
+    $this->postJson('/api/nhl-lineups', $body)->assertUnauthorized();
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $body)
+        ->assertUnprocessable()->assertJsonValidationErrors('team_abbrev');
+    Http::assertNothingSent();
+});
+
+it('fails clearly when X credentials are missing without attempting a lookup', function (): void {
+    config(['services.x.bearer_token' => '']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => 'https://x.com/user/status/123456',
+    ])->assertUnprocessable()->assertJsonValidationErrors('post_url');
+    Http::assertNothingSent();
+});
+
+it('keeps explicit reviewed text ahead of fetched caption and photo OCR', function (): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    Http::fake(['api.x.com/*' => Http::response(['data' => ['id' => '123456', 'text' => 'Unrelated caption']])]);
+    $this->mock(NhlLineupImageOcr::class, function ($mock): void {
+        $mock->shouldNotReceive('extract');
+        $mock->shouldNotReceive('extractUpload');
+    });
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        ...$this->body, 'post_url' => 'https://x.com/user/status/123456', 'image_reviewed' => 1,
+    ])->assertCreated()->assertJsonCount(20, 'lineup.players');
+    Http::assertSentCount(1);
+});
+
+it('does not accept a URL solely because the X lookup succeeded', function (): void {
+    config(['services.x.bearer_token' => 'test-x-token']);
+    Http::fake(['api.x.com/*' => Http::response(['data' => ['id' => '123456', 'text' => 'No lineup today']])]);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        'nhl_game_id' => 2026010088, 'team_abbrev' => 'TOR', 'post_url' => 'https://x.com/user/status/123456',
+    ])->assertUnprocessable()->assertJsonValidationErrors('text')
+        ->assertJsonPath('interpreted_text', 'No lineup today');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+});
+
 it('protects the date lineup read with the existing read scope', function (string $case, int $status): void {
     if ($case === 'read' || $case === 'revoked') {
         $this->client->update(['scopes' => ['nhl-stats:read']]);
