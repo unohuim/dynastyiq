@@ -940,6 +940,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - `nhl_lineup_observation_players.power_play_unit`: nullable `1`, `2`.
 - `nhl_lineup_observation_players.penalty_kill_unit`: nullable `1`, `2`.
 - `nhl_current_lineups.evidence_status`: `official`, `reported`, `corroborated`, `strongly_corroborated`.
+- Date lineup API `teams.*.lineup_status`: `not_reported`, `reported`, `manual`, `official`. This read-only display classification never changes stored evidence status. Valid manual overrides take precedence; corroborated evidence is displayed as reported while retaining its separate evidence status.
 - Public game detail `display_lineup.evidence_status` may additionally be `projected` for a read-only roster preview. This value is not persisted to `nhl_current_lineups` and does not qualify as reported evidence.
 - Game skater `toi_source`: `sat_model`, `previous_season`, `linemate_average`, `line_estimate`. These identify the request-time TOI fallback chosen for all game types.
 - Current evidence statuses require verified core skaters, compatible positions, and unique identities/slots. `unresolved` F4/D3 players remain explicitly unresolved and are permitted only with a verified peer in the same group; all other unresolved skaters prevent current reported status.

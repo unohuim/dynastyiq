@@ -1,5 +1,11 @@
 # Architecture Inventory
 
+Partner date lineup reads use `GET /api/nhl/lineups` and
+`NhlAnticipatedLineupPayload::schedule` to expose both scheduled teams, verified
+lineups, and the shared starting-goalie selection without imports or predictions.
+The contract is documented in `docs/integrations/DIQ-API-Usage-Doc.md`; authority
+remains `docs/architecture/integrations/ServerToServerApiClients.yaml`.
+
 This document tracks **reusable abstractions, components, and architectural patterns**
 used throughout the project.
 

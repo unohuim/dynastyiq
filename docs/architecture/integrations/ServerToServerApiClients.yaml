@@ -10,6 +10,7 @@ location:
   - app/Http/Controllers/Api/NhlInjuriesController.php
   - app/Http/Controllers/Api/NhlStartingGoaliesController.php
   - app/Http/Controllers/Api/NhlAnticipatedLineupsController.php
+  - app/Http/Controllers/Api/NhlLineupsController.php
   - app/Http/Controllers/Api/NhlLineupSubmissionsController.php
   - app/Services/NhlSeasonStatsPayload.php
   - app/Services/NhlGamePredictionPayload.php
@@ -29,6 +30,7 @@ when_not_to_use:
   - Public unauthenticated API endpoints.
   - Bot runtime commands that belong in the Discord bot service.
 rules:
+  - GET /api/nhl/lineups requires nhl-stats:read and an explicit calendar date. It returns every scheduled game with both teams using the shared verified current-lineup payload and starting-goalie selector. Missing eligible lineups return empty players, not projected rosters. Reads never trigger provider discovery or prediction assembly; projected goalie selections remain explicitly labelled.
   - docs/integrations/DIQ-API-Usage-Doc.md is the canonical consumer-facing usage contract for all partner API endpoints and must be updated whenever authentication, parameters, response fields, or consumption guidance changes.
   - API clients must store only hashed bearer tokens.
   - Plaintext tokens may be shown only once by the creation command or authorized admin key-creation response.
@@ -48,6 +50,7 @@ rules:
   - NHL starting-goalie requests default to today; date and nhl_game_id filters are mutually exclusive.
   - NHL injury requests without filters return all current injuries and may filter by team_abbrev and nhl_player_id together.
 public_interface:
+  - GET /api/nhl/lineups
   - POST /api/nhl-lineups
   - api-client:create
   - api.client middleware

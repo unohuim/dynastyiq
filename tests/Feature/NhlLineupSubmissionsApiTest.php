@@ -53,6 +53,87 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+it('protects the date lineup read with the existing read scope', function (string $case, int $status): void {
+    if ($case === 'read' || $case === 'revoked') {
+        $this->client->update(['scopes' => ['nhl-stats:read']]);
+    }
+    if ($case === 'revoked') {
+        $this->client->update(['revoked_at' => now()]);
+    }
+    if ($case !== 'missing') {
+        $this->withToken($case === 'invalid' ? 'invalid-token' : $this->token);
+    }
+    $this->getJson('/api/nhl/lineups?date=2026-09-24')->assertStatus($status);
+    Http::assertNothingSent();
+})->with([['missing', 401], ['invalid', 403], ['write only', 403], ['revoked', 403], ['read', 200]]);
+
+it('requires a valid explicit date for lineup reads', function (string $query): void {
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->withToken($this->token)->getJson('/api/nhl/lineups' . $query)
+        ->assertUnprocessable()->assertJsonValidationErrors('date');
+})->with(['', '?date=tomorrow', '?date=2026-02-30']);
+
+it('reads submitted players and goalies with independent per-team lineup status', function (): void {
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonCount(1, 'games')->assertJsonPath('games.0.nhl_game_id', 2026010088)
+        ->assertJsonPath('games.0.teams.home.team_id', 10)
+        ->assertJsonPath('games.0.teams.home.team_abbrev', 'TOR')
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'games.0.teams.home.players')
+        ->assertJsonPath('games.0.teams.home.starting_goalie.nhl_player_id', 8488019)
+        ->assertJsonPath('games.0.teams.home.starting_goalie.status', 'expected')
+        ->assertJsonPath('games.0.teams.away.lineup_status', 'not_reported')
+        ->assertJsonPath('games.0.teams.away.players', [])
+        ->assertJsonPath('games.0.teams.away.updated_at', null);
+    $this->getJson('/api/nhl/lineups?date=2026-09-24')->assertOk()
+        ->assertJsonPath('games', [])->assertJsonPath('meta.count', 0);
+    Http::assertNothingSent();
+});
+
+it('maps verified evidence without reporting an invalid roster', function (string $evidence, bool $invalidate, string $status): void {
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    $observation = NhlLineupObservation::query()->firstOrFail();
+    $observation->update(['raw_evidence' => [...$observation->raw_evidence, 'manual_override' => false]]);
+    DB::table('nhl_current_lineups')->update(['evidence_status' => $evidence]);
+    if ($invalidate) {
+        $observation->players()->where('line_key', 'F1')->delete();
+    }
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonPath('games.0.teams.home.lineup_status', $status)
+        ->assertJsonCount($invalidate ? 0 : 20, 'games.0.teams.home.players');
+})->with([
+    ['reported', false, 'reported'], ['corroborated', false, 'reported'],
+    ['official', false, 'official'], ['reported', true, 'not_reported'],
+]);
+
+it('keeps split squad games separate and marks projected goalies explicitly', function (): void {
+    $game = NhlGame::query()->firstOrFail();
+    $second = $game->replicate();
+    $second->nhl_game_id = 2026010089;
+    $second->start_time_utc = '2026-09-23 20:00:00';
+    $second->save();
+    $this->mock(\App\Services\NhlStartingGoalieSelector::class, function ($mock): void {
+        foreach ([2026010088, 2026010089] as $id) {
+            foreach (['TOR', 'MTL'] as $team) {
+                $mock->shouldReceive('select')->once()->with($id, $team, '20262027')->andReturn([
+                    'nhl_player_id' => 8488019, 'status' => 'projected', 'selection_source' => 'goalie_projection',
+                ]);
+            }
+        }
+    });
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->withToken($this->token)->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonCount(2, 'games')->assertJsonPath('games.0.nhl_game_id', 2026010089)
+        ->assertJsonPath('games.1.nhl_game_id', 2026010088)
+        ->assertJsonPath('games.0.teams.home.players', [])
+        ->assertJsonPath('games.0.teams.home.starting_goalie.status', 'projected');
+    Http::assertNothingSent();
+});
+
 it('requires the dedicated live write key before any lineup processing', function (string $case, int $status): void {
     $this->mock(NhlLineupImageOcr::class, fn ($mock) => $mock->shouldNotReceive('extractUpload'));
     if ($case === 'read only') $this->client->update(['scopes' => ['nhl-stats:read']]);

@@ -23,6 +23,7 @@ Endpoint scopes:
 | `GET /api/nhl-season-stats` | `nhl-stats:read` |
 | `GET /api/nhl-starting-goalies` | `nhl-stats:read` |
 | `GET /api/nhl-anticipated-lineups` | `nhl-stats:read` |
+| `GET /api/nhl/lineups` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
 | `POST /api/nhl-lineups` | `nhl-lineups:write` |
 
@@ -32,6 +33,87 @@ with one configured client.
 
 Writes require a separate, explicitly issued key. Existing read tokens are not
 upgraded and the write scope does not grant read access.
+
+## Read Game Lineups By Date
+
+`GET /api/nhl/lineups?date=2026-09-24`
+
+Use the existing **read key** (`nhl-stats:read`), not the separate write-only key.
+`date` is required in `YYYY-MM-DD` format and selects the stored NHL schedule
+calendar date, without conversion to the caller's timezone. Missing or invalid
+dates return `422`. A date with no games returns `games: []` and `meta.count: 0`.
+Missing credentials return `401`; invalid, revoked, or wrong-scope keys return `403`.
+
+Every scheduled game is returned, ordered by start time and then NHL game ID.
+Both teams are present even if neither lineup has been reported. Split-squad
+games retain separate `nhl_game_id` values; do not key records by team/date alone.
+`team_id` is the NHL team identifier, not the consumer's local team ID.
+
+```json
+{
+  "games": [
+    {
+      "nhl_game_id": 2026010088,
+      "game_date": "2026-09-24",
+      "start_time_utc": "2026-09-24T23:00:00+00:00",
+      "game_state": "FUT",
+      "teams": {
+        "away": {
+          "team_id": 8,
+          "team_abbrev": "MTL",
+          "lineup_status": "not_reported",
+          "evidence_status": null,
+          "updated_at": null,
+          "players": [],
+          "sources": [],
+          "starting_goalie": null
+        },
+        "home": {
+          "team_id": 10,
+          "team_abbrev": "TOR",
+          "lineup_status": "not_reported",
+          "evidence_status": null,
+          "updated_at": null,
+          "players": [],
+          "sources": [],
+          "starting_goalie": null
+        }
+      }
+    }
+  ],
+  "meta": {
+    "date": "2026-09-24",
+    "count": 1,
+    "generated_at": "2026-09-24T12:00:00+00:00"
+  }
+}
+```
+
+`lineup_status` distinguishes unreported, reported, manual, and official lineups
+(canonical values are listed in `docs/ENUMS.md`). Corroborated evidence displays
+as reported; `evidence_status` retains the original confidence distinction.
+Manual means the currently selected eligible manual override, including partner
+submissions. Ineligible or incomplete stored observations remain not reported.
+
+For accepted lineups, `players` uses the existing anticipated-lineup player schema:
+`player_id`, `nhl_player_id`, `player_name`, `lineup_role`, `line_key`, `slot_index`,
+`power_play_unit`, `penalty_kill_unit`, and `resolution_status`. It includes listed
+goalies/scratches when present; permitted unresolved peers retain null IDs. Sources
+use the existing lineup source schema. `updated_at` is the accepted lineup's
+`last_observed_at`, not the request time. Unreported teams always return empty
+`players` and `sources`, never a guessed skater lineup.
+
+`starting_goalie` is selected independently through the same selector used by
+predictions, even for unreported teams. It is `null` when no selection is available;
+otherwise it includes `nhl_player_id`, `name`, `avatar_url`, `status`, and
+`selection_source`, plus `provider`/`observed_at` for observed evidence when available.
+Display the supplied status (expected, confirmed, or projected); a projected goalie
+does not make the team's lineup reported. Listed G2 remains in `players` as backup
+context and is not a second starter. Game-specific manual starter decisions apply.
+
+This is a persisted-data read: it does not import boxscores, contact X, or calculate
+predictions. Scores/live play are outside this endpoint. Data freshness depends
+on the existing import/sync processes. Existing read and write routes are unchanged.
 
 ## Submit A Lineup (Authoritative Manual Override)
 

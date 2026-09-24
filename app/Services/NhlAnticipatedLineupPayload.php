@@ -22,6 +22,54 @@ class NhlAnticipatedLineupPayload
     ) {
     }
 
+    /**
+     * Read every scheduled matchup without live provider requests or prediction assembly.
+     *
+     * @return array<string,mixed>
+     */
+    public function schedule(Carbon $date, NhlStartingGoalieSelector $goalies): array
+    {
+        $lineups = collect($this->build($date)['anticipated_lineups'])
+            ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
+        $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
+        $games = NhlGame::query()->whereDate('game_date', $date->toDateString())
+            ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()
+            ->map(function (NhlGame $game) use ($lineups, $teamIds, $goalies): array {
+                $teams = [];
+                foreach (['away', 'home'] as $side) {
+                    $abbrev = (string) $game->{$side . '_team_abbrev'};
+                    $lineup = $lineups->get($game->nhl_game_id . ':' . $abbrev);
+                    $teams[$side] = [
+                        'team_id' => $game->{$side . '_team_id'} ?? $teamIds->get($abbrev),
+                        'team_abbrev' => $abbrev,
+                        'lineup_status' => $lineup === null ? 'not_reported'
+                            : (($lineup['manual_override'] ?? false) ? 'manual'
+                                : ($lineup['evidence_status'] === 'official' ? 'official' : 'reported')),
+                        'evidence_status' => $lineup['evidence_status'] ?? null,
+                        'updated_at' => $lineup['last_observed_at'] ?? null,
+                        'players' => $lineup['players'] ?? [],
+                        'sources' => $lineup['sources'] ?? [],
+                        'starting_goalie' => $goalies->select(
+                            (int) $game->nhl_game_id, $abbrev, (string) $game->season_id
+                        ),
+                    ];
+                }
+
+                return [
+                    'nhl_game_id' => $game->nhl_game_id,
+                    'game_date' => $game->game_date->toDateString(),
+                    'start_time_utc' => $game->start_time_utc?->toIso8601String(),
+                    'game_state' => $game->game_state,
+                    'teams' => $teams,
+                ];
+            });
+
+        return ['games' => $games, 'meta' => [
+            'date' => $date->toDateString(), 'count' => $games->count(),
+            'generated_at' => now()->toIso8601String(),
+        ]];
+    }
+
     /** @return array<string,mixed> */
     public function page(Carbon $date): array
     {
