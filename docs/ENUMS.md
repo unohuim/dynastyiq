@@ -943,7 +943,7 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 - Date lineup API `teams.*.lineup_status`: `not_reported`, `reported`, `manual`, `official`. This read-only display classification never changes stored evidence status. Valid manual overrides take precedence; corroborated evidence is displayed as reported while retaining its separate evidence status.
 - Public game detail `display_lineup.evidence_status` may additionally be `projected` for a read-only roster preview. This value is not persisted to `nhl_current_lineups` and does not qualify as reported evidence.
 - Game skater `toi_source`: `sat_model`, `previous_season`, `linemate_average`, `line_estimate`. These identify the request-time TOI fallback chosen for all game types.
-- Current evidence statuses require verified core skaters, target-team membership, and unique identities/slots. Reported slots determine forward/defense roles; goalies cannot occupy skater slots. Unresolved peer exceptions remain game-type-dependent under the canonical lineup architecture rules; known wrong-team players cannot use them.
+- Current evidence statuses require verified core skaters and unique identities/slots. Reported slots determine forward/defense roles; goalies cannot occupy skater slots. Unresolved peer exceptions remain game-type-dependent under the canonical lineup architecture rules. Team membership is a new-evidence admission check only: blank assignment is allowed, a known different team is rejected, and existing accepted evidence is not rechecked for membership.
 - `integration_api_usage_logs.operation` for X lineup work: `nhl_lineup_source_timeline`; historical rows may contain the retired `nhl_lineup_discovery` value.
 
 **Notes:**

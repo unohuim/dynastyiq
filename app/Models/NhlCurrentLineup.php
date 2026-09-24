@@ -59,7 +59,6 @@ class NhlCurrentLineup extends Model
 
         $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
 
-        return $resolver->teamMembershipErrors($this->observation->players->toArray(), $this->team_abbrev) === []
-            && $resolver->verifiedLineupIds($players->values()->toArray(), null, $gameType, $this->team_abbrev) !== null;
+        return $resolver->verifiedLineupIds($players->values()->toArray(), null, $gameType) !== null;
     }
 }

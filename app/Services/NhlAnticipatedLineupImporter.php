@@ -206,6 +206,11 @@ class NhlAnticipatedLineupImporter
                 continue;
             }
             $normalized = $this->normalizePlayers($candidate['players'] ?? [], $teamId, $teamAbbrev);
+            // Membership is an admission rule for incoming evidence, never a historical read gate.
+            if ($this->players->teamMembershipErrors($normalized, $teamAbbrev) !== []) {
+                $skipped++;
+                continue;
+            }
             $completeness = $this->completeness($normalized, (int) ($game->game_type ?? 2));
             if ($completeness !== 'full') {
                 $skipped++;

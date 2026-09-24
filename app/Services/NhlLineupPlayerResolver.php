@@ -48,11 +48,8 @@ class NhlLineupPlayerResolver
      * @param array<int,array<string,mixed>> $rows
      * @return array<int,int>|null Verified NHL ids, or null when the group is not reportable.
      */
-    public function verifiedLineupIds(array $rows, ?string $role = null, int $gameType = 2, ?string $teamAbbrev = null): ?array
+    public function verifiedLineupIds(array $rows, ?string $role = null, int $gameType = 2): ?array
     {
-        if ($this->teamMembershipErrors($rows, $teamAbbrev) !== []) {
-            return null;
-        }
         $groups = $role === 'forward' ? ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3]
             : ($role === 'defense' ? ['D1' => 2, 'D2' => 2, 'D3' => 2]
                 : ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3, 'D1' => 2, 'D2' => 2, 'D3' => 2]);
@@ -120,9 +117,9 @@ class NhlLineupPlayerResolver
                 continue;
             }
             $actual = mb_strtoupper(trim((string) $player->team_abbrev));
-            if ($actual !== $target) {
+            if ($actual !== '' && $actual !== $target) {
                 $errors[] = sprintf('%s is assigned to %s, not %s.', $player->full_name,
-                    $actual !== '' ? $actual : 'no recorded team', $target);
+                    $actual, $target);
             }
         }
 

@@ -77,7 +77,8 @@ class NhlLineupTextParser
                 continue;
             }
             foreach ($this->players->mentions($line, $teamAbbrev) as $player) {
-                if (mb_strtoupper((string) $player['team_abbrev']) === mb_strtoupper($teamAbbrev)) {
+                $assignedTeam = mb_strtoupper(trim((string) $player['team_abbrev']));
+                if ($assignedTeam === '' || $assignedTeam === mb_strtoupper($teamAbbrev)) {
                     $groups[$section][] = $player;
                 }
             }
@@ -94,7 +95,8 @@ class NhlLineupTextParser
         foreach (['forward' => 3, 'defense' => 2, 'goalie' => 2] as $role => $size) {
             foreach ($groups[$role] as $index => $player) {
                 $key = $role === 'goalie' ? 'G' : ($role === 'forward' ? 'F' : 'D') . (intdiv($index, $size) + 1);
-                $rows[] = $this->row($player, $role, $key, ($index % $size) + 1);
+                $rows[] = [...$this->row($player, $role, $key, ($index % $size) + 1),
+                    'team_abbrev' => mb_strtoupper($teamAbbrev)];
             }
         }
 

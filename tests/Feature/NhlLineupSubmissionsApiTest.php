@@ -143,14 +143,23 @@ it('still rejects a goalie assigned to a skater slot', function (): void {
     $this->assertDatabaseCount('nhl_lineup_observations', 0);
 });
 
-it('does not report stored lineups whose players now fail target-team verification', function (): void {
+it('keeps previously accepted lineups visible when canonical team assignments change', function (): void {
     $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
     Player::query()->where('nhl_id', 8488001)->update(['team_abbrev' => 'STL']);
     $this->client->update(['scopes' => ['nhl-stats:read']]);
     $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
-        ->assertJsonPath('games.0.teams.home.lineup_status', 'not_reported')
-        ->assertJsonPath('games.0.teams.home.players', []);
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'games.0.teams.home.players');
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->assertDatabaseCount('nhl_current_lineups', 1);
 });
+
+it('accepts new submissions with unassigned canonical players', function (?string $team): void {
+    Player::query()->whereIn('nhl_id', [8488001, 8488019])->update(['team_abbrev' => $team]);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertCreated()->assertJsonCount(20, 'lineup.players')
+        ->assertJsonPath('starting_goalie.nhl_player_id', 8488019);
+})->with([null, '', '   ']);
 
 it('fetches a submitted X post once and preserves manual attribution and original evidence', function (string $url): void {
     config(['services.x.bearer_token' => 'test-x-token']);

@@ -467,7 +467,7 @@ class NhlGamePredictionPayload
         }
 
         return app(NhlLineupPlayerResolver::class)->verifiedLineupIds(
-            collect($lineup['players'] ?? [])->values()->all(), null, $gameType, $lineup['team_abbrev'] ?? null
+            collect($lineup['players'] ?? [])->values()->all(), null, $gameType
         );
     }
 

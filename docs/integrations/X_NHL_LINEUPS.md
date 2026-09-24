@@ -79,18 +79,19 @@ An account supplying accepted lineup evidence is stored in `sources` and linked 
 
 The shared parser also accepts roster tables with Goaltenders, Defensemen, and
 Forwards sections (including spelling variants), in any order, and GP/PTS/GAA/SV
-header labels. These may interleave opponent columns. Only players resolved to
-the target team are retained; exactly 12 forwards and 6 defensemen must remain,
+header labels. These may interleave opponent columns. Recognized players assigned to
+the target team or with blank team assignments are retained; exactly 12 forwards and 6 defensemen must remain,
 without duplicates. Up to two goalies are retained. Printed order supplies inferred
 lines/pairs and G1/G2. This exception does not relax automated game/date checks
 or ordinary line-post wrong-team rejection.
 
 Reported F/D slots control game deployment, so a normally listed defenseman may
 play forward (and vice versa). Goalies remain excluded from skater slots. Resolved
-players must have the selected team's canonical abbreviation; league assignment
-does not exclude prospects. Cross-team identity matches are retained for explicit
-manual rejection messages, never accepted as unresolved fallback slots. The same
-shared verification protects imports, current lineup reads, and predictions.
+players in new submissions must not have a known different canonical team;
+blank assignments are allowed, and league assignment does not exclude prospects.
+Cross-team identity matches are retained for explicit manual rejection messages,
+never accepted as unresolved fallback slots. This admission check is not applied
+retroactively to accepted lineups during reads, current selection, or predictions.
 
 Every returned timeline post is read in full. Before resolving names, the parser requires a single roster-shaped block containing twelve forward slots followed by six defense slots in that same post. Forward/defense headings are allowed; ordered individual names and delimited lines/pairs map to F1–F4 and D1–D3. Sentences are not mined for player mentions to fill missing slots. Multiple complete roster blocks are ambiguous and declined. Canonical identity and slot verification follows through `NhlLineupPlayerResolver`, preserving apostrophe normalization and the season-specific peer exceptions. Goalies and scratches remain supplemental and cannot fill missing skater slots.
 

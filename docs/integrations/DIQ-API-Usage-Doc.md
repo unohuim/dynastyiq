@@ -179,14 +179,16 @@ curl -X POST 'https://dynastyiq.com/api/nhl-lineups' \
 The roster still needs twelve forward slots and six defense slots under the
 existing identity/peer-fallback rules. A skater's usual database position does not
 restrict their reported F/D slot, but goalies cannot occupy skater slots. Resolved
-players must belong to the submitted team according to canonical team assignment,
-including listed goalies; NHL/AHL/prospect league assignment is not a restriction.
+players with a nonempty canonical team assignment must match the submitted team,
+including listed goalies; blank/null assignments are allowed. NHL/AHL/prospect league assignment is not a restriction.
 A known wrong-team player is rejected, not treated as an unresolved peer fallback.
 The `422 errors.text` response names offending players and their recorded teams.
-Stale or missing team assignments must be corrected rather than bypassing this rule.
+This check applies only to new submissions. Previously accepted lineups remain
+eligible without retroactive team-membership checks, including prediction reads.
 An explicit sectioned roster table is the exception for mixed-team content:
 Goaltenders/Goalies, Defensemen/Defencemen, and Forwards headings with stat-column
-labels (such as GP/PTS/GAA/SV) may appear in any order. Opponent players are ignored
+labels (such as GP/PTS/GAA/SV) may appear in any order. Known opponent players are ignored,
+while recognized players with blank team assignments are allowed,
 and the selected team must resolve to exactly 12 forwards and 6 defensemen, with
 up to two goalies and no duplicates. Jersey numbers and stats are not player slots.
 Selected forwards form F1-F4 in listed groups of three; defensemen form D1-D3 in
