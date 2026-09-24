@@ -96,10 +96,14 @@ Horizon assigns six workers to `default`, two workers to `fantrax`, and two work
 **Allowed values currently emitted:**
 
 - `nhl-reference:read`
+- `nhl-stats:read`
+- `nhl-lineups:write`
 
 **Semantic meaning:**
 
 - `nhl-reference:read`: Allows a server-to-server API client to read NHL team and player reference endpoints.
+- `nhl-stats:read`: Allows reads of NHL statistics, availability, anticipated lineups, and predictions.
+- `nhl-lineups:write`: Allows validated text/image lineup submissions as authoritative manual overrides; does not grant read scopes or other writes.
 
 **Notes:**
 

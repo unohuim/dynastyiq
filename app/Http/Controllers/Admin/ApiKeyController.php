@@ -22,6 +22,7 @@ class ApiKeyController extends Controller
     private const ALLOWED_SCOPES = [
         'nhl-reference:read',
         'nhl-stats:read',
+        'nhl-lineups:write',
     ];
 
     /**
@@ -121,6 +122,7 @@ class ApiKeyController extends Controller
         return match ($scope) {
             'nhl-reference:read' => 'NHL Reference Read',
             'nhl-stats:read' => 'NHL Stats Read',
+            'nhl-lineups:write' => 'NHL Lineups Write',
             default => $scope,
         };
     }

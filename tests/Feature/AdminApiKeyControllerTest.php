@@ -100,3 +100,17 @@ it('rejects unknown api key scopes', function () {
         ->assertUnprocessable()
         ->assertJsonValidationErrors('scopes.0');
 });
+
+it('creates a separate write only lineup key without changing existing read keys', function (): void {
+    $read = ApiClient::query()->create([
+        'name' => 'Read client', 'slug' => 'read-client', 'token_hash' => ApiClient::hashToken('existing-read-key'),
+        'scopes' => ['nhl-stats:read'],
+    ]);
+    $this->actingAs(($this->makeSuperAdmin)())->postJson(route('admin.api-keys.store'), [
+        'name' => 'gner8 Lineups Write', 'scopes' => ['nhl-lineups:write'],
+    ])->assertCreated()->assertJsonPath('api_key.scopes', ['nhl-lineups:write']);
+    expect($read->fresh()->scopes)->toBe(['nhl-stats:read']);
+    $this->getJson(route('admin.api-keys.index'))->assertOk()->assertJsonFragment([
+        'value' => 'nhl-lineups:write', 'label' => 'NHL Lineups Write',
+    ]);
+});

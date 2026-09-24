@@ -252,7 +252,7 @@ it('uses manual G1 and includes unprojected G2 in the dressed prediction roster'
     $this->actingAs($user)->postJson('/games/2026020001/lineup', ['team_abbrev' => 'AWY', 'text' => $text])->assertOk();
     $this->assertDatabaseHas('nhl_starting_goalie_observations', [
         'nhl_game_id' => 2026020001, 'team_abbrev' => 'AWY', 'nhl_player_id' => 9001,
-        'provider' => 'public_lineup', 'status' => 'expected',
+        'provider' => 'manual', 'status' => 'expected',
     ]);
     $this->assertDatabaseHas('nhl_lineup_observation_players', [
         'nhl_player_id' => 9003, 'line_key' => 'G', 'slot_index' => 2,

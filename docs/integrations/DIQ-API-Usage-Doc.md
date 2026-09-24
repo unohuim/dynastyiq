@@ -24,10 +24,123 @@ Endpoint scopes:
 | `GET /api/nhl-starting-goalies` | `nhl-stats:read` |
 | `GET /api/nhl-anticipated-lineups` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
+| `POST /api/nhl-lineups` | `nhl-lineups:write` |
 
 Most partner applications need a token with both `nhl-reference:read` and
 `nhl-stats:read` so they can resolve teams, players, stats, and predictions
 with one configured client.
+
+Writes require a separate, explicitly issued key. Existing read tokens are not
+upgraded and the write scope does not grant read access.
+
+## Submit A Lineup (Authoritative Manual Override)
+
+`POST https://dynastyiq.com/api/nhl-lineups` accepts a full team lineup through
+the same text parser, player resolver, OCR, and validation used by the DynastyIQ
+manual lineup modal. This is currently an authoritative submission, not a proposal
+awaiting moderation. The latest **valid saved** manual submission wins for that
+game/team, whether submitted through DynastyIQ or any authorized partner key.
+Save order is server-controlled (observation id breaks timestamp ties); supplied
+publication timestamps or claimed submitter identities cannot change it.
+
+### Separate Write Key And Environment
+
+In DynastyIQ **Admin → API Keys**, create a key named `gner8 Lineups Write` with
+**only NHL Lineups Write** (`nhl-lineups:write`) selected. Leave the existing read
+key untouched. Copy the new token when shown; only its hash is stored afterward.
+Issue a different key for each additional submitting integration/person so
+attribution and revocation remain independent.
+
+Recommended entry on the **submitting server (gner8)**:
+
+```dotenv
+DYNASTYIQ_LINEUPS_WRITE_TOKEN=<new-write-key-from-DynastyIQ>
+```
+
+The submitting application must read this variable and use its value as the
+Bearer token for lineup POSTs. This is the integration configuration contract,
+not an environment variable read by DynastyIQ. DynastyIQ needs **no new `.env`
+entry**: it authenticates `api_clients` token hashes. Keep the token server-side,
+out of browser bundles, logs, and source control. Do not use a `VITE_` variable.
+
+### Input
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `nhl_game_id` | Yes | Exact scheduled NHL game ID; required to distinguish split squads. |
+| `team_abbrev` | Yes | Participating team, such as `TOR`; normalized to uppercase. |
+| `text` | Unless uploading an image | Full lineup text, maximum 20,000 characters. |
+| `image` | Unless sending text | Multipart JPEG/PNG upload, maximum 10 MiB. URLs, base64 strings, PDFs and arbitrary files are not accepted. |
+| `image_reviewed` | No | Send `true`/`1` with reviewed text to validate that text without substituting OCR output. Text is then required. |
+
+Send JSON for text only, or `multipart/form-data` for uploads (let the HTTP client
+generate the multipart boundary). Include `Accept: application/json` and
+`Authorization: Bearer <write-key>`. No browser session or CSRF token is needed.
+
+```bash
+curl -X POST 'https://dynastyiq.com/api/nhl-lineups' \
+  -H "Authorization: Bearer $DYNASTYIQ_LINEUPS_WRITE_TOKEN" \
+  -H 'Accept: application/json' \
+  -F 'nhl_game_id=2026010036' \
+  -F 'team_abbrev=TOR' \
+  -F 'text=<lineup.txt'
+
+curl -X POST 'https://dynastyiq.com/api/nhl-lineups' \
+  -H "Authorization: Bearer $DYNASTYIQ_LINEUPS_WRITE_TOKEN" \
+  -H 'Accept: application/json' \
+  -F 'nhl_game_id=2026010036' \
+  -F 'team_abbrev=TOR' \
+  -F 'image=@lineup.png'
+```
+
+The roster still needs twelve forward slots and six defense slots under the
+existing identity/position/peer-fallback rules. This endpoint does not accept a
+goalie-only submission. Goalies are optional additions: G1 becomes the expected
+manual starter, G2 remains the dressed backup. The latest manual goalie decision
+(UI, API, or explicit goalie picker) takes precedence over provider expectations
+and confirmations for prediction selection. Explicit prediction request goalie
+overrides remain first; live NHL boxscore presentation stays unchanged.
+
+### Responses
+
+`201 Created` means validation and persistence succeeded:
+
+```json
+{
+  "success": true,
+  "message": "Lineup accepted as the current manual override.",
+  "submission_id": 1234,
+  "nhl_game_id": 2026010036,
+  "team_abbrev": "TOR",
+  "lineup": { "manual_override": true, "team_abbrev": "TOR", "players": [] },
+  "starting_goalie": null
+}
+```
+
+The example abbreviates `lineup`; the actual response includes the accepted
+players, slots, source attribution, and evidence status using the existing lineup
+read schema. `starting_goalie` contains the shared selection object when one is
+available. Every accepted resubmission creates a new immutable observation;
+retries are new manual submissions, not idempotent replays.
+
+`422 Unprocessable Entity` leaves the previous lineup and goalies unchanged:
+
+```json
+{
+  "success": false,
+  "message": "Select a known NHL team participating in this game.",
+  "errors": { "team_abbrev": ["Select a known NHL team participating in this game."] },
+  "interpreted_text": ""
+}
+```
+
+For parsing/OCR failures, `errors.text` or `errors.image` explains the rejection;
+`interpreted_text` provides submitted/extracted text where available so the caller
+can offer correction and resubmission. Low-confidence images do not bypass roster
+validation. Other errors use standard JSON `message` responses: `401` missing
+Bearer token, `403` invalid/revoked/wrong-scope token, `404` unknown game. Uploads
+rejected by the web server before Laravel may return `413`. No Twitter or OpenAI
+requests are made for these submissions.
 
 ## NHL Season Stats Endpoint
 
@@ -739,7 +852,7 @@ selected starter is included when available, but no backup is invented.
 Evidence-only responses also return this field; projected roster previews remain
 previews, not confirmed dressed participants.
 
-Starter selection precedence is request override, explicit manual starter selection, official NHL starter, current
+Starter selection precedence is request override, latest authoritative manual starter selection, official NHL starter, current
 starting-goalie observation, goalie season projection, then workload projection.
 Within observations, confirmed evidence outranks expected evidence, with newest
 evidence breaking ties.
@@ -748,8 +861,9 @@ An explicit super-admin goalie-picker selection takes precedence immediately
 after a request override, ahead of provider starter evidence. It is returned with
 `selection_source: manual_starter_override` (and `provider: manual` in availability
 responses). It applies only to the selected game/team, persists until replaced by
-another explicit selection, and does not change live NHL-owned presentation.
-Unlike a manually submitted lineup's G1, this is an explicit starter decision.
+another accepted manual goalie decision, and does not change live NHL-owned presentation.
+Validated UI and partner API lineup G1 submissions have the same manual authority;
+the latest accepted decision wins, with record ID breaking timestamp ties.
 If the chosen player lacks an NHL ID or usable goalie model, predictions report
 the missing prerequisite rather than silently selecting another goalie.
 The prediction dressed roster uses this starter as G1; selecting the listed G2
@@ -763,9 +877,9 @@ local `player_id`, requires CSRF protection, and returns the updated
 `starting_goalie` plus game/team identity. It includes prospects regardless of
 league assignment and preserves an attributed, append-only selection history.
 
-A validated manual lineup's G1 is expected starter evidence and outranks generic
-expected/projected choices for that specific game, including split-squad games.
-Official/confirmed starters and explicit API goalie overrides retain precedence.
+A validated manual lineup's G1 is authoritative for that specific game/team,
+including split-squad games, even when its evidence status is `expected`.
+It outranks provider evidence; explicit prediction-request goalie overrides retain precedence.
 Superseded or wrong-date lineup-derived observations cannot select a starter.
 Live game presentation remains sourced from the NHL boxscore.
 
@@ -1066,7 +1180,7 @@ inputs, while retaining the former for evidence provenance.
 
 ### Lineup-Aware Consumption Guidance
 
-- Lineup evidence may have `sources[].platform: manual`: a super admin pasted the text into DynastyIQ. It uses the same verification and prediction rules as imported text, is attributed to that admin, and is not an X post or official NHL evidence. Manual entry is a first-party authenticated UI action, not a partner API endpoint.
+- Lineup evidence may have `sources[].platform: manual`: a super admin submitted it in DynastyIQ or an explicitly authorized partner submitted it through `POST /api/nhl-lineups`. Both use the same validator, retain server-owned user/API-client attribution, and are temporarily equally authoritative manual overrides—not X posts or official NHL evidence.
 - X posts saying “tonight” or “today” apply to their publication date; “tomorrow” applies to the next day, using America/Toronto calendar dates. They must match the target game date, including when reading older stored observations. Yesterday's explicitly dated report for today's opponent remains eligible. Relative wording without a publication timestamp is rejected; manual and official evidence are exempt.
 - A `reported` lineup has valid slots and verified identities or eligible peer fallbacks, not merely eighteen parsed names. Duplicate identities and goalies in skater slots remain invalid. Unknown F1–F3/D1–D2 players are eligible only in preseason with a verified same-group peer. Invalid legacy lineups are omitted too.
 - Eligible unidentified players remain `resolution_status: unresolved` with null identity fields. They do not block reporting or predictions when a verified player in that same line/pair supplies the peer-average fallback; they are never presented as identified players.

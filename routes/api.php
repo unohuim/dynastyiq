@@ -69,6 +69,9 @@ Route::middleware('api.client:nhl-stats:read')->group(function (): void {
         ->name('api.nhl-anticipated-lineups.index');
 });
 
+Route::post('/nhl-lineups', \App\Http\Controllers\Api\NhlLineupSubmissionsController::class)
+    ->middleware('api.client:nhl-lineups:write')->name('api.nhl-lineups.store');
+
 
 
 

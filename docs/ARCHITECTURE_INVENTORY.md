@@ -3766,6 +3766,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Authorized partner text/image submissions use `POST /api/nhl-lineups` with the
+separate `nhl-lineups:write` scope. UI and API manual submissions share validation
+and temporary authority: latest accepted record wins, retaining user or API-client
+attribution. Key setup and examples belong in `DIQ-API-Usage-Doc.md`.
+
 `Games/GoaliePicker.vue` provides super-admin-only, immediate AJAX starter
 selection from all team-associated goalies, including prospects. Append-only
 manual observations take precedence in the shared starter selector for that game;

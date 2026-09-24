@@ -33,7 +33,7 @@ class NhlStartingGoalieSelector
         }
 
         $observed = $this->observed($nhlGameId, $teamAbbrev);
-        if (($observed['provider'] ?? null) === 'manual') {
+        if (($observed['selection_source'] ?? null) === 'manual_starter_override') {
             return $observed;
         }
 
@@ -136,7 +136,8 @@ class NhlStartingGoalieSelector
                 && ($observation->nhl_player_id !== null || $observation->provider === 'manual')
                 && in_array($observation->status, ['confirmed', 'expected'], true));
 
-        if ($row !== null && $row->provider === 'manual' && $row->nhl_player_id === null) {
+        $manual = $row !== null && ($row->provider === 'manual' || (bool) $row->getAttribute('manual_lineup'));
+        if ($manual && $row->nhl_player_id === null) {
             return [
                 'nhl_player_id' => null, 'name' => $row->player_name,
                 'avatar_url' => Player::query()->whereKey($row->player_id)->value('head_shot_url'),
@@ -145,7 +146,7 @@ class NhlStartingGoalieSelector
         }
 
         return $row === null ? null : [
-            ...$this->result((int) $row->nhl_player_id, $row->provider === 'manual' ? 'manual_starter_override' : 'starting_goalie_observation', (string) $row->status),
+            ...$this->result((int) $row->nhl_player_id, $manual ? 'manual_starter_override' : 'starting_goalie_observation', (string) $row->status),
             'name' => $row->player_name,
             'provider' => $row->provider,
             'observed_at' => $row->getRawOriginal('fetched_at'),
@@ -165,7 +166,7 @@ class NhlStartingGoalieSelector
             ->whereDate('game_date', $date->toDateString())
             ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
             ->orderByDesc('fetched_at')->orderByDesc('id')->get();
-        $lineupIds = $rows->where('provider', 'public_lineup')->map(
+        $lineupIds = $rows->whereIn('provider', ['public_lineup', 'manual'])->map(
             fn (NhlStartingGoalieObservation $row) => data_get($row->raw_evidence, 'lineup_observation_id')
         )->filter()->unique();
         $currentLineups = NhlCurrentLineup::query()->with('observation.players')
@@ -176,15 +177,18 @@ class NhlStartingGoalieSelector
             ->keyBy('nhl_lineup_observation_id');
         $rows = $rows->filter(function (NhlStartingGoalieObservation $row) use ($currentLineups): bool {
             $lineupId = data_get($row->raw_evidence, 'lineup_observation_id');
-            if ($row->provider !== 'public_lineup' || ! $lineupId) {
+            if (! in_array($row->provider, ['public_lineup', 'manual'], true) || ! $lineupId) {
                 return true;
             }
             $current = $currentLineups->get($lineupId);
+            // Read-only annotation also recognizes manual evidence written before
+            // manual submissions received their own goalie provider value.
+            $row->setAttribute('manual_lineup', (bool) data_get($current?->observation?->raw_evidence, 'manual_override', false));
 
             return $current !== null && (int) $current->nhl_game_id === (int) $row->nhl_game_id
                 && $current->team_abbrev === $row->team_abbrev;
         })->sortBy(fn (NhlStartingGoalieObservation $row): int => match (true) {
-            $row->provider === 'manual' => -1,
+            $row->provider === 'manual' || (bool) $row->getAttribute('manual_lineup') => -1,
             $row->provider === 'nhl_boxscore' && $row->status === 'confirmed' => 0,
             $row->status === 'confirmed' => 1,
             $row->provider === 'public_lineup' && $row->status === 'expected'

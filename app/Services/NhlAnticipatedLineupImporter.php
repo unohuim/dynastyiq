@@ -24,7 +24,7 @@ class NhlAnticipatedLineupImporter
     }
 
     /**
-     * Import validated super-admin text using the same observation pipeline as public posts.
+     * Import validated human or authorized partner text through the same observation pipeline.
      *
      * @param array<string,mixed>|null $imageEvidence Server-produced OCR evidence, never raw request fields.
      * @return array{observed:int,skipped:int}
@@ -34,9 +34,13 @@ class NhlAnticipatedLineupImporter
         string $teamAbbrev,
         int $teamId,
         string $text,
-        int $userId,
-        ?array $imageEvidence = null
+        ?int $userId,
+        ?array $imageEvidence = null,
+        ?\App\Models\ApiClient $apiClient = null
     ): array {
+        if (($userId === null) === ($apiClient === null)) {
+            throw new \InvalidArgumentException('A manual submission requires exactly one submitting user or API client.');
+        }
         $parser = app(NhlLineupTextParser::class);
         $lineupText = $text;
         $players = $parser->parse($text, $teamAbbrev);
@@ -67,14 +71,17 @@ class NhlAnticipatedLineupImporter
             ]);
         }
         $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);
+        $actor = $apiClient !== null ? 'api-client-' . $apiClient->id : 'user-' . $userId;
         $candidate = [
-            'platform' => 'manual', 'source_name' => 'Manual submission (user #' . $userId . ')',
-            'source_handle' => 'user-' . $userId,
-            'source_url' => route('games.index') . '#manual-user-' . $userId,
-            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $userId . '-' . Str::uuid(),
+            'platform' => 'manual', 'source_name' => $apiClient !== null
+                ? 'API submission (' . $apiClient->name . ')' : 'Manual submission (user #' . $userId . ')',
+            'source_handle' => $actor,
+            'source_url' => route('games.index') . '#manual-' . $actor,
+            'post_url' => $url . '#manual-' . $teamAbbrev . '-' . $actor . '-' . Str::uuid(),
             'post_text' => $text, 'published_at' => now()->toIso8601String(),
             'lineup_text' => $lineupText, 'ocr' => $imageEvidence !== null ? [$imageEvidence] : [],
             'submitted_by_user_id' => $userId, 'manual_override' => true, 'players' => $players,
+            'submitted_by_api_client_id' => $apiClient?->id,
         ];
         $observed = 0;
         $skipped = 0;
@@ -420,7 +427,7 @@ class NhlAnticipatedLineupImporter
             'player_id' => $starter['player_id'],
             'nhl_player_id' => $starter['nhl_player_id'],
             'player_name' => $starter['player_name'],
-            'provider' => $isOfficial ? 'nhl_boxscore' : 'public_lineup',
+            'provider' => ($candidate['manual_override'] ?? false) ? 'manual' : ($isOfficial ? 'nhl_boxscore' : 'public_lineup'),
             'provider_player_key' => null,
             'status' => $isOfficial ? 'confirmed' : 'expected',
             'provider_published_at' => $observation->provider_published_at,
@@ -429,6 +436,8 @@ class NhlAnticipatedLineupImporter
             'raw_evidence' => [
                 'lineup_observation_id' => $observation->id,
                 'manual_override' => (bool) ($candidate['manual_override'] ?? false),
+                'submitted_by_user_id' => $candidate['submitted_by_user_id'] ?? null,
+                'submitted_by_api_client_id' => $candidate['submitted_by_api_client_id'] ?? null,
                 'source_id' => $observation->source_id,
                 'line_key' => 'G',
                 'slot_index' => 1,

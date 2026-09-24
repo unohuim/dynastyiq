@@ -10,6 +10,7 @@ location:
   - app/Http/Controllers/Api/NhlInjuriesController.php
   - app/Http/Controllers/Api/NhlStartingGoaliesController.php
   - app/Http/Controllers/Api/NhlAnticipatedLineupsController.php
+  - app/Http/Controllers/Api/NhlLineupSubmissionsController.php
   - app/Services/NhlSeasonStatsPayload.php
   - app/Services/NhlGamePredictionPayload.php
   - database/migrations/2026_07_27_000002_create_api_clients_table.php
@@ -30,8 +31,10 @@ when_not_to_use:
 rules:
   - docs/integrations/DIQ-API-Usage-Doc.md is the canonical consumer-facing usage contract for all partner API endpoints and must be updated whenever authentication, parameters, response fields, or consumption guidance changes.
   - API clients must store only hashed bearer tokens.
-  - Plaintext tokens may be shown only once by the creation command.
+  - Plaintext tokens may be shown only once by the creation command or authorized admin key-creation response.
   - API client endpoints must require explicit scopes.
+  - POST /api/nhl-lineups requires the dedicated nhl-lineups:write scope. Existing read scopes never imply writes, and adding the write option to key management must not grant it to existing keys or select it by default. Partners use separate per-submitter write keys stored only in their server environment; DynastyIQ authenticates database token hashes and requires no environment-based write secret.
+  - Lineup submission actor identity comes exclusively from the authenticated ApiClient, not request-supplied attribution. Text and bounded JPEG/PNG uploads reuse the manual validator and OCR. Invalid submissions leave current evidence unchanged; successful submissions return their persisted observation identifier and selected lineup/starter.
   - Revoked clients must not authenticate.
   - Partner-facing payloads must use stable external identifiers rather than DynastyIQ primary keys as their primary lookup keys.
   - NHL reference endpoints must assume the consumer owns its local league id mapping.
@@ -45,6 +48,7 @@ rules:
   - NHL starting-goalie requests default to today; date and nhl_game_id filters are mutually exclusive.
   - NHL injury requests without filters return all current injuries and may filter by team_abbrev and nhl_player_id together.
 public_interface:
+  - POST /api/nhl-lineups
   - api-client:create
   - api.client middleware
   - api_clients
