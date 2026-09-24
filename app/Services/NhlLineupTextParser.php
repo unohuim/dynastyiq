@@ -21,11 +21,84 @@ class NhlLineupTextParser
     /** @return array{players:array<int,array<string,mixed>>,matched_players:array<int,array<string,mixed>>} */
     public function analyze(string $text, string $teamAbbrev): array
     {
+        $table = $this->sectionedTeamRoster($text, $teamAbbrev);
+        if ($table !== null) {
+            return $table;
+        }
         $roster = $this->rosterBlock($text);
 
-        return $roster === null
+        $analysis = $roster === null
             ? ['players' => [], 'matched_players' => []]
             : $this->analyzeRoster($roster, $teamAbbrev);
+        // Slot ownership is the requested team; canonical membership is checked separately.
+        $analysis['players'] = array_map(fn (array $row): array => [
+            ...$row, 'team_abbrev' => mb_strtoupper($teamAbbrev),
+        ], $analysis['players']);
+
+        return $analysis;
+    }
+
+    /**
+     * Read explicitly sectioned roster tables, including interleaved opponent columns.
+     * Listed order supplies inferred lines and G1; ordinary line posts do not use this filter.
+     *
+     * @return array{players:array<int,array<string,mixed>>,matched_players:array<int,array<string,mixed>>}|null
+     */
+    private function sectionedTeamRoster(string $text, string $teamAbbrev): ?array
+    {
+        $lines = preg_split('/\R/u', html_entity_decode($text, ENT_QUOTES | ENT_HTML5)) ?: [];
+        $headingPattern = '/^\s*(GOALTENDERS?|GOALIES?|DEFENSEMEN|DEFENCEMEN|DEFENSE|DEFENCE|FORWARDS?)\b/iu';
+        $sectionFor = static fn (string $heading): string => match (true) {
+            str_starts_with(strtoupper($heading), 'GOAL') => 'goalie',
+            str_starts_with(strtoupper($heading), 'DEF') => 'defense',
+            default => 'forward',
+        };
+        $headings = [];
+        $tableHeader = false;
+        foreach ($lines as $line) {
+            if (preg_match($headingPattern, $line, $match)) {
+                $headings[] = $sectionFor($match[1]);
+                $tableHeader = $tableHeader || preg_match('/\b(?:GP|PTS|GAA|SV)\b/i', $line) === 1;
+            }
+        }
+        // Require roster-table context, not merely headings in a normal line-combination post.
+        if (! $tableHeader || count(array_unique($headings)) !== 3) {
+            return null;
+        }
+
+        $groups = ['forward' => [], 'defense' => [], 'goalie' => []];
+        $section = null;
+        foreach ($lines as $line) {
+            if (preg_match($headingPattern, $line, $match)) {
+                $section = $sectionFor($match[1]);
+                continue;
+            }
+            if ($section === null) {
+                continue;
+            }
+            foreach ($this->players->mentions($line, $teamAbbrev) as $player) {
+                if (mb_strtoupper((string) $player['team_abbrev']) === mb_strtoupper($teamAbbrev)) {
+                    $groups[$section][] = $player;
+                }
+            }
+        }
+        $matched = array_merge($groups['forward'], $groups['defense'], $groups['goalie']);
+        $ids = array_column($matched, 'nhl_player_id');
+        if (count($groups['forward']) !== 12 || count($groups['defense']) !== 6
+            || count($groups['goalie']) > 2 || count(array_unique($ids)) !== count($ids)
+            || collect($groups['goalie'])->contains(fn (array $player): bool => strtoupper((string) $player['position']) !== 'G')) {
+            return ['players' => [], 'matched_players' => $matched];
+        }
+
+        $rows = [];
+        foreach (['forward' => 3, 'defense' => 2, 'goalie' => 2] as $role => $size) {
+            foreach ($groups[$role] as $index => $player) {
+                $key = $role === 'goalie' ? 'G' : ($role === 'forward' ? 'F' : 'D') . (intdiv($index, $size) + 1);
+                $rows[] = $this->row($player, $role, $key, ($index % $size) + 1);
+            }
+        }
+
+        return ['players' => $rows, 'matched_players' => $matched];
     }
 
     /** Find exactly twelve forward names followed by six defense names before any identity lookup. */

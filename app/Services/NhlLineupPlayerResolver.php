@@ -48,8 +48,11 @@ class NhlLineupPlayerResolver
      * @param array<int,array<string,mixed>> $rows
      * @return array<int,int>|null Verified NHL ids, or null when the group is not reportable.
      */
-    public function verifiedLineupIds(array $rows, ?string $role = null, int $gameType = 2): ?array
+    public function verifiedLineupIds(array $rows, ?string $role = null, int $gameType = 2, ?string $teamAbbrev = null): ?array
     {
+        if ($this->teamMembershipErrors($rows, $teamAbbrev) !== []) {
+            return null;
+        }
         $groups = $role === 'forward' ? ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3]
             : ($role === 'defense' ? ['D1' => 2, 'D2' => 2, 'D3' => 2]
                 : ['F1' => 3, 'F2' => 3, 'F3' => 3, 'F4' => 3, 'D1' => 2, 'D2' => 2, 'D3' => 2]);
@@ -81,8 +84,10 @@ class NhlLineupPlayerResolver
                     continue;
                 }
                 $player = $canonical->get((int) $row['nhl_player_id']);
-                $positions = $expectedRole === 'forward' ? ['C', 'L', 'R', 'LW', 'RW', 'F'] : ['D'];
+                // The reported slot owns F/D deployment, not the player's usual position.
+                $positions = ['C', 'L', 'R', 'LW', 'RW', 'F', 'D'];
                 if ($player === null || ! in_array(mb_strtoupper((string) $player->position), $positions, true)
+                    || (bool) $player->is_goalie || mb_strtoupper((string) $player->pos_type) === 'G'
                     || (! empty($row['player_id']) && (int) $row['player_id'] !== (int) $player->id)
                     || ($row['resolution_status'] ?? 'resolved') !== 'resolved') {
                     return null;
@@ -95,6 +100,33 @@ class NhlLineupPlayerResolver
         }
 
         return $ids->values()->all();
+    }
+
+    /**
+     * Reject known wrong-team identities rather than treating them as unresolved prospects.
+     *
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,string>
+     */
+    public function teamMembershipErrors(array $rows, ?string $teamAbbrev = null): array
+    {
+        $players = Player::query()->whereIn('nhl_id', collect($rows)->pluck('nhl_player_id')->filter())
+            ->get()->keyBy('nhl_id');
+        $errors = [];
+        foreach ($rows as $row) {
+            $target = mb_strtoupper(trim((string) ($teamAbbrev ?? $row['team_abbrev'] ?? '')));
+            $player = $players->get($row['nhl_player_id'] ?? null);
+            if ($target === '' || $player === null) {
+                continue;
+            }
+            $actual = mb_strtoupper(trim((string) $player->team_abbrev));
+            if ($actual !== $target) {
+                $errors[] = sprintf('%s is assigned to %s, not %s.', $player->full_name,
+                    $actual !== '' ? $actual : 'no recorded team', $target);
+            }
+        }
+
+        return array_values(array_unique($errors));
     }
 
     /** @return array<int,array<string,mixed>> */
@@ -119,7 +151,8 @@ class NhlLineupPlayerResolver
         return collect($found)->groupBy('offset')->map(function (Collection $matches): ?array {
             $teamMatches = $matches->where('team_match', true)->values();
 
-            return $teamMatches->count() === 1 ? $teamMatches->first() : null;
+            return $teamMatches->count() === 1 ? $teamMatches->first()
+                : ($matches->count() === 1 ? $matches->first() : null);
         })->filter()->sortBy('offset')->pluck('player')->map(fn (Player $player): array => $this->playerRow($player))
             ->values()->all();
     }

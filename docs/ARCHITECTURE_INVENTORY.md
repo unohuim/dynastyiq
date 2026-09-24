@@ -1,5 +1,14 @@
 # Architecture Inventory
 
+The shared lineup text parser supports explicitly sectioned mixed-team roster
+tables, filtering to the target team and inferring lines/pairs and goalie order
+from the retained printed order. Ordinary line-combination validation is unchanged.
+
+Lineup verification treats reported forward/defense deployment independently of
+usual skater position while enforcing canonical target-team membership, including
+prospects. The shared resolver governs imports and reads; see
+`docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
 Manual partner lineup submissions also accept X post URLs through the existing
 X discovery service's targeted lookup, retaining manual attribution and reusing
 bounded photo OCR. See `ServerToServerApiClients.yaml` and the official API guide.

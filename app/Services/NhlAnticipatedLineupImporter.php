@@ -58,6 +58,10 @@ class NhlAnticipatedLineupImporter
                 }
             }
         }
+        $teamErrors = $this->players->teamMembershipErrors($players, $teamAbbrev);
+        if ($teamErrors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['text' => $teamErrors]);
+        }
         if ($this->players->verifiedLineupIds($players, null, $gameType) === null) {
             if (! $reviewed && $imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
                 throw \Illuminate\Validation\ValidationException::withMessages([
@@ -67,7 +71,7 @@ class NhlAnticipatedLineupImporter
                 ]);
             }
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'text' => 'A verified lineup needs 12 forwards and 6 defensemen with no duplicates or invalid positions. '
+                'text' => 'A verified lineup needs 12 forward slots and 6 defense slots with no duplicates or goalies in skater slots. '
                     . ($gameType === 1 ? 'Unknown players need a verified linemate on the same line or pairing.'
                         : 'Unknown players are allowed only on F4/D3 with a verified linemate.'),
             ]);

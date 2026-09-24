@@ -57,6 +57,9 @@ class NhlCurrentLineup extends Model
 
         $gameType = (int) NhlGame::query()->where('nhl_game_id', $this->nhl_game_id)->value('game_type');
 
-        return app(\App\Services\NhlLineupPlayerResolver::class)->verifiedLineupIds($players->values()->toArray(), null, $gameType) !== null;
+        $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
+
+        return $resolver->teamMembershipErrors($this->observation->players->toArray(), $this->team_abbrev) === []
+            && $resolver->verifiedLineupIds($players->values()->toArray(), null, $gameType, $this->team_abbrev) !== null;
     }
 }

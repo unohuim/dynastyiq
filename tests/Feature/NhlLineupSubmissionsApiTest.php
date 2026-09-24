@@ -53,6 +53,105 @@ beforeEach(function (): void {
 
 afterEach(function (): void { $this->travelBack(); });
 
+describe('sectioned mixed-team roster submissions', function (): void {
+    beforeEach(function (): void {
+        $names = ['Oliver Moore', 'Anton Frondell', 'Ryan Greene', 'Dillon Boucher', 'Connor Mylymok',
+            'Nick Lardis', 'AJ Spellacy', 'Roman Kantserov', 'Landon Slaggert', 'Patrick Kane',
+            'Sacha Boisvert', 'Frank Nazar', 'Sam Rinzel', 'Kevin Korchinski', 'Connor Mackey',
+            'Ethan Del Mastro', 'Wyatt Kaiser', 'Artyom Levshunov', 'Drew Commesso', 'Arvid Soderblom'];
+        $opponents = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel',
+            'India', 'Juliet', 'Kilo', 'Lima', 'Mike', 'November', 'Oscar', 'Papa', 'Quebec', 'Romeo', 'Sierra', 'Tango'];
+        foreach ($names as $index => $name) {
+            $parts = explode(' ', $name);
+            Player::query()->where('nhl_id', 8488001 + $index)->update([
+                'full_name' => $name, 'first_name' => array_shift($parts), 'last_name' => implode(' ', $parts),
+                'team_abbrev' => 'CHI',
+            ]);
+            Player::query()->create(['nhl_id' => 8498001 + $index, 'full_name' => 'Visitor ' . $opponents[$index],
+                'first_name' => 'Visitor', 'last_name' => $opponents[$index], 'team_abbrev' => 'STL',
+                'position' => $index < 12 ? 'C' : ($index < 18 ? 'D' : 'G')]);
+        }
+        DB::table('nhl_teams')->insert([['nhl_id' => 16, 'abbrev' => 'CHI'], ['nhl_id' => 19, 'abbrev' => 'STL']]);
+        NhlGame::query()->whereKey(2026010088)->update(['home_team_abbrev' => 'CHI', 'away_team_abbrev' => 'STL']);
+        $this->sections = [];
+        foreach (['GOALTENDERS' => [18, 19], 'DEFENSEMEN' => range(12, 17), 'FORWARDS' => range(0, 11)] as $heading => $indices) {
+            $lines = [$heading . ' - GP - PTS - ' . $heading . ' - GP - PTS'];
+            foreach ($indices as $index) {
+                $lines[] = ($index + 1) . ' - ' . strtoupper($names[$index])
+                    . ' - 0 - 0 - ' . ($index + 30) . ' - VISITOR ' . strtoupper($opponents[$index]) . ' - 0 - 0';
+            }
+            $this->sections[$heading] = implode("\n", $lines);
+        }
+    });
+
+    it('filters the opponent columns and groups selected team players in printed order', function (bool $reverse): void {
+        $sections = $reverse ? array_reverse($this->sections) : $this->sections;
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+            'nhl_game_id' => 2026010088, 'team_abbrev' => 'CHI', 'text' => implode("\n", $sections),
+        ])->assertCreated()->assertJsonCount(20, 'lineup.players')
+            ->assertJsonPath('starting_goalie.nhl_player_id', 8488019);
+        $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => 8488001, 'line_key' => 'F1', 'slot_index' => 1]);
+        $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => 8488018, 'line_key' => 'D3', 'slot_index' => 2]);
+        $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => 8488020, 'line_key' => 'G', 'slot_index' => 2]);
+        $this->assertDatabaseMissing('nhl_lineup_observation_players', ['team_abbrev' => 'STL']);
+        $this->client->update(['scopes' => ['nhl-stats:read']]);
+        $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+            ->assertJsonPath('games.0.teams.home.lineup_status', 'manual')
+            ->assertJsonCount(20, 'games.0.teams.home.players');
+        Http::assertNothingSent();
+    })->with([false, true]);
+
+    it('rejects incomplete or duplicate selected-team roster tables', function (bool $duplicate): void {
+        $text = str_replace('OLIVER MOORE', $duplicate ? 'ANTON FRONDELL' : 'UNIDENTIFIED PERSON', implode("\n", $this->sections));
+        $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+            'nhl_game_id' => 2026010088, 'team_abbrev' => 'CHI', 'text' => $text,
+        ])->assertUnprocessable()->assertJsonValidationErrors('text');
+        $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    })->with([false, true]);
+});
+
+it('uses reported skater slots rather than usual forward or defense position', function (): void {
+    Player::query()->where('nhl_id', 8488001)->update(['position' => 'D']);
+    Player::query()->where('nhl_id', 8488013)->update(['position' => 'C']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertCreated()->assertJsonCount(20, 'lineup.players');
+    $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => 8488001, 'lineup_role' => 'forward', 'line_key' => 'F1']);
+    $this->assertDatabaseHas('nhl_lineup_observation_players', ['nhl_player_id' => 8488013, 'lineup_role' => 'defense', 'line_key' => 'D1']);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'manual');
+});
+
+it('rejects recognized players from another team including depth slots and goalies', function (int $id): void {
+    Player::query()->where('nhl_id', $id)->update(['team_abbrev' => 'STL']);
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertUnprocessable()->assertJsonValidationErrors('text');
+    expect(implode(' ', $response->json('errors.text')))->toContain('STL, not TOR');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+})->with([8488001, 8488012, 8488018, 8488019]);
+
+it('accepts same-team prospects without requiring an NHL assignment', function (): void {
+    Player::query()->where('nhl_id', 8488001)->update(['current_league_abbrev' => 'AHL']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+});
+
+it('still rejects a goalie assigned to a skater slot', function (): void {
+    Player::query()->where('nhl_id', 8488001)->update(['position' => 'G']);
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)
+        ->assertUnprocessable()->assertJsonValidationErrors('text');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+});
+
+it('does not report stored lineups whose players now fail target-team verification', function (): void {
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    Player::query()->where('nhl_id', 8488001)->update(['team_abbrev' => 'STL']);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups?date=2026-09-23')->assertOk()
+        ->assertJsonPath('games.0.teams.home.lineup_status', 'not_reported')
+        ->assertJsonPath('games.0.teams.home.players', []);
+});
+
 it('fetches a submitted X post once and preserves manual attribution and original evidence', function (string $url): void {
     config(['services.x.bearer_token' => 'test-x-token']);
     Http::fake(['api.x.com/2/tweets/123456*' => Http::response(['data' => [
