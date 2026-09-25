@@ -11,10 +11,70 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 /** Selects a game's starting goalie using the canonical prediction priority. */
 class NhlStartingGoalieSelector
 {
+    use \App\Traits\HasAPITrait;
+
+    /**
+     * For predictions, a started game's designated NHL starter supersedes pregame selections.
+     * Provider reads share the 60-second gamecenter cache without importing or saving game data.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function selectForPrediction(
+        int $nhlGameId,
+        string $teamAbbrev,
+        ?string $targetSeasonId = null,
+        ?string $goalieProjectionVersion = null,
+        mixed $providedGoalieId = null
+    ): ?array {
+        $teamAbbrev = mb_strtoupper($teamAbbrev);
+        $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
+        $boxscore = null;
+        if ($game !== null) {
+            try {
+                $boxscore = Cache::remember('nhl:gamecenter:boxscore:' . $nhlGameId, 60, function () use ($nhlGameId): mixed {
+                    return Http::acceptJson()->connectTimeout(5)->timeout(15)
+                        ->get($this->getApiUrl('nhl', 'boxscore', ['gameId' => $nhlGameId]))->throw()->json();
+                });
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+        $validBoxscore = is_array($boxscore) && (int) ($boxscore['id'] ?? 0) === $nhlGameId;
+        $state = mb_strtoupper((string) ($validBoxscore ? ($boxscore['gameState'] ?? '') : ($game->game_state ?? '')));
+        if ($state !== '' && ! in_array($state, ['FUT', 'PRE'], true)) {
+            foreach (['awayTeam', 'homeTeam'] as $side) {
+                if (! $validBoxscore || mb_strtoupper((string) data_get($boxscore, $side . '.abbrev')) !== $teamAbbrev) {
+                    continue;
+                }
+                $starters = collect(data_get($boxscore, 'playerByGameStats.' . $side . '.goalies', []))
+                    ->filter(fn ($row): bool => is_array($row) && ($row['starter'] ?? false) === true
+                        && (int) ($row['playerId'] ?? 0) > 0)->values();
+                if ($starters->count() === 1) {
+                    $starter = $starters->first();
+                    $selected = $this->result((int) $starter['playerId'], 'nhl_boxscore', 'confirmed');
+
+                    return [...$selected,
+                        'name' => data_get($starter, 'name.default') ?: $selected['name'],
+                        'provider' => 'nhl_boxscore'];
+                }
+            }
+            if ($game !== null && in_array($teamAbbrev, [$game->home_team_abbrev, $game->away_team_abbrev], true)) {
+                $official = $this->official($nhlGameId, $teamAbbrev);
+                if ($official !== null) {
+                    return $this->result($official, 'nhl_boxscore', 'confirmed');
+                }
+            }
+        }
+
+        return $this->select($nhlGameId, $teamAbbrev, $targetSeasonId, $goalieProjectionVersion, $providedGoalieId);
+    }
+
     /**
      * Select a goalie identity using official, observed, season, and workload evidence.
      *

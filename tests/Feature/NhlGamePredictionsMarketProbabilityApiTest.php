@@ -8,7 +8,55 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Symfony\Component\HttpFoundation\Response;
 
+it('uses the designated boxscore starter in live predictions and dressed rosters', function (string $state): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 23:00:00 UTC'));
+    $token = ($this->seedPredictionInputs)();
+    \App\Models\NhlStartingGoalieObservation::query()->create([
+        'nhl_game_id' => 2026020001, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
+        'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => 9003,
+        'player_name' => 'Old Manual Goalie', 'provider' => 'manual', 'status' => 'expected',
+        'fetched_at' => now(), 'raw_evidence' => [],
+    ]);
+    Http::fake(['api-web.nhle.com/*' => Http::response([
+        'id' => 2026020001, 'gameState' => $state,
+        'awayTeam' => ['abbrev' => 'AWY'], 'homeTeam' => ['abbrev' => 'HOM'],
+        'playerByGameStats' => [
+            'awayTeam' => ['goalies' => [
+                ['playerId' => 9003, 'starter' => false, 'toi' => '45:00'],
+                ['playerId' => 9001, 'starter' => true, 'toi' => '15:00'],
+            ]],
+            'homeTeam' => ['goalies' => [['playerId' => 9002, 'starter' => true]]],
+        ],
+    ])]);
+    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9003,
+    ]))->assertOk()->assertJsonPath('goalies.away.nhl_player_id', 9001)
+        ->assertJsonPath('goalies.away.selection_source', 'nhl_boxscore')
+        ->assertJsonPath('inputs.away_goalie_id', 9001)
+        ->assertJsonFragment(['nhl_player_id' => 9001, 'is_starter' => true]);
+    Http::assertSentCount(1);
+    $this->assertDatabaseHas('nhl_starting_goalie_observations', ['nhl_player_id' => 9003, 'provider' => 'manual']);
+    $this->travelBack();
+})->with(['LIVE', 'CRIT', 'FINAL', 'OFF']);
+
+it('retains pregame or unavailable boxscore fallback selection', function (string $state, bool $starter): void {
+    ($this->seedPredictionInputs)();
+    Http::fake(['api-web.nhle.com/*' => Http::response([
+        'id' => 2026020001, 'gameState' => $state, 'awayTeam' => ['abbrev' => 'AWY'],
+        'playerByGameStats' => ['awayTeam' => ['goalies' => [['playerId' => 9001, 'starter' => $starter]]]],
+    ])]);
+    $result = app(\App\Services\NhlStartingGoalieSelector::class)->selectForPrediction(
+        2026020001, 'AWY', providedGoalieId: 9003
+    );
+    expect($result['nhl_player_id'])->toBe(9003)->and($result['selection_source'])->toBe('provided');
+})->with([['FUT', true], ['PRE', true], ['LIVE', false], ['', false]]);
+
 beforeEach(function (): void {
+    Http::fake(['api-web.nhle.com/*' => Http::response([])]);
+    config(['cache.default' => 'array']);
+    \Illuminate\Support\Facades\Cache::forget('nhl:gamecenter:boxscore:2026020001');
     $this->createNhlStatsApiToken = function (array $scopes = ['nhl-stats:read']): string {
         $token = 'diq_gner8_market-probability-token';
 

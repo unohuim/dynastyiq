@@ -360,7 +360,7 @@ class NhlGamePredictionPayload
     {
         $goalies = collect($lineup['players'] ?? [])->where('lineup_role', 'goalie')
             ->where('line_key', 'G')->whereIn('slot_index', [1, 2])->sortBy('slot_index')->values();
-        if (($starter['selection_source'] ?? null) === 'manual_starter_override') {
+        if (in_array($starter['selection_source'] ?? null, ['manual_starter_override', 'nhl_boxscore'], true)) {
             $listedStarter = $goalies->firstWhere('slot_index', 1);
             $backup = $goalies->firstWhere('slot_index', 2);
             if (($backup['nhl_player_id'] ?? null) === $starter['nhl_player_id']) {
@@ -654,7 +654,7 @@ class NhlGamePredictionPayload
         int $nhlGameId
     ): array
     {
-        $selection = $this->startingGoalies->select(
+        $selection = $this->startingGoalies->selectForPrediction(
             $nhlGameId,
             $team,
             $targetSeasonId,

@@ -997,7 +997,19 @@ selected starter is included when available, but no backup is invented.
 Evidence-only responses also return this field; projected roster previews remain
 previews, not confirmed dressed participants.
 
-Starter selection precedence is request override, latest authoritative manual starter selection, official NHL starter, current
+For started-game **prediction requests**, the designated NHL boxscore starter takes
+precedence over all pregame choices, including manual and request overrides.
+The read uses the shared 60-second gamecenter cache, so provider changes may take
+up to that cache interval to appear. A matching game/team, nonempty state other
+than FUT/PRE, and a unique goalie with `starter: true` are required. Relief-goalie
+ice time and array order do not establish who started. The response identifies
+`goalies.*.selection_source: nhl_boxscore`, updates `inputs.*_goalie_id`, and aligns
+the dressed roster's G1 with the simulation goalie. No stored manual evidence is
+rewritten. If a provider read fails or identifies no starter, stored official
+starter data and then existing fallbacks apply. An official starter missing a
+usable goalie projection still produces a prerequisite error, not a substitute.
+
+Otherwise, starter selection precedence is request override, latest authoritative manual starter selection, official NHL starter, current
 starting-goalie observation, goalie season projection, then workload projection.
 Within observations, confirmed evidence outranks expected evidence, with newest
 evidence breaking ties.

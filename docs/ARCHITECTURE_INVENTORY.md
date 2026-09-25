@@ -1,5 +1,9 @@
 # Architecture Inventory
 
+Started-game predictions read the cached NHL boxscore's designated starter before
+pregame goalie choices and align dressed-roster G1 without rewriting observations.
+See `docs/architecture/imports/NhlPlayerAvailability.yaml`.
+
 The shared lineup text parser supports explicitly sectioned mixed-team roster
 tables, filtering to the target team and inferring lines/pairs and goalie order
 from the retained printed order. Ordinary line-combination validation is unchanged.
