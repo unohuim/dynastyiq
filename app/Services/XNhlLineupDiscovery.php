@@ -205,8 +205,8 @@ class XNhlLineupDiscovery
         $this->output("{$teamAbbrev} | @{$handle} | posts {$firstPost}-{$lastPost}");
         $parameters = [
             'max_results' => 5,
-            'start_time' => Carbon::parse((string) $game->game_date, 'America/Toronto')
-                ->subDay()->startOfDay()->utc()->toIso8601ZuluString(),
+            'start_time' => Carbon::now('America/Toronto')
+                ->startOfDay()->utc()->toIso8601ZuluString(),
             'tweet.fields' => 'id,text,note_tweet,author_id,created_at,public_metrics,attachments,referenced_tweets',
             'expansions' => 'attachments.media_keys',
             'media.fields' => 'media_key,type,url,preview_image_url,alt_text',
@@ -299,8 +299,7 @@ class XNhlLineupDiscovery
             $analysis = $this->parser->analyze($postText, $teamAbbrev);
             $ocrEvidence = [];
             $imageText = '';
-            $eligibleDate = ! empty($post['created_at']) && Carbon::parse($post['created_at'])
-                ->gte(NhlLineupObservation::evidenceCutoff((string) $game->game_date));
+            $eligibleDate = $this->publishedToday($post['created_at'] ?? null);
             if ($eligibleDate && count($this->candidateComponents(['players' => $analysis['players']], (int) ($game->game_type ?? 2))) < 2) {
                 foreach (array_slice($attachments, 0, (int) config('lineup_ocr.max_images_per_post', 4)) as $attachment) {
                     if (($attachment['type'] ?? '') !== 'photo' || empty($attachment['url'])) {
@@ -443,9 +442,21 @@ class XNhlLineupDiscovery
         );
     }
 
+    /** Limit new timeline evidence to the current Toronto calendar date. */
+    private function publishedToday(?string $timestamp): bool
+    {
+        return filled($timestamp)
+            && Carbon::parse($timestamp)->setTimezone('America/Toronto')->toDateString()
+                === Carbon::now('America/Toronto')->toDateString();
+    }
+
     /** @param array<string,mixed> $candidate @return array{approved:bool,reason:string} */
     private function decision(array $candidate, object $game, string $teamAbbrev): array
     {
+        if (! $this->publishedToday($candidate['published_at'] ?? null)) {
+            return ['approved' => false, 'reason' => 'The post was not published today in America/Toronto, or its publication time is missing.'];
+        }
+
         $publishedAt = filled($candidate['published_at'] ?? null)
             ? Carbon::parse((string) $candidate['published_at'])
             : now();

@@ -206,16 +206,13 @@ class AdminImportSchedules
         }
 
         $query = DB::table('nhl_games')
+            ->whereDate('game_date', $now->setTimezone('America/Toronto')->toDateString())
             ->whereNotNull('start_time_utc');
 
         if ($schedule->lane_key === 'within_two_hours') {
-            $query->whereDate('game_date', $localNow->toDateString())
-                ->where('start_time_utc', '<=', $now->addHours(2));
+            $query->where('start_time_utc', '<=', $now->addHours(2));
         } else {
-            $query->whereBetween('game_date', [
-                $localNow->toDateString(),
-                $localNow->addDay()->toDateString(),
-            ])->where('start_time_utc', '>', $now->addHours(2));
+            $query->where('start_time_utc', '>', $now->addHours(2));
         }
 
         return $query->exists();

@@ -19,7 +19,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         {--window=all : all, within-two-hours, or outside-two-hours}
         {--import-run-id= : Internal admin import run id}';
 
-    protected $description = 'Queue anticipated-lineup discovery for teams playing today and tomorrow';
+    protected $description = 'Queue anticipated-lineup discovery for teams playing today';
 
     public function handle(): int
     {
@@ -30,9 +30,8 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         }
 
         $today = Carbon::now('America/Toronto')->startOfDay();
-        $tomorrow = $today->copy()->addDay();
         $games = DB::table('nhl_games')
-            ->whereBetween('game_date', [$today->toDateString(), $tomorrow->toDateString()])
+            ->whereDate('game_date', $today->toDateString())
             ->whereNotNull('start_time_utc')
             ->orderBy('start_time_utc')->get();
 
@@ -54,7 +53,7 @@ class ImportNhlAnticipatedLineupsCommand extends Command
         $run?->setProgressTotal($jobs->count(), 'Team lineup searches');
         if ($jobs->isEmpty()) {
             $run?->markCompleted();
-            $this->info('No eligible teams remain today or tomorrow.');
+            $this->info('No eligible teams remain today.');
             return self::SUCCESS;
         }
 

@@ -54,9 +54,9 @@ The importer reads timelines in round-robin order:
 3. If both a complete forward group and complete defense group have not been accepted, read posts 6–10 from source one using its `next_token`.
 4. Continue the same cycle until both groups are available or every timeline is exhausted. Each account is limited to six pages of five posts (at most 30 posts) per discovery attempt, even if X returns another pagination token. Reaching one account's cap does not stop the remaining accounts.
 
-Every request includes a `start_time` at the beginning of the calendar day immediately preceding the target game, interpreted in America/Toronto and sent to X in UTC. This permits yesterday's lineup report for today's game without scanning older history.
+Every timeline request includes a `start_time` at the beginning of **today** in America/Toronto, sent to X in UTC. Admin imports and individual `/games` refreshes use this same boundary. Returned posts must have a publication timestamp on today's Toronto calendar date; yesterday's posts are not newly accepted or sent to OCR.
 
-Returned evidence is checked against the same boundary before acceptance. Older observations cannot remain current, suppress another scheduled lookup, appear in public or partner payloads, or feed a prediction.
+This is a new-discovery restriction only. Previously saved observations keep their existing game-date eligibility (including qualifying previous-day reports); nothing is deleted or retroactively invalidated. Explicit manual `post_url` lookups are not timeline scans and remain unchanged.
 
 Example source-first request:
 
@@ -165,11 +165,11 @@ Ordinary bulk imports do not persist this additional per-post review metadata.
 The existing Anticipated Lineups admin schedule remains authoritative:
 
 - `within_two_hours` defaults to 900 seconds and applies to each same-day game relative to puck drop.
-- `outside_two_hours` defaults to 3600 seconds and considers games today and tomorrow.
+- `outside_two_hours` defaults to 3600 seconds and considers only today's games.
 - Same-day games with missing lineup coverage remain eligible after puck drop.
 - A team with a verified, date-eligible current lineup is no longer searched, even if it has only one source. Unresolved core players, duplicate identities, and invalid positions prevent this skip. Unknown F4/D3 slots remain explicitly unresolved and are allowed only with a verified same-group peer for prediction fallback.
 
-The scheduler still controls when each configured lane becomes due. The parent import command dispatches one `lineups` queue job per game/team for today and tomorrow without checking current lineups or contacting providers. Each job rechecks its game date and requested timing window, skips existing complete lineup coverage, checks NHL, and only then scans X. Ineligible jobs count as skipped in import progress. Manual runs use the `all` window; the within-two-hours window applies only to today's games, including games already started.
+The scheduler still controls when each configured lane becomes due. The parent import command dispatches one `lineups` queue job per game/team for today in America/Toronto, without checking current lineups or contacting providers. Tomorrow's games cannot trigger a bulk scheduled run. Each job rechecks its game date and requested timing window, skips existing complete lineup coverage, checks NHL, and only then scans X. Ineligible jobs count as skipped in import progress. Manual bulk runs use the `all` window; the within-two-hours window applies only to today's games, including games already started.
 
 Jobs share an X-search overlap lock. HTTP 429 responses release the job according to X's `Retry-After` header or the existing bounded backoff. Pagination remains attempt-local: a retried job starts its scan again, so the 30-post cap is not a persistent cross-retry usage budget.
 

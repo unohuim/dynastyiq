@@ -1190,7 +1190,7 @@ it('anchors relative lineup wording to publication rather than import time', fun
     'explicit game date is not publication date' => ['9/23 vs LAK', '2026-09-22T18:00:00-04:00', true],
 ]);
 
-it('rejects previous night X lineups but accepts tomorrow and explicit next game reports', function (string $caption, bool $accepted): void {
+it('only imports timeline posts published today in Toronto', function (string $caption, string $publishedAt, bool $accepted): void {
     $this->travelTo(Carbon::parse('2026-09-23 12:00:00 America/Toronto'));
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
@@ -1199,7 +1199,7 @@ it('rejects previous night X lineups but accepts tomorrow and explicit next game
         'start_time_utc' => '2026-09-23 23:00:00', 'away_team_abbrev' => 'MTL', 'home_team_abbrev' => 'TOR',
     ]);
     $response = xLineupResponse([lineupCandidate('date_reporter', 'https://x.com/date_reporter/status/126')]);
-    $response['data'][0]['created_at'] = '2026-09-22T18:00:00-04:00';
+    $response['data'][0]['created_at'] = $publishedAt;
     $response['data'][0]['text'] = str_replace("Tonight's lineup", $caption, $response['data'][0]['text']);
     Http::fake(['api.x.com/*' => Http::response($response)]);
 
@@ -1210,7 +1210,12 @@ it('rejects previous night X lineups but accepts tomorrow and explicit next game
         ->assertOk()->assertJsonCount($accepted ? 1 : 0, 'anticipated_lineups');
     $this->travelBack();
 })->with([
-    ['Tonight’s lines', false], ['Tomorrow’s lines', true], ['September 23 vs MTL', true],
+    ['Tonight’s lines', '2026-09-22T18:00:00-04:00', false],
+    ['Tomorrow’s lines', '2026-09-22T18:00:00-04:00', false],
+    ['September 23 vs MTL', '2026-09-23T03:59:59Z', false],
+    ['Tonight’s lines', '2026-09-23T04:00:00Z', true],
+    ['Tonight’s lines', '2026-09-23T12:00:00-04:00', true],
+    ['Tonight’s lines', '', false],
 ]);
 
 it('withholds historical wrong date lineups and their derived goalie evidence without deleting history', function (): void {
@@ -1510,7 +1515,7 @@ it('reads stored team scoped X source timelines', function (): void {
     expect($requests)->toHaveCount(1)
         ->and($requests[0][0]->url())->toContain('/2/users/12345/tweets')
         ->and((int) $requests[0][0]['max_results'])->toBe(5)
-        ->and($requests[0][0]['start_time'])->not->toBeNull()
+        ->and($requests[0][0]['start_time'])->toBe(Carbon::now('America/Toronto')->startOfDay()->utc()->toIso8601ZuluString())
         ->and($candidates)->toHaveCount(1);
     expect($run->refresh()->meta)
         ->toMatchArray([
@@ -2121,7 +2126,7 @@ it('continues searching missing lineups for games that already started today', f
     $this->travelBack();
 });
 
-it('queues anticipated lineup searches for today and tomorrow but not later dates', function (): void {
+it('queues anticipated lineup searches only for today', function (): void {
     Queue::fake();
     $this->travelTo(Carbon::parse('2026-09-19 14:00:00 UTC'));
     DB::table('nhl_teams')->insert([
@@ -2143,8 +2148,8 @@ it('queues anticipated lineup searches for today and tomorrow but not later date
 
     Artisan::call('nhl:import-anticipated-lineups');
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 4);
-    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010111);
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    Queue::assertNotPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010111);
     Queue::assertNotPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010112);
     $queued = Queue::pushed(ImportNhlAnticipatedLineupTeamJob::class)->values();
     expect($queued[0]->nhlGameId)->toBe(2026010110)
@@ -2316,7 +2321,7 @@ it('does not revisit a complete lineup while the opponent remains missing', func
     Http::assertNothingSent();
 });
 
-it('queues today and tomorrow with the outside window for jobs to evaluate', function (): void {
+it('queues only today with the outside window for jobs to evaluate', function (): void {
     Queue::fake();
     $this->travelTo(Carbon::parse('2026-09-19 16:00:00 UTC'));
     DB::table('nhl_teams')->insert([
@@ -2337,14 +2342,14 @@ it('queues today and tomorrow with the outside window for jobs to evaluate', fun
 
     Artisan::call('nhl:import-anticipated-lineups', ['--window' => 'outside-two-hours']);
 
-    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 4);
-    Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010117);
+    Queue::assertPushed(ImportNhlAnticipatedLineupTeamJob::class, 2);
+    Queue::assertNotPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010117);
     Queue::assertPushed(fn (ImportNhlAnticipatedLineupTeamJob $job): bool => $job->nhlGameId === 2026010116
         && $job->window === 'outside-two-hours');
     $this->travelBack();
 });
 
-it('allows tomorrow to make only the outside two hour schedule lane eligible', function (): void {
+it('does not let tomorrow trigger either lineup schedule lane', function (): void {
     $now = Carbon::parse('2026-09-19 16:00:00 UTC')->toImmutable();
     NhlGame::query()->create([
         'nhl_game_id' => 2026010113, 'season_id' => '20262027', 'game_type' => 1,
@@ -2365,7 +2370,7 @@ it('allows tomorrow to make only the outside two hour schedule lane eligible', f
         'timezone' => 'America/Toronto',
     ]);
 
-    expect(app(AdminImportSchedules::class)->shouldDispatch($outside, $now))->toBeTrue()
+    expect(app(AdminImportSchedules::class)->shouldDispatch($outside, $now))->toBeFalse()
         ->and(app(AdminImportSchedules::class)->shouldDispatch($within, $now))->toBeFalse();
 });
 
@@ -2867,6 +2872,7 @@ it('does not call X when a team has no stored timeline sources', function (): vo
 });
 
 it('derives an expected starting goalie observation from a newly observed G1', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-20 12:00:00 America/Toronto'));
     config(['services.x.bearer_token' => 'test-key']);
     $game = NhlGame::query()->create([
         'nhl_game_id' => 2026010115, 'season_id' => '20262027', 'game_type' => 1,
@@ -2880,9 +2886,8 @@ it('derives an expected starting goalie observation from a newly observed G1', f
         'current_league_abbrev' => 'NHL',
     ]);
     $candidate = lineupCandidate('goalie_reporter', 'https://x.com/goalie_reporter/status/1');
-    $candidate['published_at'] = '2026-09-19T19:00:00-04:00';
+    $candidate['published_at'] = '2026-09-20T10:00:00-04:00';
     $response = xLineupResponse([$candidate]);
-    $response['data'][0]['text'] = str_replace("Tonight's", "Tomorrow's", $response['data'][0]['text']);
     Http::fake([
         'api-web.nhle.com/*' => Http::response([]),
         'api.x.com/*' => Http::response($response),
@@ -2904,8 +2909,9 @@ it('derives an expected starting goalie observation from a newly observed G1', f
             'source_url' => 'https://x.com/goalie_reporter/status/1',
         ]);
     $goalie = NhlStartingGoalieObservation::query()->firstOrFail();
-    expect($goalie->provider_published_at?->equalTo(Carbon::parse('2026-09-19T19:00:00-04:00')))->toBeTrue()
+    expect($goalie->provider_published_at?->equalTo(Carbon::parse('2026-09-20T10:00:00-04:00')))->toBeTrue()
         ->and(data_get($goalie->raw_evidence, 'backup.player_name'))->toBe('Goalie 2');
+    $this->travelBack();
 });
 
 it('keeps confirmed goalie evidence ahead of newer lineup-derived expectations', function (): void {
