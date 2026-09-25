@@ -1,5 +1,17 @@
 # DynastyIQ API Usage Guide
 
+## Selected starters without goalie history
+
+Game predictions retain the selected starter even without a personal goalie
+projection. `goalies.away` / `goalies.home` expose `projection_source: league_average`
+and `projection_fallback_reason: missing_goalie_projection`. His name and NHL ID
+remain unchanged (ID may be null for a name-only manual starter). The estimate
+uses league expected rates from the selected season/version weighted by projected
+games, neutral GA/xGA of 1 and GSAx of 0, including penalty-kill contribution.
+Confidence is low; season games, starts and workload remain null. Nothing is
+persisted. Modelled starters return `projection_source: goalie_model` and a null
+fallback reason. Other model and lineup prerequisites remain unchanged.
+
 This is the official and canonical API usage guide for every DynastyIQ partner
 and API consumer. It covers authentication, reference dependencies, NHL season
 stats, availability data, anticipated lineups, and game predictions. Consumer-

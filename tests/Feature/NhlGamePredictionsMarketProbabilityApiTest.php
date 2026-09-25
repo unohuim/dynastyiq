@@ -8,6 +8,40 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Symfony\Component\HttpFoundation\Response;
 
+it('keeps an unmodelled manual starter with labelled league average predictions', function (?int $goalieId): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 12:00:00 America/Toronto'));
+    $token = ($this->seedPredictionInputs)();
+    \App\Models\NhlStartingGoalieObservation::query()->create([
+        'nhl_game_id' => 2026020001, 'game_date' => '2026-10-10', 'team_abbrev' => 'AWY',
+        'opponent_abbrev' => 'HOM', 'is_home' => false, 'nhl_player_id' => $goalieId,
+        'player_name' => 'Joshua Kotai', 'provider' => 'manual', 'status' => 'expected',
+        'fetched_at' => now(), 'raw_evidence' => [],
+    ]);
+    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'home_goalie_id' => 9002,
+    ]))->assertOk()->assertJsonPath('goalies.away.name', 'Joshua Kotai')
+        ->assertJsonPath('goalies.away.nhl_player_id', $goalieId)
+        ->assertJsonPath('goalies.away.projection_source', 'league_average')
+        ->assertJsonPath('goalies.away.projected_games', null)
+        ->assertJsonPath('goalies.away.confidence_bucket', 'low')
+        ->assertJsonPath('goalies.home.projection_source', 'goalie_model');
+    $this->assertDatabaseCount('nhl_goalie_season_projections', 2);
+    $this->travelBack();
+})->with(['canonical rookie' => [9999], 'name only starter' => [null]]);
+
+it('uses neutral league expected rates without saving a goalie projection', function (): void {
+    ($this->seedPredictionInputs)();
+    $baseline = (new NhlProjectedTeamMatchupSimulator())->leagueAverageGoalieProjection('20262027', 'goalie-market');
+    expect(round($baseline->projected_xga / $baseline->projected_games, 4))->toBe(2.8)
+        ->and(round($baseline->projected_pk_xga / $baseline->projected_games, 4))->toBe(0.8)
+        ->and($baseline->projected_ga)->toBe($baseline->projected_xga)
+        ->and($baseline->projected_pk_ga)->toBe($baseline->projected_pk_xga)
+        ->and($baseline->projected_gsax)->toBe(0.0);
+    $this->assertDatabaseCount('nhl_goalie_season_projections', 2);
+});
+
 it('uses the designated boxscore starter in live predictions and dressed rosters', function (string $state): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 23:00:00 UTC'));
     $token = ($this->seedPredictionInputs)();

@@ -3794,6 +3794,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Selected starters without personal goalie projections do not block partner game
+predictions. The existing simulator supplies a transient, labelled league-average
+EV/PK baseline while retaining starter identity; no synthetic projection records
+are saved. Authority: `docs/architecture/stats/NhlProjectedTeamMatchups.yaml`.
+
 Authorized partner text/image submissions use `POST /api/nhl-lineups` with the
 separate `nhl-lineups:write` scope. UI and API manual submissions share validation
 and temporary authority: latest accepted record wins, retaining user or API-client

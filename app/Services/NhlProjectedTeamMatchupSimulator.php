@@ -186,6 +186,20 @@ class NhlProjectedTeamMatchupSimulator
         $pkGoalieBuckets = $goalie === null
             ? collect()
             : $this->goalieBuckets($targetSeasonId, $goalieProjectionVersion, (int) $goalie['goalie_player_id'], self::STRENGTH_PK);
+        if (($goalie['projection_source'] ?? null) === 'league_average') {
+            $evGoalieBuckets = collect();
+            $pkGoalieBuckets = collect([(object) [
+                'matched_bucket_key' => 'league_average',
+                'shot_type_group' => 'all', 'distance_group' => 'all',
+                'angle_group' => 'all', 'sequence_group' => 'all',
+                'projected_profile_share' => 1.0,
+                'projected_sata' => $goalie['projected_pk_sata'],
+                'projected_soga' => $goalie['projected_pk_soga'],
+                'projected_xga' => $goalie['projected_pk_xga'],
+                'projected_ga' => $goalie['projected_pk_xga'],
+                'confidence_score' => 0.0,
+            ]]);
+        }
         $rows = $this->applyEvGoalieAdjustments($goalieEnvironmentRows, $evGoalieBuckets, $goalie, $projectedGames);
         $pk = $this->applyPkGoalieAdjustments($goalieEnvironmentRows, $pkGoalieBuckets, $goalie, $projectedGames);
         $goalieReasons = $this->goalieReasons($rows->merge($pk['rows']));
@@ -381,7 +395,13 @@ class NhlProjectedTeamMatchupSimulator
             ->first();
 
         if ($row === null) {
-            return null;
+            return [
+                ...get_object_vars($this->leagueAverageGoalieProjection($targetSeasonId, $goalieProjectionVersion)),
+                'goalie_player_id' => $goalieId,
+                'goalie_name' => DB::table('players')->where('nhl_id', $goalieId)->value('full_name') ?? (string) $goalieId,
+                'team_abbrev' => $team,
+                'projection_source' => 'league_average',
+            ];
         }
 
         return [
@@ -405,6 +425,31 @@ class NhlProjectedTeamMatchupSimulator
             'confidence_bucket' => $row->confidence_bucket,
             'is_auto' => false,
         ];
+    }
+
+    /**
+     * Neutral goalie skill with league workload-weighted expected rates, scaled to 84 games.
+     * These are transient calculation inputs, never a saved player season projection.
+     */
+    public function leagueAverageGoalieProjection(string $season, string $version): object
+    {
+        $rows = DB::table('nhl_goalie_season_projections')
+            ->where('target_season_id', $season)->where('projection_version', $version)
+            ->where('projected_games', '>', 0)->get();
+        $games = (float) $rows->sum('projected_games');
+        $projection = [
+            'projected_games' => self::TARGET_SEASON_GAMES,
+            'projected_starts' => null, 'projected_toi_hours' => null,
+            'projected_gsax' => 0.0, 'confidence_score' => 0.0, 'confidence_bucket' => 'low',
+        ];
+        foreach (['projected_xga', 'projected_ev_xga', 'projected_pk_xga', 'projected_pk_sata', 'projected_pk_soga'] as $field) {
+            $projection[$field] = $games > 0 ? (float) $rows->sum($field) / $games * self::TARGET_SEASON_GAMES : 0.0;
+        }
+        $projection['projected_ga'] = $projection['projected_xga'];
+        $projection['projected_ev_ga'] = $projection['projected_ev_xga'];
+        $projection['projected_pk_ga'] = $projection['projected_pk_xga'];
+
+        return (object) $projection;
     }
 
     /**

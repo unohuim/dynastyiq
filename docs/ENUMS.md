@@ -1,5 +1,12 @@
 # ENUMS - Canonical Enum Authority
 
+## Game prediction goalie projection provenance
+
+Request-time `goalies.*.projection_source`: `goalie_model` for a personal season
+projection; `league_average` for an unmodelled selected starter.
+`goalies.*.projection_fallback_reason`: `missing_goalie_projection` for that
+fallback, otherwise null. These values do not change starter selection provenance.
+
 This document defines the canonical, normative enum-like values used throughout the system.
 It is the source of truth for all domain-level enum-like values referenced in database schemas, models, services, controllers, seeders, and tests.
 

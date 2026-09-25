@@ -668,16 +668,10 @@ class NhlGamePredictionPayload
         }
 
         $goalieId = (int) $selection['nhl_player_id'];
-        if ($goalieId <= 0) {
-            throw ValidationException::withMessages(['goalie' => "The selected {$team} starter has no canonical NHL player ID."]);
-        }
-
         $goalie = $this->goalieProjection($targetSeasonId, $goalieProjectionVersion, $team, $goalieId);
-
-        if ($goalie === null) {
-            throw ValidationException::withMessages([
-                'goalie' => "Goalie {$goalieId} does not have a usable {$team} goalie performance projection.",
-            ]);
+        if (($goalie['projection_source'] ?? null) === 'league_average') {
+            $goalie['name'] = $selection['name'];
+            $goalie['nhl_player_id'] = $goalieId > 0 ? $goalieId : null;
         }
 
         $goalie['selection_source'] = $selection['selection_source'];
@@ -719,8 +713,12 @@ class NhlGamePredictionPayload
             ->selectRaw("COALESCE(players.full_name, {$goalieNameFallback}) as name")
             ->first();
 
-        if ($row === null) {
-            return null;
+        $fallback = $row === null;
+        if ($fallback) {
+            $row = $this->simulator->leagueAverageGoalieProjection($targetSeasonId, $goalieProjectionVersion);
+            $row->goalie_player_id = $goalieId;
+            $row->name = (string) $goalieId;
+            $row->target_team_abbrev = $team;
         }
 
         $projectedGames = (float) ($row->projected_games ?? 0);
@@ -729,7 +727,9 @@ class NhlGamePredictionPayload
             'nhl_player_id' => (int) $row->goalie_player_id,
             'name' => (string) $row->name,
             'team_abbrev' => $row->target_team_abbrev,
-            'projected_games' => $row->projected_games === null ? null : round((float) $row->projected_games, 2),
+            'projection_source' => $fallback ? 'league_average' : 'goalie_model',
+            'projection_fallback_reason' => $fallback ? 'missing_goalie_projection' : null,
+            'projected_games' => $fallback || $row->projected_games === null ? null : round((float) $row->projected_games, 2),
             'projected_starts' => $row->projected_starts === null ? null : round((float) $row->projected_starts, 2),
             'projected_toi_hours' => $row->projected_toi_hours === null ? null : round((float) $row->projected_toi_hours, 2),
             'projected_xga_per_game' => $projectedGames > 0 && $row->projected_xga !== null ? round((float) $row->projected_xga / $projectedGames, 4) : null,
