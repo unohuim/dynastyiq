@@ -3761,7 +3761,7 @@ it('exposes live starter identity and individual goalie statistics', function (?
     $this->travelBack();
 })->with([[2, 14], [0, 0], [null, null]]);
 
-it('uses only provider live data and database avatars without requiring starter flags', function (): void {
+it('uses provider live rosters and replaces goalie presentation with or without starter flags', function (bool $starterFlag): void {
     $this->travelTo(Carbon::parse('2026-09-22 00:30:00 UTC'));
     $this->mock(\App\Services\NhlStartingGoalieSelector::class)->shouldNotReceive('select');
     Player::query()->create([
@@ -3780,8 +3780,10 @@ it('uses only provider live data and database avatars without requiring starter 
         'startTimeUTC' => '2026-09-21T23:05:00Z',
         'awayTeam' => ['abbrev' => 'PHI', 'score' => 1],
         'homeTeam' => ['abbrev' => 'WSH', 'score' => 3],
-        'playerByGameStats' => ['awayTeam' => ['goalies' => [
-            ['playerId' => 8489991, 'name' => ['default' => 'Provider Starter'], 'shotsAgainst' => 18, 'goalsAgainst' => 3, 'toi' => '30:00'],
+        'playerByGameStats' => ['awayTeam' => ['forwards' => [
+            ['playerId' => 8489900, 'name' => ['default' => 'Provider Forward'], 'position' => 'C', 'sweaterNumber' => 12],
+        ], 'goalies' => [
+            ['playerId' => 8489991, 'name' => ['default' => 'Provider Starter'], 'starter' => $starterFlag, 'shotsAgainst' => 18, 'goalsAgainst' => 3, 'toi' => '30:00'],
             ['playerId' => 8489992, 'name' => ['default' => 'Provider Relief'], 'saveShotsAgainst' => '4/4', 'goalsAgainst' => 0, 'toi' => '10:00'],
             ['playerId' => 8489993, 'name' => ['default' => 'Unused Backup'], 'shotsAgainst' => 0, 'goalsAgainst' => 0, 'toi' => '00:00'],
         ]]],
@@ -3792,8 +3794,10 @@ it('uses only provider live data and database avatars without requiring starter 
         ->assertJsonPath('games.0.away.team_abbrev', 'PHI')
         ->assertJsonPath('games.0.away.score', 1)
         ->assertJsonPath('games.0.away.sog', null)
-        ->assertJsonPath('games.0.away.lineup', null)
-        ->assertJsonPath('games.0.away.starting_goalie', null)
+        ->assertJsonPath('games.0.away.lineup.evidence_status', 'official')
+        ->assertJsonPath('games.0.away.lineup.players.0.player_name', 'Provider Forward')
+        ->assertJsonCount(4, 'games.0.away.lineup.players')
+        ->assertJsonPath('games.0.away.starting_goalie.nhl_player_id', $starterFlag ? 8489991 : null)
         ->assertJsonCount(2, 'games.0.away.goalies')
         ->assertJsonPath('games.0.away.goalies.0.name', 'Provider Starter')
         ->assertJsonPath('games.0.away.goalies.0.avatar_url', 'https://example.test/avatar.png')
@@ -3801,7 +3805,7 @@ it('uses only provider live data and database avatars without requiring starter 
         ->assertJsonPath('games.0.away.goalies.1.saves', 4)
         ->assertJsonPath('games.0.away.goalies.1.avatar_url', null);
     $this->travelBack();
-});
+})->with([true, false]);
 
 it('treats final as the terminal gamecenter state', function (): void {
     Carbon::setTestNow('2026-09-21 12:00:00 UTC');

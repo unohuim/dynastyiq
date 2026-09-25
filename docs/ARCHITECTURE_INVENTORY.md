@@ -1,5 +1,10 @@
 # Architecture Inventory
 
+Public games pages poll asynchronously and replace pregame lineup/goalie display
+with NHL live boxscore rosters and explicit starter flags. `BoxscoreRoster.vue`
+renders provider player lists without inventing line combinations or changing
+stored observations. Canonical behavior is in `NhlAnticipatedLineups.yaml`.
+
 Started-game predictions read the cached NHL boxscore's designated starter before
 pregame goalie choices and align dressed-roster G1 without rewriting observations.
 See `docs/architecture/imports/NhlPlayerAvailability.yaml`.

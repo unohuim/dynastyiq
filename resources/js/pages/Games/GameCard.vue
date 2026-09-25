@@ -1,4 +1,5 @@
 <script setup>
+import BoxscoreRoster from './BoxscoreRoster.vue';
 import { Link } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import ManualLineupModal from './ManualLineupModal.vue';
@@ -134,13 +135,19 @@ const gameStateClass = (state) => state === 'FINAL'
         </div>
         <div v-if="isLive" class="space-y-3">
           <div v-for="goalie in game[side].goalies ?? []" :key="goalie.nhl_player_id" class="flex items-center justify-end gap-3">
-            <div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ goalie.name ?? '—' }}</p><p class="mt-1 text-xs tabular-nums text-gray-500">GA: {{ goalie.goals_against ?? '—' }} · Saves: {{ goalie.saves ?? '—' }}</p></div>
+            <div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ goalie.name ?? '—' }}</p><p v-if="goalie.is_starter" class="text-xs text-emerald-700">Starter</p><p class="mt-1 text-xs tabular-nums text-gray-500">GA: {{ goalie.goals_against ?? '—' }} · Saves: {{ goalie.saves ?? '—' }}</p></div>
             <img v-if="goalie.avatar_url" :src="goalie.avatar_url" :alt="goalie.name ?? 'Goalie'" class="size-12 rounded-full border border-gray-200 object-cover">
           </div>
         </div>
         <GoaliePicker v-else-if="canManageLineups" :game-id="Number(game.nhl_game_id)" :team="game[side].team_abbrev" :goalie="game[side].starting_goalie" @selected="emit('goalie-selected', $event)" />
         <div v-else-if="game[side].starting_goalie" class="flex items-center gap-3"><div class="text-right"><p class="max-w-36 truncate text-sm font-semibold">{{ game[side].starting_goalie.name }}</p><span class="mt-1 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold" :class="goalieStatusClass(game[side].starting_goalie.status)">{{ label(game[side].starting_goalie.status ?? 'projected') }}</span></div><img v-if="game[side].starting_goalie.avatar_url" :src="game[side].starting_goalie.avatar_url" :alt="game[side].starting_goalie.name" class="size-12 rounded-full border border-gray-200 object-cover"></div>
         <span v-if="!isLive && game[side].score !== null" class="text-2xl font-semibold tabular-nums">{{ game[side].score }}</span>
+      </section>
+    </div>
+    <div v-if="isLive" class="grid gap-3 border-t border-gray-100 p-4 sm:grid-cols-2">
+      <section v-for="side in ['away', 'home']" :key="side">
+        <h3 class="mb-2 text-xs font-semibold text-gray-600">{{ game[side].team_abbrev }}</h3>
+        <BoxscoreRoster :lineup="game[side].lineup" />
       </section>
     </div>
     <footer v-if="!isLive" class="border-t border-gray-100 bg-gray-50 px-5 py-3 text-right"><Link :href="`/games/${game.nhl_game_id}`" class="text-sm font-semibold text-indigo-600 hover:text-indigo-500">View current lineups →</Link></footer>

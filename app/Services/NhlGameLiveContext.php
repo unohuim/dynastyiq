@@ -112,16 +112,38 @@ class NhlGameLiveContext
                 return [
                     'nhl_player_id' => (int) $row['playerId'],
                     'name' => data_get($row, 'name.default'),
+                    'is_starter' => ($row['starter'] ?? false) === true,
+                    'status' => 'confirmed', 'selection_source' => 'nhl_boxscore',
                     'avatar_url' => $avatars->get((int) $row['playerId']),
                     'goals_against' => isset($row['goalsAgainst']) ? (int) $row['goalsAgainst'] : null,
                     'saves' => $saves,
                 ];
             })->values()->all();
+            $roster = [];
+            foreach (['forwards' => 'forward', 'defense' => 'defense', 'goalies' => 'goalie'] as $group => $role) {
+                foreach (data_get($response, "playerByGameStats.{$side}Team.{$group}", []) as $row) {
+                    if (! is_array($row) || empty($row['playerId'])) {
+                        continue;
+                    }
+                    $roster[] = [
+                        'nhl_player_id' => (int) $row['playerId'],
+                        'player_name' => data_get($row, 'name.default'),
+                        'position' => $row['position'] ?? null, 'lineup_role' => $role,
+                        'sweater_number' => $row['sweaterNumber'] ?? null,
+                        'is_starter' => $role === 'goalie' && ($row['starter'] ?? false) === true,
+                    ];
+                }
+            }
+            $starters = collect($goalies)->where('is_starter', true)->values();
             $result[$side] = [
                 'team_id' => $team['id'] ?? null, 'team_abbrev' => $team['abbrev'] ?? null,
                 'team_name' => data_get($team, 'commonName.default'), 'team_logo' => $team['logo'] ?? null,
                 'score' => $team['score'] ?? null, 'sog' => $team['sog'] ?? null,
-                'goalies' => $goalies, 'starting_goalie' => null, 'lineup' => null,
+                'goalies' => $goalies,
+                'starting_goalie' => $starters->count() === 1 ? $starters->first() : null,
+                'lineup' => $roster === [] ? null : ['evidence_status' => 'official',
+                    'manual_override' => false, 'team_abbrev' => $team['abbrev'] ?? null,
+                    'players' => $roster],
             ];
         }
 

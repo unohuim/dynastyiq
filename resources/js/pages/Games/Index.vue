@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import ToggleSwitch from '../../components/ToggleSwitch.vue';
 import GameCard from './GameCard.vue';
 
@@ -26,13 +26,13 @@ const loading = ref(false);
 const drawerOpen = ref(false);
 function applyManualLineup(lineup) {
   const game = payload.value.games.find((item) => Number(item.nhl_game_id) === Number(lineup.nhl_game_id));
-  if (!game) return;
+  if (!game || game.live_mode) return;
   const side = ['away', 'home'].find((key) => game[key].team_abbrev === lineup.team_abbrev);
   if (side) game[side].lineup = lineup;
 }
 function applyGoalie(selection) {
   const game = payload.value.games.find((item) => Number(item.nhl_game_id) === Number(selection.nhl_game_id));
-  if (!game) return;
+  if (!game || game.live_mode) return;
   const side = ['away', 'home'].find((key) => game[key].team_abbrev === selection.team_abbrev);
   if (side) game[side].starting_goalie = selection.starting_goalie;
 }
@@ -47,20 +47,33 @@ const startBeforeMinutes = ref(props.gameSyncSchedule?.timing?.start_before_minu
 const timerSeconds = (timer) => Math.max(60, Number(timer.hours) * 3600 + Number(timer.minutes) * 60 + Number(timer.seconds));
 const formattedDate = computed(() => new Intl.DateTimeFormat(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(new Date(`${date.value}T12:00:00`)));
 let frequencySaveTimer = null;
+let refreshTimer = null;
+let payloadRequest = null;
+let requestVersion = 0;
 const shiftDate = (days) => { const value = new Date(`${date.value}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + days); changeDate(value.toISOString().slice(0, 10)); };
-async function changeDate(value) {
-  date.value = value; loading.value = true; error.value = '';
+async function changeDate(value, background = false) {
+  if (background && (payloadRequest || document.visibilityState === 'hidden')) return;
+  const version = ++requestVersion;
+  payloadRequest?.abort();
+  const controller = new AbortController();
+  payloadRequest = controller;
+  if (!background) { date.value = value; loading.value = true; error.value = ''; }
   try {
     const url = new URL(props.payloadUrl, window.location.origin); url.searchParams.set('date', value);
-    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    const response = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal });
     if (!response.ok) throw new Error('Unable to load games.');
-    payload.value = await response.json(); window.history.replaceState({}, '', `/games?date=${value}`);
+    const next = await response.json();
+    if (version !== requestVersion) return;
+    payload.value = next;
+    if (!background) window.history.replaceState({}, '', `/games?date=${value}`);
   } catch (exception) {
-    error.value = exception instanceof Error ? exception.message : 'Unable to load games.';
+    if (version === requestVersion && exception?.name !== 'AbortError' && !background)
+      error.value = exception instanceof Error ? exception.message : 'Unable to load games.';
   } finally {
-    loading.value = false;
+    if (version === requestVersion) { loading.value = false; payloadRequest = null; }
   }
 }
+onMounted(() => { refreshTimer = window.setInterval(() => changeDate(date.value, true), 30000); });
 async function persistSchedule(nextEnabled) {
   const response = await fetch(props.gameSyncScheduleUrl, { method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' }, body: JSON.stringify({ enabled: nextEnabled, timing: { start_before_minutes: startBeforeMinutes.value, pregame_seconds: timerSeconds(pregame), live_seconds: timerSeconds(live) } }) });
   if (!response.ok) throw new Error('Unable to update game synchronization.');
@@ -90,7 +103,12 @@ watch([startBeforeMinutes, pregame, live], () => {
     }
   }, 500);
 });
-onBeforeUnmount(() => window.clearTimeout(frequencySaveTimer));
+onBeforeUnmount(() => {
+  window.clearTimeout(frequencySaveTimer);
+  window.clearInterval(refreshTimer);
+  requestVersion++;
+  payloadRequest?.abort();
+});
 </script>
 
 <template>
