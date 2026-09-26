@@ -21,7 +21,7 @@ class NhlStartingGoalieSelector
 
     /**
      * For predictions, a started game's designated NHL starter supersedes pregame selections.
-     * Provider reads share the 60-second gamecenter cache without importing or saving game data.
+     * Provider reads share the 60-second cache; first explicit live starters are persisted once.
      *
      * @return array<string,mixed>|null
      */
@@ -33,6 +33,9 @@ class NhlStartingGoalieSelector
         mixed $providedGoalieId = null
     ): ?array {
         $teamAbbrev = mb_strtoupper($teamAbbrev);
+        if (($locked = $this->lockedStarter($nhlGameId, $teamAbbrev)) !== null) {
+            return $locked;
+        }
         $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
         $boxscore = null;
         if ($game !== null) {
@@ -48,28 +51,11 @@ class NhlStartingGoalieSelector
         $validBoxscore = is_array($boxscore) && (int) ($boxscore['id'] ?? 0) === $nhlGameId;
         $state = mb_strtoupper((string) ($validBoxscore ? ($boxscore['gameState'] ?? '') : ($game->game_state ?? '')));
         if ($state !== '' && ! in_array($state, ['FUT', 'PRE'], true)) {
-            foreach (['awayTeam', 'homeTeam'] as $side) {
-                if (! $validBoxscore || mb_strtoupper((string) data_get($boxscore, $side . '.abbrev')) !== $teamAbbrev) {
-                    continue;
-                }
-                $starters = collect(data_get($boxscore, 'playerByGameStats.' . $side . '.goalies', []))
-                    ->filter(fn ($row): bool => is_array($row) && ($row['starter'] ?? false) === true
-                        && (int) ($row['playerId'] ?? 0) > 0)->values();
-                if ($starters->count() === 1) {
-                    $starter = $starters->first();
-                    $selected = $this->result((int) $starter['playerId'], 'nhl_boxscore', 'confirmed');
+            if ($validBoxscore) {
+                $this->lockBoxscoreStarters($nhlGameId, $boxscore);
+            }
 
-                    return [...$selected,
-                        'name' => data_get($starter, 'name.default') ?: $selected['name'],
-                        'provider' => 'nhl_boxscore'];
-                }
-            }
-            if ($game !== null && in_array($teamAbbrev, [$game->home_team_abbrev, $game->away_team_abbrev], true)) {
-                $official = $this->official($nhlGameId, $teamAbbrev);
-                if ($official !== null) {
-                    return $this->result($official, 'nhl_boxscore', 'confirmed');
-                }
-            }
+            return $this->lockedStarter($nhlGameId, $teamAbbrev);
         }
 
         return $this->select($nhlGameId, $teamAbbrev, $targetSeasonId, $goalieProjectionVersion, $providedGoalieId);
@@ -88,6 +74,13 @@ class NhlStartingGoalieSelector
         mixed $providedGoalieId = null
     ): ?array {
         $teamAbbrev = mb_strtoupper($teamAbbrev);
+        if (($locked = $this->lockedStarter($nhlGameId, $teamAbbrev)) !== null) {
+            return $locked;
+        }
+        $state = mb_strtoupper((string) DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->value('game_state'));
+        if ($state !== '' && ! in_array($state, ['FUT', 'PRE'], true)) {
+            return null;
+        }
         if ($providedGoalieId !== null && $providedGoalieId !== '') {
             return $this->result((int) $providedGoalieId, 'provided', 'projected');
         }
@@ -149,6 +142,63 @@ class NhlStartingGoalieSelector
         return $workload === null
             ? null
             : $this->result((int) $workload, 'workload_projection', 'projected');
+    }
+
+    /** Persist each side's first unambiguous NHL starter after puck drop, atomically. */
+    public function lockBoxscoreStarters(int $nhlGameId, array $boxscore): void
+    {
+        $state = mb_strtoupper((string) ($boxscore['gameState'] ?? ''));
+        if ((int) ($boxscore['id'] ?? 0) !== $nhlGameId || $state === '' || in_array($state, ['FUT', 'PRE'], true)) {
+            return;
+        }
+        $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
+        if ($game === null) {
+            return;
+        }
+        foreach (['away', 'home'] as $side) {
+            $teamField = $side . '_team_abbrev';
+            $column = $side . '_starter_lock';
+            if (mb_strtoupper((string) data_get($boxscore, $side . 'Team.abbrev')) !== mb_strtoupper((string) $game->{$teamField})) {
+                continue;
+            }
+            $starters = collect(data_get($boxscore, 'playerByGameStats.' . $side . 'Team.goalies', []))
+                ->filter(fn ($row): bool => is_array($row) && ($row['starter'] ?? false) === true
+                    && (int) ($row['playerId'] ?? 0) > 0)->values();
+            if ($starters->count() !== 1) {
+                continue;
+            }
+            $starter = $starters->first();
+            DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->whereNull($column)->update([
+                $column => json_encode([
+                    'nhl_player_id' => (int) $starter['playerId'],
+                    'name' => data_get($starter, 'name.default'),
+                    'locked_at' => now()->toIso8601String(),
+                ], JSON_THROW_ON_ERROR),
+            ]);
+        }
+    }
+
+    /** Read a durable starter independently of cache, observations or later provider corrections. */
+    public function lockedStarter(int $nhlGameId, string $teamAbbrev): ?array
+    {
+        $game = DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
+        foreach (['away', 'home'] as $side) {
+            $teamField = $side . '_team_abbrev';
+            if ($game === null || mb_strtoupper((string) $game->{$teamField}) !== mb_strtoupper($teamAbbrev)) {
+                continue;
+            }
+            $column = $side . '_starter_lock';
+            $lock = json_decode((string) ($game->{$column} ?? ''), true);
+            if (! is_array($lock) || empty($lock['nhl_player_id'])) {
+                return null;
+            }
+            $selected = $this->result((int) $lock['nhl_player_id'], 'nhl_boxscore', 'confirmed');
+
+            return [...$selected, 'name' => $lock['name'] ?: $selected['name'],
+                'provider' => 'nhl_boxscore', 'locked_at' => $lock['locked_at']];
+        }
+
+        return null;
     }
 
     /** Return every canonical team goalie, including prospects outside the NHL. */

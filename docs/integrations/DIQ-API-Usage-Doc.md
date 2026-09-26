@@ -1,5 +1,16 @@
 # DynastyIQ API Usage Guide
 
+## Starter identity after puck drop
+
+The first unique NHL `starter: true` observed after the game leaves FUT/PRE is
+saved separately for each team. Predictions, lineup starter selection and the
+starting-goalies API retain that identity despite later NHL flag changes, relief
+appearances, cache expiry or manual/request overrides. No pregame guess is locked;
+a known live game without an identified starter waits for NHL confirmation.
+The source remains `nhl_boxscore`, status `confirmed`. Missing personal projection
+history still uses the labelled league-average fallback. Live participation and
+save/GA statistics continue updating independently of this starter identity.
+
 ## Selected starters without goalie history
 
 Game predictions retain the selected starter even without a personal goalie

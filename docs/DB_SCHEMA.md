@@ -1,5 +1,8 @@
 # Database Schema Inventory (DB_SCHEMA)
 
+Starter locks (`2026_09_26_000001_add_locked_starters_to_nhl_games`):
+- `nhl_games.away_starter_lock` and `home_starter_lock`: nullable JSON snapshots containing `nhl_player_id`, provider `name`, and `locked_at`. The selector writes each once, only after an explicit unique NHL starter is observed after puck drop. No migration backfill.
+
 Game synchronization additions (`2026_09_21_000001_add_game_sync_timing`):
 - `admin_import_schedules.game_sync_timing`: nullable JSON for the game-sync start window in minutes and pregame/live intervals in seconds. Existing `within_one_hour_seconds` values are accepted as a fallback for `pregame_seconds`; `interval_seconds` is no longer used for game-sync cadence.
 - `nhl_games.boxscore_synced_at`: nullable timestamp of the last successful scheduled boxscore refresh, used for per-game cadence.

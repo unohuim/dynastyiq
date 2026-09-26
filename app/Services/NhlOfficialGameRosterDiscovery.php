@@ -23,6 +23,10 @@ class NhlOfficialGameRosterDiscovery
             return null;
         }
 
+        if (is_array($response)) {
+            app(NhlStartingGoalieSelector::class)->lockBoxscoreStarters((int) $game->nhl_game_id, $response);
+        }
+
         $side = mb_strtoupper((string) data_get($response, 'awayTeam.abbrev')) === $teamAbbrev
             ? 'awayTeam'
             : (mb_strtoupper((string) data_get($response, 'homeTeam.abbrev')) === $teamAbbrev

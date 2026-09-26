@@ -39,6 +39,8 @@ class NhlGameLiveContext
             return null;
         }
 
+        $this->goalies->lockBoxscoreStarters((int) $game->nhl_game_id, $response);
+
         $state = mb_strtoupper((string) ($response['gameState'] ?? ''));
         $showScore = $state !== '' && ! in_array($state, ['FUT', 'PRE'], true);
         if ($showScore) {

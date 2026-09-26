@@ -3794,6 +3794,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+NHL starter identity is locked independently per side on `nhl_games` after the
+first unique explicit live boxscore starter is observed. Shared selection and
+starter APIs prefer these durable, atomic first-write snapshots over all later
+choices; relief statistics continue updating. See `NhlPlayerAvailability.yaml`.
+
 Selected starters without personal goalie projections do not block partner game
 predictions. The existing simulator supplies a transient, labelled league-average
 EV/PK baseline while retaining starter identity; no synthetic projection records

@@ -22,6 +22,10 @@ class ImportNhlBoxscore
     {
         $response = $this->getAPIData('nhl', 'boxscore', ['gameId' => $nhlGameId]);
 
+        if (is_array($response)) {
+            app(NhlStartingGoalieSelector::class)->lockBoxscoreStarters((int) $nhlGameId, $response);
+        }
+
         if (empty($response['playerByGameStats'])) {
             return 0;
         }

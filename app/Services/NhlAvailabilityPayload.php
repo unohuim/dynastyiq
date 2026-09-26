@@ -47,7 +47,8 @@ class NhlAvailabilityPayload
             ->sortBy([['game_date', 'asc'], ['nhl_game_id', 'asc'], ['is_home', 'asc']])->values();
 
         $games = DB::table('nhl_games')
-            ->whereIn('nhl_game_id', $rows->pluck('nhl_game_id')->filter()->unique())
+            ->whereDate('game_date', $date->toDateString())
+            ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
             ->get()
             ->keyBy('nhl_game_id');
 
@@ -63,12 +64,31 @@ class NhlAvailabilityPayload
                 'provider' => $row->provider, 'observed_at' => $row->fetched_at?->toIso8601String(),
             ];
         });
-        $goalies = $this->addGoalieSeasonStats($goalies, $games);
+        foreach ($games as $game) {
+            foreach (['away', 'home'] as $side) {
+                $team = $game->{$side . '_team_abbrev'};
+                $locked = app(NhlStartingGoalieSelector::class)->lockedStarter((int) $game->nhl_game_id, $team);
+                if ($locked === null) {
+                    continue;
+                }
+                $goalies = $goalies->reject(fn (array $row): bool => (int) $row['nhl_game_id'] === (int) $game->nhl_game_id
+                    && $row['team_abbrev'] === $team);
+                $goalies->push([
+                    'nhl_game_id' => (int) $game->nhl_game_id, 'game_date' => $game->game_date,
+                    'start_time_utc' => $game->start_time_utc ? Carbon::parse($game->start_time_utc, 'UTC')->toIso8601String() : null,
+                    'team_abbrev' => $team, 'opponent_abbrev' => $game->{($side === 'home' ? 'away' : 'home') . '_team_abbrev'},
+                    'is_home' => $side === 'home', 'nhl_player_id' => $locked['nhl_player_id'],
+                    'player_name' => $locked['name'], 'status' => 'confirmed', 'provider' => 'nhl_boxscore',
+                    'observed_at' => $locked['locked_at'], 'locked_at' => $locked['locked_at'],
+                ]);
+            }
+        }
+        $goalies = $this->addGoalieSeasonStats($goalies->values(), $games);
 
         return [
             'starting_goalies' => $goalies,
             'games' => $this->groupGoaliesByGame($goalies, $games),
-            'meta' => ['date' => $date->toDateString(), 'count' => $rows->count(), 'generated_at' => now()->toIso8601String()],
+            'meta' => ['date' => $date->toDateString(), 'count' => $goalies->count(), 'generated_at' => now()->toIso8601String()],
         ];
     }
 

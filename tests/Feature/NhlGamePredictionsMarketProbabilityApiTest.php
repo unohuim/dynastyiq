@@ -71,6 +71,22 @@ it('uses the designated boxscore starter in live predictions and dressed rosters
         ->assertJsonPath('inputs.away_goalie_id', 9001)
         ->assertJsonFragment(['nhl_player_id' => 9001, 'is_starter' => true]);
     Http::assertSentCount(1);
+    $lock = json_decode(DB::table('nhl_games')->where('nhl_game_id', 2026020001)->value('away_starter_lock'), true);
+    expect($lock['nhl_player_id'])->toBe(9001);
+    app(\App\Services\NhlStartingGoalieSelector::class)->lockBoxscoreStarters(2026020001, [
+        'id' => 2026020001, 'gameState' => 'LIVE', 'awayTeam' => ['abbrev' => 'AWY'],
+        'playerByGameStats' => ['awayTeam' => ['goalies' => [['playerId' => 9003, 'starter' => true]]]],
+    ]);
+    \Illuminate\Support\Facades\Cache::flush();
+    Http::fake(['api-web.nhle.com/*' => Http::response([], 503)]);
+    $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001, 'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9003,
+    ]))->assertOk()->assertJsonPath('goalies.away.nhl_player_id', 9001);
+    $this->withToken($token)->getJson('/api/nhl-starting-goalies?nhl_game_id=2026020001&date=2026-10-10')
+        ->assertOk()->assertJsonFragment(['nhl_player_id' => 9001, 'status' => 'confirmed']);
+    Http::assertNothingSent();
     $this->assertDatabaseHas('nhl_starting_goalie_observations', ['nhl_player_id' => 9003, 'provider' => 'manual']);
     $this->travelBack();
 })->with(['LIVE', 'CRIT', 'FINAL', 'OFF']);
@@ -84,8 +100,33 @@ it('retains pregame or unavailable boxscore fallback selection', function (strin
     $result = app(\App\Services\NhlStartingGoalieSelector::class)->selectForPrediction(
         2026020001, 'AWY', providedGoalieId: 9003
     );
-    expect($result['nhl_player_id'])->toBe(9003)->and($result['selection_source'])->toBe('provided');
+    if ($state === 'LIVE') {
+        expect($result)->toBeNull();
+    } else {
+        expect($result['nhl_player_id'])->toBe(9003)->and($result['selection_source'])->toBe('provided');
+    }
 })->with([['FUT', true], ['PRE', true], ['LIVE', false], ['', false]]);
+
+it('locks only unique official starters on the correct live game and team', function (string $state, int $gameId, string $team, array $goalies, bool $locks): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 23:00:00 UTC'));
+    ($this->seedPredictionInputs)();
+    $selector = app(\App\Services\NhlStartingGoalieSelector::class);
+    $selector->lockBoxscoreStarters(2026020001, [
+        'id' => $gameId, 'gameState' => $state, 'awayTeam' => ['abbrev' => $team],
+        'playerByGameStats' => ['awayTeam' => ['goalies' => $goalies]],
+    ]);
+    expect($selector->lockedStarter(2026020001, 'AWY') !== null)->toBe($locks)
+        ->and($selector->lockedStarter(2026020001, 'HOM'))->toBeNull();
+    $this->travelBack();
+})->with([
+    ['PRE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
+    ['FUT', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
+    ['LIVE', 2026020999, 'AWY', [['playerId' => 9001, 'starter' => true]], false],
+    ['LIVE', 2026020001, 'OTHER', [['playerId' => 9001, 'starter' => true]], false],
+    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'toi' => '60:00']], false],
+    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true], ['playerId' => 9003, 'starter' => true]], false],
+    ['LIVE', 2026020001, 'AWY', [['playerId' => 9001, 'starter' => true]], true],
+]);
 
 beforeEach(function (): void {
     Http::fake(['api-web.nhle.com/*' => Http::response([])]);

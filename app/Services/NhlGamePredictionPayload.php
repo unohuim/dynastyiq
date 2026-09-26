@@ -675,6 +675,7 @@ class NhlGamePredictionPayload
         }
 
         $goalie['selection_source'] = $selection['selection_source'];
+        $goalie['locked_at'] = $selection['locked_at'] ?? null;
 
         return $goalie;
     }
