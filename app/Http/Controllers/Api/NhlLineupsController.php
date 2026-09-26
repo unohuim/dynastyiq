@@ -14,6 +14,15 @@ use Illuminate\Support\Carbon;
 /** Read scheduled matchups and their current accepted lineup evidence without importing. */
 class NhlLineupsController extends Controller
 {
+    /** Read a single stored matchup without scanning other games or calling providers. */
+    public function show(int $nhlGameId, NhlAnticipatedLineupPayload $payload, NhlStartingGoalieSelector $goalies): JsonResponse
+    {
+        $game = \App\Models\NhlGame::query()->findOrFail($nhlGameId);
+        $result = $payload->schedule($game->game_date, $goalies, $nhlGameId);
+
+        return response()->json(['game' => $result['games']->first(), 'meta' => $result['meta']]);
+    }
+
     /** Return both participating teams even when no verified lineup exists. */
     public function __invoke(
         Request $request,

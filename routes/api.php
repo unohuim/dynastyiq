@@ -69,6 +69,8 @@ Route::middleware('api.client:nhl-stats:read')->group(function (): void {
         ->name('api.nhl-anticipated-lineups.index');
     Route::get('/nhl/lineups', \App\Http\Controllers\Api\NhlLineupsController::class)
         ->name('api.nhl.lineups.index');
+    Route::get('/nhl/lineups/{nhlGameId}', [\App\Http\Controllers\Api\NhlLineupsController::class, 'show'])
+        ->whereNumber('nhlGameId')->name('api.nhl.lineups.show');
 });
 
 Route::post('/nhl-lineups', \App\Http\Controllers\Api\NhlLineupSubmissionsController::class)

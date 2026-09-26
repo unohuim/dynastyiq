@@ -27,12 +27,13 @@ class NhlAnticipatedLineupPayload
      *
      * @return array<string,mixed>
      */
-    public function schedule(Carbon $date, NhlStartingGoalieSelector $goalies): array
+    public function schedule(Carbon $date, NhlStartingGoalieSelector $goalies, ?int $nhlGameId = null): array
     {
-        $lineups = collect($this->build($date)['anticipated_lineups'])
+        $lineups = collect($this->build($date, $nhlGameId)['anticipated_lineups'])
             ->keyBy(fn (array $lineup): string => $lineup['nhl_game_id'] . ':' . $lineup['team_abbrev']);
         $teamIds = DB::table('nhl_teams')->pluck('nhl_id', 'abbrev');
         $games = NhlGame::query()->whereDate('game_date', $date->toDateString())
+            ->when($nhlGameId, fn ($query) => $query->where('nhl_game_id', $nhlGameId))
             ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()
             ->map(function (NhlGame $game) use ($lineups, $teamIds, $goalies): array {
                 $teams = [];

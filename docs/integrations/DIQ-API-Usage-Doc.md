@@ -47,6 +47,7 @@ Endpoint scopes:
 | `GET /api/nhl-starting-goalies` | `nhl-stats:read` |
 | `GET /api/nhl-anticipated-lineups` | `nhl-stats:read` |
 | `GET /api/nhl/lineups` | `nhl-stats:read` |
+| `GET /api/nhl/lineups/{nhl_game_id}` | `nhl-stats:read` |
 | `GET /api/nhl-game-predictions` | `nhl-stats:read` |
 | `POST /api/nhl-lineups` | `nhl-lineups:write` |
 
@@ -58,6 +59,25 @@ Writes require a separate, explicitly issued key. Existing read tokens are not
 upgraded and the write scope does not grant read access.
 
 ## Read Game Lineups By Date
+
+### Read one game instead
+
+`GET /api/nhl/lineups/2026010088`
+
+Use the same read key. No date parameter is needed. The response is
+`{"game": {...}, "meta": {"date": "2026-09-23", "count": 1, "generated_at": "..."}}`.
+`game` has the same fields as one entry in the date endpoint's `games` array:
+both teams, lineup statuses, players, sources and starting goalies, including
+durable live starter locks. Missing lineups have `players: []` and
+`lineup_status: not_reported`; a missing starter is null. Unknown or nonnumeric
+game IDs return 404. Missing credentials return 401 and wrong-scope keys 403.
+
+This is a database read, not a refresh/import or prediction request. Lineup work
+is restricted to the requested game. Same-team same-day RotoWire evidence may
+still be checked to avoid conflicting split-squad goalie assignments. No NHL/X
+calls are made. The date endpoint remains unchanged.
+
+### Read all games on a date
 
 `GET /api/nhl/lineups?date=2026-09-24`
 

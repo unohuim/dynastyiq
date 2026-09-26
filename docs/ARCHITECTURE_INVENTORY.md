@@ -3794,6 +3794,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Partners can read one game's teams, lineup status, players and starting goalies
+through `GET /api/nhl/lineups/{nhlGameId}` with `nhl-stats:read`, without scanning
+other games' lineups or requesting providers. The date-list endpoint is unchanged.
+Contract: `docs/integrations/DIQ-API-Usage-Doc.md`.
+
 NHL starter identity is locked independently per side on `nhl_games` after the
 first unique explicit live boxscore starter is observed. Shared selection and
 starter APIs prefer these durable, atomic first-write snapshots over all later

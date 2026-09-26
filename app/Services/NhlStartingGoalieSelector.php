@@ -240,7 +240,7 @@ class NhlStartingGoalieSelector
             ->where('nhl_game_id', $nhlGameId)
             ->where('team_abbrev', $teamAbbrev)
             ->value('game_date');
-        $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date))
+        $row = $date === null ? null : $this->rankedObservations(Carbon::parse($date), $nhlGameId)
             ->first(fn (NhlStartingGoalieObservation $observation): bool => (int) $observation->nhl_game_id === $nhlGameId
                 && $observation->team_abbrev === $teamAbbrev
                 && ($observation->nhl_player_id !== null || $observation->provider === 'manual')
@@ -270,10 +270,17 @@ class NhlStartingGoalieSelector
      *
      * @return Collection<int, NhlStartingGoalieObservation>
      */
-    public function rankedObservations(Carbon $date): Collection
+    public function rankedObservations(Carbon $date, ?int $nhlGameId = null): Collection
     {
+        $game = $nhlGameId === null ? null : DB::table('nhl_games')->where('nhl_game_id', $nhlGameId)->first();
         $rows = NhlStartingGoalieObservation::query()
             ->whereDate('game_date', $date->toDateString())
+            ->when($nhlGameId !== null, fn ($query) => $query->where(function ($query) use ($nhlGameId, $game): void {
+                $query->where('nhl_game_id', $nhlGameId)
+                    // Keep same-team RotoWire evidence to detect split-squad conflicts.
+                    ->orWhere(fn ($query) => $query->where('provider', 'rotowire')
+                        ->whereIn('team_abbrev', array_filter([$game?->away_team_abbrev, $game?->home_team_abbrev])));
+            }))
             ->orderByRaw("CASE status WHEN 'confirmed' THEN 0 WHEN 'expected' THEN 1 ELSE 2 END")
             ->orderByDesc('fetched_at')->orderByDesc('id')->get();
         $lineupIds = $rows->whereIn('provider', ['public_lineup', 'manual'])->map(

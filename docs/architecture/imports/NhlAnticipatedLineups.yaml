@@ -30,6 +30,7 @@ when_not_to_use:
   - Replacing an official NHL game roster or boxscore lineup.
   - Treating multiple posts from the same publisher as independent corroboration.
 rules:
+  - GET /api/nhl/lineups/{nhlGameId} requires nhl-stats:read and returns one game with the date schedule's team/player/goalie contract under game rather than games. Unknown or nonnumeric ids return 404. Lineup verification is scoped to that game without provider calls; goalie conflicts retain relevant same-team same-day RotoWire evidence. Empty lineups remain empty lists and locked starters retain priority.
   - The public games index and detail refresh asynchronously every thirty seconds while visible, with no full-page reload; requests must not overlap or let stale date responses overwrite current selection and must stop on unmount. Existing pregame coverage never suppresses live refresh. Once live, boxscore forwards, defensemen, and goalies replace pregame presentation; database enrichment is limited to goalie avatars. Boxscore list order does not imply line combinations. Only an explicit unique starter flag establishes starting_goalie. Live cards expose expandable official rosters and preserve goalie GA/saves. Late pregame edit responses cannot overwrite live presentation. The NHL provider cache remains sixty seconds, independently of browser polling.
   - In started-game prediction responses, the designated NHL boxscore starter supersedes pregame manual G1 and request-specific goalie choices under NhlPlayerAvailability rules. Dressed roster G1 and simulation goalie inputs must agree with the selected official identity; manual lineup and goalie observation history remains unchanged.
   - Authorized POST /api/nhl-lineups submissions and direct UI manual submissions temporarily have equal lineup and goalie authority. Both require the same complete-roster validation; the latest accepted server-written manual observation wins, with observation id breaking timestamp ties. External publication timestamps and claimed user/source identities cannot affect this order. No voting or moderation workflow is introduced.
@@ -114,6 +115,7 @@ rules:
   - X searches persist the query and returned-post count in integration usage logs without an application-owned daily search ceiling.
   - Each admin-triggered lineup run atomically accumulates its returned X posts and dedicated import_runs estimated cost using the configured current X rates; usage from other runs must not affect its progress display.
 public_interface:
+  - GET /api/nhl/lineups/{nhlGameId}
   - GET /api/nhl/lineups
   - NhlAnticipatedLineupPayload::schedule
   - POST /api/nhl-lineups

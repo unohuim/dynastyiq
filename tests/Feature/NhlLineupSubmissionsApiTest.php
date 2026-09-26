@@ -279,7 +279,7 @@ it('does not accept a URL solely because the X lookup succeeded', function (): v
     $this->assertDatabaseCount('nhl_lineup_observations', 0);
 });
 
-it('protects the date lineup read with the existing read scope', function (string $case, int $status): void {
+it('protects lineup reads with the existing read scope', function (string $case, int $status, string $path): void {
     if ($case === 'read' || $case === 'revoked') {
         $this->client->update(['scopes' => ['nhl-stats:read']]);
     }
@@ -289,9 +289,39 @@ it('protects the date lineup read with the existing read scope', function (strin
     if ($case !== 'missing') {
         $this->withToken($case === 'invalid' ? 'invalid-token' : $this->token);
     }
-    $this->getJson('/api/nhl/lineups?date=2026-09-24')->assertStatus($status);
+    $this->getJson($path)->assertStatus($status);
     Http::assertNothingSent();
-})->with([['missing', 401], ['invalid', 403], ['write only', 403], ['revoked', 403], ['read', 200]]);
+})->with([['missing', 401], ['invalid', 403], ['write only', 403], ['revoked', 403], ['read', 200]])
+    ->with(['/api/nhl/lineups?date=2026-09-24', '/api/nhl/lineups/2026010088']);
+
+it('reads only the requested game with submitted players and locked goalie', function (): void {
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $other = NhlGame::query()->findOrFail(2026010088)->replicate();
+    $other->nhl_game_id = 2026010089;
+    $other->save();
+    app(\App\Services\NhlStartingGoalieSelector::class)->lockBoxscoreStarters(2026010088, [
+        'id' => 2026010088, 'gameState' => 'LIVE', 'homeTeam' => ['abbrev' => 'TOR'],
+        'playerByGameStats' => ['homeTeam' => ['goalies' => [['playerId' => 8488020, 'starter' => true]]]],
+    ]);
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->getJson('/api/nhl/lineups/2026010088')->assertOk()
+        ->assertJsonPath('game.nhl_game_id', 2026010088)
+        ->assertJsonPath('meta.count', 1)
+        ->assertJsonPath('game.teams.home.lineup_status', 'manual')
+        ->assertJsonCount(20, 'game.teams.home.players')
+        ->assertJsonPath('game.teams.home.starting_goalie.nhl_player_id', 8488020)
+        ->assertJsonPath('game.teams.home.starting_goalie.status', 'confirmed')
+        ->assertJsonPath('game.teams.away.players', [])
+        ->assertJsonPath('game.teams.away.lineup_status', 'not_reported');
+    Http::assertNothingSent();
+});
+
+it('returns not found for unknown or malformed lineup game ids', function (string $id): void {
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $this->withToken($this->token)->getJson('/api/nhl/lineups/' . $id)->assertNotFound();
+    Http::assertNothingSent();
+})->with(['9999999999', 'not-a-game']);
 
 it('requires a valid explicit date for lineup reads', function (string $query): void {
     $this->client->update(['scopes' => ['nhl-stats:read']]);
