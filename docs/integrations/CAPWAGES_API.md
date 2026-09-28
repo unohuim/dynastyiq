@@ -387,7 +387,28 @@ def get_team_lineup(team_slug):
 
 ## DynastyIQ Integration Status
 
-DynastyIQ currently configures and consumes the player list and player-detail endpoints. The team
-lineup endpoint is documented here as an available provider contract but is not currently configured
-or consumed by the application.
+DynastyIQ configures and consumes the player list, player-detail, and team-lineup endpoints.
 
+The **Cap Wages** button on `/lineups-test` selects games from `nhl_games` for the chosen stored
+`game_date`. Clicking **View lineups** invokes `CapWagesLineups::forGame()` and requests
+`/lineups/{teamSlug}` once for each participating team. The default source remains Highlightly.
+An initial source can also be supplied with `/lineups-test?source=capwages`.
+
+The existing `CAPWAGES_API_KEY` and `CAPWAGES_BASE_URL` settings supply authentication and the
+base URL. `apiurls.capwages.endpoints.lineups` supplies the path, and
+`apiurls.capwages.team_slugs` maps NHL abbreviations to provider slugs. The map is explicit and
+configurable; unmapped teams report a mapping error rather than inventing a slug. The configured
+slugs have not been verified through authenticated API calls as part of this implementation.
+
+This endpoint has no date or game parameter. Results are labelled **Current team lineup**,
+with `meta.lastUpdated` displayed when present. Changing the schedule date does not request
+a historical lineup. Each side independently reports unavailable lineups (HTTP 404) or request
+errors, while retaining a successful result for the other team.
+
+The existing two-team player-list UI is retained. Exact `playerSlug` matches against
+`capwages_players` supply stored names and jersey numbers where available. Unmatched rows show
+the provider slug and no jersey; no per-player API calls are made. Provider order, `line`, and
+`position` are preserved in the response, including unknown values. No scratch status or starting
+goalie designation is inferred. Player profiles and game/lineup records are not modified.
+
+Canonical boundaries: [CapWagesTeamLineups.yaml](../architecture/integrations/CapWagesTeamLineups.yaml).

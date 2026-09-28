@@ -14,6 +14,7 @@ export function createLineupsTest(payload, fetcher = (...args) => fetch(...args)
 
     return {
         date: payload.date,
+        source: payload.source === 'capwages' ? 'capwages' : 'highlightly',
         games: [],
         selectedGame: null,
         lineups: null,
@@ -24,6 +25,12 @@ export function createLineupsTest(payload, fetcher = (...args) => fetch(...args)
         lineupsError: '',
 
         init() { return this.loadGames(); },
+
+        selectSource(source) {
+            if (!['highlightly', 'capwages'].includes(source) || source === this.source) return;
+            this.source = source;
+            return this.loadGames();
+        },
 
         async loadGames() {
             const version = ++gamesVersion;
@@ -41,6 +48,7 @@ export function createLineupsTest(payload, fetcher = (...args) => fetch(...args)
             this.gamesLoading = true;
             try {
                 const query = new URLSearchParams({ date: this.date });
+                if (this.source === 'capwages') query.set('source', this.source);
                 const response = await fetcher(`${payload.gamesUrl}?${query}`, {
                     headers: { Accept: 'application/json' }, signal: gamesRequest.signal,
                 });
@@ -85,7 +93,8 @@ export function createLineupsTest(payload, fetcher = (...args) => fetch(...args)
             lineupRequest = new AbortController();
             this.lineupsLoading = true;
             try {
-                const url = payload.lineupsUrl.replace('__MATCH_ID__', encodeURIComponent(game.id));
+                let url = payload.lineupsUrl.replace('__MATCH_ID__', encodeURIComponent(game.id));
+                if (this.source === 'capwages') url += '?source=capwages';
                 const response = await fetcher(url, {
                     headers: { Accept: 'application/json' }, signal: lineupRequest.signal,
                 });
@@ -104,6 +113,16 @@ export function createLineupsTest(payload, fetcher = (...args) => fetch(...args)
         },
 
         players(side) { return this.lineups?.[side]?.lineup ?? []; },
+        teamError(side) { return this.lineups?.[side]?.error ?? ''; },
+        updatedAt(side) {
+            const value = this.lineups?.[side]?.lastUpdated;
+            if (!value) return '';
+            const date = new Date(value);
+            if (!Number.isFinite(date.getTime())) return value;
+            return new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short',
+            }).format(date);
+        },
         teamName(team) { return team?.displayName || team?.name || team?.abbreviation || 'Team unavailable'; },
         gameTime(game) {
             const date = new Date(game.date);

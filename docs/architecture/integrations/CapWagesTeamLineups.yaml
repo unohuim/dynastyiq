@@ -1,0 +1,33 @@
+name: CapWages Team Lineups
+type: Read Only Provider Lineup Projection
+location:
+  - app/Services/CapWagesLineups.php
+  - app/Http/Controllers/HighlightlyLineupsTestController.php
+  - config/apiurls.php
+  - resources/views/lineups-test.blade.php
+  - resources/js/pages/lineups-test.js
+purpose: Display current CapWages team lineups for a database-sourced matchup without invoking the player import or changing canonical lineup evidence.
+when_to_use:
+  - Selecting the Cap Wages source on the public lineups test page.
+when_not_to_use:
+  - Historical or game-specific lineup evidence, lineup imports, or player identity matching.
+rules:
+  - Source values are canonical in docs/ENUMS.md; omitting the source retains Highlightly behavior.
+  - Cap Wages game lists read nhl_games by stored game_date and order by puck-drop time, without provider calls.
+  - Game selection resolves both teams from the stored matchup, never caller-supplied team slugs.
+  - Each team is mapped through explicit provider configuration; an unmapped team must not trigger a guessed provider request.
+  - CapWages requests follow docs/integrations/CAPWAGES_API.md and reuse configured server-side authentication.
+  - The provider accepts a team slug, not a game date or id; the UI labels results as current team lineups and exposes provider freshness when supplied.
+  - Responses retain player order, unknown line and position values, and unresolved player slugs. Stored CapWages profiles may enrich names and jerseys by exact slug without live detail lookups.
+  - Missing lineups are distinct from request failures and each team's result is handled independently.
+  - No canonical players, game records, or lineup observations are created or updated by these reads.
+  - Switching sources clears game selection and invalidates outstanding games and lineup responses.
+public_interface:
+  - CapWagesLineups::forGame(NhlGame)
+  - GET /lineups-test/games?date=YYYY-MM-DD&source=capwages
+  - GET /lineups-test/{nhlGameId}/lineups?source=capwages
+  - apiurls.capwages.endpoints.lineups
+  - apiurls.capwages.team_slugs
+example_usage: |
+  $game = NhlGame::query()->findOrFail($nhlGameId);
+  $lineups = app(CapWagesLineups::class)->forGame($game);

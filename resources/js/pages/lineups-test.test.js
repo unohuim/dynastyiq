@@ -214,4 +214,115 @@ describe('Highlightly lineups test page', () => {
         expect(Alpine.data.mock.calls[0][0]).toBe('highlightlyLineupsTest');
         expect(Alpine.data.mock.calls[0][1]().date).toBe(payload.date);
     });
+
+    it('defaults to Highlightly and preserves its request URLs', async () => {
+        const fetcher = vi.fn().mockResolvedValueOnce(ok({ games: [] })).mockResolvedValueOnce(ok({ matchId: 91 }));
+        const state = createLineupsTest(payload, fetcher);
+        expect(state.source).toBe('highlightly');
+        await state.loadGames();
+        await state.selectGame(game);
+        expect(fetcher.mock.calls[0][0]).toBe('/lineups-test/games?date=2026-09-29');
+        expect(fetcher.mock.calls[1][0]).toBe('/lineups-test/91/lineups');
+    });
+
+    it('switches to Cap Wages without changing the selected date', async () => {
+        const fetcher = vi.fn().mockResolvedValue(ok({ games: [] }));
+        const state = createLineupsTest(payload, fetcher);
+        await state.selectSource('capwages');
+        expect(state.source).toBe('capwages');
+        expect(state.date).toBe('2026-09-29');
+        expect(fetcher.mock.calls[0][0]).toBe('/lineups-test/games?date=2026-09-29&source=capwages');
+    });
+
+    it('clears a selected game when switching providers', async () => {
+        const state = createLineupsTest(payload, vi.fn().mockResolvedValue(ok({ games: [] })));
+        state.selectedGame = game;
+        state.lineups = { matchId: 91 };
+        await state.selectSource('capwages');
+        expect(state.selectedGame).toBeNull();
+        expect(state.lineups).toBeNull();
+    });
+
+    it('includes the Cap Wages source when viewing a stored game', async () => {
+        const fetcher = vi.fn().mockResolvedValue(ok({ matchId: 2026010001 }));
+        const state = createLineupsTest({ ...payload, source: 'capwages' }, fetcher);
+        await state.selectGame({ id: 2026010001 });
+        expect(fetcher.mock.calls[0][0]).toBe('/lineups-test/2026010001/lineups?source=capwages');
+    });
+
+    it('keeps the Cap Wages source when navigating dates', async () => {
+        const fetcher = vi.fn().mockResolvedValue(ok({ games: [] }));
+        const state = createLineupsTest({ ...payload, source: 'capwages' }, fetcher);
+        await state.changeDay(1);
+        expect(fetcher.mock.calls[0][0]).toBe('/lineups-test/games?date=2026-09-30&source=capwages');
+    });
+
+    it('returns to Highlightly requests when switching back', async () => {
+        const fetcher = vi.fn().mockResolvedValue(ok({ games: [] }));
+        const state = createLineupsTest({ ...payload, source: 'capwages' }, fetcher);
+        await state.selectSource('highlightly');
+        expect(fetcher.mock.calls[0][0]).toBe('/lineups-test/games?date=2026-09-29');
+    });
+
+    it('does not refetch an already selected source', async () => {
+        const fetcher = vi.fn();
+        const state = createLineupsTest(payload, fetcher);
+        await state.selectSource('highlightly');
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('ignores an unsupported source selection', async () => {
+        const fetcher = vi.fn();
+        const state = createLineupsTest(payload, fetcher);
+        await state.selectSource('invalid');
+        expect(state.source).toBe('highlightly');
+        expect(fetcher).not.toHaveBeenCalled();
+    });
+
+    it('ignores stale games from the previous provider', async () => {
+        const pending = deferred();
+        const fetcher = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValueOnce(ok({ games: [{ id: 2026010001 }] }));
+        const state = createLineupsTest(payload, fetcher);
+        const oldRequest = state.loadGames();
+        await state.selectSource('capwages');
+        pending.resolve(ok({ games: [game] }));
+        await oldRequest;
+        expect(state.games).toEqual([{ id: 2026010001 }]);
+        expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+    });
+
+    it('ignores stale lineups from the previous provider even when ids overlap', async () => {
+        const pending = deferred();
+        const fetcher = vi.fn().mockReturnValueOnce(pending.promise)
+            .mockResolvedValueOnce(ok({ games: [game] }))
+            .mockResolvedValueOnce(ok({ matchId: 91, home: { lineup: [{ player: 'Cap Player' }] } }));
+        const state = createLineupsTest(payload, fetcher);
+        const oldRequest = state.selectGame(game);
+        await state.selectSource('capwages');
+        await state.selectGame(game);
+        pending.resolve(ok({ matchId: 91, home: { lineup: [{ player: 'Highlightly Player' }] } }));
+        await oldRequest;
+        expect(state.players('home')).toEqual([{ player: 'Cap Player' }]);
+    });
+
+    it('exposes one team error while retaining the other team lineup', async () => {
+        const state = createLineupsTest({ ...payload, source: 'capwages' }, vi.fn().mockResolvedValue(ok({
+            matchId: 91, away: { lineup: [], error: 'Team unavailable' },
+            home: { lineup: [{ player: 'Home Player' }], error: null },
+        })));
+        await state.selectGame(game);
+        expect(state.teamError('away')).toBe('Team unavailable');
+        expect(state.teamError('home')).toBe('');
+        expect(state.players('home')).toEqual([{ player: 'Home Player' }]);
+        expect(state.lineupsError).toBe('');
+    });
+
+    it('formats provider freshness in Toronto and handles missing timestamps', () => {
+        const state = createLineupsTest(payload, vi.fn());
+        state.lineups = { away: { lastUpdated: '2026-09-28T16:00:00Z' } };
+        expect(state.updatedAt('away')).toBe(new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Toronto', dateStyle: 'medium', timeStyle: 'short',
+        }).format(new Date('2026-09-28T16:00:00Z')));
+        expect(state.updatedAt('home')).toBe('');
+    });
 });

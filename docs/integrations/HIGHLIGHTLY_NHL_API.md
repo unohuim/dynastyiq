@@ -86,7 +86,7 @@ php artisan test tests/Unit/HighlightlyNhlClientTest.php
 
 #### Browser test page
 
-Visit `/lineups-test` to browse NHL games using the configured Highlightly account. The page uses the regular application layout and defaults to **September 29, 2026**. `/lineups-test?date=2026-09-30` overrides the initial date. Dates and displayed game times use **America/Toronto**.
+Visit `/lineups-test` to browse NHL games using the configured Highlightly account. The page uses the regular application layout and defaults to **September 29, 2026**. `/lineups-test?date=2026-09-30` overrides the initial date. Dates and displayed game times use **America/Toronto**. The source buttons default to **Highlightly**; its behavior below is unchanged. Selecting **Cap Wages** instead reads games from DIQ's database and fetches current team lineups as described in [CAPWAGES_API.md](CAPWAGES_API.md#dynastyiq-integration-status). Switching sources keeps the selected date but clears the game and any previous lineup results.
 
 Click the date field to open the browser calendar, or use the arrows on either side to move one day. Date changes fetch the game's list asynchronously through `/lineups-test/games?date=YYYY-MM-DD`. Selecting a game fetches `/lineups-test/{matchId}/lineups` and displays both teams' provider player lists, including jersey, position, and scratch status. The page offers refresh/retry actions and identifies unavailable lineups separately from failed requests.
 

@@ -85,6 +85,18 @@ page-local Alpine module to browse Highlightly NHL games by Toronto date and
 fetch both team lineups on selection. It defaults to September 29, 2026, retains
 provider player lists, and does not create line combinations or import records.
 
+### CapWages Team Lineups
+
+**Purpose:** Display current CapWages lineups for both teams in a stored NHL matchup.
+
+**Location:** `app/Services/CapWagesLineups.php`, `app/Http/Controllers/HighlightlyLineupsTestController.php`, `config/apiurls.php`.
+
+**Public Interface:** `CapWagesLineups::forGame(NhlGame)` and the `/lineups-test` payload routes with `source=capwages`.
+
+**Example Usage:** `app(CapWagesLineups::class)->forGame($game)`.
+
+**Authority:** `docs/architecture/integrations/CapWagesTeamLineups.yaml`.
+
 ### Server To Server API Clients
 
 **Name:** Server To Server API Clients

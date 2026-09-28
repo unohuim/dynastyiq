@@ -2708,6 +2708,15 @@ The following enum-like areas are intentionally documented because they are not 
 - Stats resource values differ between HTTP validation (`players`, `units`) and Discord command metadata (`player`, `unit`, `team`).
 - Stats period values differ in casing/naming between current stats validation (`lastWeek`, `thisWeek`, `past30days`) and legacy/Discord metadata (`lastweek`, `thisweek`, `last30`).
 
+## Lineups Test Sources
+
+The optional `source` query parameter on `/lineups-test` and its game/lineup payload routes accepts:
+
+- `highlightly` (default): Highlightly games and match lineups.
+- `capwages`: DIQ's stored game schedule and current CapWages team lineups.
+
+These values select the test-page data source only; they do not add canonical lineup evidence providers.
+
 **End of ENUMS**
 
 ### Partner X post lookup usage

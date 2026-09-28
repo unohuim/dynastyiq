@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\NhlGame;
+use App\Services\CapWagesLineups;
 use App\Services\HighlightlyNhlClient;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Client\ConnectionException;
@@ -13,16 +15,20 @@ use Illuminate\Http\Request;
 use LogicException;
 use UnexpectedValueException;
 
-/** Display date-scoped Highlightly games and on-demand team lineups. */
+/** Display date-scoped games and on-demand lineups from the selected provider. */
 class HighlightlyLineupsTestController extends Controller
 {
     /** Render the application shell without making a blocking provider request. */
     public function index(Request $request): View
     {
-        $input = $request->validate(['date' => ['nullable', 'date_format:Y-m-d']]);
+        $input = $request->validate([
+            'date' => ['nullable', 'date_format:Y-m-d'],
+            'source' => ['sometimes', 'required', 'in:highlightly,capwages'],
+        ]);
 
         return view('lineups-test', ['payload' => [
             'date' => $input['date'] ?? '2026-09-29',
+            'source' => $input['source'] ?? 'highlightly',
             'gamesUrl' => route('lineups-test.games'),
             'lineupsUrl' => route('lineups-test.lineups', ['matchId' => '__MATCH_ID__']),
         ]]);
@@ -31,7 +37,34 @@ class HighlightlyLineupsTestController extends Controller
     /** Retrieve every page of NHL games for the selected Toronto calendar date. */
     public function games(Request $request, HighlightlyNhlClient $client): JsonResponse
     {
-        $input = $request->validate(['date' => ['required', 'date_format:Y-m-d']]);
+        $input = $request->validate([
+            'date' => ['required', 'date_format:Y-m-d'],
+            'source' => ['sometimes', 'required', 'in:highlightly,capwages'],
+        ]);
+
+        if (($input['source'] ?? 'highlightly') === 'capwages') {
+            $games = NhlGame::query()->whereDate('game_date', $input['date'])
+                ->orderBy('start_time_utc')->orderBy('nhl_game_id')->get()
+                ->map(static function (NhlGame $game): array {
+                    $teams = [];
+
+                    foreach (['away', 'home'] as $side) {
+                        $teams[$side.'Team'] = [
+                            'abbreviation' => $game->{$side.'_team_abbrev'},
+                            'displayName' => trim(($game->{$side.'_team_place_name'} ?? '').' '.
+                                ($game->{$side.'_team_common_name'} ?? '')) ?: $game->{$side.'_team_abbrev'},
+                        ];
+                    }
+
+                    return array_merge($teams, [
+                        'id' => (int) $game->nhl_game_id,
+                        'date' => $game->start_time_utc?->toIso8601String(),
+                        'state' => ['description' => $game->game_state],
+                    ]);
+                });
+
+            return response()->json(['date' => $input['date'], 'games' => $games]);
+        }
 
         try {
             $games = [];
@@ -75,9 +108,18 @@ class HighlightlyLineupsTestController extends Controller
     }
 
     /** Retrieve both sides only when a game is selected, without persisting evidence. */
-    public function lineups(int $matchId, HighlightlyNhlClient $client): JsonResponse
-    {
+    public function lineups(
+        Request $request,
+        int $matchId,
+        HighlightlyNhlClient $client,
+        CapWagesLineups $capWages
+    ): JsonResponse {
+        $input = $request->validate(['source' => ['sometimes', 'required', 'in:highlightly,capwages']]);
         abort_if($matchId <= 0, 422, 'Select a valid game.');
+
+        if (($input['source'] ?? 'highlightly') === 'capwages') {
+            return response()->json($capWages->forGame(NhlGame::query()->findOrFail($matchId)));
+        }
 
         try {
             $payload = $client->lineups($matchId)->json();

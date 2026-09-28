@@ -26,6 +26,7 @@ rules:
   - Test-page dates use America/Toronto and restrict match discovery to NHL; date navigation fetches games asynchronously and selecting a provider match fetches both lineups on demand.
   - Test-page reads do not import evidence, infer line combinations, or use canonical NHL ids in place of Highlightly ids. Missing lineups and request errors are distinct UI states.
   - Date or game changes invalidate older browser requests so stale results cannot overwrite the current selection.
+  - The test page defaults to Highlightly; its alternative Cap Wages source is governed by CapWagesTeamLineups.yaml.
 public_interface:
   - HighlightlyNhlClient resource methods documented in docs/integrations/HIGHLIGHTLY_NHL_API.md
   - apiurls.highlightly base and endpoint configuration

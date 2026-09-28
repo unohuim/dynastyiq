@@ -5,10 +5,18 @@
 
     <div data-page="lineups-test" data-payload="lineups-test-payload" x-data="highlightlyLineupsTest"
         class="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div role="group" aria-label="Lineup source" class="flex gap-2">
+            <button type="button" @click="selectSource('capwages')" :aria-pressed="source === 'capwages'"
+                :class="source === 'capwages' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
+                class="rounded-md border px-4 py-2 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-indigo-500">Cap Wages</button>
+            <button type="button" @click="selectSource('highlightly')" :aria-pressed="source === 'highlightly'"
+                :class="source === 'highlightly' ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'"
+                class="rounded-md border px-4 py-2 text-sm font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-indigo-500">Highlightly</button>
+        </div>
         <div class="flex flex-wrap items-end justify-between gap-4">
             <div>
                 <h2 class="text-lg font-semibold text-gray-900">NHL games</h2>
-                <p class="mt-1 text-sm text-gray-600">Highlightly lineups · Dates and times in Toronto</p>
+                <p class="mt-1 text-sm text-gray-600" x-text="(source === 'capwages' ? 'Cap Wages' : 'Highlightly') + ' lineups · Dates and times in Toronto'">Highlightly lineups · Dates and times in Toronto</p>
             </div>
             <div class="flex items-end gap-2">
                 <button type="button" aria-label="Previous date" @click="changeDay(-1)"
@@ -51,7 +59,7 @@
             x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
             class="rounded-md bg-white px-4 py-5 sm:px-6">
             <h2 class="text-lg font-semibold text-gray-900" x-text="selectedGame ? teamName(selectedGame.awayTeam) + ' at ' + teamName(selectedGame.homeTeam) : ''"></h2>
-            <p class="mt-1 text-sm text-gray-500">Lineups may become available a few hours before puck drop.</p>
+            <p class="mt-1 text-sm text-gray-500" x-text="source === 'capwages' ? 'Current team lineup · Not specific to the selected game date.' : 'Lineups may become available a few hours before puck drop.'">Lineups may become available a few hours before puck drop.</p>
             <p x-show="lineupsLoading" role="status" class="mt-4 text-sm text-gray-500">Loading both team lineups…</p>
             <div x-show="lineupsError" role="alert" class="mt-4 text-sm text-red-700">
                 <p x-text="lineupsError"></p>
@@ -62,7 +70,9 @@
                     <section>
                         <h3 class="font-semibold text-gray-900" x-text="teamName(selectedGame?.[side + 'Team'])"></h3>
                         <p class="mt-1 text-xs uppercase tracking-wide text-gray-500" x-text="side"></p>
-                        <p x-show="players(side).length === 0" class="mt-4 text-sm text-gray-500">Lineup not available yet.</p>
+                        <p x-show="source === 'capwages' && updatedAt(side)" class="mt-1 text-xs text-gray-500" x-text="'Updated ' + updatedAt(side) + ' · Toronto time'"></p>
+                        <p x-show="teamError(side)" role="alert" class="mt-4 text-sm text-red-700" x-text="teamError(side)"></p>
+                        <p x-show="players(side).length === 0 && !teamError(side)" class="mt-4 text-sm text-gray-500">Lineup not available yet.</p>
                         <ul class="mt-3 divide-y divide-gray-100">
                             <template x-for="(player, index) in players(side)" :key="side + '-' + index">
                                 <li class="flex items-center gap-3 py-3 text-sm">
