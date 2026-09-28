@@ -28,6 +28,12 @@ return [
         'key' => env('RESEND_KEY'),
     ],
 
+    'highlightly' => [
+        'key' => env('HIGHLIGHTLY_API_KEY'),
+        'timeout_seconds' => (int) env('HIGHLIGHTLY_TIMEOUT_SECONDS', 30),
+        'connect_timeout_seconds' => (int) env('HIGHLIGHTLY_CONNECT_TIMEOUT_SECONDS', 10),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

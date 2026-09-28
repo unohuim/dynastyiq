@@ -15,6 +15,10 @@ This directory indexes provider API contracts, observed response semantics, and 
 - `fantrax-api.md`: Fantrax API usage notes.
 - `fantrax-responses/README.md`: Observed Fantrax response documentation.
 
+## Highlightly
+
+- [HIGHLIGHTLY_NHL_API.md](HIGHLIGHTLY_NHL_API.md): NHL & NCAAH API usage, all 18 endpoints, authentication, parameters, response structures, subscription restrictions, quotas, and errors.
+
 ## NHL
 
 - `DIQ-API-Usage-Doc.md`: Official and canonical DynastyIQ API usage guide for every partner and API consumer.

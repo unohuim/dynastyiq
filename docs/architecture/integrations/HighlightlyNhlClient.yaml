@@ -1,0 +1,39 @@
+name: Highlightly NHL Client
+type: External Provider Client
+location:
+  - app/Services/HighlightlyNhlClient.php
+  - config/apiurls.php
+  - config/services.php
+  - app/Http/Controllers/HighlightlyLineupsTestController.php
+  - resources/views/lineups-test.blade.php
+  - resources/js/pages/lineups-test.js
+purpose: Provide authenticated access to all documented Highlightly hockey resources while retaining provider payloads and quota metadata.
+when_to_use:
+  - Requesting Highlightly NHL or NCAA hockey data through a dedicated hockey or All Sports subscription.
+when_not_to_use:
+  - Resolving canonical NHL identities or replacing official NHL statistics.
+  - Persisting provider data, scheduling polling, or exposing credentials to browsers.
+rules:
+  - Credentials and timeouts come from Laravel configuration and are never query parameters.
+  - Credential-bearing requests are restricted to the documented HTTPS product bases and do not follow redirects.
+  - The RapidAPI host header is derived from the configured RapidAPI base and is omitted for direct Highlightly requests.
+  - Each public resource method makes one GET request without automatic pagination or retries.
+  - Callers retain the HTTP response, including provider JSON shape, plan restrictions, and quota headers.
+  - Missing credentials, invalid required inputs, and invalid configuration fail before an HTTP request.
+  - HTTP and connection errors propagate; malformed success payloads must not become empty successful results.
+  - Provider identifiers and payload values remain external evidence and are not mapped or persisted by the client.
+  - The public /lineups-test page uses the application layout and defaults to September 29, 2026, with an optional validated date query override.
+  - Test-page dates use America/Toronto and restrict match discovery to NHL; date navigation fetches games asynchronously and selecting a provider match fetches both lineups on demand.
+  - Test-page reads do not import evidence, infer line combinations, or use canonical NHL ids in place of Highlightly ids. Missing lineups and request errors are distinct UI states.
+  - Date or game changes invalidate older browser requests so stale results cannot overwrite the current selection.
+public_interface:
+  - HighlightlyNhlClient resource methods documented in docs/integrations/HIGHLIGHTLY_NHL_API.md
+  - apiurls.highlightly base and endpoint configuration
+  - services.highlightly credentials and timeout configuration
+  - GET /lineups-test
+  - GET /lineups-test/games?date=YYYY-MM-DD
+  - GET /lineups-test/{matchId}/lineups
+example_usage: |
+  $response = app(HighlightlyNhlClient::class)->matches(['league' => 'NHL', 'date' => '2026-01-15']);
+  $matches = $response->json('data');
+  $remaining = $response->header('x-ratelimit-requests-remaining');

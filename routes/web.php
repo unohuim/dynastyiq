@@ -66,6 +66,12 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
     Route::get('/injuries', [NhlAvailabilityController::class, 'injuries'])->name('injuries.index');
     Route::get('/injuries/payload', [NhlAvailabilityController::class, 'injuriesPayload'])->name('injuries.payload');
     Route::get('/games', [NhlGamesController::class, 'index'])->name('games.index');
+    Route::get('/lineups-test', [\App\Http\Controllers\HighlightlyLineupsTestController::class, 'index'])
+        ->name('lineups-test.index');
+    Route::get('/lineups-test/games', [\App\Http\Controllers\HighlightlyLineupsTestController::class, 'games'])
+        ->name('lineups-test.games');
+    Route::get('/lineups-test/{matchId}/lineups', [\App\Http\Controllers\HighlightlyLineupsTestController::class, 'lineups'])
+        ->whereNumber('matchId')->name('lineups-test.lineups');
     Route::get('/games/payload', [NhlGamesController::class, 'payload'])->name('games.payload');
     Route::get('/games/{nhlGameId}', [NhlGamesController::class, 'show'])
         ->whereNumber('nhlGameId')

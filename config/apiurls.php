@@ -66,6 +66,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Highlightly NHL & NCAAH API Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Credentials and timeouts live in services.highlightly. Use
+    | HighlightlyNhlClient to retain quota headers and select platform headers.
+    |
+    */
+    'highlightly' => [
+        'base' => env('HIGHLIGHTLY_BASE_URL', 'https://nhl.highlightly.net'),
+        'endpoints' => [
+            'bookmakers' => '/bookmakers',
+            'bookmaker' => '/bookmakers/{id}',
+            'head_to_head' => '/head-2-head',
+            'highlights' => '/highlights',
+            'highlight_geo_restrictions' => '/highlights/geo-restrictions/{id}',
+            'highlight' => '/highlights/{id}',
+            'last_five_games' => '/last-five-games',
+            'matches' => '/matches',
+            'match' => '/matches/{id}',
+            'odds' => '/odds',
+            'standings' => '/standings',
+            'teams' => '/teams',
+            'team_statistics' => '/teams/statistics/{id}',
+            'team' => '/teams/{id}',
+            'lineups' => '/lineups/{matchId}',
+            'players' => '/players',
+            'player' => '/players/{id}',
+            'player_statistics' => '/players/{id}/statistics',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | NHL Stats API Configuration
     |--------------------------------------------------------------------------
     |

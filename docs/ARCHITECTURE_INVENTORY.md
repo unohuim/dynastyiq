@@ -68,6 +68,23 @@ Each entry includes:
 
 ## Application Structure
 
+### Highlightly NHL Client
+
+**Purpose:** Fetch external hockey resources while retaining payloads and quota headers.
+
+**Location:** `app/Services/HighlightlyNhlClient.php`, `config/apiurls.php`, `config/services.php`.
+
+**Public Interface:** Eighteen resource methods returning Laravel HTTP responses; method mapping and setup are in `docs/integrations/HIGHLIGHTLY_NHL_API.md`.
+
+**Example Usage:** `app(HighlightlyNhlClient::class)->teams(['league' => 'NHL'])->json()`.
+
+**Authority:** `docs/architecture/integrations/HighlightlyNhlClient.yaml`.
+
+The public `/lineups-test` Blade page uses the regular application layout and a
+page-local Alpine module to browse Highlightly NHL games by Toronto date and
+fetch both team lineups on selection. It defaults to September 29, 2026, retains
+provider player lists, and does not create line combinations or import records.
+
 ### Server To Server API Clients
 
 **Name:** Server To Server API Clients

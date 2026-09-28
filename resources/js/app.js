@@ -17,6 +17,7 @@ import { registerCommunityMembersStore } from './components/community-members-st
 import './components/draft-round-scrollbar';
 import './pages/discord-bot-installed';
 import { registerToastStack } from './components/toast-stack';
+import { mount as mountLineupsTest } from './pages/lineups-test';
 
 // import "./components/RangeSlider/range-slider.css";
 // import { RangeSlider } from "./components/RangeSlider/range-slider.js";
@@ -52,6 +53,12 @@ window.Alpine = Alpine;
 
 registerCommunityMembersStore();
 registerToastStack(Alpine);
+
+const lineupsTestRoot = document.querySelector('[data-page="lineups-test"]');
+if (lineupsTestRoot) {
+    const payload = JSON.parse(document.getElementById(lineupsTestRoot.dataset.payload).textContent);
+    mountLineupsTest(lineupsTestRoot, payload, Alpine);
+}
 
 // Only start Alpine once per page load.
 if (!window.__alpineStarted) {
