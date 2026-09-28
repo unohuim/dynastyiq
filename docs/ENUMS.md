@@ -1485,6 +1485,16 @@ These values describe training-only age, S1-to-S2 rate movement, S1-to-S2 opport
 
 ## Stats & Rankings
 
+### Line Combination Sum Selection
+
+**Location:** `/stats/units` query parameter `sum`.
+
+- `1`: Combine each unit across the selected games (default when omitted or empty).
+- `0`: Show each unit separately per game, combining its shifts within that game.
+
+This boolean grouping choice is independent of the existing `display` values
+`counts` and `share`, which control statistics presentation.
+
 ### Visibility
 
 **Name:** Content visibility

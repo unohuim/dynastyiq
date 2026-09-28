@@ -8,6 +8,9 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Display line combinations summed across games or grouped by individual game.
+ */
 class StatsUnitsController extends Controller
 {
     /** @var string[] allow-list for sortable columns on s.* */
@@ -47,8 +50,20 @@ class StatsUnitsController extends Controller
         'penalties_a',
     ];
 
+    /**
+     * Read persisted unit summaries for the selected games and player.
+     */
     public function index(Request $request)
     {
+        $request->validate([
+            'sum' => ['nullable', 'boolean'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
+            'nhl_game_id' => ['nullable', 'integer', 'min:1'],
+            'player_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+
+        $sum = ! $request->filled('sum') || $request->boolean('sum');
+        $date = (string) $request->input('date', '');
         $perPage = (int) $request->integer('per_page', 30);
         $sort    = (string) $request->get('sort', 'gf');
         $dir     = strtolower((string) $request->get('dir', 'desc'));
@@ -129,28 +144,86 @@ class StatsUnitsController extends Controller
             $team = '';
         }
 
+        $context = DB::table('nhl_unit_game_strength_summaries as s')
+            ->join('nhl_units as u', 'u.id', '=', 's.unit_id')
+            ->join('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+            ->where('g.season_id', $seasonId)
+            ->where('g.game_type', $gameType)
+            ->whereIn('u.unit_type', $pos)
+            ->when($team !== '', fn (QueryBuilder $query) => $query->where('s.team_abbrev', $team))
+            ->when($date !== '', fn (QueryBuilder $query) => $query->where('g.game_date', $date));
+
+        $gameOptions = (clone $context)
+            ->select('g.nhl_game_id', 'g.game_date', 'g.away_team_abbrev', 'g.home_team_abbrev', 'g.start_time_utc')
+            ->distinct()
+            ->orderByDesc('g.game_date')
+            ->orderBy('g.nhl_game_id')
+            ->get();
+        $gameId = $request->integer('nhl_game_id');
+
+        if (! $gameOptions->contains('nhl_game_id', $gameId)) {
+            $gameId = null;
+        }
+
+        $context->when($gameId !== null, fn (QueryBuilder $query) => $query->where('s.nhl_game_id', $gameId));
+
+        $playerOptions = (clone $context)
+            ->join('nhl_unit_players as up', 'up.unit_id', '=', 's.unit_id')
+            ->join('players as p', 'p.id', '=', 'up.player_id')
+            ->select('p.id', 'p.first_name', 'p.last_name', 'p.full_name')
+            ->distinct()
+            ->orderBy('p.last_name')
+            ->orderBy('p.first_name')
+            ->orderBy('p.id')
+            ->get();
+        $playerId = $request->integer('player_id');
+
+        if (! $playerOptions->contains('id', $playerId)) {
+            $playerId = null;
+        }
+
+        if ($playerId !== null) {
+            $context->whereExists(function (QueryBuilder $query) use ($playerId): void {
+                $query->selectRaw('1')
+                    ->from('nhl_unit_players as selected_player')
+                    ->whereColumn('selected_player.unit_id', 's.unit_id')
+                    ->where('selected_player.player_id', $playerId);
+            });
+        }
+
         $sumSelects = collect($this->totalFields)
             ->map(static fn (string $field): string => "SUM(s.{$field}) as {$field}")
             ->implode(', ');
 
-        $q = DB::table('nhl_unit_game_strength_summaries as s')
-            ->join('nhl_units as u', 'u.id', '=', 's.unit_id')
-            ->leftJoin('nhl_games as g', 'g.nhl_game_id', '=', 's.nhl_game_id')
+        $q = $context
             ->selectRaw(
                 "s.unit_id, u.unit_type, COALESCE(u.team_abbrev, MAX(s.team_abbrev)) as team_abbrev, " .
                 "g.season_id, g.game_type, COUNT(DISTINCT s.nhl_game_id) as gp, {$sumSelects}"
             )
-            ->where('g.season_id', $seasonId)
-            ->where('g.game_type', $gameType)
-            ->whereIn('u.unit_type', $pos)
-            ->when($team !== '', function ($qq) use ($team) {
-                $qq->where('s.team_abbrev', $team);
-            })
             ->groupBy('s.unit_id', 'u.unit_type', 'u.team_abbrev', 'g.season_id', 'g.game_type');
+
+        $groupByGame = ! $sum || $gameId !== null;
+
+        if ($groupByGame) {
+            $q->addSelect([
+                'g.nhl_game_id', 'g.game_date',
+                'g.away_team_abbrev as away', 'g.home_team_abbrev as home',
+                'g.away_team_score', 'g.home_team_score', 'g.period_type',
+            ])->groupBy(
+                'g.nhl_game_id', 'g.game_date', 'g.away_team_abbrev', 'g.home_team_abbrev',
+                'g.away_team_score', 'g.home_team_score', 'g.period_type'
+            );
+        }
 
         $filterStats = $this->filterStats(clone $q);
         $filterBounds = $filterStats['bounds'];
         $filterDefaults = $filterStats['defaults'];
+        if (! $sum || $date !== '' || $gameId !== null || $playerId !== null) {
+            // Small game/player samples must not disappear behind season-volume defaults.
+            $filterDefaults['gp_min'] = 0;
+            $filterDefaults['shifts_min'] = 0;
+            $filterDefaults['toi_min'] = 0;
+        }
         $filters = $this->withDefaultFilters($request, $filters, $filterDefaults);
         $this->applyAggregateFilters($q, $filters);
 
@@ -162,6 +235,19 @@ class StatsUnitsController extends Controller
         }, 'player_names');
 
         $this->applyOrdering($q, $sort, $dir, $displayMode);
+        $q->orderBy('s.unit_id');
+
+        if ($groupByGame) {
+            $q->orderByDesc('g.game_date')->orderBy('g.nhl_game_id');
+        }
+
+        // Pagination must retain the resolved scope, not stale game/player choices.
+        $request->merge([
+            'sum' => $sum ? '1' : '0',
+            'date' => $date,
+            'nhl_game_id' => $gameId,
+            'player_id' => $playerId,
+        ]);
 
         $units = $q->paginate($perPage)->withQueryString();
         $units->getCollection()->transform(function (object $row): object {
@@ -170,7 +256,7 @@ class StatsUnitsController extends Controller
             return $row;
         });
 
-        return view('stats-units', [
+        $data = [
             'units'    => $units,
             'sortable' => $this->sortable,
             'sort'     => $sort,
@@ -188,7 +274,22 @@ class StatsUnitsController extends Controller
             'filterBounds' => $filterBounds,
             'filterDefaults' => $filterDefaults,
             'filters' => $filters,
-        ]);
+            'sum' => $sum,
+            'date' => $date,
+            'gameId' => $gameId,
+            'gameOptions' => $gameOptions,
+            'playerId' => $playerId,
+            'playerOptions' => $playerOptions,
+        ];
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'html' => view('partials._stats-units-content', $data)->render(),
+                'url' => $request->fullUrl(),
+            ]);
+        }
+
+        return view('stats-units', $data);
     }
 
     /**

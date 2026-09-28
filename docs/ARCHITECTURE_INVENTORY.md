@@ -2007,6 +2007,10 @@ app(NhlValidationTroubleshootingExporter::class)->export($validation);
 
 ### NHL Strength On-Ice Stats
 
+The `/stats/units` report supports summed combinations or combinations per game,
+with date, game, and participating-player filters. Both modes read persisted
+game-strength summaries; see `docs/architecture/stats/NhlStrengthOnIceStats.yaml`.
+
 **Name:** NHL Strength On-Ice Stats
 **Type:** Stats Aggregation Pattern
 **Location:**

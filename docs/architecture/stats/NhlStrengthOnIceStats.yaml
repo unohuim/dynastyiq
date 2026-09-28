@@ -5,6 +5,7 @@ location:
   - app/Services/NhlStrengthStatsQuery.php
   - app/Models/NhlUnitGameStrengthSummary.php
   - app/Models/NhlPlayerGameStrengthSummary.php
+  - app/Http/Controllers/StatsUnitsController.php
   - database/migrations/2026_06_29_020001_create_nhl_strength_summaries_table.php
 purpose: Persist strength-aware on-ice totals by game so stats requests can aggregate summaries instead of scanning raw play-by-play events.
 when_to_use:
@@ -17,6 +18,12 @@ when_not_to_use:
   - Storing cheap rate variants that can be derived from totals.
 rules:
   - Request-time stats must aggregate from persisted game-strength summaries, not raw play-by-play rows.
+  - The line-combination report groups summaries by unit across selected games when Sum is checked, and by unit and game when unchecked; both modes combine all shifts within each unit-game.
+  - Line-combination date filters use the stored NHL schedule date and combine with season, game type, team, unit type, and optional game constraints before aggregation.
+  - Game choices must come from summaries in the selected scope; player choices must come from participating units within that scope and optional game, before applying the selected player or volume limits.
+  - A player selection retains complete combinations containing that player and must not multiply their statistics through player joins.
+  - Stale game and player selections outside the current scope must be cleared; clearing the date also clears the selected game in the UI.
+  - Date, game, player, and per-game views must not inherit season-volume minimum defaults; explicit volume limits apply to the chosen grouping.
   - Strength values must remain aligned with docs/ENUMS.md.
   - Empty-net contexts remain EV unless a separate context flag is approved.
   - Per-game, per-60, percentages, and IPP must be derived from totals in one query/presentation layer.
