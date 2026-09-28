@@ -178,7 +178,8 @@ class NhlAnticipatedLineupImporter
             ->get();
 
         foreach ($rows as $row) {
-            $player = $this->players->resolve((string) $row->player_name, $teamAbbrev);
+            $player = $this->players->resolve((string) $row->player_name, $teamAbbrev,
+                ['forward' => 'F', 'defense' => 'D', 'goalie' => 'G'][$row->lineup_role] ?? null);
             if ($player === null) {
                 continue;
             }
@@ -366,7 +367,8 @@ class NhlAnticipatedLineupImporter
             ->map(function (array $row) use ($teamId, $teamAbbrev): array {
                 $player = isset($row['nhl_player_id'])
                     ? \App\Models\Player::query()->where('nhl_id', (int) $row['nhl_player_id'])->first()
-                    : $this->players->resolve((string) $row['name'], $teamAbbrev);
+                    : $this->players->resolve((string) $row['name'], $teamAbbrev,
+                        ['forward' => 'F', 'defense' => 'D', 'goalie' => 'G'][$row['lineup_role']] ?? null);
                 $nhlPlayerId = $player?->nhl_id;
 
                 return [

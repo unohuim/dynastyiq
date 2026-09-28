@@ -62,7 +62,7 @@ class NhlLineupTextParser
                     break 2;
                 }
                 $lineKey = $slot < 12 ? 'F' . (intdiv($slot, 3) + 1) : 'D' . (intdiv($slot - 12, 2) + 1);
-                $message = $this->players->unresolvedReferenceMessage($name, $teamAbbrev);
+                $message = $this->players->unresolvedReferenceMessage($name, $teamAbbrev, $slot < 12 ? 'F' : 'D');
                 if ($message !== null) {
                     $messages[] = $lineKey . ': ' . $message;
                 }
@@ -111,7 +111,7 @@ class NhlLineupTextParser
             if ($section === null) {
                 continue;
             }
-            foreach ($this->players->mentions($line, $teamAbbrev) as $player) {
+            foreach ($this->players->mentions($line, $teamAbbrev, ['forward' => 'F', 'defense' => 'D', 'goalie' => 'G'][$section]) as $player) {
                 $assignedTeam = mb_strtoupper(trim((string) $player['team_abbrev']));
                 if ($assignedTeam === '' || $assignedTeam === mb_strtoupper($teamAbbrev)) {
                     $groups[$section][] = $player;
@@ -343,7 +343,7 @@ class NhlLineupTextParser
                 }
             }
 
-            $matches = $this->players->mentions($line, $teamAbbrev);
+            $matches = $this->players->mentions($line, $teamAbbrev, ['forward' => 'F', 'defense' => 'D', 'goalie' => 'G'][$section] ?? null);
             if ($matches === []) {
                 continue;
             }
@@ -465,7 +465,7 @@ class NhlLineupTextParser
         foreach ($segments as $segment) {
             $references = explode('/', $segment);
             foreach ($references as $reference) {
-                $resolved = $this->players->resolve($reference, $teamAbbrev);
+                $resolved = $this->players->resolve($reference, $teamAbbrev, $fallbackPosition);
                 if ($resolved === null) {
                     continue;
                 }

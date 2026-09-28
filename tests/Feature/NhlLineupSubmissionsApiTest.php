@@ -519,6 +519,102 @@ it('explains ambiguous initials without choosing a player or claiming the name w
     Http::assertNothingSent();
 });
 
+it('submits and reads same-team ambiguous initials resolved by reported position type', function (): void {
+    DB::table('nhl_teams')->where('abbrev', 'TOR')->update(['abbrev' => 'VAN']);
+    NhlGame::query()->whereKey(2026010088)->update(['home_team_abbrev' => 'VAN', 'game_type' => 2]);
+    Player::query()->where('team_abbrev', 'TOR')->update(['team_abbrev' => 'VAN']);
+    Player::query()->where('nhl_id', 8488001)->update([
+        'full_name' => 'Elias Pettersson', 'first_name' => 'Elias', 'last_name' => 'Pettersson', 'pos_type' => 'F',
+    ]);
+    Player::query()->where('nhl_id', 8488013)->update([
+        'full_name' => 'Erik Pettersson', 'first_name' => 'Erik', 'last_name' => 'Pettersson', 'pos_type' => 'D',
+    ]);
+    $text = str_replace(['Player 1 -', 'Player 13 -'], ['E. Pettersson -', 'E. Pettersson -'], $this->text);
+
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [
+        ...$this->body, 'team_abbrev' => 'VAN', 'text' => $text,
+    ])->assertCreated();
+
+    foreach ([8488001 => 'F1', 8488013 => 'D1'] as $id => $line) {
+        $this->assertDatabaseHas('nhl_lineup_observation_players', [
+            'nhl_player_id' => $id, 'line_key' => $line, 'slot_index' => 1, 'resolution_status' => 'resolved',
+        ]);
+    }
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $response = $this->getJson('/api/nhl/lineups/2026010088')->assertOk();
+    $players = collect($response->json('game.teams.home.players'));
+    expect($players->firstWhere('nhl_player_id', 8488001)['line_key'])->toBe('F1')
+        ->and($players->firstWhere('nhl_player_id', 8488013)['line_key'])->toBe('D1');
+    Http::assertNothingSent();
+});
+
+it('uses position type before considering an explicit position for ambiguous names', function (): void {
+    $forward = Player::query()->create([
+        'nhl_id' => 8499101, 'full_name' => 'Elias Pettersson', 'first_name' => 'Elias',
+        'last_name' => 'Pettersson', 'team_abbrev' => 'VAN', 'pos_type' => 'F', 'position' => 'LW',
+    ]);
+    Player::query()->create([
+        'nhl_id' => 8499102, 'full_name' => 'Erik Pettersson', 'first_name' => 'Erik',
+        'last_name' => 'Pettersson', 'team_abbrev' => 'VAN', 'pos_type' => 'D', 'position' => 'C',
+    ]);
+    $resolver = app(\App\Services\NhlLineupPlayerResolver::class);
+
+    expect($resolver->resolve('E. Pettersson', 'VAN', 'F', 'C')?->id)->toBe($forward->id)
+        ->and($resolver->unresolvedReferenceMessage('E. Pettersson', 'VAN', 'F', 'C'))->toBeNull()
+        ->and(array_column($resolver->mentions('E. Pettersson', 'VAN', 'F'), 'nhl_player_id'))->toBe([8499101]);
+});
+
+it('uses explicit position only to break a remaining same-type name tie', function (?string $position, ?int $expected): void {
+    foreach (['C', 'LW'] as $index => $playerPosition) {
+        Player::query()->create([
+            'nhl_id' => 8499101 + $index, 'full_name' => ['Elias Pettersson', 'Erik Pettersson'][$index],
+            'first_name' => ['Elias', 'Erik'][$index], 'last_name' => 'Pettersson',
+            'team_abbrev' => 'VAN', 'pos_type' => 'F', 'position' => $playerPosition,
+        ]);
+    }
+
+    expect(app(\App\Services\NhlLineupPlayerResolver::class)
+        ->resolve('E. Pettersson', 'VAN', 'F', $position)?->nhl_id)->toBe($expected);
+})->with([[null, null], ['C', 8499101], ['LW', 8499102], ['RW', null]]);
+
+it('does not choose a matching position type from another team over ambiguous team matches', function (): void {
+    foreach (['VAN', 'VAN', 'TOR'] as $index => $team) {
+        Player::query()->create([
+            'nhl_id' => 8499101 + $index, 'full_name' => ['Elias Pettersson', 'Erik Pettersson', 'Ellis Pettersson'][$index],
+            'first_name' => ['Elias', 'Erik', 'Ellis'][$index], 'last_name' => 'Pettersson',
+            'team_abbrev' => $team, 'pos_type' => $team === 'VAN' ? 'D' : 'F', 'position' => 'C',
+        ]);
+    }
+
+    expect(app(\App\Services\NhlLineupPlayerResolver::class)->resolve('E. Pettersson', 'VAN', 'F'))->toBeNull();
+});
+
+it('does not infer a centre position from the middle forward slot', function (): void {
+    NhlGame::query()->whereKey(2026010088)->update(['game_type' => 2]);
+    Player::query()->where('nhl_id', 8488002)->update([
+        'full_name' => 'Elias Pettersson', 'first_name' => 'Elias', 'last_name' => 'Pettersson', 'pos_type' => 'F',
+    ]);
+    Player::query()->create([
+        'nhl_id' => 8499102, 'full_name' => 'Erik Pettersson', 'first_name' => 'Erik',
+        'last_name' => 'Pettersson', 'team_abbrev' => 'TOR', 'pos_type' => 'F', 'position' => 'LW',
+    ]);
+    $text = str_replace('Player 2 -', 'E. Pettersson -', $this->text);
+
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])
+        ->assertUnprocessable()->assertJsonPath('errors.text.0',
+            'F1: "E. Pettersson" matches multiple players. Use a more specific name or NHL sweater number.');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    Http::assertNothingSent();
+});
+
+it('preserves uniquely identified skaters despite a different reported position type', function (): void {
+    $player = Player::query()->where('nhl_id', 8488001)->firstOrFail();
+    $player->update(['pos_type' => 'D', 'position' => 'D']);
+
+    expect(app(\App\Services\NhlLineupPlayerResolver::class)->resolve('Player 1', 'TOR', 'F')?->id)
+        ->toBe($player->id);
+});
+
 it('returns wrong-team and unmatched player messages together on a rejected lineup', function (): void {
     NhlGame::query()->whereKey(2026010088)->update(['game_type' => 2]);
     Player::query()->where('nhl_id', 8488001)->update(['team_abbrev' => 'MTL']);

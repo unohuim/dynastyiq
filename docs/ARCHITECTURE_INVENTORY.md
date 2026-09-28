@@ -1,5 +1,9 @@
 # Architecture Inventory
 
+Ambiguous lineup names use team context, then `pos_type`, with explicit `position`
+only breaking remaining ties. Forward slot order does not imply position.
+Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
+
 Public games pages poll asynchronously and replace pregame lineup/goalie display
 with NHL live boxscore rosters and explicit starter flags. `BoxscoreRoster.vue`
 renders provider player lists without inventing line combinations or changing

@@ -18,7 +18,8 @@ class NhlLineupPlayerResolver
     {
     }
 
-    public function resolve(string $name, string $teamAbbrev): ?Player
+    /** Use reported type, then an explicit position, only to disambiguate name matches. */
+    public function resolve(string $name, string $teamAbbrev, ?string $posType = null, ?string $position = null): ?Player
     {
         // A shared lineup slot names alternatives, not one canonical player.
         // Never collapse them during persistence or later identity reconciliation.
@@ -39,13 +40,17 @@ class NhlLineupPlayerResolver
             fn (Player $player): bool => $this->referenceMatchesPlayer($normalized, $player)
         )->values();
 
-        return $this->preferTeamMatch($matches, $teamAbbrev);
+        return $this->preferTeamMatch($matches, $teamAbbrev, $posType, $position);
     }
 
     /** Explain an unresolved reference using the same candidates and team preference as resolve(). */
-    public function unresolvedReferenceMessage(string $name, string $teamAbbrev): ?string
-    {
-        if ($this->resolve($name, $teamAbbrev) !== null) {
+    public function unresolvedReferenceMessage(
+        string $name,
+        string $teamAbbrev,
+        ?string $posType = null,
+        ?string $position = null
+    ): ?string {
+        if ($this->resolve($name, $teamAbbrev, $posType, $position) !== null) {
             return null;
         }
 
@@ -152,7 +157,7 @@ class NhlLineupPlayerResolver
     }
 
     /** @return array<int,array<string,mixed>> */
-    public function mentions(string $text, string $teamAbbrev): array
+    public function mentions(string $text, string $teamAbbrev, ?string $posType = null): array
     {
         $normalizedText = $this->normalizer->normalizeName($text);
         if ($normalizedText === null) {
@@ -166,15 +171,13 @@ class NhlLineupPlayerResolver
                 continue;
             }
 
-            $teamMatch = mb_strtoupper((string) $player->team_abbrev) === mb_strtoupper($teamAbbrev);
-            $found[] = ['offset' => $offset, 'team_match' => $teamMatch, 'player' => $player];
+            $found[] = ['offset' => $offset, 'player' => $player];
         }
 
-        return collect($found)->groupBy('offset')->map(function (Collection $matches): ?array {
-            $teamMatches = $matches->where('team_match', true)->values();
+        return collect($found)->groupBy('offset')->map(function (Collection $matches) use ($teamAbbrev, $posType): ?array {
+            $player = $this->preferTeamMatch($matches->pluck('player'), $teamAbbrev, $posType);
 
-            return $teamMatches->count() === 1 ? $teamMatches->first()
-                : ($matches->count() === 1 ? $matches->first() : null);
+            return $player === null ? null : ['offset' => $matches->first()['offset'], 'player' => $player];
         })->filter()->sortBy('offset')->pluck('player')->map(fn (Player $player): array => $this->playerRow($player))
             ->values()->all();
     }
@@ -183,7 +186,7 @@ class NhlLineupPlayerResolver
     private function canonicalPlayers(): Collection
     {
         return $this->players ??= Player::query()->whereNotNull('nhl_id')->whereNotNull('full_name')
-            ->get(['id', 'nhl_id', 'first_name', 'last_name', 'full_name', 'team_abbrev', 'position']);
+            ->get(['id', 'nhl_id', 'first_name', 'last_name', 'full_name', 'team_abbrev', 'pos_type', 'position']);
     }
 
     private function referenceMatchesPlayer(string $reference, Player $player): bool
@@ -260,14 +263,30 @@ class NhlLineupPlayerResolver
     }
 
     /** @param Collection<int,Player> $matches */
-    private function preferTeamMatch(Collection $matches, string $teamAbbrev): ?Player
-    {
+    private function preferTeamMatch(
+        Collection $matches,
+        string $teamAbbrev,
+        ?string $posType = null,
+        ?string $position = null
+    ): ?Player {
         $teamMatches = $matches->filter(
             fn (Player $player): bool => mb_strtoupper((string) $player->team_abbrev) === mb_strtoupper($teamAbbrev)
         )->values();
 
-        if ($teamMatches->count() === 1) {
-            return $teamMatches->first();
+        if ($teamMatches->isNotEmpty()) {
+            $matches = $teamMatches;
+        }
+
+        // A unique identity retains its reported deployment, even outside its usual type.
+        if ($matches->count() > 1 && $posType !== null) {
+            $matches = $matches->filter(
+                fn (Player $player): bool => mb_strtoupper((string) $player->pos_type) === mb_strtoupper($posType)
+            );
+        }
+        if ($matches->count() > 1 && $position !== null) {
+            $matches = $matches->filter(
+                fn (Player $player): bool => mb_strtoupper((string) $player->position) === mb_strtoupper($position)
+            );
         }
 
         return $matches->count() === 1 ? $matches->first() : null;
