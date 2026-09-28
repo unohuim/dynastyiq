@@ -60,7 +60,9 @@ class NhlAnticipatedLineupImporter
         }
         $teamErrors = $gameType === 1 ? [] : $this->players->teamMembershipErrors($players, $teamAbbrev);
         if ($teamErrors !== []) {
-            throw \Illuminate\Validation\ValidationException::withMessages(['text' => $teamErrors]);
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'text' => [...$teamErrors, ...$parser->unresolvedPlayerMessages($lineupText, $teamAbbrev)],
+            ]);
         }
         if ($this->players->verifiedLineupIds($players, null, $gameType) === null) {
             if (! $reviewed && $imageEvidence !== null && ($imageEvidence['status'] ?? '') !== 'ok') {
@@ -71,9 +73,11 @@ class NhlAnticipatedLineupImporter
                 ]);
             }
             throw \Illuminate\Validation\ValidationException::withMessages([
-                'text' => 'A verified lineup needs 12 forward slots and 6 defense slots with no duplicates or goalies in skater slots. '
+                'text' => [...$parser->unresolvedPlayerMessages($lineupText, $teamAbbrev),
+                    'A verified lineup needs 12 forward slots and 6 defense slots with no duplicates or goalies in skater slots. '
                     . ($gameType === 1 ? 'Unknown players need a verified linemate on the same line or pairing.'
                         : 'Unknown players are allowed only on F4/D3 with a verified linemate.'),
+                ],
             ]);
         }
         $url = route('games.show', ['nhlGameId' => $game->nhl_game_id]);

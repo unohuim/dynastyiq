@@ -475,3 +475,83 @@ it('processes image uploads through the existing OCR and validator', function (b
     $this->assertDatabaseCount('nhl_lineup_observations', $valid ? 1 : 0);
     Http::assertNothingSent();
 })->with([true, false]);
+
+it('names every unmatched player even when an entire forward line cannot be resolved', function (): void {
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', $this->body)->assertCreated();
+    $previousObservation = NhlLineupObservation::query()->sole()->id;
+    $text = str_replace('Player 1 - Player 2 - Player 3', 'Unknown Alpha - Unknown Beta - Unknown Gamma', $this->text);
+
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])
+        ->assertUnprocessable()->assertJsonValidationErrors('text')
+        ->assertJsonPath('interpreted_text', $text);
+
+    expect($response->json('errors.text'))->toHaveCount(4)
+        ->and($response->json('errors.text.0'))->toBe('F1: Could not match "Unknown Alpha" to a player. Check the spelling or use the full name.')
+        ->and($response->json('errors.text.1'))->toContain('Unknown Beta')
+        ->and($response->json('errors.text.2'))->toContain('Unknown Gamma');
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    $this->assertDatabaseHas('nhl_current_lineups', ['nhl_game_id' => 2026010088, 'nhl_lineup_observation_id' => $previousObservation]);
+
+    $this->client->update(['scopes' => ['nhl-stats:read']]);
+    $current = $this->getJson('/api/nhl/lineups/2026010088')->assertOk()
+        ->assertJsonPath('game.teams.home.lineup_status', 'manual');
+    expect(collect($current->json('game.teams.home.players'))->pluck('player_name')->all())->toContain('Player 1');
+    Http::assertNothingSent();
+});
+
+it('explains ambiguous initials without choosing a player or claiming the name was not found', function (): void {
+    NhlGame::query()->whereKey(2026010088)->update(['game_type' => 2]);
+    Player::query()->where('nhl_id', 8488001)->update([
+        'full_name' => 'Ellis Pettersson', 'first_name' => 'Ellis', 'last_name' => 'Pettersson',
+    ]);
+    Player::query()->create([
+        'nhl_id' => 8499001, 'full_name' => 'Erik Pettersson', 'first_name' => 'Erik',
+        'last_name' => 'Pettersson', 'position' => 'D', 'team_abbrev' => 'TOR',
+    ]);
+    $text = str_replace('Player 1 -', 'E. Pettersson -', $this->text);
+
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])
+        ->assertUnprocessable()->assertJsonValidationErrors('text');
+
+    expect($response->json('errors.text.0'))->toBe('F1: "E. Pettersson" matches multiple players. Use a more specific name or NHL sweater number.');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    $this->assertDatabaseCount('nhl_starting_goalie_observations', 0);
+    Http::assertNothingSent();
+});
+
+it('returns wrong-team and unmatched player messages together on a rejected lineup', function (): void {
+    NhlGame::query()->whereKey(2026010088)->update(['game_type' => 2]);
+    Player::query()->where('nhl_id', 8488001)->update(['team_abbrev' => 'MTL']);
+    $text = str_replace('Player 2 -', 'Unknown Skater -', $this->text);
+
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])
+        ->assertUnprocessable()->assertJsonValidationErrors('text');
+
+    expect($response->json('errors.text'))->toHaveCount(2)
+        ->and($response->json('errors.text.0'))->toBe('Player 1 is assigned to MTL, not TOR.')
+        ->and($response->json('errors.text.1'))->toContain('Unknown Skater');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+    Http::assertNothingSent();
+});
+
+it('keeps generic structure errors when no complete roster block can be identified', function (): void {
+    $response = $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => 'Not a complete lineup'])
+        ->assertUnprocessable()->assertJsonValidationErrors('text');
+
+    expect($response->json('errors.text'))->toHaveCount(1)
+        ->and($response->json('errors.text.0'))->toStartWith('A verified lineup needs 12 forward slots');
+    $this->assertDatabaseCount('nhl_lineup_observations', 0);
+});
+
+it('continues accepting unknown players where the existing peer rules permit them', function (int $gameType, string $original, string $replacement): void {
+    NhlGame::query()->whereKey(2026010088)->update(['game_type' => $gameType]);
+    $text = str_replace($original, $replacement, $this->text);
+
+    $this->withToken($this->token)->postJson('/api/nhl-lineups', [...$this->body, 'text' => $text])->assertCreated();
+    $this->assertDatabaseCount('nhl_lineup_observations', 1);
+    Http::assertNothingSent();
+})->with([
+    'preseason first line' => [1, 'Player 1 -', 'Unknown Skater -'],
+    'regular season fourth line' => [2, 'Player 10 -', 'Unknown Skater -'],
+    'regular season third pair' => [2, 'Player 17 -', 'Unknown Skater -'],
+]);

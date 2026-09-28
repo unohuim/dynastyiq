@@ -42,6 +42,31 @@ class NhlLineupPlayerResolver
         return $this->preferTeamMatch($matches, $teamAbbrev);
     }
 
+    /** Explain an unresolved reference using the same candidates and team preference as resolve(). */
+    public function unresolvedReferenceMessage(string $name, string $teamAbbrev): ?string
+    {
+        if ($this->resolve($name, $teamAbbrev) !== null) {
+            return null;
+        }
+
+        if (preg_match('~[/⁄／]~u', $name)) {
+            return sprintf('"%s" lists alternative players. Specify one player for this slot.', $name);
+        }
+
+        $normalized = $this->normalizer->normalizeName($name);
+        $matches = $normalized === null || ctype_digit($normalized)
+            ? collect()
+            : $this->canonicalPlayers()->filter(
+                fn (Player $player): bool => $this->referenceMatchesPlayer($normalized, $player)
+            );
+
+        if ($matches->count() > 1) {
+            return sprintf('"%s" matches multiple players. Use a more specific name or NHL sweater number.', $name);
+        }
+
+        return sprintf('Could not match "%s" to a player. Check the spelling or use the full name.', $name);
+    }
+
     /**
      * Verify skater slots, allowing same-group peer fallbacks on every preseason line.
      *

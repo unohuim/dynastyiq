@@ -39,6 +39,41 @@ class NhlLineupTextParser
     }
 
     /**
+     * Explain unresolved skater references in a recognized roster, including wholly unmatched lines.
+     * This is diagnostic only; parsing and lineup eligibility remain unchanged.
+     *
+     * @return array<int,string>
+     */
+    public function unresolvedPlayerMessages(string $text, string $teamAbbrev): array
+    {
+        $roster = $this->rosterBlock($text);
+        if ($roster === null) {
+            return [];
+        }
+
+        $messages = [];
+        $slot = 0;
+        foreach (explode("\n", $roster) as $line) {
+            if ($this->heading($line) !== null) {
+                continue;
+            }
+            foreach ($this->structuredSegments($line) as $name) {
+                if ($slot >= 18) {
+                    break 2;
+                }
+                $lineKey = $slot < 12 ? 'F' . (intdiv($slot, 3) + 1) : 'D' . (intdiv($slot - 12, 2) + 1);
+                $message = $this->players->unresolvedReferenceMessage($name, $teamAbbrev);
+                if ($message !== null) {
+                    $messages[] = $lineKey . ': ' . $message;
+                }
+                $slot++;
+            }
+        }
+
+        return array_values(array_unique($messages));
+    }
+
+    /**
      * Read explicitly sectioned roster tables, including interleaved opponent columns.
      * Listed order supplies inferred lines and G1; ordinary line posts do not use this filter.
      *
