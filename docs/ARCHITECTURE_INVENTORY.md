@@ -3794,6 +3794,11 @@ Reusable cross-sport publisher identity, per-team active scope, and time-varying
 
 ## NHL Anticipated Lineups
 
+Prediction roster identity is always `nhl_player_id`, including the legacy
+simulator path and dressed rosters. Legacy `player_id` fields remain compatible
+but have path-dependent semantics and must not be used as partner NHL identity.
+Authority: `NhlProjectedTeamMatchups.yaml` and `DIQ-API-Usage-Doc.md`.
+
 Partners can read one game's teams, lineup status, players and starting goalies
 through `GET /api/nhl/lineups/{nhlGameId}` with `nhl-stats:read`, without scanning
 other games' lineups or requesting providers. The date-list endpoint is unchanged.

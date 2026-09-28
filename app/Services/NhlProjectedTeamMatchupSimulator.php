@@ -1199,6 +1199,8 @@ class NhlProjectedTeamMatchupSimulator
 
                 return [
                     'player_id' => (int) $row->player_id,
+                    // Projection bucket player_id is the NHL identifier, not players.id.
+                    'nhl_player_id' => (int) $row->player_id,
                     'player_name' => (string) $row->player_name,
                     'position' => $row->position,
                     'baseline_xgf' => round((float) $row->baseline_xgf, 4),

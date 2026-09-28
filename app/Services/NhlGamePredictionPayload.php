@@ -358,6 +358,7 @@ class NhlGamePredictionPayload
      */
     private function withDressedRoster(array $team, ?array $lineup, ?array $starter): array
     {
+        $team['roster'] = $this->predictionRoster($team['roster'] ?? []);
         $goalies = collect($lineup['players'] ?? [])->where('lineup_role', 'goalie')
             ->where('line_key', 'G')->whereIn('slot_index', [1, 2])->sortBy('slot_index')->values();
         if (in_array($starter['selection_source'] ?? null, ['manual_starter_override', 'nhl_boxscore'], true)) {
@@ -387,7 +388,7 @@ class NhlGamePredictionPayload
                 ? ! empty($goalie['nhl_player_id']) && (int) $goalie['nhl_player_id'] === (int) $starter['nhl_player_id']
                 : (int) $goalie['slot_index'] === 1,
         ]);
-        $team['dressed_roster'] = collect($team['roster'] ?? [])->concat($goalies)->values()->all();
+        $team['dressed_roster'] = $this->predictionRoster(collect($team['roster'])->concat($goalies)->values()->all());
 
         return $team;
     }
@@ -1399,8 +1400,25 @@ class NhlGamePredictionPayload
             'team_abbrev' => $side['offense_team'] ?? null,
             'opponent_team_abbrev' => $side['defense_team'] ?? null,
             'summary' => $side['summary'] ?? [],
-            'roster' => $side['roster'] ?? [],
+            'roster' => $this->predictionRoster($side['roster'] ?? [], true),
         ];
+    }
+
+    /**
+     * Emit the partner NHL identity without replacing an explicit unresolved null.
+     * Only legacy simulator rows use player_id as an NHL id; lineup rows use an internal id.
+     *
+     * @param iterable<int,array<string,mixed>> $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function predictionRoster(iterable $rows, bool $legacySimulator = false): array
+    {
+        return collect($rows)->map(function (array $row) use ($legacySimulator): array {
+            $nhlId = array_key_exists('nhl_player_id', $row)
+                ? $row['nhl_player_id'] : ($legacySimulator ? ($row['player_id'] ?? null) : null);
+
+            return [...$row, 'nhl_player_id' => $nhlId !== null && (int) $nhlId > 0 ? (int) $nhlId : null];
+        })->values()->all();
     }
 
     /**

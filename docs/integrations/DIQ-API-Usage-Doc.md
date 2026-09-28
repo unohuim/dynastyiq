@@ -1,5 +1,16 @@
 # DynastyIQ API Usage Guide
 
+## Prediction roster player identifiers
+
+Every row in `teams.away.roster`, `teams.home.roster`, and both `dressed_roster`
+lists includes `nhl_player_id` (integer or explicit null for unresolved players).
+Use this field exclusively for NHL identity, including legacy model, reported,
+official, NHLe, replacement-level and evidence-only roster paths.
+`player_id` is retained for compatibility but is not a reliable partner identifier:
+legacy simulator rows use NHL IDs there; lineup-derived rows use DIQ internal IDs.
+An explicit null NHL ID is never replaced with an internal ID. Null-ID players
+retain their names and eligible fallback projections.
+
 ## Starter identity after puck drop
 
 The first unique NHL `starter: true` observed after the game leaves FUT/PRE is

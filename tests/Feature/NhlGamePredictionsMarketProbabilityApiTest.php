@@ -8,6 +8,38 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Testing\Fluent\AssertableJson;
 use Symfony\Component\HttpFoundation\Response;
 
+it('exposes NHL ids on legacy prediction and dressed rosters for both teams', function (): void {
+    ($this->predictionRequest)()->assertOk()
+        ->assertJsonPath('teams.away.roster.0.nhl_player_id', 8482155)
+        ->assertJsonPath('teams.away.roster.0.player_id', 8482155)
+        ->assertJsonPath('teams.away.dressed_roster.0.nhl_player_id', 8482155)
+        ->assertJsonPath('teams.home.roster.0.nhl_player_id', 8482156)
+        ->assertJsonPath('teams.home.dressed_roster.0.nhl_player_id', 8482156);
+});
+
+it('preserves explicit NHL identity and unresolved null without leaking internal ids', function (bool $collection): void {
+    $rows = [
+        ['player_id' => 8482155, 'player_name' => 'Legacy skater'],
+        ['player_id' => 12, 'nhl_player_id' => '8482156', 'player_name' => 'Reported skater'],
+        ['player_id' => 13, 'nhl_player_id' => null, 'player_name' => 'Unresolved skater'],
+    ];
+    $service = app(\App\Services\NhlGamePredictionPayload::class);
+    $team = (new ReflectionMethod($service, 'teamPayload'))->invoke($service, [
+        'roster' => $collection ? collect($rows) : $rows,
+    ]);
+    $team = (new ReflectionMethod($service, 'withDressedRoster'))->invoke($service, $team, null, [
+        'nhl_player_id' => 9001, 'name' => 'Starting Goalie', 'selection_source' => 'provided',
+    ]);
+    foreach (['roster', 'dressed_roster'] as $key) {
+        expect($team[$key][0]['nhl_player_id'])->toBe(8482155)
+            ->and($team[$key][1]['nhl_player_id'])->toBe(8482156)
+            ->and($team[$key][1]['player_id'])->toBe(12)
+            ->and($team[$key][2]['nhl_player_id'])->toBeNull()
+            ->and($team[$key][2]['player_id'])->toBe(13);
+    }
+    expect($team['dressed_roster'][3]['nhl_player_id'])->toBe(9001);
+})->with([false, true]);
+
 it('keeps an unmodelled manual starter with labelled league average predictions', function (?int $goalieId): void {
     $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-10 12:00:00 America/Toronto'));
     $token = ($this->seedPredictionInputs)();
@@ -181,7 +213,7 @@ beforeEach(function (): void {
                                     'total_goalie_adjustment_per_game' => 0.0,
                                 ],
                                 'roster' => [
-                                    ['adjusted_xgf_per_game' => $this->awayGoals, 'confidence_score' => 0.8],
+                                    ['player_id' => 8482155, 'player_name' => 'Alex Laferriere', 'adjusted_xgf_per_game' => $this->awayGoals, 'confidence_score' => 0.8],
                                 ],
                             ],
                             [
@@ -192,7 +224,7 @@ beforeEach(function (): void {
                                     'total_goalie_adjustment_per_game' => 0.0,
                                 ],
                                 'roster' => [
-                                    ['adjusted_xgf_per_game' => $this->homeGoals, 'confidence_score' => 0.8],
+                                    ['player_id' => 8482156, 'player_name' => 'Home Skater', 'adjusted_xgf_per_game' => $this->homeGoals, 'confidence_score' => 0.8],
                                 ],
                             ],
                         ],
