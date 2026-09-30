@@ -173,7 +173,7 @@ php artisan api-client:create partner-app --scope=nhl-reference:read --scope=nhl
 
 **Purpose:**
 Provide the primary authenticated and public web application using Laravel, Jetstream/Fortify, Blade, Alpine, staged Inertia/Vue pages, Tailwind, Livewire, queues, and Vite.
-Horizon isolates ten `default` workers, one `fantrax` worker, and one time-sensitive `lineups` worker in every environment.
+Horizon isolates nine `default` workers, one `fantrax` worker, and one time-sensitive `lineups` worker in every environment.
 
 **When to Use:**
 Adding first-party HTTP routes, controllers, views, approved Inertia pages, request validation, policies, jobs, and application JavaScript.

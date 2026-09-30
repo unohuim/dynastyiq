@@ -616,7 +616,7 @@ it('keeps queue retry reservations above the maximum supported job timeout', fun
     }
     expect($horizon['defaults']['supervisor-default']['timeout'])->toBeGreaterThan(3600)
         ->toBeLessThan($queue['connections']['redis']['retry_after']);
-    foreach (['supervisor-default' => 10, 'supervisor-fantrax' => 1, 'supervisor-lineups' => 1] as $supervisor => $workers) {
+    foreach (['supervisor-default' => 9, 'supervisor-fantrax' => 1, 'supervisor-lineups' => 1] as $supervisor => $workers) {
         expect($horizon['defaults'][$supervisor]['minProcesses'])->toBe($workers)
             ->and($horizon['defaults'][$supervisor]['maxProcesses'])->toBe($workers);
     }
