@@ -59,6 +59,77 @@ class NhlModelRun extends Model
         return (string) $startYear . ($startYear + 1);
     }
 
+    /** Check that a queued stage still belongs to the active combined build. */
+    public function acceptsPredictionStage(?string $buildId, string $stage): bool
+    {
+        return $buildId === null
+            || ($this->status === self::STATUS_RUNNING
+                && data_get($this->metrics, 'prediction_build.id') === $buildId
+                && data_get($this->metrics, 'prediction_build.status') === 'running'
+                && data_get($this->metrics, 'prediction_build.stage') === $stage);
+    }
+
+    /**
+     * Finish a complete batch and advance the same model, once, under a row lock.
+     *
+     * @param array<string, mixed> $stageMetrics
+     */
+    public static function finishPredictionStage(
+        int $modelRunId,
+        string $buildId,
+        string $stage,
+        bool $failed,
+        array $stageMetrics = [],
+        ?string $error = null,
+    ): void {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($modelRunId, $buildId, $stage, $failed, $stageMetrics, $error): void {
+            $run = self::query()->whereKey($modelRunId)->lockForUpdate()->first();
+            if ($run === null || ! $run->acceptsPredictionStage($buildId, $stage)) {
+                return;
+            }
+
+            $metrics = array_merge($run->metrics ?? [], $stageMetrics);
+            $build = $metrics['prediction_build'];
+            $next = $failed ? null : match ($stage) {
+                'profiles' => 'rates',
+                'rates' => 'toi',
+                default => null,
+            };
+            $build['stage'] = $next ?? $stage;
+            $build['status'] = $failed ? 'failed' : ($next === null ? 'complete' : 'running');
+            if ($failed) {
+                $build['error'] = mb_substr($error ?? 'One or more stage jobs failed or were cancelled.', 0, 1000);
+            }
+            if ($next === null) {
+                $build['completed_at'] = now()->toIso8601String();
+            } else {
+                $prefix = $next === 'rates' ? 'rate_projection' : 'toi_projection';
+                $metrics[$prefix . 's_started_at'] = now()->toIso8601String();
+                $metrics[$prefix . '_entities_queued'] = 0;
+                $metrics[$prefix . '_entities_completed'] = 0;
+            }
+            $metrics['prediction_build'] = $build;
+            $run->forceFill([
+                'metrics' => $metrics,
+                'status' => $failed ? self::STATUS_FAILED : ($next === null ? self::STATUS_COMPLETE : self::STATUS_RUNNING),
+                'completed_at' => $next === null ? now() : null,
+            ])->save();
+
+            if ($next !== null) {
+                \Illuminate\Support\Facades\DB::afterCommit(function () use ($modelRunId, $buildId, $next): void {
+                    try {
+                        $job = $next === 'rates'
+                            ? new \App\Jobs\BuildNhlSatModelEntityRateProjectionsJob($modelRunId, $buildId)
+                            : new \App\Jobs\BuildNhlSatModelEntityToiProjectionsJob($modelRunId, $buildId);
+                        \Illuminate\Support\Facades\Bus::dispatch($job);
+                    } catch (\Throwable $exception) {
+                        self::finishPredictionStage($modelRunId, $buildId, $next, true, error: $exception->getMessage());
+                    }
+                });
+            }
+        });
+    }
+
     /**
      * Allowed model families.
      *

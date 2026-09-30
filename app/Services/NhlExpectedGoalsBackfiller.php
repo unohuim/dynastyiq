@@ -257,7 +257,7 @@ class NhlExpectedGoalsBackfiller
                         : $this->fallbackDefinitions(),
                     'bucket_selection' => 'shrinkage_confidence_no_hard_minimum',
                     'excluded_training_values' => [
-                        'shot_type_bucket' => $sampleMode === self::SAMPLE_SOG ? ['unknown', 'other'] : ['unknown'],
+                        'shot_type_bucket' => $sampleMode === self::SAMPLE_SOG ? ['other'] : [],
                         'period_type' => ['SO'],
                         'is_empty_net' => [true],
                     ],
@@ -668,7 +668,6 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
     private function exclusionReasonSql(): string
     {
         return "CASE
-            WHEN COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') = 'unknown' THEN 'unknown_shot_type'
             WHEN facts.is_empty_net = true THEN 'empty_net'
             WHEN COALESCE(NULLIF(facts.period_type, ''), 'unknown') = 'SO' THEN 'shootout'
             ELSE NULL
@@ -679,7 +678,6 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
     {
         $query = DB::table('nhl_shot_attempts_facts')
             ->whereIn('season_id', $seasonIds)
-            ->where('shot_type_bucket', '<>', 'unknown')
             ->where(function ($query): void {
                 $query->whereNull('period_type')
                     ->orWhere('period_type', '<>', 'SO');
@@ -691,7 +689,7 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
 
         if ($sampleMode === self::SAMPLE_SOG) {
             $query->where('is_shot_on_goal', true)
-                ->where('shot_type_bucket', '<>', 'other');
+                ->whereRaw("COALESCE(NULLIF(shot_type_bucket, ''), 'unknown') <> 'other'");
         }
 
         return $query;
@@ -1091,7 +1089,7 @@ SQL, [$modelRunId, $modelId, $predictionTarget, $modelId, $seasonId]);
     private function trainingFilters(string $sampleMode = self::SAMPLE_SAT): array
     {
         $filters = [
-            'shot_type_bucket' => $sampleMode === self::SAMPLE_SOG ? 'exclude_unknown_and_other' : 'exclude_unknown',
+            'shot_type_bucket' => $sampleMode === self::SAMPLE_SOG ? 'exclude_other' : 'include_unknown',
             'is_empty_net' => false,
             'period_type' => 'not_shootout',
         ];

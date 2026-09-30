@@ -26,7 +26,7 @@ when_not_to_use:
 rules:
   - Goalie projections must be versioned by projection version and target season.
   - Bucket rows must preserve source profile context and target projection outputs separately.
-  - Projected goalie outcomes must split EV and PK environments before producing combined totals.
+  - Historical goalie projections split EV and PK environments before combined totals. SAT-run builds use compatible all-situation environments under NhlPredictionInputServices.yaml and must not add a second PK contribution.
   - EV projected team defensive chance buckets must use the target team's top 12 forwards and top 7 defensemen by projected TOI.
   - EV on-ice skater buckets must be built from even-strength shot attempts against while selected skaters were on ice, scaled by projected TOI, and normalized so five skater attributions become one faced team chance environment.
   - PK projected team defensive chance buckets must use the target team's prior-season team PK environment rather than recomposing PK quality from individual skaters.

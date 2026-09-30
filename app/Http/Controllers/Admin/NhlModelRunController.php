@@ -149,7 +149,7 @@ class NhlModelRunController extends Controller
         $smoothingPriorAttempts = (int) ($input['smoothing_prior_attempts'] ?? 100);
         $version = $this->trainingVersion($run);
 
-        $run->forceFill([
+        $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'run_config' => array_merge($run->run_config ?? [], [
                 'training_version' => $version,
@@ -164,7 +164,7 @@ class NhlModelRunController extends Controller
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ])->save();
+        ]);
 
         app(NhlExpectedGoalsBackfiller::class)->trainBucketsForRun(
             run: $run->fresh(),
@@ -317,14 +317,14 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        $run->forceFill([
+        $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
                 'profiles_started_at' => now()->toIso8601String(),
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ])->save();
+        ]);
 
         BuildNhlSatModelEntityProfilesJob::dispatch(
             modelRunId: (int) $run->id,
@@ -391,14 +391,14 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        $run->forceFill([
+        $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
                 'rate_projections_started_at' => now()->toIso8601String(),
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ])->save();
+        ]);
 
         BuildNhlSatModelEntityRateProjectionsJob::dispatch(modelRunId: (int) $run->id);
 
@@ -418,6 +418,77 @@ class NhlModelRunController extends Controller
         return redirect()
             ->route('admin.nhl-sat-models.index')
             ->with('status', 'Queued /60.');
+    }
+
+    /** Queue all prediction inputs on the existing model in dependency order. */
+    public function buildPredictions(Request $request, NhlModelRun $run): RedirectResponse|JsonResponse
+    {
+        abort_unless($run->model_family === NhlModelRun::FAMILY_SAT
+            && $run->workflow_stage === NhlModelRun::STAGE_TRAINING, 404);
+        $satModel = $this->bucketModelForTarget($run, NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL);
+        $sogModel = $this->bucketModelForTarget($run, NhlExpectedGoalsBackfiller::TARGET_GOAL);
+        if ($satModel === null) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Eval SAT before building predictions.']);
+        }
+        foreach (['nhl_sat_model_entity_profile_buckets', 'nhl_sat_model_entity_test_profile_buckets',
+            'nhl_sat_model_entity_rate_projection_buckets', 'nhl_sat_model_entity_toi_projections'] as $table) {
+            if (! Schema::hasTable($table)) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Run migrations before building predictions.']);
+            }
+        }
+        if ($this->seasonIdsFromArray($run->train_season_ids ?? []) === []) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Choose training seasons before building predictions.']);
+        }
+        $buildId = (string) Str::uuid();
+        $this->claimModelWork($run, [
+            'status' => NhlModelRun::STATUS_RUNNING,
+            'metrics' => array_merge($run->metrics ?? [], [
+                'prediction_build' => ['id' => $buildId, 'stage' => 'profiles', 'status' => 'running',
+                    'started_at' => now()->toIso8601String()],
+                'profiles_started_at' => now()->toIso8601String(),
+                'profile_entities_queued' => 0, 'profile_entities_completed' => 0,
+                'season_snapshot_entities_queued' => 0, 'season_snapshot_entities_completed' => 0,
+            ]),
+            'started_at' => $run->started_at ?? now(),
+            'completed_at' => null,
+        ]);
+        try {
+            \Illuminate\Support\Facades\Bus::dispatch(new BuildNhlSatModelEntityProfilesJob(
+                (int) $run->id, (int) $satModel->id, $sogModel === null ? null : (int) $sogModel->id, $buildId
+            ));
+        } catch (\Throwable $exception) {
+            NhlModelRun::finishPredictionStage((int) $run->id, $buildId, 'profiles', true, error: $exception->getMessage());
+            throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'Could not queue Build Predictions.']);
+        }
+        try {
+            broadcast(new NhlSatModelUpdated((int) $run->id, 'predictions-updated'));
+        } catch (\Throwable) {
+            // The request still returns the refreshed row when broadcasts are unavailable.
+        }
+        $run->refresh();
+        return $request->expectsJson()
+            ? response()->json(['message' => 'Queued Build Predictions: Profiles → /60 → TOI/GP.', 'row_html' => $this->renderRow($run)])
+            : redirect()->route('admin.nhl-sat-models.index')->with('status', 'Queued Build Predictions.');
+    }
+
+    /**
+     * Reserve a model for one action, including competing single-stage requests.
+     *
+     * @param array<string, mixed> $changes
+     */
+    private function claimModelWork(NhlModelRun $run, array $changes): void
+    {
+        DB::transaction(function () use ($run, $changes): void {
+            $locked = NhlModelRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+            if ($locked->status === NhlModelRun::STATUS_RUNNING) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['run' => 'This model already has work running.']);
+            }
+            if (data_get($changes, 'metrics.prediction_build.id') === data_get($locked->metrics, 'prediction_build.id')) {
+                unset($changes['metrics']['prediction_build']);
+            }
+            $locked->forceFill($changes)->save();
+        });
+        $run->refresh();
     }
 
     /**
@@ -461,14 +532,14 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        $run->forceFill([
+        $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
                 'toi_projections_started_at' => now()->toIso8601String(),
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ])->save();
+        ]);
 
         BuildNhlSatModelEntityToiProjectionsJob::dispatch(modelRunId: (int) $run->id);
 
@@ -558,14 +629,14 @@ class NhlModelRunController extends Controller
             return back()->withErrors(['run' => $message]);
         }
 
-        $run->forceFill([
+        $this->claimModelWork($run, [
             'status' => NhlModelRun::STATUS_RUNNING,
             'metrics' => array_merge($run->metrics ?? [], [
                 'rate_comparisons_started_at' => now()->toIso8601String(),
             ]),
             'started_at' => $run->started_at ?? now(),
             'completed_at' => null,
-        ])->save();
+        ]);
 
         BuildNhlSatModelEntityRateComparisonsJob::dispatch(modelRunId: (int) $run->id);
 
@@ -2225,7 +2296,6 @@ WHERE facts.season_id IN ({$seasonPlaceholders})
     AND games.game_type = ?
     AND COALESCE(facts.period_type, '') <> 'SO'
     AND COALESCE(facts.is_empty_net, false) = false
-    AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
     AND {$definition['where']}
 GROUP BY {$definition['entity_key']}
 SQL;
@@ -2323,8 +2393,7 @@ SQL;
             ->whereIn('facts.season_id', $seasonIds)
             ->where('games.game_type', 2)
             ->whereRaw("COALESCE(facts.period_type, '') <> 'SO'")
-            ->whereRaw('COALESCE(facts.is_empty_net, false) = false')
-            ->whereRaw("COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'");
+            ->whereRaw('COALESCE(facts.is_empty_net, false) = false');
 
         if ($ageDate !== null && $ageWhere !== null) {
             $query

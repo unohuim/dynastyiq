@@ -790,7 +790,6 @@ train_games AS (
         AND games.game_type = ?
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
-        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
         AND {$definition['where']}
         AND {$definition['entity_key']} = ?
 ),
@@ -803,7 +802,6 @@ test_games AS (
         AND games.game_type = ?
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
-        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
         AND {$definition['where']}
         AND {$definition['entity_key']} = ?
 ),

@@ -1017,6 +1017,21 @@ explicit line:
 
 ### Headline Payload
 
+Every successful response includes a top-level `pick_qualified` boolean.
+It is `true` only when a prediction is available, the returned
+`prediction.confidence_score` is between **72 and 74 inclusive**, and the
+absolute difference between the underlying projected goals is **greater than
+zero**, before rounding `prediction.predicted_score` to two decimal places.
+Either an away or home lead qualifies. Exact ties and confidence outside that
+range return `false`; evidence-only responses with `prediction_available: false`
+also return `pick_qualified: false`. Existing error responses are unchanged.
+
+This flag does not suppress predictions, scores or market probabilities, change
+the confidence calculation, or override the winner. A pair of displayed scores
+can look tied while `pick_qualified` is true because the underlying scores differ.
+It describes selection criteria, not a guaranteed win rate. Consumers use
+`prediction.winner` for the selected side.
+
 The `prediction` block contains the display headline:
 
 | Field | Meaning |
@@ -1025,7 +1040,7 @@ The `prediction` block contains the display headline:
 | `predicted_score.home` | Home projected goals per game. |
 | `winner` | Higher projected-goal side. |
 | `goal_differential` | Home projected goals minus away projected goals. |
-| `confidence_score` | `1` to `100`, combining goal margin and projection confidence. |
+| `confidence_score` | `1` to `100`, averaging the two teams' weighted skater/goalie input confidence; not goal margin or win probability. |
 | `goalie_edge` | Selected-starter goalie edge in goals saved per game. |
 
 `goalie_edge.score` scale:
@@ -1163,10 +1178,10 @@ game prediction is withheld. These browser previews are not reported evidence
 and do not change this API's `prediction_available` rules. SAT, SOG and G are
 shown per 60 and per game; unavailable inputs render as dashes.
 
-For complete official or reported rosters, DynastyIQ selects the newest created
+For official, reported, and projected rosters, DynastyIQ selects the newest created
 completed SAT model with successfully completed Build /60 outputs, a run-scoped
-goal model, and usable skater rate rows. Model TOI is optional; missing TOI does
-not discard usable SAT rates. A newer unfinished model does not displace a usable one. Selection is
+goal model, and skater rate rows. A player uses model predictions only when both
+valid bucket rates and positive same-run TOI are available. A newer unfinished model does not displace a usable one. Selection is
 automatic; no additional API parameter is required. The SAT model's stored
 `target_season_id` is its evaluation/test season and does not have to match the
 game's season. Request-season filtering still applies to legacy season projections.
@@ -1174,20 +1189,55 @@ game's season. Request-season filtering still applies to legacy season projectio
 `inputs.sat_model_run_id` identifies the selected model, or is null when none
 qualifies. Selection does not mean every skater used that model: inspect each
 roster row's `projection_source` and `model_run_id` for actual application.
-Players without usable rate outputs keep their production fallback. Projected
-rosters without an official or reported lineup retain the existing simulator
-path. Legacy simulator and goalie projection prerequisites still apply.
+Players without a complete model pair use the historical service. Bucket provenance
+is available as `bucket_projection_source` and `bucket_model_run_id`; the latter
+identifies bucket definitions even when the rate source is historical.
+Legacy simulator and goalie projection prerequisites still apply.
+
+When SAT-model buckets are used, roster confidence now follows the selected run's
+stored rate-bucket evidence (source-attempt weighted), or personal training-profile
+evidence for historical fallback. Goalie confidence follows the projected-attempt
+weighted, sample-shrunk exact-bucket evidence; a missing exact bucket contributes
+zero confidence. The existing team/game confidence aggregation is unchanged.
+These scores describe input evidence, not calibrated accuracy or win probability.
+Goalie `projection_source` is `sat_model` for this path.
+
+Additive output fields include `inputs.training_season_ids`,
+`teams.*.input_confidence_score` (0–100), `teams.*.defense_roster` (individual
+on-ice projections with 0–1 personal-evidence confidence), `teams.*.defense_summary`
+(five-skater-normalized composition), and `teams.*.goalie_bucket_coverage`
+(the opposing goalie's bucket coverage against that team's offense).
+Internal historical evaluation may pin a run and use stored boxscore identities
+through the same service; those controls are not accepted partner API parameters.
 
 For a model-backed skater, each bucket contributes:
 
-- Attempts: `SAT/60 × game TOI seconds / 3600`.
-- SOG: attempts multiplied by the bucket's trained attempt-to-SOG probability.
-- Goals: expected SOG multiplied by its trained SOG-to-goal probability.
+- xSAT: `projected_xsat_per_60 × same-run TOI seconds / 3600`.
+- xSOG: xSAT multiplied by that player's historical training-bucket `SOG / SAT`.
+- xGF: xSOG multiplied by that player's historical training-bucket `goals / SOG`.
 
-The contributions are summed across buckets. Model-supplied rates and TOI come
-from the same model and player; unavailable model TOI uses the ladder below.
-Diagnostic `projected_xsog_per_60` and
-`projected_xg_per_60` storage columns are not used as prediction inputs.
+Baseline predicted TOI and SAT are not discounted. The same conversion rule applies to
+Other. If the relevant personal historical denominator is unavailable, use the
+matching pooled bucket average; trained bucket probabilities remain the final
+fallback when empirical averages are absent. A valid observed zero remains zero.
+Stored `projected_xsog_per_60` and `projected_xg_per_60` do not supply game outcomes.
+Outcome provenance is documented in `docs/ENUMS.md`.
+
+These are static annual inputs; current-season and preseason results do not
+update them. Matchups derive attacking conversion from the selected bucket
+volumes, then use 88% of every offensive bucket's attempts plus 2% of defensive
+attempts with the exact same bucket key. Defense-only buckets are excluded;
+offensive buckets without matching defense retain 88% of their attempts.
+Neither weights nor resulting totals are normalized. Apply attacking conversion
+and then goalie ability to these adjusted attempts. Defensive rates and goalie
+skill still use compatible historical profiles. This formula does not filter
+predictions by confidence range or score gap and does not override winners using
+head-to-head history. Production model selection remains unchanged.
+
+Contributions are summed across buckets. A complete valid SAT rate set and
+positive TOI must exist for the same model and player. Missing that pair switches
+the player to historical inputs; model rates are not multiplied by fallback
+minutes.
 For all game types, TOI uses the selected model's projected TOI/GP first, then
 the player's previous NHL regular-season average (total TOI divided by GP), then
 the average of available same-line teammates (the other two forwards or defensive
@@ -1196,7 +1246,11 @@ circular estimates. If no anchor exists, estimates are F1 20, F2 16.5, F3 13.5,
 F4 8.5, D1 24, D2 20, D3 16 minutes. Positive TOI is required at each step.
 This also applies without a usable SAT model and replaces the preseason override.
 Fallback production is rescaled to the chosen TOI; rookie NHLe and depth-peer
-production rules remain intact. Goalie adjustments are unchanged.
+production rules remain intact. For SAT-model matchups, these bucket volumes enter
+the defensive blend and goalie comparison before score assembly. Model full-game
+volumes already include special teams and receive no extra historical PK volume.
+Compatible defensive and goalie history uses the selected SAT run's definitions.
+The existing goalie-edge season/matchup weights remain unchanged.
 
 When `inputs.*_lineup_source` is `nhl_boxscore` or `anticipated_lineup`,
 DynastyIQ builds a game-specific input for every resolved skater. For players
@@ -1259,7 +1313,7 @@ used by the prediction. When the lineup source is `nhl_boxscore` or
 | `projected_sat_per_60` | number | Sum of model bucket SAT/60; model-backed rows only. |
 | `projected_sog_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG probability; model-backed rows only. |
 | `projected_goals_per_60` | number | Bucket SAT/60 weighted by attempt-to-SOG and SOG-to-goal probabilities; model-backed rows only. |
-| `projected_sat` | number | Expected game shot attempts at the applied game TOI; model-backed rows only. |
+| `projected_sat` | number | Expected game shot attempts at the applied game TOI, including historical bucket fallbacks when available. |
 | `nhle_factor` | number/null | Applied versioned league factor; null when NHLe was not used. |
 | `confidence` | string/null | Human-readable projection confidence bucket. NHLe and replacement rows are `low`. |
 | `confidence_score` | number | Numeric `0`-`1` confidence input used by prediction confidence weighting. |

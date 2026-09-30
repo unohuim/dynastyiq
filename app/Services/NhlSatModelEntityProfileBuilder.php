@@ -476,7 +476,6 @@ WITH profile_facts AS (
         AND games.game_type = ?
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
-        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
         AND {$definition['where']}
         {$entityWhereSql}
 ),
@@ -640,7 +639,6 @@ WHERE facts.season_id IN ({$seasonPlaceholders})
     AND games.game_type = ?
     AND COALESCE(facts.period_type, '') <> 'SO'
     AND COALESCE(facts.is_empty_net, false) = false
-    AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
     AND {$definition['where']}
 ORDER BY entity_key
 SQL;

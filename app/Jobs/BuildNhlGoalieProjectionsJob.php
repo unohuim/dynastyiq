@@ -44,7 +44,8 @@ class BuildNhlGoalieProjectionsJob implements ShouldQueue, ShouldBeUnique
         public string $targetSeasonId,
         public string $goalieWorkloadProjectionVersion,
         public string $toiProjectionVersion,
-        public string $version
+        public string $version,
+        public ?int $satModelId = null
     ) {
         $this->afterCommit = true;
     }
@@ -92,7 +93,8 @@ class BuildNhlGoalieProjectionsJob implements ShouldQueue, ShouldBeUnique
             $this->targetSeasonId,
             $this->goalieWorkloadProjectionVersion,
             $this->toiProjectionVersion,
-            $this->version
+            $this->version,
+            $this->satModelId ?? null
         );
         $jobs = array_map(
             fn (int $goaliePlayerId): BuildNhlGoalieProjectionForGoalieJob => new BuildNhlGoalieProjectionForGoalieJob(
@@ -101,7 +103,8 @@ class BuildNhlGoalieProjectionsJob implements ShouldQueue, ShouldBeUnique
                 goalieWorkloadProjectionVersion: $this->goalieWorkloadProjectionVersion,
                 toiProjectionVersion: $this->toiProjectionVersion,
                 version: $this->version,
-                goaliePlayerId: $goaliePlayerId
+                goaliePlayerId: $goaliePlayerId,
+                satModelId: $this->satModelId ?? null
             ),
             $setup['goalie_player_ids']
         );

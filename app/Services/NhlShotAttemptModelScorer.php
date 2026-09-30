@@ -136,7 +136,6 @@ CROSS JOIN LATERAL (
         WHEN facts.shooter_player_id IS NULL THEN 'missing_shooter'
         WHEN COALESCE(facts.period_type, '') = 'SO' THEN 'shootout'
         WHEN COALESCE(facts.is_empty_net, false) = true THEN 'empty_net'
-        WHEN COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') = 'unknown' THEN 'unknown_shot_type'
         ELSE NULL
     END as exclusion_reason
 ) exclusions
@@ -327,6 +326,14 @@ SQL, array_merge(
         }
 
         $factCount = (int) $facts->count();
+
+        // Legacy exclusions and pre-retraining probabilities must not survive a rebuild.
+        if ((clone $scores)->where('exclusion_reason', 'unknown_shot_type')->exists()) {
+            return false;
+        }
+        if ($model->trained_at !== null) {
+            $scores->where('scored_at', '>=', $model->trained_at);
+        }
 
         return $factCount > 0 && (int) $scores->count() >= $factCount;
     }

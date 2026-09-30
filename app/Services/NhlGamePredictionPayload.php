@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\NhlModelRun;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -22,6 +23,8 @@ class NhlGamePredictionPayload
     private const INPUT_CONFIDENCE_SKATER_WEIGHT = 0.70;
     private const INPUT_CONFIDENCE_GOALIE_WEIGHT = 0.30;
     private const SKATER_CONFIDENCE_COVERAGE_TARGET = 0.99;
+    private const PICK_CONFIDENCE_MIN = 72;
+    private const PICK_CONFIDENCE_MAX = 74;
 
     public function __construct(
         private readonly NhlProjectedTeamMatchupSimulator $simulator,
@@ -48,17 +51,45 @@ class NhlGamePredictionPayload
             ]);
         }
 
-        $targetSeasonId = (string) ($overrides['target_season_id'] ?? $this->latestTargetSeasonId());
-        $sourceSeasonId = (string) ($overrides['source_season_id'] ?? $this->latestSourceSeasonId($targetSeasonId));
-        $projectionVersion = (string) ($overrides['projection_version'] ?? $this->latestProjectionVersion($targetSeasonId));
-        $toiProjectionVersion = (string) ($overrides['toi_projection_version'] ?? $this->latestToiProjectionVersion($targetSeasonId));
-        $goalieProjectionVersion = (string) ($overrides['goalie_projection_version'] ?? $this->latestGoalieProjectionVersion($targetSeasonId));
+        $pinnedRun = null;
+        if (array_key_exists('sat_model_run_id', $overrides)) {
+            $pinnedRun = NhlModelRun::query()->find((int) $overrides['sat_model_run_id']);
+            $metrics = $pinnedRun?->metrics ?? [];
+            $completed = $metrics['rate_projections_completed_at'] ?? null;
+            $started = $metrics['rate_projections_started_at'] ?? null;
+            $training = collect($pinnedRun?->train_season_ids ?? [])->sort()->values();
+            if ($pinnedRun === null || $pinnedRun->model_family !== 'sat' || $pinnedRun->status !== 'complete'
+                || ! $completed || ($started && strtotime($completed) < strtotime($started))
+                || (int) ($metrics['rate_projection_entities_queued'] ?? 0) < 1
+                || (int) ($metrics['rate_projection_entities_completed'] ?? 0) !== (int) $metrics['rate_projection_entities_queued']
+                || $training->isEmpty() || (string) $training->last() >= (string) $game->season_id
+                || ! DB::table('nhl_expected_goals_models')->where('model_run_id', $pinnedRun->id)->where('prediction_target', 'goal')->exists()
+                || ! DB::table('nhl_sat_model_entity_rate_projection_buckets')->where('model_run_id', $pinnedRun->id)
+                    ->where('profile_type', 'skater_offense')->where('game_type', 2)->exists()) {
+                throw ValidationException::withMessages(['sat_model_run_id' => 'Select a complete SAT run trained strictly before the game season.']);
+            }
+        }
+        $storedBoxscore = (bool) ($overrides['use_stored_boxscore'] ?? false);
+        if ($storedBoxscore && $pinnedRun === null) {
+            throw ValidationException::withMessages(['sat_model_run_id' => 'Stored-boxscore evaluation requires an explicit SAT run.']);
+        }
+        if ($pinnedRun !== null) {
+            // A selected annual run owns the input horizon. Never borrow unrelated versions.
+            $targetSeasonId = (string) $game->season_id;
+            $sourceSeasonId = (string) collect($pinnedRun->train_season_ids)->sort()->last();
+            $projectionVersion = $toiProjectionVersion = $goalieProjectionVersion = '';
+        } else {
+            $targetSeasonId = (string) ($overrides['target_season_id'] ?? $this->latestTargetSeasonId());
+            $sourceSeasonId = (string) ($overrides['source_season_id'] ?? $this->latestSourceSeasonId($targetSeasonId));
+            $projectionVersion = (string) ($overrides['projection_version'] ?? $this->latestProjectionVersion($targetSeasonId));
+            $toiProjectionVersion = (string) ($overrides['toi_projection_version'] ?? $this->latestToiProjectionVersion($targetSeasonId));
+            $goalieProjectionVersion = (string) ($overrides['goalie_projection_version'] ?? $this->latestGoalieProjectionVersion($targetSeasonId));
+            $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
+        }
+        $satModelId = $pinnedRun !== null ? (int) $pinnedRun->id : $this->lineupProjections->latestUsableSatModelId($targetSeasonId);
 
-        $this->assertSimulationInputs($sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion, $goalieProjectionVersion);
-        $satModelId = $this->lineupProjections->latestUsableSatModelId($targetSeasonId);
-
-        $awayLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
-        $homeLineup = $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
+        $awayLineup = $storedBoxscore ? null : $this->anticipatedLineups->forGameTeam($nhlGameId, $awayTeam, false);
+        $homeLineup = $storedBoxscore ? null : $this->anticipatedLineups->forGameTeam($nhlGameId, $homeTeam, false);
         $awayOfficialRosterIds = ($awayLineup['manual_override'] ?? false)
             ? null : $this->officialSkaterIds($nhlGameId, $awayTeam);
         $homeOfficialRosterIds = ($homeLineup['manual_override'] ?? false)
@@ -66,7 +97,10 @@ class NhlGamePredictionPayload
         $awayRosterIds = $awayOfficialRosterIds ?? $this->resolvedSkaterIds($awayLineup, (int) $game->game_type);
         $homeRosterIds = $homeOfficialRosterIds ?? $this->resolvedSkaterIds($homeLineup, (int) $game->game_type);
 
-        if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
+        if ($storedBoxscore && ($awayRosterIds === null || $homeRosterIds === null)) {
+            throw ValidationException::withMessages(['lineup' => 'Stored-boxscore evaluation requires both complete skater rosters.']);
+        }
+        if (! $storedBoxscore && (int) $game->game_type === self::PRESEASON_GAME_TYPE
             && ($awayRosterIds === null || $homeRosterIds === null)) {
             $this->importMissingOfficialLineups(
                 $game,
@@ -83,24 +117,28 @@ class NhlGamePredictionPayload
 
         $awayOfficial = $awayOfficialRosterIds !== null || $this->isOfficialLineup($awayLineup);
         $homeOfficial = $homeOfficialRosterIds !== null || $this->isOfficialLineup($homeLineup);
-        $awayGamePlayers = $this->gamePlayerProjections(
-            $awayLineup,
-            $awayRosterIds,
-            $sourceSeasonId,
-            $targetSeasonId,
-            $projectionVersion,
-            $toiProjectionVersion,
-            (int) $game->game_type
-        );
-        $homeGamePlayers = $this->gamePlayerProjections(
-            $homeLineup,
-            $homeRosterIds,
-            $sourceSeasonId,
-            $targetSeasonId,
-            $projectionVersion,
-            $toiProjectionVersion,
-            (int) $game->game_type
-        );
+        $awayGamePlayers = $storedBoxscore
+            ? $this->lineupProjections->boxscoreRoster($nhlGameId, (int) $game->away_team_id)
+            : $this->gamePlayerProjections(
+                $awayLineup,
+                $awayRosterIds,
+                $sourceSeasonId,
+                $targetSeasonId,
+                $projectionVersion,
+                $toiProjectionVersion,
+                (int) $game->game_type
+            );
+        $homeGamePlayers = $storedBoxscore
+            ? $this->lineupProjections->boxscoreRoster($nhlGameId, (int) $game->home_team_id)
+            : $this->gamePlayerProjections(
+                $homeLineup,
+                $homeRosterIds,
+                $sourceSeasonId,
+                $targetSeasonId,
+                $projectionVersion,
+                $toiProjectionVersion,
+                (int) $game->game_type
+            );
 
         if ((int) $game->game_type === self::PRESEASON_GAME_TYPE
             && ($awayRosterIds === null || $homeRosterIds === null)) {
@@ -133,14 +171,16 @@ class NhlGamePredictionPayload
             $goalieProjectionVersion,
             $awayTeam,
             $overrides['away_goalie_id'] ?? null,
-            $nhlGameId
+            $nhlGameId,
+            $storedBoxscore
         );
         $homeGoalie = $this->resolveGoalie(
             $targetSeasonId,
             $goalieProjectionVersion,
             $homeTeam,
             $overrides['home_goalie_id'] ?? null,
-            $nhlGameId
+            $nhlGameId,
+            $storedBoxscore
         );
 
         $simulationArguments = [
@@ -154,12 +194,21 @@ class NhlGamePredictionPayload
             (int) $awayGoalie['nhl_player_id'],
             (int) $homeGoalie['nhl_player_id'],
         ];
-        $result = $awayRosterIds === null && $homeRosterIds === null
+        if ($awayGamePlayers !== null) {
+            $awayGamePlayers = $this->lineupProjections->applySatModel($awayGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+        }
+        if ($homeGamePlayers !== null) {
+            $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+        }
+        $result = $satModelId === null && $awayRosterIds === null && $homeRosterIds === null
             ? $this->simulator->simulate(...$simulationArguments)
             : $this->simulator->simulateWithRosters(...[
                 ...$simulationArguments,
                 $awayRosterIds,
                 $homeRosterIds,
+                $satModelId,
+                $awayGamePlayers,
+                $homeGamePlayers,
             ]);
 
         if (($result['is_available'] ?? false) !== true) {
@@ -170,14 +219,46 @@ class NhlGamePredictionPayload
 
         $awaySide = $result['sides'][0] ?? [];
         $homeSide = $result['sides'][1] ?? [];
-        if ($awayGamePlayers !== null) {
-            $awayGamePlayers = $this->lineupProjections->applySatModel($awayGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
+        if ($satModelId === null) {
+            $awaySide = $this->applyGameLineupProjection($awaySide, $awayGamePlayers);
+            $homeSide = $this->applyGameLineupProjection($homeSide, $homeGamePlayers);
+        } else {
+            $awayGoalie['projection_source'] = $homeGoalie['projection_source'] = 'sat_model';
+            $awayGoalie['projection_fallback_reason'] = $homeGoalie['projection_fallback_reason'] = null;
+            foreach (['away' => $homeSide, 'home' => $awaySide] as $teamSide => $opponentSide) {
+                if ($teamSide === 'away') {
+                    $awayGoalie['confidence_score'] = round(100 * (float) ($opponentSide['goalie_input_confidence'] ?? 0));
+                } else {
+                    $homeGoalie['confidence_score'] = round(100 * (float) ($opponentSide['goalie_input_confidence'] ?? 0));
+                }
+                $gsax = data_get($opponentSide, 'goalie.sat_model_gsax_per_game');
+                if ($gsax !== null) {
+                    if ($teamSide === 'away') {
+                        $awayGoalie['projected_gsax_per_game'] = round((float) $gsax, 4);
+                        $awayGoalie['projected_xga_per_game'] = round((float) data_get($opponentSide, 'goalie.sat_model_xga_per_game'), 4);
+                        $awayGoalie['projected_ga_per_game'] = round((float) data_get($opponentSide, 'goalie.sat_model_ga_per_game'), 4);
+                        $awayGoalie['sat_model_run_id'] = $satModelId;
+                        $awayGoalie['projection_volume_basis'] = 'all';
+                    } else {
+                        $homeGoalie['projected_gsax_per_game'] = round((float) $gsax, 4);
+                        $homeGoalie['projected_xga_per_game'] = round((float) data_get($opponentSide, 'goalie.sat_model_xga_per_game'), 4);
+                        $homeGoalie['projected_ga_per_game'] = round((float) data_get($opponentSide, 'goalie.sat_model_ga_per_game'), 4);
+                        $homeGoalie['sat_model_run_id'] = $satModelId;
+                        $homeGoalie['projection_volume_basis'] = 'all';
+                    }
+                }
+            }
+            foreach (['projected_ev_xga_per_game', 'projected_ev_ga_per_game', 'projected_pk_xga_per_game', 'projected_pk_ga_per_game'] as $field) {
+                $awayGoalie[$field] = null;
+                $homeGoalie[$field] = null;
+            }
+            $awayGoalie['confidence_bucket'] = $awayGoalie['confidence_score'] >= 80 ? 'high'
+                : ($awayGoalie['confidence_score'] >= 50 ? 'medium' : 'low');
+            $homeGoalie['confidence_bucket'] = $homeGoalie['confidence_score'] >= 80 ? 'high'
+                : ($homeGoalie['confidence_score'] >= 50 ? 'medium' : 'low');
         }
-        if ($homeGamePlayers !== null) {
-            $homeGamePlayers = $this->lineupProjections->applySatModel($homeGamePlayers, $satModelId, $targetSeasonId, (int) $game->game_type);
-        }
-        $awaySide = $this->applyGameLineupProjection($awaySide, $awayGamePlayers);
-        $homeSide = $this->applyGameLineupProjection($homeSide, $homeGamePlayers);
+        $awaySide['input_confidence_score'] = round(100 * $this->teamInputConfidence($awaySide, $awayGoalie), 4);
+        $homeSide['input_confidence_score'] = round(100 * $this->teamInputConfidence($homeSide, $homeGoalie), 4);
         $awayGoals = (float) data_get($awaySide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $homeGoals = (float) data_get($homeSide, 'summary.total_goalie_adjusted_xgf_per_game', 0);
         $awayGoalieAdjustment = (float) data_get($homeSide, 'summary.total_goalie_adjustment_per_game', 0);
@@ -199,9 +280,13 @@ class NhlGamePredictionPayload
 
         return [
             'prediction_available' => true,
+            'pick_qualified' => $prediction['confidence_score'] >= self::PICK_CONFIDENCE_MIN
+                && $prediction['confidence_score'] <= self::PICK_CONFIDENCE_MAX
+                && abs($homeGoals - $awayGoals) > 0.0,
             'game' => $this->gamePayload($game),
             'inputs' => [
                 'sat_model_run_id' => $satModelId,
+                'training_season_ids' => $satModelId === null ? [] : (NhlModelRun::query()->find($satModelId)?->train_season_ids ?? []),
                 'source_season_id' => $sourceSeasonId,
                 'target_season_id' => $targetSeasonId,
                 'projection_version' => $projectionVersion,
@@ -303,6 +388,7 @@ class NhlGamePredictionPayload
 
         return [
             'prediction_available' => false,
+            'pick_qualified' => false,
             'reason' => 'preseason_lineup_unresolved',
             'missing_lineups' => collect([
                 $awayRosterIds === null ? $awayTeam : null,
@@ -626,7 +712,7 @@ class NhlGamePredictionPayload
                 $join->on('buckets.projection_version', '=', 'projections.projection_version')
                     ->on('buckets.target_season_id', '=', 'projections.target_season_id')
                     ->on('buckets.goalie_player_id', '=', 'projections.goalie_player_id')
-                    ->where('buckets.projection_strength', '=', 'ev');
+                    ->whereIn('buckets.projection_strength', ['ev', 'all']);
             })
             ->where('projections.target_season_id', $targetSeasonId)
             ->groupBy('projections.projection_version')
@@ -652,10 +738,11 @@ class NhlGamePredictionPayload
         string $goalieProjectionVersion,
         string $team,
         mixed $providedGoalieId,
-        int $nhlGameId
+        int $nhlGameId,
+        bool $storedBoxscore = false
     ): array
     {
-        $selection = $this->startingGoalies->selectForPrediction(
+        $selection = $storedBoxscore ? $this->storedBoxscoreStarter($nhlGameId, $team) : $this->startingGoalies->selectForPrediction(
             $nhlGameId,
             $team,
             $targetSeasonId,
@@ -679,6 +766,30 @@ class NhlGamePredictionPayload
         $goalie['locked_at'] = $selection['locked_at'] ?? null;
 
         return $goalie;
+    }
+
+    /**
+     * Read the recorded starting identity without fetching, importing, or locking live state.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function storedBoxscoreStarter(int $gameId, string $team): ?array
+    {
+        $game = $this->game($gameId);
+        $teamId = $game->away_team_abbrev === $team ? $game->away_team_id : $game->home_team_id;
+        $rows = DB::table('nhl_game_summaries as summary')
+            ->join('nhl_boxscores as box', function ($join): void {
+                $join->on('box.nhl_game_id', '=', 'summary.nhl_game_id')
+                    ->on('box.nhl_player_id', '=', 'summary.nhl_player_id');
+            })->where('box.nhl_game_id', $gameId)->where('box.nhl_team_id', $teamId)
+            ->where('box.position', 'G')->where('summary.goalie_started', true)
+            ->get(['box.nhl_player_id', 'box.player_name']);
+        if ($rows->count() !== 1) {
+            return null;
+        }
+
+        return ['nhl_player_id' => (int) $rows->first()->nhl_player_id,
+            'name' => $rows->first()->player_name, 'selection_source' => 'nhl_boxscore'];
     }
 
     /**
@@ -793,12 +904,14 @@ class NhlGamePredictionPayload
     }
 
     /**
+     * Reuse the payload's existing input confidence for live predictions and reports.
+     *
      * @param array<string, mixed> $awaySide
      * @param array<string, mixed> $homeSide
      * @param array<string, mixed> $awayGoalie
      * @param array<string, mixed> $homeGoalie
      */
-    private function confidenceScore(array $awaySide, array $homeSide, array $awayGoalie, array $homeGoalie): int
+    public function confidenceScore(array $awaySide, array $homeSide, array $awayGoalie, array $homeGoalie): int
     {
         $awayConfidence = $this->teamInputConfidence($awaySide, $awayGoalie);
         $homeConfidence = $this->teamInputConfidence($homeSide, $homeGoalie);
@@ -808,10 +921,12 @@ class NhlGamePredictionPayload
     }
 
     /**
+     * Combine skater and goalie input confidence; this is not a win probability.
+     *
      * @param array<string, mixed> $side
      * @param array<string, mixed> $goalie
      */
-    private function teamInputConfidence(array $side, array $goalie): float
+    public function teamInputConfidence(array $side, array $goalie): float
     {
         $skaterConfidence = $this->weightedSkaterConfidence($side);
         $goalieConfidence = max(0.0, min(1.0, ((float) ($goalie['confidence_score'] ?? 50)) / 100));
@@ -1400,6 +1515,10 @@ class NhlGamePredictionPayload
             'team_abbrev' => $side['offense_team'] ?? null,
             'opponent_team_abbrev' => $side['defense_team'] ?? null,
             'summary' => $side['summary'] ?? [],
+            'input_confidence_score' => $side['input_confidence_score'] ?? null,
+            'defense_roster' => $side['defense_roster'] ?? [],
+            'defense_summary' => $side['defense_summary'] ?? [],
+            'goalie_bucket_coverage' => $side['goalie_bucket_coverage'] ?? [],
             'roster' => $this->predictionRoster($side['roster'] ?? [], true),
         ];
     }

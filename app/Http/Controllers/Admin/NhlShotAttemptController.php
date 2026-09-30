@@ -1951,7 +1951,6 @@ class NhlShotAttemptController extends Controller
     private function predictiveSampleQuery(array $filters)
     {
         return $this->baseQuery($filters)
-            ->where('nhl_shot_attempts_facts.shot_type_bucket', '<>', 'unknown')
             ->where(function ($query): void {
                 $query->whereNull('nhl_shot_attempts_facts.period_type')
                     ->orWhere('nhl_shot_attempts_facts.period_type', '<>', 'SO');
@@ -3273,7 +3272,7 @@ class NhlShotAttemptController extends Controller
                 $join->on('buckets.projection_version', '=', 'projections.projection_version')
                     ->on('buckets.target_season_id', '=', 'projections.target_season_id')
                     ->on('buckets.goalie_player_id', '=', 'projections.goalie_player_id')
-                    ->where('buckets.projection_strength', '=', 'ev');
+                    ->whereIn('buckets.projection_strength', ['ev', 'all']);
             })
             ->whereNotNull('projections.projection_version')
             ->groupBy('projections.projection_version')

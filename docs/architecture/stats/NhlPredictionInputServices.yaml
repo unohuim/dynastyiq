@@ -1,0 +1,46 @@
+name: NHL Prediction Input Services
+type: Model And Historical Prediction Input Boundary
+location:
+  - app/Services/NhlSatModelPredictionService.php
+  - app/Services/NhlHistoricalPredictionService.php
+  - app/Services/NhlGameLineupProjectionBuilder.php
+  - app/Services/NhlProjectedTeamMatchupSimulator.php
+  - app/Services/NhlGoalieProjectionBuilder.php
+purpose: Supply consistent per-game chance buckets to skater, game, and goalie predictions with paired model inputs and an explicit historical fallback.
+when_to_use:
+  - Reading the latest finished SAT run for game-specific projections.
+  - Combining a selected lineup's offense with compatible defensive and goalie history.
+  - Building goalie projections pinned to a SAT run.
+when_not_to_use:
+  - Inventing defensive rate projection strategies before they are validated.
+  - Treating held-out evaluation snapshots as historical prediction inputs.
+  - Translating incompatible old bucket boundaries by guessing their distribution.
+rules:
+  - Model prediction inputs require all valid player bucket SAT rates and positive standalone TOI/GP from the same run. Reject partial SAT rate sets and in-progress TOI rebuilds. Valid zero SAT rates remain zero predictions. Do not reduce model TOI for conversion calibration.
+  - Predictions are static annual estimates. Never incorporate current-season or preseason observations, recent-form windows, or held-out labels into these inputs.
+  - Offensive xSAT equals projected_xsat_per_60 multiplied by same-run model TOI seconds/GP divided by 3600. xSOG equals those attempts times the player’s historical training-bucket SOG/SAT; xGF equals xSOG times that player’s historical goals/SOG. Use pooled bucket averages only when the relevant personal denominator is unavailable, then trained bucket probabilities when empirical averages are absent. Valid observed zeros remain zero. Stored projected_xsog_per_60 and projected_xg_per_60 are not consumed. The same rule applies to Other; missing matching personal Other history uses the existing bucket fallback rather than unrelated personal buckets.
+  - Select the newest complete SAT run with a completed rate build and its goal model. Evaluation season does not restrict eligibility. Missing player pairs fall back individually instead of mixing model rates and historical minutes.
+  - Historical fallback uses latest-training-season snapshots in the same bucket vocabulary when available, otherwise training profiles. Never consume held-out snapshots. Profiles are rebuilt through the existing SAT model profile workflow, outside prediction requests.
+  - Defensive rates currently remain historical because model defensive rate projections do not exist. Compose selected skater chance-allowed profiles using paired model opportunity where available, otherwise historical-path opportunity, and the existing five-skater normalization. This all-situation normalization is provisional until dedicated defensive models exist.
+  - Missing personal defensive profiles or unusable opportunity replace both rates and TOI with training-only third-line averages. Rank active same-run defensive TOI rows within source team by latest-training-season TOI, taking forwards 7-9 or defensemen 5-6. Use the peers' average projected TOI and pooled defensive bucket counts divided by their total exposure, counting each peer's exposure once. Preserve valid zero outcomes. Expose third_line_average provenance and defensive_toi_seconds.
+  - If the run lacks a complete third-line cohort, use available same-position peers; if they lack defensive profiles, use pooled training defensive profiles and the existing F3 or D3 line-estimate minutes. If the entire run lacks defensive evidence, add no defensive attempts rather than invent bucket rates; retain the configured offensive weight. Missing individual evidence must not silently remove that skater when training evidence is available.
+  - Missing personal offensive volume uses pooled training-bucket rates scaled by fallback TOI. Only when no pooled evidence is available retain existing replacement estimates in Other. Preserve unresolved roster identities.
+  - Both services return per-game bucket volumes and source provenance. Derive attacking conversion from the summed selected offensive xSAT, xSOG and xGF bucket volumes; conversion follows the personal historical then pooled bucket ladder, while attempt volumes and TOI remain model-predicted. The SAT-model environment uses 88% of every offensive bucket's attempts plus 2% of defensive attempts with the exact same matched_bucket_key. Retain all offensive keys, including unknown and legacy Other; exclude defense-only keys. Do not normalize weights to 100% or rescale totals to offensive volume. Missing matching defense contributes zero while offense remains weighted at 88%. Apply attacking conversion afterward. An existing zero offensive bucket keeps zero conversion rather than borrowing averages, even when matching defense adds attempts.
+  - SAT-model volumes are all-situation. Do not append the historical simulator's separate PK volume. Historical-only simulations retain their EV and PK calculations.
+  - Model goalie skill uses same-run faced profiles with confidence-shrunk goals saved above expected per attempt. Missing exact buckets use neutral league-average skill, never personal performance in unrelated buckets. Never shrink confidence twice. Final goals cannot exceed projected shots on goal.
+  - The same model-bucket defensive environment supplies the season goalie contribution used by goalie edge. Its existing season-versus-matchup weighting remains unchanged.
+  - Pinned model goalie builds store compatible full-game buckets and model provenance in existing projection metadata. They must not add a broad adjustment derived from a different historical xG model.
+  - SAT-model confidence must use the selected run's evidence in both live and historical predictions. Skaters use stored rate-bucket confidence weighted by source SAT; historical fallback uses personal training-profile confidence with the same weighting. Absent personal evidence has zero personal-evidence confidence, even when a pooled performance estimate is supplied. Defensive rows expose personal defensive profile confidence, with zero for third-line replacements.
+  - Goalie input confidence is the projected-attempt-weighted mean of the existing sample-shrunk exact-bucket skill confidences, including neutral missing buckets at zero. Do not use the internal post-shrink confidence of one as evidence confidence or borrow unrelated season confidence. This does not change goalie skill shrinkage.
+  - Keep the game payload's existing aggregate formula, including its skater xGF coverage rule and skater/goalie weights. Reports consume returned player, team, and game confidence rather than supplying report-specific constants. Input confidence is not calibrated accuracy or win probability.
+  - An internal per-call SAT run override resolves the training horizon from that run, rejects incomplete runs or training seasons at or after the game season, and bypasses unrelated legacy projection versions. Default model selection is unchanged. Stored-boxscore evaluation takes only participant identities and recorded starters from the evaluated games, uses the normal build and simulator path, and must not fetch providers, import data, or persist live starter locks.
+public_interface:
+  - NhlSatModelPredictionService
+  - NhlHistoricalPredictionService
+  - NhlGoalieProjectionBuilder::buildModelGoalie
+  - NhlGamePredictionPayload::confidenceScore
+  - NhlGamePredictionPayload::teamInputConfidence
+  - nhl:goalie-projections --sat-model
+example_usage: |
+  Bucket SAT/GP = projected_xsat_per_60 * projected_toi_per_game_seconds / 3600
+  php artisan nhl:goalie-projections --source=20252026 --target=20262027 --goalie-workload-version=WORKLOAD_VERSION --toi-version=TOI_VERSION --version=NEW_GOALIE_VERSION --sat-model=latest

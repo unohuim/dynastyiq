@@ -120,6 +120,15 @@ class BuildNhlSatModelEntityProfileForEntityJob implements ShouldQueue
             $metrics[$metricKey] = ((int) ($metrics[$metricKey] ?? 0)) + 1;
 
             $run->forceFill(['metrics' => $metrics])->save();
+            if (data_get($metrics, 'prediction_build.status') === 'running' && ((int) ($metrics['profile_entities_completed'] ?? 0) + (int) ($metrics['season_snapshot_entities_completed'] ?? 0)) % 25 === 0) {
+                DB::afterCommit(function (): void {
+                    try {
+                        broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));
+                    } catch (Throwable) {
+                        // Progress delivery must not fail a successfully built entity.
+                    }
+                });
+            }
         });
     }
 

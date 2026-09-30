@@ -3620,6 +3620,13 @@ describe('public game detail roster previews', function (): void {
         } else {
             $model->update(['metrics' => collect($model->metrics)->reject(fn ($value, string $key): bool => str_starts_with($key, 'toi_'))->all()]);
         }
+        if (! $withToi) {
+            $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
+                ->where('game.home.predictions.0.projection_source', fn ($value): bool => $value !== 'sat_model')
+                ->where('game.home.predictions.0.model_projected_toi_per_game_seconds', null));
+
+            return;
+        }
         $this->get('/games/2026010900')->assertOk()->assertInertia(fn (Assert $page) => $page
             ->where('game.home.predictions.0.projection_source', 'sat_model')
             ->where('game.home.predictions.0.model_run_id', $model->id)
@@ -3633,7 +3640,7 @@ describe('public game detail roster previews', function (): void {
         'earlier evaluation season preseason' => [1, 3.6, 1.8, 0.18, '20252026'],
         'earlier evaluation season regular' => [2, 3.6, 1.8, 0.18, '20252026'],
         'no evaluation season' => [2, 3.6, 1.8, 0.18, null],
-        'rate remains usable without any model TOI' => [2, 4.0, 2.0, 0.2, '20252026', false],
+        'missing model TOI uses historical pair' => [2, 4.0, 2.0, 0.2, '20252026', false],
     ]);
 
     it('uses prior-season TOI then independent linemates then line estimates', function (): void {

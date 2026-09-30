@@ -32,8 +32,8 @@ when_not_to_use:
   - Storing xG directly on nhl_shot_attempts_facts.
   - Treating draft model outputs as published production signals before calibration and holdout validation are approved.
 rules:
-  - Shot outcome training samples must use classified shot types and exclude shootout attempts and empty-net attempts by default.
-  - Unknown shot type rows remain valid raw shot-attempt facts but must not feed predictive buckets or model training unless an explicit model version documents that choice.
+  - Shot outcome training samples must retain unknown, null, and blank shot types as the existing unknown shot-type category; shootout and empty-net exclusions remain in effect.
+  - Unknown shot types must participate in evaluation, scoring, profiles, projections, comparison denominators, and predictive analysis through existing bucket rules. Do not infer a blocked outcome from the unknown label, duplicate attempts, or introduce a separate fallback model. Existing stored results require explicit evaluation and downstream rebuilds.
   - Raw grouped goal rates are discovery evidence only; factor weights require controlled modeling such as logistic regression or a successor approved model.
   - Distance must be included as a primary continuous feature unless a future model version proves a superior transformation.
   - Shot side and off-wing context must be treated as interaction candidates with distance, shot type, strength, and lane context rather than standalone danger labels.
@@ -50,18 +50,19 @@ rules:
   - Calibration must compare predicted probability bands against actual goal rates and correct overconfidence before storing final expected-goals values.
   - Model outputs, coefficients, calibration bands, and scored shot predictions belong in versioned xG tables, not in nhl_shot_attempts_facts.
   - Per-SAT model probabilities must be stored in `nhl_shot_attempt_model_scores`, keyed by `expected_goals_model_id` and `shot_attempt_fact_id`, so the same fact can be audited against specific model versions without mutating the base fact row.
+  - Score reuse during summary refresh must reject legacy unknown-shot-type exclusions and probabilities scored before the model's latest training timestamp, so explicit rebuilds cannot preserve pre-change eligibility or probabilities.
   - Historical xG and xGA must be derived by summing versioned goal-target shot-attempt prediction values by team_id or opponent_team_id.
   - Historical xSOG must be derived by summing versioned shot_on_goal-target shot-attempt prediction values by shooter_player_id or team_id.
   - Backfills must write predictions by model, prediction target, and shot-attempt fact id so reruns update rather than duplicate scored attempts.
   - Run-aware Eval SAT from SAT Models must train from nhl_model_runs.train_season_ids and write model and bucket rows only.
   - Run-aware Eval SAT must model P(shot_on_goal | SAT, selected context), not P(goal | SAT context) and not P(goal | shot_on_goal, selected context).
-  - Run-aware Eval SAT must exclude unavailable shot-type evidence using the SAT training constraints, but it must not require is_shot_on_goal=true because that would leak the target.
+  - Run-aware Eval SAT must include unknown shot types and all otherwise eligible SAT outcomes; it must not require is_shot_on_goal=true. Actual is_shot_on_goal and is_goal flags supply training outcomes, never a guessed result from the shot-type label.
   - Run-aware Eval SAT must not write nhl_shot_attempt_predictions or score a test season.
   - Run-aware Eval SAT must evaluate approved single factors, then two-factor combinations from the strongest three to five singles, using only training-season SAT rows.
   - Run-aware Eval SAT must store its selected factors and candidate scores in model feature_config or metrics so the admin UI can explain why those rows were trained.
   - Run-aware Eval SOG from SAT Models must train from nhl_model_runs.train_season_ids and write model and bucket rows only.
   - Run-aware Eval SOG must model P(goal | shot_on_goal, selected context), not P(goal | SAT context) and not P(shot_on_goal | SAT context).
-  - Run-aware Eval SOG must treat shot_type_bucket values `unknown` and `other` as unavailable shot-type evidence and exclude those rows from SOG evaluation.
+  - Run-aware Eval SOG must include unknown shot types only when is_shot_on_goal is true, preserving unknown-type goals and saves without admitting blocked attempts to its SOG denominator. The existing exclusion of other shot types remains.
   - Run-aware Eval SOG must not write nhl_shot_attempt_predictions or score a test season.
   - Run-aware Eval SOG must evaluate approved single factors, then two-factor combinations from the strongest three to five singles, using only training-season SOG rows.
   - Run-aware Eval SOG must store its selected factors and candidate scores in model feature_config or metrics so the admin UI can explain why those rows were trained.

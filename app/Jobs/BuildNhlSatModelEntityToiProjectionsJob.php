@@ -43,7 +43,7 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
      */
     public int $uniqueFor = 21600;
 
-    public function __construct(public int $modelRunId)
+    public function __construct(public int $modelRunId, public ?string $predictionBuildId = null)
     {
         $this->afterCommit = true;
     }
@@ -78,6 +78,9 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
     public function handle(NhlSatModelEntityToiProjectionBuilder $builder): void
     {
         $run = NhlModelRun::query()->findOrFail($this->modelRunId);
+        if (! $run->acceptsPredictionStage($this->predictionBuildId, 'toi')) {
+            return;
+        }
         $entities = $builder->prepareBuild($run);
         $jobs = array_map(
             fn (array $entity): BuildNhlSatModelEntityToiProjectionForEntityJob => new BuildNhlSatModelEntityToiProjectionForEntityJob(
@@ -96,24 +99,40 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
         ])->save();
 
         if ($jobs === []) {
-            self::markFinishedForRun($this->modelRunId, failed: false);
+            self::markFinishedForRun($this->modelRunId, failed: $this->predictionBuildId !== null, predictionBuildId: $this->predictionBuildId);
 
             return;
         }
 
         $modelRunId = $this->modelRunId;
+        $predictionBuildId = $this->predictionBuildId;
 
         Bus::batch($jobs)
             ->name('NHL SAT model TOI projections ' . $this->modelRunId)
             ->allowFailures()
-            ->finally(function (Batch $batch) use ($modelRunId): void {
-                self::markFinishedForRun($modelRunId, failed: $batch->failedJobs > 0);
+            ->finally(function (Batch $batch) use ($modelRunId, $predictionBuildId): void {
+                try {
+                    self::markFinishedForRun($modelRunId, failed: $batch->failedJobs > 0 || $batch->cancelled(), predictionBuildId: $predictionBuildId);
+                } catch (Throwable $exception) {
+                    if ($predictionBuildId === null) {
+                        throw $exception;
+                    }
+                    NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'toi', true, error: $exception->getMessage());
+                    self::broadcastForRun($modelRunId, 'predictions-failed');
+                }
             })
             ->dispatch();
     }
 
     public function failed(Throwable $exception): void
     {
+        if ($this->predictionBuildId !== null) {
+            NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'toi', true, error: $exception->getMessage());
+            self::broadcastForRun($this->modelRunId, 'predictions-failed');
+
+            return;
+        }
+
         $run = NhlModelRun::query()->find($this->modelRunId);
 
         $run?->forceFill([
@@ -133,11 +152,11 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
         ]);
     }
 
-    private static function markFinishedForRun(int $modelRunId, bool $failed): void
+    private static function markFinishedForRun(int $modelRunId, bool $failed, ?string $predictionBuildId = null): void
     {
         $run = NhlModelRun::query()->find($modelRunId);
 
-        if ($run === null) {
+        if ($run === null || ! $run->acceptsPredictionStage($predictionBuildId, 'toi')) {
             return;
         }
 
@@ -149,6 +168,15 @@ class BuildNhlSatModelEntityToiProjectionsJob implements ShouldQueue, ShouldBeUn
             ->map(fn (mixed $count): int => (int) $count)
             ->all();
         $counts['total'] = array_sum($counts);
+
+        if ($predictionBuildId !== null) {
+            NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'toi', $failed, [
+                'toi_projections_completed_at' => now()->toIso8601String(), 'toi_projection_rows' => $counts,
+            ]);
+            self::broadcastForRun($modelRunId, 'predictions-updated');
+
+            return;
+        }
 
         $run->forceFill([
             'status' => $failed ? NhlModelRun::STATUS_FAILED : NhlModelRun::STATUS_COMPLETE,

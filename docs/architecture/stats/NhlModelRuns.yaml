@@ -5,6 +5,7 @@ location:
   - app/Events/NhlSatModelUpdated.php
   - app/Jobs/BuildNhlSatModelEntityProfileForEntityJob.php
   - app/Jobs/BuildNhlSatModelEntityProfilesJob.php
+  - app/Jobs/LoadNhlSatModelProfileBatchJob.php
   - app/Jobs/BuildNhlSatModelEntityRateComparisonForEntityJob.php
   - app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php
   - app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php
@@ -58,6 +59,9 @@ when_not_to_use:
   - Replacing domain-specific prediction, profile, or projection output tables.
   - Modeling non-SAT stats before those aggregate/modeling workflows exist.
 rules:
+  - Build Predictions is a super-admin action on an existing SAT training run. Atomically reserve the run, then run Build Profiles (including all training/evaluation snapshots and generic stability), Build /60, and standalone Build TOI/GP in that order. Reuse existing per-entity batches; a parent dispatch is not stage completion.
+  - Combined prediction builds remain running between stages and advance only after the full stage batch succeeds. Failed, cancelled, or empty stages stop the workflow; record the failed stage and error. A build identifier plus stage guard makes stale or duplicate completion callbacks inert. Individual build/evaluation actions must not overlap a running combined build.
+  - Build Predictions stores its identifier, stage, status and timestamps in existing model-run metrics; it creates no new model and performs no model training or held-out comparison. Standalone build actions retain their separate behavior. Stage counts and failures appear in the existing model menu row via the authenticated SAT model broadcast channel.
   - Projection season is independent of held-out evaluation season. Store an optional explicit projection_season_id in run_config; resolve it first, then the existing test season, then the season following the latest training season. A null test season permits production forecasting without comparison labels. Projection ages and standalone TOI output season use this resolution; comparison queries continue to use the held-out test season.
   - SAT models are immutable experiment anchors; adding a new training season must create a new comparable model instead of overwriting prior model outputs.
   - A SAT model must identify model version, training seasons, optional test season, status, configuration, and metrics.
@@ -76,7 +80,11 @@ rules:
   - Eval SOG must test approved single factors, then two-factor combinations from the strongest three to five single factors, and store the selected factor interpretation with the trained model.
   - Eval SOG must keep observed rows and use shrinkage plus confidence instead of hard minimum row exclusion.
   - Build Profiles must run only after Eval SAT exists for the SAT model and must use only the SAT model's training seasons.
+  - Unknown shot types must remain eligible for profile entity discovery, training profiles, season snapshots, projection source queries, and comparison/Training Drift game counts. Unknown-only games must count toward those per-game denominators. Source SAT/SOG/goals come from actual outcome flags; the unknown label must not force an outcome. Model eligibility authority is NhlExpectedGoalsModel.yaml.
   - Build Profiles must queue a parent job that dispatches one child job per profile entity instead of performing all profile SQL during the admin HTTP request.
+  - Profile queue hydration must bound both instantiated child-job groups and queue inserts. One loader belongs to the same batch and stays pending until all training-profile and season-snapshot children have been added; completion of an early group cannot complete the stage. The same path serves standalone Profiles and combined Build Predictions.
+  - A profile loader failure must cancel partially queued work and fail the model build without advancing. Cancelled and stale combined loaders must not prepare profiles or enqueue children. Failed profile batches must not build generic stability from partial outputs.
+  - Profile queue failures must report bounded diagnostics and queued/expected counts without SQL text, serialized job payloads, or a retained SQL exception graph reaching queue error reporters.
   - Build Profiles must also build single-season entity profile snapshots for every training season and the held-out target season when present, using the same bucket matching as training profiles but writing to the separate season snapshot table.
   - Build Profiles must also build generic profile-bucket stability rows after entity profile and season snapshot rows exist.
   - Build Profiles must persist entity-level SAT profile rows separately from trained probability buckets; it must not score the optional test season or create projections.
@@ -98,7 +106,8 @@ rules:
   - Build /60 must queue a parent job that dispatches one child job per profile entity instead of performing all projection SQL during the admin HTTP request.
   - Build /60 must not use future TOI, opportunity, schedules, or the optional test season; it estimates bucket rates per 60 from training-season entity profiles only.
   - Build /60 must keep skater-offense SAT projections scoped to validated skater-offense inputs; peer and tendency baseline columns may remain stored for diagnostics but must not drive skater-offense SAT rates until separately validated.
-  - Build /60 must use entity profile rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row as projection inputs and roll lower-volume or remaining profile rows into an explicit Other row.
+  - Skater-offense Build /60 must preserve every training-profile bucket with a usable source SAT/60 rate under its original matched_bucket_key and dimensions. Do not impose a minimum SAT count or cumulative-share cutoff, and do not combine rare or tail buckets into Other. Historical profiles, event eligibility, and unknown-model-bucket fallback remain unchanged.
+  - Prior/latest training snapshots must match those original bucket keys directly. Retaining additional buckets may change active-bucket-count segments and projected totals under the existing rate formulas; do not freeze the old grouped totals. Existing projections require an explicit rebuild before consumers see the new bucket selection. Legacy Other projections remain readable until rebuilt.
   - Build /60 skater-offense projections must use the skater_offense_segmented_xsat_v2 strategy documented in NhlSatEntityRateProjection.yaml: latest-training-season bucket shape, entity targets segmented by active bucket count, position type, training goal-per-game tier, and latest-versus-prior training-season direction, then bucket scaling to the entity target.
   - Build /60 skater-offense projections must also persist skater_offense_strength_rate_v15 split projection rows for `all`, `ev`, `pp`, and `pk` in `nhl_sat_model_entity_rate_projection_splits`, using training-season summary rows only.
   - Build /60 skater-offense split projections must treat the final model-run training season as the latest training season for forward PP TOI/GP role signals; if the training window grows beyond two seasons, those signals must move forward with the latest training season instead of remaining hardcoded to S2.

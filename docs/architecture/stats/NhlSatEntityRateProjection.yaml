@@ -17,14 +17,15 @@ when_to_use:
 when_not_to_use:
   - Training SAT-to-SOG or SOG-to-goal probability buckets.
   - Building historical entity profiles or single-season entity snapshots.
-  - Projecting full-season volume, future TOI, games played, opportunity, SOG, or goals before those strategies are separately validated.
+  - Projecting full-season volume, future TOI, games played or opportunity inside the rate builder; claiming that consumption of stored SOG and goal rate forecasts establishes independent validation.
 rules:
   - Forecast age context uses NhlModelRun::projectionSeasonId; optional evaluation/test season remains separate and must not be required for projection builds.
-  - Approved game prediction integration consumes projected SAT/60 bucket shape and the bucket's trained SAT-to-SOG and SOG-to-goal probabilities with same-run standalone TOI. This does not promote comparison-only SOG/60 or goal/60 projections or establish new backtest validation claims. Game assembly is governed by NhlProjectedTeamMatchups.yaml.
+  - Approved game prediction integration consumes predicted SAT/60 with same-run standalone TOI, then personal historical SOG/SAT and goals/SOG with bucket-average fallback under NhlPredictionInputServices.yaml. Stored SOG/60 and xG/60 forecasts remain available for evaluation but are not game-prediction inputs. Game assembly is governed by NhlProjectedTeamMatchups.yaml; this establishes no new backtest validation claims.
   - Build /60 projections must not use the SAT model target season or held-out test-season profile rows as inputs.
   - Build /60 and Compare /60 currently queue and persist only `skater_offense` entities; other profile types may still have profile rows, but they are intentionally excluded from this projection/evaluation pass until profile-type-specific strategies are documented and approved.
   - Skater-offense SAT /60 projections must use only the model training seasons, training profile rows, training-season snapshots, and skater production from nhl_game_summaries for those same training seasons.
-  - Skater-offense SAT /60 projection inputs must retain bucket rows with at least four SAT per training season through 95% cumulative SAT share plus the next threshold-crossing row, then roll the remaining profile rows into an explicit Other bucket.
+  - Skater-offense Build /60 must preserve every training-profile bucket with a usable source SAT/60 rate under its original matched_bucket_key and dimensions. Do not impose a minimum SAT count or cumulative-share cutoff, and do not combine rare or tail buckets into Other. Historical profiles, event eligibility, and unknown-model-bucket fallback remain unchanged.
+  - Prior/latest training snapshots must match those original bucket keys directly. Retaining additional buckets may change active-bucket-count segments and projected totals under the existing rate formulas; do not freeze the old grouped totals. Existing projections require an explicit rebuild before consumers see the new bucket selection. Legacy Other projections remain readable until rebuilt.
   - Skater-offense SAT /60 projections must use true per-season snapshots for the prior and latest training seasons when comparing season-one and season-two movement.
   - Skater-offense SAT /60 projections must compute latest-training-season pre-March versus March-1-plus SAT/60 and SAT/GP from training data only.
   - Late-training-season SAT signals are conservative modifiers only: stable late SAT may slightly improve confidence, late SAT spikes must not create projection upside, and late SAT drops may apply a small capped downside adjustment.

@@ -17,8 +17,8 @@ class NhlProjectedTeamMatchupSimulator
     private const TARGET_SEASON_GAMES = 84.0;
     private const STRENGTH_EV = 'ev';
     private const STRENGTH_PK = 'pk';
-    private const OFFENSE_ENVIRONMENT_WEIGHT = 0.70;
-    private const DEFENSE_ENVIRONMENT_WEIGHT = 0.30;
+    private const OFFENSE_ENVIRONMENT_WEIGHT = 0.85;
+    private const DEFENSE_ENVIRONMENT_WEIGHT = 0.15;
     private const MIN_PK_OFFENSE_MIX_WEIGHT = 0.75;
     private const MAX_PK_OFFENSE_MIX_WEIGHT = 1.25;
     private const GOALIE_REASON_COVERAGE_TARGET = 0.90;
@@ -71,10 +71,14 @@ class NhlProjectedTeamMatchupSimulator
         ?int $teamAGoalieId = null,
         ?int $teamBGoalieId = null,
         ?array $teamARosterIds = null,
-        ?array $teamBRosterIds = null
+        ?array $teamBRosterIds = null,
+        ?int $satModelId = null,
+        ?array $teamAPlayers = null,
+        ?array $teamBPlayers = null
     ): array {
         $teamA = mb_strtoupper($teamA);
         $teamB = mb_strtoupper($teamB);
+        $satModelId ??= app(NhlSatModelPredictionService::class)->latestModelId();
 
         if (! $this->tablesExist()) {
             return [
@@ -91,6 +95,7 @@ class NhlProjectedTeamMatchupSimulator
                 'projection_version' => $projectionVersion,
                 'toi_projection_version' => $toiProjectionVersion,
                 'goalie_projection_version' => $goalieProjectionVersion,
+                'sat_model_run_id' => $satModelId,
                 'team_a' => $teamA,
                 'team_b' => $teamB,
                 'team_a_goalie_id' => $teamAGoalieId,
@@ -108,7 +113,9 @@ class NhlProjectedTeamMatchupSimulator
                     $teamB,
                     $teamBGoalieId,
                     $teamARosterIds,
-                    $teamBRosterIds
+                    $teamBRosterIds,
+                    $satModelId,
+                    $teamAPlayers
                 ),
                 $this->simulateSide(
                     $sourceSeasonId,
@@ -120,7 +127,9 @@ class NhlProjectedTeamMatchupSimulator
                     $teamA,
                     $teamAGoalieId,
                     $teamBRosterIds,
-                    $teamARosterIds
+                    $teamARosterIds,
+                    $satModelId,
+                    $teamBPlayers
                 ),
             ],
         ];
@@ -139,11 +148,45 @@ class NhlProjectedTeamMatchupSimulator
         string $defenseTeam,
         ?int $goalieId,
         ?array $offenseRosterIds,
-        ?array $defenseRosterIds
+        ?array $defenseRosterIds,
+        ?int $satModelId = null,
+        ?array $gamePlayers = null
     ): array {
-        $offenseBuckets = $this->offenseBuckets($targetSeasonId, $projectionVersion, $toiProjectionVersion, $offenseTeam, $offenseRosterIds);
-        $teamDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $offenseTeam, $offenseRosterIds);
-        $opponentDefenseBuckets = $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $defenseTeam, $defenseRosterIds);
+        $offenseBuckets = $satModelId === null
+            ? $this->offenseBuckets($targetSeasonId, $projectionVersion, $toiProjectionVersion, $offenseTeam, $offenseRosterIds) : collect();
+        $teamDefenseBuckets = $satModelId === null
+            ? $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $offenseTeam, $offenseRosterIds) : collect();
+        $opponentDefenseBuckets = $satModelId === null
+            ? $this->defenseBuckets($sourceSeasonId, $targetSeasonId, $toiProjectionVersion, $defenseTeam, $defenseRosterIds) : collect();
+        if ($satModelId !== null) {
+            $lineups = app(NhlGameLineupProjectionBuilder::class);
+            $offenseRosterIds ??= array_column($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $offenseTeam), 'nhl_player_id');
+            $defenseRosterIds ??= array_column($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $defenseTeam), 'nhl_player_id');
+            $gamePlayers ??= $lineups->buildFromRosterIds($offenseRosterIds, $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion);
+            if ($gamePlayers === null) {
+                $positions = ['forward' => 0, 'defense' => 0];
+                $preview = collect($lineups->projectedRosterPreview($targetSeasonId, $toiProjectionVersion, $offenseTeam, $offenseRosterIds))
+                    ->map(function (array $player) use (&$positions): array {
+                        $role = mb_strtoupper((string) $player['position']) === 'D' ? 'defense' : 'forward';
+                        $index = $positions[$role]++;
+                        $size = $role === 'defense' ? 2 : 3;
+
+                        return [...$player, 'lineup_role' => $role,
+                            'line_key' => ($role === 'defense' ? 'D' : 'F') . (intdiv($index, $size) + 1),
+                            'slot_index' => ($index % $size) + 1];
+                    })->all();
+                $gamePlayers = $lineups->build(['players' => $preview], $sourceSeasonId, $targetSeasonId, $projectionVersion, $toiProjectionVersion)
+                    ?? $preview;
+                $gamePlayers = $lineups->applySatModel($gamePlayers, $satModelId, $targetSeasonId, 2);
+            }
+            $model = app(NhlSatModelPredictionService::class);
+            $projected = $model->offense($satModelId, $gamePlayers);
+            $gamePlayers = $projected['players'];
+            $offenseBuckets = $projected['buckets'];
+            $defensePlayers = $model->defensePlayers($satModelId, $offenseRosterIds, $targetSeasonId, $toiProjectionVersion);
+            $teamDefenseBuckets = $model->sumBuckets($defensePlayers->pluck('buckets')->flatten(1));
+            $opponentDefenseBuckets = $model->defense($satModelId, $defenseRosterIds, $targetSeasonId, $toiProjectionVersion);
+        }
         $baseline = $this->summary($offenseBuckets, 'baseline_');
         $projectedGames = $this->projectedGames($offenseBuckets);
         $baselineXsat = max(0.01, $baseline['baseline_xsat']);
@@ -178,15 +221,45 @@ class NhlProjectedTeamMatchupSimulator
             })
             ->sortByDesc('baseline_xgf')
             ->values();
-        $goalieEnvironmentRows = $this->adjustedGoalieEnvironmentRows($offenseRows, $opponentDefenseBuckets, $baseline);
+        $goalieEnvironmentRows = $satModelId === null
+            ? $this->adjustedGoalieEnvironmentRows($offenseRows, $opponentDefenseBuckets, $baseline)
+            : $model->environment($satModelId, $offenseBuckets, $opponentDefenseBuckets);
         $goalie = $this->goalie($targetSeasonId, $goalieProjectionVersion, $defenseTeam, $goalieId);
+        if ($satModelId !== null && $goalie === null && $goalieId !== null) {
+            // A selected annual run needs an identity, not an unrelated season projection.
+            $goalie = ['goalie_player_id' => $goalieId,
+                'goalie_name' => DB::table('players')->where('nhl_id', $goalieId)->value('full_name') ?? (string) $goalieId,
+                'team_abbrev' => $defenseTeam, 'projection_source' => 'sat_model',
+                'projected_games' => null, 'projected_toi_seconds' => null];
+        }
         $evGoalieBuckets = $goalie === null
             ? collect()
             : $this->goalieBuckets($targetSeasonId, $goalieProjectionVersion, (int) $goalie['goalie_player_id'], self::STRENGTH_EV);
         $pkGoalieBuckets = $goalie === null
             ? collect()
             : $this->goalieBuckets($targetSeasonId, $goalieProjectionVersion, (int) $goalie['goalie_player_id'], self::STRENGTH_PK);
-        if (($goalie['projection_source'] ?? null) === 'league_average') {
+        if ($satModelId !== null && $goalie !== null) {
+            $model = app(NhlSatModelPredictionService::class);
+            $seasonBuckets = $model->goalieBuckets($satModelId, (int) $goalie['goalie_player_id'], $opponentDefenseBuckets);
+            $goalie['projected_ev_xga'] = (float) $seasonBuckets->sum('projected_xga');
+            $goalie['projected_ev_ga'] = (float) $seasonBuckets->sum('projected_ga');
+            $goalieGames = (float) ($goalie['projected_games'] ?? 0);
+            $goalieSeconds = (float) ($goalie['projected_toi_seconds'] ?? 0);
+            $goalieGameShare = $goalieGames > 0 && $goalieSeconds > 0 ? $goalieSeconds / ($goalieGames * 3600) : 1.0;
+            $goalie['sat_model_xga_per_game'] = (float) $seasonBuckets->sum('projected_xga') * $goalieGameShare;
+            $goalie['sat_model_ga_per_game'] = (float) $seasonBuckets->sum('projected_ga') * $goalieGameShare;
+            $goalie['sat_model_gsax_per_game'] = (float) $seasonBuckets->sum('projected_gsax') * $goalieGameShare;
+            $goalie['sat_model_run_id'] = $satModelId;
+            $evGoalieBuckets = $model->goalieBuckets($satModelId, (int) $goalie['goalie_player_id'],
+                $goalieEnvironmentRows->map(fn (array $row): object => (object) [
+                    ...$row,
+                    'bucket_dimensions' => $offenseBuckets->firstWhere('matched_bucket_key', $row['matched_bucket_key'])?->bucket_dimensions
+                        ?? $opponentDefenseBuckets->firstWhere('matched_bucket_key', $row['matched_bucket_key'])?->bucket_dimensions ?? [],
+                    'baseline_xsat' => $row['adjusted_xsat'], 'baseline_xsog' => $row['adjusted_xsog'],
+                    'baseline_xgf' => $row['adjusted_xgf'],
+                ]));
+        }
+        if ($satModelId === null && ($goalie['projection_source'] ?? null) === 'league_average') {
             $evGoalieBuckets = collect();
             $pkGoalieBuckets = collect([(object) [
                 'matched_bucket_key' => 'league_average',
@@ -200,8 +273,11 @@ class NhlProjectedTeamMatchupSimulator
                 'confidence_score' => 0.0,
             ]]);
         }
-        $rows = $this->applyEvGoalieAdjustments($goalieEnvironmentRows, $evGoalieBuckets, $goalie, $projectedGames);
-        $pk = $this->applyPkGoalieAdjustments($goalieEnvironmentRows, $pkGoalieBuckets, $goalie, $projectedGames);
+        $rows = $this->applyEvGoalieAdjustments($goalieEnvironmentRows, $evGoalieBuckets, $goalie, $projectedGames, $satModelId !== null);
+        // SAT/60 × all-situation TOI already includes special teams. Never add legacy PK volume again.
+        $pk = $satModelId === null
+            ? $this->applyPkGoalieAdjustments($goalieEnvironmentRows, $pkGoalieBuckets, $goalie, $projectedGames)
+            : ['xgf' => 0.0, 'goalie_adjusted_xgf' => 0.0, 'goalie_adjustment' => 0.0, 'rows' => collect()];
         $goalieReasons = $this->goalieReasons($rows->merge($pk['rows']));
 
         $adjusted = [
@@ -234,6 +310,21 @@ class NhlProjectedTeamMatchupSimulator
         ];
 
         return [
+            'bucket_model_run_id' => $satModelId,
+            'goalie_input_confidence' => $satModelId === null ? null
+                : app(NhlHistoricalPredictionService::class)->confidence($evGoalieBuckets, 'projected_sata', 'source_confidence_score'),
+            'goalie_bucket_coverage' => $satModelId === null ? [] : [
+                'buckets' => $evGoalieBuckets->count(),
+                'exact_buckets' => $evGoalieBuckets->where('goalie_skill_source', 'model_history')->count(),
+                'exact_sat' => (float) $evGoalieBuckets->where('goalie_skill_source', 'model_history')->sum('projected_sata'),
+            ],
+            'defense_roster' => $satModelId === null ? [] : $defensePlayers
+                ->map(fn (array $row): array => array_diff_key($row, ['buckets' => true]))->all(),
+            'defense_summary' => [
+                'projected_sata' => (float) $teamDefenseBuckets->sum('baseline_xsat'),
+                'projected_soga' => (float) $teamDefenseBuckets->sum('baseline_xsog'),
+                'projected_xga' => (float) $teamDefenseBuckets->sum('baseline_xgf'),
+            ],
             'offense_team' => $offenseTeam,
             'defense_team' => $defenseTeam,
             'goalie' => $goalie,
@@ -255,7 +346,7 @@ class NhlProjectedTeamMatchupSimulator
             'goalie_environment_profile' => $this->profileReasons($goalieEnvironmentRows, $projectedGames),
             'goalie_reasons' => $goalieReasons['rows'],
             'goalie_reason_summary' => $goalieReasons['summary'],
-            'roster' => $this->rosterRows(
+            'roster' => $satModelId !== null ? $gamePlayers : $this->rosterRows(
                 $targetSeasonId,
                 $projectionVersion,
                 $toiProjectionVersion,
@@ -374,7 +465,7 @@ class NhlProjectedTeamMatchupSimulator
             ->where('projections.target_team_abbrev', mb_strtoupper($team))
             ->where('projections.goalie_player_id', $goalieId)
             ->selectRaw('projections.goalie_player_id')
-            ->selectRaw("COALESCE(players.full_name, projections.goalie_player_id::text) as goalie_name")
+            ->selectRaw('COALESCE(players.full_name, CAST(projections.goalie_player_id AS TEXT)) as goalie_name')
             ->selectRaw('projections.source_team_abbrev')
             ->selectRaw('projections.target_team_abbrev')
             ->selectRaw('projections.source_games')
@@ -413,6 +504,7 @@ class NhlProjectedTeamMatchupSimulator
             'source_gsax' => $row->source_gsax === null ? null : round((float) $row->source_gsax, 4),
             'projected_games' => $row->projected_games === null ? null : round((float) $row->projected_games, 2),
             'projected_starts' => $row->projected_starts === null ? null : round((float) $row->projected_starts, 2),
+            'projected_toi_seconds' => $row->projected_toi_seconds === null ? null : (float) $row->projected_toi_seconds,
             'projected_xgaa' => $this->projectedGoalsAgainstAverage($row->projected_xga, $row->projected_toi_seconds),
             'projected_gaa' => $this->projectedGoalsAgainstAverage($row->projected_ga, $row->projected_toi_seconds),
             'projected_ev_xga' => $row->projected_ev_xga === null ? null : round((float) $row->projected_ev_xga, 4),
@@ -494,7 +586,8 @@ class NhlProjectedTeamMatchupSimulator
         Collection $rows,
         Collection $goalieBuckets,
         ?array $goalie,
-        float $projectedGames
+        float $projectedGames,
+        bool $modelBuckets = false
     ): Collection
     {
         $projectedGames = $projectedGames > 0 ? $projectedGames : self::TARGET_SEASON_GAMES;
@@ -503,7 +596,7 @@ class NhlProjectedTeamMatchupSimulator
         $bucketProjectedXga = (float) $goalieBuckets->sum('projected_xga');
         $seasonEvProjectedXga = $goalie === null ? 0.0 : (float) ($goalie['projected_ev_xga'] ?? 0);
         $seasonEvProjectedGa = $goalie === null ? 0.0 : (float) ($goalie['projected_ev_ga'] ?? 0);
-        $seasonCalibration = $bucketProjectedGa > 0 && $seasonEvProjectedGa > 0
+        $seasonCalibration = ! $modelBuckets && $bucketProjectedGa > 0 && $seasonEvProjectedGa > 0
             ? $seasonEvProjectedGa / $bucketProjectedGa
             : 1.0;
         $seasonGoalieRatio = $seasonEvProjectedXga > 0 && $seasonEvProjectedGa > 0
@@ -511,7 +604,7 @@ class NhlProjectedTeamMatchupSimulator
             : ($bucketProjectedXga > 0 && $bucketProjectedGa > 0 ? $bucketProjectedGa / $bucketProjectedXga : 1.0);
 
         return $rows
-            ->map(function (array $row) use ($goalieBuckets, $projectedGames, $seasonCalibration, $seasonGoalieRatio, $hasGoalieProjection): array {
+            ->map(function (array $row) use ($goalieBuckets, $projectedGames, $seasonCalibration, $seasonGoalieRatio, $hasGoalieProjection, $modelBuckets): array {
                 $goalieBucket = $goalieBuckets->get((string) $row['matched_bucket_key']);
                 $goalieConfidence = 0.0;
                 $goalieRatio = $seasonGoalieRatio;
@@ -533,7 +626,12 @@ class NhlProjectedTeamMatchupSimulator
 
                 $goalieAdjustment = ((float) $row['adjusted_xgf']) * ($goalieRatio - 1);
                 $goalieAdjustedXgf = max(0.0, ((float) $row['adjusted_xgf']) + $goalieAdjustment);
-                $row['projection_strength'] = self::STRENGTH_EV;
+                if ($modelBuckets && $goalieBucket !== null) {
+                    // The static bucket service has already applied skill and confidence once.
+                    $goalieAdjustedXgf = (float) $goalieBucket->projected_ga;
+                    $goalieAdjustment = $goalieAdjustedXgf - (float) $row['adjusted_xgf'];
+                }
+                $row['projection_strength'] = $modelBuckets ? 'all' : self::STRENGTH_EV;
                 $row['goalie_adjustment'] = round($goalieAdjustment, 4);
                 $row['goalie_adjustment_per_game'] = round($goalieAdjustment / $projectedGames, 4);
                 $row['goalie_adjusted_xgf'] = round($goalieAdjustedXgf, 4);
@@ -541,7 +639,8 @@ class NhlProjectedTeamMatchupSimulator
                 $row['adjusted_xsat_per_game'] = round(((float) ($row['adjusted_xsat'] ?? 0)) / $projectedGames, 3);
                 $row['adjusted_xsog_per_game'] = round(((float) ($row['adjusted_xsog'] ?? 0)) / $projectedGames, 3);
                 $row['adjusted_xgf_per_game'] = round(((float) ($row['adjusted_xgf'] ?? 0)) / $projectedGames, 4);
-                $row['goalie_confidence'] = round($goalieConfidence, 4);
+                $row['goalie_confidence'] = round($modelBuckets
+                    ? (float) ($goalieBucket->source_confidence_score ?? 0) : $goalieConfidence, 4);
                 $row['goalie_ga_xga_ratio'] = round($goalieRatio, 4);
                 $row['season_goalie_ga_xga_ratio'] = round($seasonGoalieRatio, 4);
                 $row['goalie_profile_share'] = $goalieProfileShare === null ? null : round((float) $goalieProfileShare, 6);
@@ -561,6 +660,13 @@ class NhlProjectedTeamMatchupSimulator
      */
     private function adjustedGoalieEnvironmentRows(Collection $offenseRows, Collection $defenseRows, array $offenseTotals): Collection
     {
+        if ($defenseRows->isEmpty()) {
+            // Missing defensive evidence must preserve the full offensive volume.
+            $defenseRows = $offenseRows->map(fn (array $row): object => (object) [
+                ...$row, 'baseline_xsat' => $row['adjusted_xsat'],
+                'baseline_xsog' => $row['adjusted_xsog'], 'baseline_xgf' => $row['adjusted_xgf'],
+            ]);
+        }
         $offenseByBucket = $offenseRows->keyBy('matched_bucket_key');
         $defenseByBucket = $defenseRows->keyBy('matched_bucket_key');
         $keys = $offenseByBucket
@@ -939,7 +1045,7 @@ class NhlProjectedTeamMatchupSimulator
             ))
             ->values();
 
-        $shown = collect([self::STRENGTH_EV, self::STRENGTH_PK])
+        $shown = collect([self::STRENGTH_EV, self::STRENGTH_PK, 'all'])
             ->flatMap(fn (string $strength): Collection => $this->goalieReasonRowsForStrength($eligible, $strength))
             ->values();
 

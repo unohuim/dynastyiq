@@ -96,6 +96,15 @@ class BuildNhlSatModelEntityRateProjectionForEntityJob implements ShouldQueue
             $metrics['rate_projection_entities_completed'] = ((int) ($metrics['rate_projection_entities_completed'] ?? 0)) + 1;
 
             $run->forceFill(['metrics' => $metrics])->save();
+            if (data_get($metrics, 'prediction_build.status') === 'running' && (int) ($metrics['rate_projection_entities_completed'] ?? 0) % 25 === 0) {
+                DB::afterCommit(function (): void {
+                    try {
+                        broadcast(new \App\Events\NhlSatModelUpdated($this->modelRunId, 'predictions-progress'));
+                    } catch (Throwable) {
+                        // Progress delivery must not fail a successfully built entity.
+                    }
+                });
+            }
         });
     }
 

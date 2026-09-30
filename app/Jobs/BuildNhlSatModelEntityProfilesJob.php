@@ -11,6 +11,7 @@ use App\Services\NhlSatModelEntityProfileBuilder;
 use Illuminate\Bus\Batch;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
@@ -47,7 +48,8 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
     public function __construct(
         public int $modelRunId,
         public int $satModelId,
-        public ?int $sogModelId = null
+        public ?int $sogModelId = null,
+        public ?string $predictionBuildId = null
     ) {
         $this->afterCommit = true;
     }
@@ -79,85 +81,99 @@ class BuildNhlSatModelEntityProfilesJob implements ShouldQueue, ShouldBeUnique
         ];
     }
 
+    /**
+     * Start one batch whose pending loader adds bounded groups of entity jobs.
+     */
     public function handle(NhlSatModelEntityProfileBuilder $builder): void
     {
         $run = NhlModelRun::query()->findOrFail($this->modelRunId);
-        $entities = $builder->prepareBuild($run);
-        $snapshotEntities = $builder->prepareSeasonSnapshotBuilds($run);
-        $jobs = array_map(
-            fn (array $entity): BuildNhlSatModelEntityProfileForEntityJob => new BuildNhlSatModelEntityProfileForEntityJob(
-                modelRunId: $this->modelRunId,
-                satModelId: $this->satModelId,
-                sogModelId: $this->sogModelId,
-                profileType: $entity['profile_type'],
-                entityKey: $entity['entity_key']
-            ),
-            $entities
-        );
-        $snapshotJobs = array_map(
-            fn (array $entity): BuildNhlSatModelEntityProfileForEntityJob => new BuildNhlSatModelEntityProfileForEntityJob(
-                modelRunId: $this->modelRunId,
-                satModelId: $this->satModelId,
-                sogModelId: $this->sogModelId,
-                profileType: $entity['profile_type'],
-                entityKey: $entity['entity_key'],
-                snapshotSeasonId: $entity['season_id']
-            ),
-            $snapshotEntities
-        );
-        $jobs = array_merge($jobs, $snapshotJobs);
+        if (! $run->acceptsPredictionStage($this->predictionBuildId, 'profiles')) {
+            return;
+        }
+        $modelRunId = $this->modelRunId;
+        $predictionBuildId = $this->predictionBuildId;
 
-        $run->forceFill([
-            'metrics' => array_merge($run->metrics ?? [], [
-                'profile_entities_queued' => count($entities),
-                'profile_entities_completed' => 0,
-                'season_snapshot_entities_queued' => count($snapshotEntities),
-                'season_snapshot_entities_completed' => 0,
-            ]),
-        ])->save();
+        try {
+            Bus::batch([new LoadNhlSatModelProfileBatchJob(
+                $this->modelRunId,
+                $this->satModelId,
+                $this->sogModelId,
+                $this->predictionBuildId
+            )])
+                ->name('NHL SAT model profiles ' . $this->modelRunId)
+                ->allowFailures()
+                ->finally(static function (Batch $batch) use ($modelRunId, $predictionBuildId): void {
+                    try {
+                        self::markFinishedForRun($modelRunId, failed: $batch->failedJobs > 0 || $batch->cancelled(), predictionBuildId: $predictionBuildId);
+                    } catch (Throwable $exception) {
+                        if ($predictionBuildId === null) {
+                            throw new \RuntimeException(self::failureMessage($exception));
+                        }
+                        NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'profiles', true, error: self::failureMessage($exception));
+                        self::broadcastForRun($modelRunId, 'predictions-failed');
+                    }
+                })
+                ->dispatch();
+        } catch (Throwable $exception) {
+            // Do not hand SQL/bindings or a large previous exception to queue logging.
+            throw new \RuntimeException(self::failureMessage($exception));
+        }
+    }
 
-        if ($jobs === []) {
-            $this->markFinished(failed: false);
+    /**
+     * Record bounded failure details without serialized queue payloads.
+     */
+    public function failed(Throwable $exception): void
+    {
+        $message = self::failureMessage($exception);
+        if ($this->predictionBuildId !== null) {
+            NhlModelRun::finishPredictionStage($this->modelRunId, $this->predictionBuildId, 'profiles', true, error: $message);
+            self::broadcastForRun($this->modelRunId, 'predictions-failed');
 
             return;
         }
 
-        $modelRunId = $this->modelRunId;
-
-        Bus::batch($jobs)
-            ->name('NHL SAT model profiles ' . $this->modelRunId)
-            ->allowFailures()
-            ->finally(function (Batch $batch) use ($modelRunId): void {
-                self::markFinishedForRun($modelRunId, failed: $batch->failedJobs > 0);
-            })
-            ->dispatch();
-    }
-
-    public function failed(Throwable $exception): void
-    {
-        $this->markFailed($exception->getMessage());
+        $this->markFailed($message);
 
         Log::error('NHL SAT model entity profiles job failed.', [
             'model_run_id' => $this->modelRunId,
-            'error' => $exception->getMessage(),
+            'error' => $message,
         ]);
     }
 
-    private function markFinished(bool $failed): void
+    /**
+     * Keep database diagnostics but omit SQL text, bindings, and exception graphs.
+     */
+    public static function failureMessage(Throwable $exception): string
     {
-        self::markFinishedForRun($this->modelRunId, $failed);
+        $message = $exception instanceof QueryException
+            ? ($exception->getPrevious()?->getMessage() ?? 'Database operation failed.')
+            : $exception->getMessage();
+
+        return mb_substr($message, 0, 1000);
     }
 
-    private static function markFinishedForRun(int $modelRunId, bool $failed): void
+    private static function markFinishedForRun(int $modelRunId, bool $failed, ?string $predictionBuildId = null): void
     {
         $run = NhlModelRun::query()->find($modelRunId);
 
-        if ($run === null) {
+        if ($run === null || ! $run->acceptsPredictionStage($predictionBuildId, 'profiles')) {
             return;
         }
 
         $counts = self::profileCountsForRun($modelRunId);
-        $genericBucketStabilityCounts = self::genericBucketStabilityCountsForRun($modelRunId);
+        $genericBucketStabilityCounts = $failed ? ['total' => 0] : self::genericBucketStabilityCountsForRun($modelRunId);
+        if ($predictionBuildId !== null) {
+            NhlModelRun::finishPredictionStage($modelRunId, $predictionBuildId, 'profiles', $failed, [
+                'profiles_completed_at' => now()->toIso8601String(), 'profile_rows' => $counts,
+                'season_snapshot_rows' => self::seasonSnapshotCountsForRun($modelRunId),
+                'generic_bucket_stability_rows' => $genericBucketStabilityCounts,
+            ]);
+            self::broadcastForRun($modelRunId, 'predictions-updated');
+
+            return;
+        }
+
         $run->forceFill([
             'status' => $failed ? NhlModelRun::STATUS_FAILED : NhlModelRun::STATUS_COMPLETE,
             'metrics' => array_merge($run->metrics ?? [], [

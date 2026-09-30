@@ -48,10 +48,22 @@ class NhlGoalieProjectionBuilder
         string $targetSeasonId,
         string $goalieWorkloadProjectionVersion,
         string $toiProjectionVersion,
-        ?string $version = null
+        ?string $version = null,
+        ?int $satModelId = null
     ): array {
         $version = $version ?: $this->defaultVersion($targetSeasonId);
         $goaliePlayerIds = $this->eligibleGoalieIds($targetSeasonId, $goalieWorkloadProjectionVersion);
+        if ($satModelId !== null) {
+            if (! DB::table('nhl_sat_model_entity_profile_buckets')->where('model_run_id', $satModelId)
+                ->where('profile_type', 'skater_defense')->exists()) {
+                throw new RuntimeException('Build defensive profiles for the selected SAT run first.');
+            }
+
+            return ['projection_version' => $version, 'source_season_id' => $sourceSeasonId,
+                'target_season_id' => $targetSeasonId, 'goalie_workload_projection_version' => $goalieWorkloadProjectionVersion,
+                'toi_projection_version' => $toiProjectionVersion, 'goalie_player_ids' => $goaliePlayerIds->all(),
+                'sat_model_run_id' => $satModelId];
+        }
         $goalModel = $this->latestModel($sourceSeasonId, NhlExpectedGoalsBackfiller::TARGET_GOAL);
         $sogModel = $this->latestModel($sourceSeasonId, NhlExpectedGoalsBackfiller::TARGET_SHOT_ON_GOAL);
 
@@ -88,8 +100,13 @@ class NhlGoalieProjectionBuilder
         string $goalieWorkloadProjectionVersion,
         string $toiProjectionVersion,
         string $version,
-        int $goaliePlayerId
+        int $goaliePlayerId,
+        ?int $satModelId = null
     ): array {
+        if ($satModelId !== null) {
+            return $this->buildModelGoalie($sourceSeasonId, $targetSeasonId, $goalieWorkloadProjectionVersion,
+                $toiProjectionVersion, $version, $goaliePlayerId, $satModelId);
+        }
         return DB::transaction(function () use (
             $sourceSeasonId,
             $targetSeasonId,
@@ -194,6 +211,96 @@ class NhlGoalieProjectionBuilder
             }
 
             return ['goalie_player_id' => $goaliePlayerId, 'season_rows' => 1, 'bucket_rows' => count($bucketPayloads)];
+        });
+    }
+
+    /**
+     * Persist full-game goalie projections in a pinned SAT run's bucket definitions.
+     * Existing model profile rebuilds supply defensive and goalie history; no raw-data work occurs here.
+     *
+     * @return array{goalie_player_id:int,season_rows:int,bucket_rows:int}
+     */
+    public function buildModelGoalie(
+        string $sourceSeasonId,
+        string $targetSeasonId,
+        string $workloadVersion,
+        string $toiVersion,
+        string $version,
+        int $goalieId,
+        int $modelId
+    ): array {
+        return DB::transaction(function () use ($sourceSeasonId, $targetSeasonId, $workloadVersion, $toiVersion, $version, $goalieId, $modelId): array {
+            $workload = $this->workloadRow($targetSeasonId, $workloadVersion, $goalieId);
+            if ($workload === null || empty($workload->target_team_abbrev)) {
+                return ['goalie_player_id' => $goalieId, 'season_rows' => 0, 'bucket_rows' => 0];
+            }
+            $model = app(NhlSatModelPredictionService::class);
+            $roster = app(NhlGameLineupProjectionBuilder::class)->projectedRosterPreview($targetSeasonId, $toiVersion, $workload->target_team_abbrev);
+            $environment = $model->defense($modelId, array_column($roster, 'nhl_player_id'), $targetSeasonId, $toiVersion);
+            if ($environment->isEmpty()) {
+                throw new RuntimeException('Build same-run defensive SAT profiles before building model goalie projections.');
+            }
+            $buckets = $model->goalieBuckets($modelId, $goalieId, $environment);
+            $games = max(0.0, (float) $workload->projected_toi_seconds / 3600);
+            $totalSat = max(0.01, (float) $buckets->sum('projected_sata'));
+            $now = now();
+            $payloads = $buckets->map(function (object $bucket) use ($sourceSeasonId, $targetSeasonId, $version, $goalieId, $modelId, $workload, $games, $totalSat, $now): array {
+                return [
+                    'source_profile_bucket_id' => null,
+                    'projection_version' => $version, 'source_season_id' => $sourceSeasonId,
+                    'target_season_id' => $targetSeasonId, 'goalie_player_id' => $goalieId,
+                    'source_team_id' => $workload->source_team_id, 'source_team_abbrev' => $workload->source_team_abbrev,
+                    'target_team_id' => $workload->target_team_id, 'target_team_abbrev' => $workload->target_team_abbrev,
+                    'position' => 'G', 'projection_strength' => 'all',
+                    'matched_bucket_key' => $bucket->matched_bucket_key, 'fallback_level' => 1,
+                    'bucket_dimensions' => json_encode($bucket->bucket_dimensions, JSON_THROW_ON_ERROR),
+                    'shot_type_group' => $bucket->shot_type_group, 'distance_group' => $bucket->distance_group,
+                    'angle_group' => $bucket->angle_group, 'sequence_group' => $bucket->sequence_group,
+                    'source_sat_against' => $bucket->source_sat_against,
+                    'source_sog_against' => $bucket->source_sog_against,
+                    'source_goals_against' => $bucket->source_goals_against,
+                    'source_xga' => $bucket->source_xga, 'source_xsoga' => $bucket->source_xsoga,
+                    'projected_sata' => $bucket->projected_sata * $games,
+                    'projected_soga' => $bucket->projected_soga * $games,
+                    'projected_xsoga' => $bucket->projected_soga * $games,
+                    'projected_xga' => $bucket->projected_xga * $games,
+                    'projected_ga' => $bucket->projected_ga * $games,
+                    'projected_gsax' => $bucket->projected_gsax * $games,
+                    'projected_profile_share' => $bucket->projected_sata / $totalSat,
+                    'confidence_score' => $bucket->source_confidence_score,
+                    'confidence_bucket' => $this->confidenceBucket($bucket->source_confidence_score),
+                    'flags' => json_encode([$bucket->goalie_skill_source], JSON_THROW_ON_ERROR),
+                    'projection_inputs' => json_encode(['sat_model_run_id' => $modelId], JSON_THROW_ON_ERROR),
+                    'metadata' => json_encode(['sat_model_run_id' => $modelId, 'volume_basis' => 'all'], JSON_THROW_ON_ERROR),
+                    'created_at' => $now, 'updated_at' => $now,
+                ];
+            })->values()->all();
+            // The model buckets already contain the confidence-adjusted historical skill.
+            // Do not add a second adjustment calculated from a different xG model.
+            $modelWorkload = clone $workload;
+            $modelWorkload->source_toi_seconds = 0;
+            $season = $this->seasonPayload($payloads, $modelWorkload, $sourceSeasonId, $targetSeasonId,
+                $workloadVersion, $toiVersion, $version, $this->goalieWorkloadShare($targetSeasonId, $workloadVersion, $workload));
+            $history = app(NhlHistoricalPredictionService::class)->profiles($modelId, 'goalie_faced', [$goalieId])->get($goalieId, collect());
+            $season['source_toi_seconds'] = $history->max('source_toi_seconds');
+            $season['source_sat_against'] = (int) $history->sum('source_sat');
+            $season['source_sog_against'] = (int) $history->sum('source_sog');
+            $season['source_goals_against'] = (int) $history->sum('source_goals');
+            $season['source_xga'] = (float) $history->sum('expected_goals');
+            $season['source_xsoga'] = (float) $history->sum('expected_sog');
+            $season['source_gsax'] = $season['source_xga'] - $season['source_goals_against'];
+            $season['metadata'] = json_encode(['builder' => self::class, 'sat_model_run_id' => $modelId, 'volume_basis' => 'all'], JSON_THROW_ON_ERROR);
+            DB::table('nhl_goalie_season_projections')->upsert([$season],
+                ['projection_version', 'target_season_id', 'goalie_player_id'], $this->seasonUpdateColumns());
+            $projectionId = DB::table('nhl_goalie_season_projections')->where('projection_version', $version)
+                ->where('target_season_id', $targetSeasonId)->where('goalie_player_id', $goalieId)->value('id');
+            DB::table('nhl_goalie_projection_chance_buckets')->where('goalie_season_projection_id', $projectionId)->delete();
+            foreach (array_chunk($payloads, 100) as $chunk) {
+                DB::table('nhl_goalie_projection_chance_buckets')->insert(array_map(
+                    fn (array $row): array => [...$row, 'goalie_season_projection_id' => $projectionId], $chunk));
+            }
+
+            return ['goalie_player_id' => $goalieId, 'season_rows' => 1, 'bucket_rows' => count($payloads)];
         });
     }
 

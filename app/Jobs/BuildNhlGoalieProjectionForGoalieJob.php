@@ -45,7 +45,8 @@ class BuildNhlGoalieProjectionForGoalieJob implements ShouldQueue
         public string $goalieWorkloadProjectionVersion,
         public string $toiProjectionVersion,
         public string $version,
-        public int $goaliePlayerId
+        public int $goaliePlayerId,
+        public ?int $satModelId = null
     ) {
         $this->afterCommit = true;
     }
@@ -89,7 +90,8 @@ class BuildNhlGoalieProjectionForGoalieJob implements ShouldQueue
             goalieWorkloadProjectionVersion: $this->goalieWorkloadProjectionVersion,
             toiProjectionVersion: $this->toiProjectionVersion,
             version: $this->version,
-            goaliePlayerId: $this->goaliePlayerId
+            goaliePlayerId: $this->goaliePlayerId,
+            satModelId: $this->satModelId ?? null
         );
     }
 

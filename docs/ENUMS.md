@@ -2034,7 +2034,8 @@ This boolean grouping choice is independent of the existing `display` values
 - Buckets do not imply high, medium, or low danger by themselves.
 - Rush buckets distinguish direct transition attempts from rebounds that inherit rush context inside the rebound window.
 - Shooter and goalie handedness, height, weight, and age-at-game snapshots are context features; `is_off_wing_attempt` is nullable when goalie-perspective side, shooter handedness, or classified shot type is unavailable.
-- Unknown shot type rows remain valid raw facts, but predictive bucket analysis excludes `shot_type_bucket = unknown` by default.
+- Unknown shot type rows remain valid raw facts and participate in predictive analysis and SAT model workflows. Null and blank shot types normalize to `unknown` in bucket keys; the label does not imply a blocked outcome.
+- Model `training_filters.shot_type_bucket` records `include_unknown` for SAT samples or `exclude_other` for SOG samples. SOG samples still require `is_shot_on_goal = true`. Legacy `exclude_unknown` and `exclude_unknown_and_other` describe stored pre-change models until evaluation is rebuilt.
 - Probability-derived danger labels must not be stored on `nhl_shot_attempts_facts`; HDSAT is stored only as an aggregate summary count after a shot attempt is matched to a latest goal-model bucket.
 
 **Notes:**
@@ -2159,13 +2160,12 @@ This boolean grouping choice is independent of the existing `display` values
 **Storage location(s):** `nhl_shot_attempt_predictions.exclusion_reason` (nullable string column)
 **Allowed values currently emitted:**
 
-- `unknown_shot_type`
 - `empty_net`
 - `shootout`
 
 **Semantic meaning:**
 
-- `unknown_shot_type`: Shot fact is retained but excluded from this model because NHL did not classify the shot type.
+- `unknown_shot_type`: Legacy stored exclusion reason; new scoring no longer emits it. Rebuild scores to replace old exclusions.
 - `empty_net`: Shot fact is excluded because normal goalie-facing xG does not apply.
 - `shootout`: Shot fact is excluded because shootout attempts are not normal game-state attempts.
 
@@ -2679,7 +2679,7 @@ This boolean grouping choice is independent of the existing `display` values
 **Allowed values:**
 
 - `nhl_projection`
-- `sat_model`: Same-run SAT/60 buckets and TOI/GP, with trained attempt-to-SOG and SOG-to-goal probabilities.
+- `sat_model`: Same-run predicted SAT/60 buckets with TOI/GP. SOG and goal outcomes use personal historical bucket conversion, then bucket-average fallback; valid observed zeros do not trigger fallback.
 - `nhle_non_nhl_history`
 - `replacement_level`
 - `line_peer_average`
@@ -2722,3 +2722,25 @@ These values select the test-page data source only; they do not add canonical li
 ### Partner X post lookup usage
 
 - `integration_api_usage_logs.operation`: `nhl_lineup_post_lookup` records a targeted X post retrieval for a manual partner lineup submission, distinct from timeline discovery usage.
+# Prediction input service values
+
+- `bucket_projection_source`: `sat_model`, `historical_fallback`, or `bucket_average` (pooled training profiles when personal volume is unavailable).
+- Defensive bucket `projection_source` additionally supports `third_line_average`: missing personal history or usable opportunity uses F3/D3 peer rates and TOI. Cohort selection and empty-pool behavior are governed by `NhlPredictionInputServices.yaml`. `defensive_toi_seconds` records the opportunity used before five-skater normalization.
+- `on_target_sources` and `finishing_sources`: lists of `historical_fallback` or `bucket_average` identifying the selected historical SOG/SAT and goals/SOG sources. Empty lists indicate provenance is carried by the volume fallback. `sat_model` remains a legacy outcome-source value in saved prediction-first experiment payloads but is no longer emitted for these conversion lists; attempt `bucket_projection_source` may still be `sat_model`.
+- Goalie `projection_strength`: existing `ev` and `pk`, plus `all` for SAT-model full-game buckets.
+- Goalie payload `projection_source` supports `sat_model` when the selected SAT run supplies the bucket response and confidence; this does not claim a dedicated goalie forecast model exists. Historical-only payloads retain `goalie_model` and `league_average`.
+- Model goalie skill provenance: `model_history` (exact bucket) or `neutral_missing_bucket` (no exact-bucket history; neutral league-average skill). Existing persisted `model_history_fallback` denotes the older same-run goalie aggregate fallback and is no longer emitted by the static prediction service.
+- `volume_basis` in storage and `projection_volume_basis` in goalie payloads: `all` identifies full-game volume that must not receive an additional historical PK contribution. Legacy EV/PK goalie payload splits are null for this basis.
+
+
+## SAT combined prediction build state
+
+Storage: `nhl_model_runs.metrics.prediction_build`.
+
+- `stage`: `profiles`, `rates`, `toi` (Profiles, /60, TOI/GP respectively).
+- `status`: `running`, `complete`, `failed`.
+- `id`: unique build identifier; callbacks must match both identifier and active stage.
+- `started_at`, `completed_at`: ISO timestamps; completion is set only on final success or failure.
+- `error`: bounded failure explanation; the failed stage remains recorded.
+
+The model run itself remains `running` between successful stages. Existing per-stage entity counters and timestamps are reused. Broadcast reasons `predictions-updated`, `predictions-progress`, and `predictions-failed` refresh the existing admin row; they do not authorize another build.

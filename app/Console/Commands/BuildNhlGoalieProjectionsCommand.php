@@ -22,7 +22,8 @@ class BuildNhlGoalieProjectionsCommand extends Command
                             {--target= : Target season id, e.g. 20262027}
                             {--goalie-workload-version= : Goalie workload projection version}
                             {--toi-version= : Skater TOI projection version}
-                            {--version= : Goalie projection version}';
+                            {--version= : Goalie projection version}
+                            {--sat-model= : SAT model run id, or latest, for compatible full-game buckets}';
 
     /**
      * @var string
@@ -58,6 +59,18 @@ class BuildNhlGoalieProjectionsCommand extends Command
         }
 
         $version = (string) ($this->option('version') ?: $builder->defaultVersion($targetSeasonId));
+        $modelOption = $this->option('sat-model');
+        $modelId = $modelOption === 'latest'
+            ? app(\App\Services\NhlSatModelPredictionService::class)->latestModelId()
+            : ($modelOption === null ? null : (int) $modelOption);
+        if ($modelOption !== null && ($modelId === null || $modelId < 1)) {
+            $this->error('Provide a usable SAT model run id, or latest after building model rates.');
+
+            return self::INVALID;
+        }
+        if ($modelId !== null && ! $this->option('version')) {
+            $version .= '_sat_' . $modelId;
+        }
 
         try {
             $builder->prepareBuild(
@@ -65,7 +78,8 @@ class BuildNhlGoalieProjectionsCommand extends Command
                 $targetSeasonId,
                 $goalieWorkloadProjectionVersion,
                 $toiProjectionVersion,
-                $version
+                $version,
+                $modelId
             );
         } catch (\RuntimeException $exception) {
             $this->error($exception->getMessage());
@@ -78,7 +92,8 @@ class BuildNhlGoalieProjectionsCommand extends Command
             $targetSeasonId,
             $goalieWorkloadProjectionVersion,
             $toiProjectionVersion,
-            $version
+            $version,
+            $modelId
         );
 
         $this->info(sprintf(

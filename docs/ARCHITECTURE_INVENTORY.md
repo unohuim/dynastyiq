@@ -1,5 +1,13 @@
 # Architecture Inventory
 
+Game and goalie prediction inputs use separate SAT-model and historical services.
+Model rates and TOI are paired per player; compatible model buckets reach the
+defense/goalie calculation before totals are assembled. Missing individual defensive
+inputs use F3/D3 peer rates and opportunity. Historical reports reuse the payload's
+shared prediction entry point with a per-call model selection and selected-run
+confidence evidence. No historical report supplies its own prediction formulas. See
+`docs/architecture/stats/NhlPredictionInputServices.yaml` for authority.
+
 Ambiguous lineup names use team context, then `pos_type`, with explicit `position`
 only breaking remaining ties. Forward slot order does not imply position.
 Authority: `docs/architecture/imports/NhlAnticipatedLineups.yaml`.
@@ -895,6 +903,7 @@ $token = PlatformTeamRosterShareLink::newPlainToken();
 - `app/Events/NhlSatModelUpdated.php`
 - `app/Jobs/BuildNhlSatModelEntityProfileForEntityJob.php`
 - `app/Jobs/BuildNhlSatModelEntityProfilesJob.php`
+- `app/Jobs/LoadNhlSatModelProfileBatchJob.php`
 - `app/Jobs/BuildNhlSatModelEntityRateComparisonForEntityJob.php`
 - `app/Jobs/BuildNhlSatModelEntityRateComparisonsJob.php`
 - `app/Jobs/BuildNhlSatModelEntityRateProjectionForEntityJob.php`
@@ -943,7 +952,10 @@ the explicit forecast season, otherwise the test season, otherwise the next seas
 after training. Comparisons still require a held-out test season.
 Skater-offense SAT /60 projection strategy is documented separately in `docs/architecture/stats/NhlSatEntityRateProjection.yaml`; the current `skater_offense_segmented_xsat_v2` strategy uses training-season profiles, true training-season snapshots, training-season production tiers from `nhl_game_summaries`, latest active bucket count, position type, goal-per-game tier, and S2-vs-S1 direction without using the held-out test season as input. Aggregate /60 comparison reports may expose player-level train/test HDSAT counts, HDSAT/GP, HDSAT/60, and HDSAT drift from `nhl_game_summaries.hdsat`; EV/PP/PK split reports read persisted `evhdsat`, `pphdsat`, and `pkhdsat` summary columns.
 Build /60 also persists `skater_offense_strength_rate_v15` entity-level projection split rows in `nhl_sat_model_entity_rate_projection_splits` for `all`, `ev`, `pp`, and `pk`. Those rows use a latest-training-season D1 all-situation SAT/60 formula for defense ranked first on their team by points per game among qualifying defense with at least 25 games, refine EV and PP SAT/60 calibration for D1/D2/D3 same-team defense points-per-game ranks, define D4-plus as the remaining league-wide top-200 qualifying defense after removing D1/D2/D3, define F1-3/F4-6/F7-9 as same-team forward points-per-game rank buckets among qualifying forwards and F10-plus as the remaining league-wide top-400 qualifying forward points-per-game group after removing F1-9, suppress F10-plus all/EV SAT/60 calibration and F7-9/F10-plus PP TOI/GP, otherwise anchor all-situation SAT/60 to the validated bucket-level `skater_offense_segmented_xsat_v2` projection, keep EV SAT/60 S2-heavy with light weak-offense regression, make PP SAT/60 train-heavy except elite/top-scoring cohorts, segment PK SAT/60 by latest-training-season PK TOI rank bands for top PK forwards and defense while keeping lower-confidence rows conservative, use train-heavy PK TOI/GP with capped defense blocks context, enhance forward PP TOI/GP from latest-training-season top-400 forward cohorts and latest-team forward ranks, enhance defense PP TOI/GP from latest-training-season top-200 defense and latest-team defense PP role rank, derive HDSAT from projected SAT multiplied by training-only HDSAT/SAT share, and project SAT/GP, HDSAT/GP, SAT/season, and HDSAT/season without using held-out S3 data.
-Build /60 and Compare /60 currently queue only skater-offense entities. Aggregate /60 comparison rows also persist summary-derived train/test SAT, HDSAT, SOG, goals, TOI/GP, GP/season, HDSAT/SAT rate, and per-GP/per-60 eval fields so reports and CSV exports can compare train signals against held-out test results across player cohorts. Compare /60 additionally writes normalized `all`, `ev`, `pp`, and `pk` rows to `nhl_sat_model_entity_rate_comparison_splits`; EV/PP/PK TOI comes from player-game strength summaries, and split HDSAT comes from persisted game-summary split HDSAT columns.
+The SAT model action menu also offers Build Predictions: Profiles → /60 → TOI/GP on the same model, with batch-success gating, exclusive run reservation, and live stage/progress/failure display. See `docs/architecture/stats/NhlModelRuns.yaml`.
+SAT workflows retain unknown shot types through evaluation, scoring, profiles, projections, and comparisons. Outcome flags remain authoritative; unknown does not mean blocked. Existing stored results require explicit evaluation and downstream rebuilds. See `docs/architecture/stats/NhlExpectedGoalsModel.yaml`.
+Profile batches use a pending loader to add bounded groups of child jobs, preserving stage completion across all groups and keeping SQL payloads out of queue failure reports. Both standalone and combined profile builds use this path.
+Build /60 and Compare /60 currently queue only skater-offense entities. Skater-offense Build /60 now retains every usable historical bucket identity without minimum-attempt or cumulative-share grouping; rare buckets remain separate instead of becoming Other. Existing runs require an explicit rebuild. Canonical authority: `docs/architecture/stats/NhlSatEntityRateProjection.yaml`. Aggregate /60 comparison rows also persist summary-derived train/test SAT, HDSAT, SOG, goals, TOI/GP, GP/season, HDSAT/SAT rate, and per-GP/per-60 eval fields so reports and CSV exports can compare train signals against held-out test results across player cohorts. Compare /60 additionally writes normalized `all`, `ev`, `pp`, and `pk` rows to `nhl_sat_model_entity_rate_comparison_splits`; EV/PP/PK TOI comes from player-game strength summaries, and split HDSAT comes from persisted game-summary split HDSAT columns.
 Build /60 skater-offense entity jobs may refresh player-game `nhl_game_summaries.hdsat`, `evhdsat`, `pphdsat`, and `pkhdsat` for the model run training seasons by matching shot-attempt facts to latest draft goal-model buckets and counting SAT with smoothed goal probability of at least 0.10; existing `nhl_season_stats` HDSAT totals, split totals, and HDSAT/60 fields may be refreshed from those player-game rows in the same pass.
 Aggregate Compare /60 exports may derive split SH%, Goal/SAT%, and S1/S2/S3 strength metrics at read time from comparison splits and latest-training-season game summaries, so CSV analysis can compare S1-to-S2 movement against held-out S3 results without persisting another table.
 Aggregate Compare /60 exports may join split projection rows to expose projected SAT/HDSAT split rates, projected opportunity, projected season totals, projection errors, and formula diagnostic buckets for S3 evaluation.
@@ -1334,7 +1346,7 @@ Importing play-by-play, changing shot-fact construction, storing xG on shot fact
 
 **Example Usage:**
 ```text
-Train on classified non-empty-net shot facts, validate on held-out games, calibrate predicted probability bands, then store versioned predictions only after approval.
+Train on eligible non-empty-net shot facts including unknown shot types, validate on held-out games, calibrate predicted probability bands, then store versioned predictions only after approval.
 ```
 
 ---
@@ -3659,10 +3671,10 @@ preview without creating evidence. Per-player /60 and /GP previews do not depend
 on full-game prediction eligibility; injuries are listed below each lineup.
 
 **When to Use:**
- Comparing two projected NHL teams from versioned TOI and skater offensive projection outputs, explaining high-level xSAT/xSOG/EV xGF/PK xG/total expected-goals matchup changes through composed roster chance profiles and projected goalie bucket adjustments, blending attacking offense shape with defending chance-allowed shape into a 70/30 adjusted goalie environment while preserving attacking offense totals, anchoring selected goalie impact to projected season EV/PK GA/xGA even when exact bucket evidence is sparse, showing goalie reasons directly below the adjusted environment as rolled-up EV and PP coverage groups with represented xSAT/xSOG/xG totals, percentages, row-level xSOG share, child bucket counts, GSAx/G, GA/G, and goalie response, computing per-game rates from projected games with an 84-game fallback, exposing partner-facing moneyline, puckline, and total market probabilities from the projected score distribution, or testing matchup methodology before persisting team profile buckets.
+ Comparing projected NHL teams using static annual predicted offensive SAT bucket rates paired with unchanged same-run TOI, personal historical SOG/SAT and goals/SOG conversion then bucket-average fallback, 88% of all offensive attempts plus 2% of exact-matching defensive attempts without normalization, and a single goalie adjustment. Defense-only buckets are excluded. Current-season observations are excluded. Without a usable SAT run the legacy normalized environment and goalie calibration remain available. Responses are not filtered; top-level `pick_qualified` annotates available predictions with confidence 72–74 inclusive and a nonzero score gap before display rounding, and is false otherwise. The simulator exposes roster provenance, projected totals, goalie reasons, and partner outcome probabilities; canonical rules live in NhlProjectedTeamMatchups.yaml and NhlPredictionInputServices.yaml.
 
 **When Not to Use:**
-Persisting team projection snapshots, applying defensive suppression or broad bonuses for opponent defensive weakness, or replacing player-level offensive projections and historical defensive profiles.
+Persisting team projection snapshots, claiming the temporary defensive blend measures causal defensive talent, or incorporating current-season updates before separately approved models exist.
 
 **Public Interface:**
 - `admin.nhl-shot-attempts.index`

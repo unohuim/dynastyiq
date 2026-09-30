@@ -141,9 +141,9 @@ class NhlSatModelEntityRateProjectionBuilder
         return self::MIN_SAT_PER_SEASON * max(1, count($this->seasonIds($run)));
     }
 
+    /** Preserve every historical bucket identity with a usable source rate. */
     private function insertSkaterOffenseProfileType(
         NhlModelRun $run,
-        int $minimumSourceSat,
         ?string $entityKey = null
     ): void {
         $now = now();
@@ -195,49 +195,16 @@ INSERT INTO nhl_sat_model_entity_rate_projection_buckets (
     created_at,
     updated_at
 )
-WITH profile_rows AS (
+WITH source_rows AS (
     SELECT
         profiles.*,
-        ROW_NUMBER() OVER (
-            PARTITION BY profiles.entity_key
-            ORDER BY profiles.source_profile_share DESC, profiles.source_sat DESC, profiles.matched_bucket_key
-        ) as profile_share_rank,
-        SUM(profiles.source_profile_share) OVER (
-            PARTITION BY profiles.entity_key
-            ORDER BY profiles.source_profile_share DESC, profiles.source_sat DESC, profiles.matched_bucket_key
-            ROWS UNBOUNDED PRECEDING
-        ) as cumulative_profile_share
+        profiles.matched_bucket_key as projection_bucket_key,
+        profiles.bucket_dimensions as projection_bucket_dimensions,
+        false as is_other_projection
     FROM nhl_sat_model_entity_profile_buckets profiles
     WHERE profiles.model_run_id = ?
         AND profiles.profile_type = ?
         AND profiles.source_xsat_per_60 IS NOT NULL
-),
-qualified_source_rows AS (
-    SELECT
-        profile_rows.*,
-        (
-            profile_rows.source_sat >= ?
-            AND (
-                profile_rows.profile_share_rank = 1
-                OR profile_rows.cumulative_profile_share <= ?
-                OR (profile_rows.cumulative_profile_share - profile_rows.source_profile_share) < ?
-            )
-        ) as is_core_projection
-    FROM profile_rows
-),
-source_rows AS (
-    SELECT
-        qualified_source_rows.*,
-        CASE
-            WHEN qualified_source_rows.is_core_projection THEN qualified_source_rows.matched_bucket_key
-            ELSE ?
-        END as projection_bucket_key,
-        CASE
-            WHEN qualified_source_rows.is_core_projection THEN qualified_source_rows.bucket_dimensions
-            ELSE json_build_object('other', 'low_volume')
-        END as projection_bucket_dimensions,
-        NOT qualified_source_rows.is_core_projection as is_other_projection
-    FROM qualified_source_rows
 ),
 grouped_rows AS (
     SELECT
@@ -269,22 +236,11 @@ grouped_rows AS (
     FROM source_rows
     GROUP BY source_rows.entity_key, source_rows.projection_bucket_key
 ),
-core_grouped_keys AS (
-    SELECT entity_key, matched_bucket_key
-    FROM grouped_rows
-    WHERE is_other_bucket = false
-),
 latest_source_rows AS (
     SELECT
         latest_profiles.*,
-        CASE
-            WHEN core_grouped_keys.matched_bucket_key IS NOT NULL THEN latest_profiles.matched_bucket_key
-            ELSE ?
-        END as projection_bucket_key
+        latest_profiles.matched_bucket_key as projection_bucket_key
     FROM nhl_sat_model_entity_test_profile_buckets latest_profiles
-    LEFT JOIN core_grouped_keys
-        ON core_grouped_keys.entity_key = latest_profiles.entity_key
-        AND core_grouped_keys.matched_bucket_key = latest_profiles.matched_bucket_key
     WHERE latest_profiles.model_run_id = ?
         AND latest_profiles.test_season_id = ?
         AND latest_profiles.profile_type = ?
@@ -304,14 +260,8 @@ latest_grouped_rows AS (
 prior_source_rows AS (
     SELECT
         prior_profiles.*,
-        CASE
-            WHEN core_grouped_keys.matched_bucket_key IS NOT NULL THEN prior_profiles.matched_bucket_key
-            ELSE ?
-        END as projection_bucket_key
+        prior_profiles.matched_bucket_key as projection_bucket_key
     FROM nhl_sat_model_entity_test_profile_buckets prior_profiles
-    LEFT JOIN core_grouped_keys
-        ON core_grouped_keys.entity_key = prior_profiles.entity_key
-        AND core_grouped_keys.matched_bucket_key = prior_profiles.matched_bucket_key
     WHERE prior_profiles.model_run_id = ?
         AND prior_profiles.test_season_id = ?
         AND prior_profiles.profile_type = ?
@@ -354,7 +304,6 @@ latest_late_sat_features AS (
         AND facts.shooter_player_id IS NOT NULL
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
-        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
     GROUP BY facts.shooter_player_id
 ),
 latest_late_rate_features AS (
@@ -772,9 +721,9 @@ SELECT
     adjusted_rows.confidence_bucket,
     json_build_object(
         'source', 'entity_profile_buckets',
-        'minimum_source_sat', ?::int,
-        'minimum_sat_per_season', ?::int,
-        'profile_input_share_coverage', ?::numeric,
+        'minimum_source_sat', 0,
+        'minimum_sat_per_season', 0,
+        'profile_input_share_coverage', 1.0,
         'prior_training_season_id', ?::text,
         'latest_training_season_id', ?::text,
         'formula_version', 'skater_offense_segmented_xsat_v2',
@@ -857,15 +806,9 @@ SQL;
         DB::statement($sql, [
             $run->id,
             self::SKATER_OFFENSE_PROFILE_TYPE,
-            $minimumSourceSat,
-            self::PROFILE_INPUT_SHARE_COVERAGE,
-            self::PROFILE_INPUT_SHARE_COVERAGE,
-            self::OTHER_BUCKET_KEY,
-            self::OTHER_BUCKET_KEY,
             $run->id,
             $latestTrainingSeasonId,
             self::SKATER_OFFENSE_PROFILE_TYPE,
-            self::OTHER_BUCKET_KEY,
             $run->id,
             $priorTrainingSeasonId,
             self::SKATER_OFFENSE_PROFILE_TYPE,
@@ -882,9 +825,6 @@ SQL;
             $priorTrainingSeasonId,
             $latestTrainingSeasonId,
             $gameType,
-            $minimumSourceSat,
-            self::MIN_SAT_PER_SEASON,
-            self::PROFILE_INPUT_SHARE_COVERAGE,
             $priorTrainingSeasonId,
             $latestTrainingSeasonId,
             $now,
@@ -892,6 +832,15 @@ SQL;
             $now,
             ...($entityKey === null ? [] : [$entityKey]),
         ]);
+
+        // Entity rebuilds must not leave a stale aggregate alongside its named buckets.
+        DB::table('nhl_sat_model_entity_rate_projection_buckets')
+            ->where('model_run_id', $run->id)
+            ->where('profile_type', self::SKATER_OFFENSE_PROFILE_TYPE)
+            ->where('matched_bucket_key', self::OTHER_BUCKET_KEY)
+            ->where('is_other_bucket', true)
+            ->when($entityKey !== null, fn ($query) => $query->where('entity_key', $entityKey))
+            ->delete();
 
         $goalModel = $this->goalModelForRun($run);
 
@@ -2519,7 +2468,7 @@ SQL;
         ?string $entityKey = null
     ): void {
         if ($profileType === self::SKATER_OFFENSE_PROFILE_TYPE) {
-            $this->insertSkaterOffenseProfileType($run, $minimumSourceSat, $entityKey);
+            $this->insertSkaterOffenseProfileType($run, $entityKey);
 
             return;
         }
@@ -3125,7 +3074,6 @@ WITH scored_attempts AS (
         AND facts.shooter_player_id IS NOT NULL
         AND COALESCE(facts.period_type, '') <> 'SO'
         AND COALESCE(facts.is_empty_net, false) = false
-        AND COALESCE(NULLIF(facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
         {$entityWhere}
 ),
 high_danger_totals AS (
@@ -3158,7 +3106,6 @@ WHERE games.nhl_game_id = summaries.nhl_game_id
             AND reset_facts.season_id = ?
             AND COALESCE(reset_facts.period_type, '') <> 'SO'
             AND COALESCE(reset_facts.is_empty_net, false) = false
-            AND COALESCE(NULLIF(reset_facts.shot_type_bucket, ''), 'unknown') <> 'unknown'
             {$resetEntityWhere}
     )
 SQL, array_merge(

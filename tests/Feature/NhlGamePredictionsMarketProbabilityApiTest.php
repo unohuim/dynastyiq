@@ -178,13 +178,14 @@ beforeEach(function (): void {
         return $token;
     };
 
-    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2): void {
+    $this->bindMatchupSimulator = function (float $awayGoals = 2.4, float $homeGoals = 3.2, float $confidence = 0.8): void {
         app()->bind(
             NhlProjectedTeamMatchupSimulator::class,
-            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals) extends NhlProjectedTeamMatchupSimulator {
+            fn (): NhlProjectedTeamMatchupSimulator => new class($awayGoals, $homeGoals, $confidence) extends NhlProjectedTeamMatchupSimulator {
                 public function __construct(
                     private readonly float $awayGoals,
-                    private readonly float $homeGoals
+                    private readonly float $homeGoals,
+                    private readonly float $confidence
                 ) {
                 }
 
@@ -213,7 +214,7 @@ beforeEach(function (): void {
                                     'total_goalie_adjustment_per_game' => 0.0,
                                 ],
                                 'roster' => [
-                                    ['player_id' => 8482155, 'player_name' => 'Alex Laferriere', 'adjusted_xgf_per_game' => $this->awayGoals, 'confidence_score' => 0.8],
+                                    ['player_id' => 8482155, 'player_name' => 'Alex Laferriere', 'adjusted_xgf_per_game' => $this->awayGoals, 'confidence_score' => $this->confidence],
                                 ],
                             ],
                             [
@@ -224,7 +225,7 @@ beforeEach(function (): void {
                                     'total_goalie_adjustment_per_game' => 0.0,
                                 ],
                                 'roster' => [
-                                    ['player_id' => 8482156, 'player_name' => 'Home Skater', 'adjusted_xgf_per_game' => $this->homeGoals, 'confidence_score' => 0.8],
+                                    ['player_id' => 8482156, 'player_name' => 'Home Skater', 'adjusted_xgf_per_game' => $this->homeGoals, 'confidence_score' => $this->confidence],
                                 ],
                             ],
                         ],
@@ -690,6 +691,47 @@ it('includes fair odds and model metadata for line-dependent rows', function ():
         );
 });
 
+it('qualifies picks by inclusive confidence and score gap before display rounding', function (
+    int $confidence,
+    float $awayGoals,
+    float $homeGoals
+): void {
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-10-01 12:00:00 UTC'));
+    Http::preventStrayRequests();
+    $token = ($this->seedPredictionInputs)($awayGoals, $homeGoals);
+    ($this->bindMatchupSimulator)($awayGoals, $homeGoals, $confidence / 100);
+    DB::table('nhl_goalie_season_projections')->where('projection_version', 'goalie-market')
+        ->update(['confidence_score' => $confidence / 100]);
+
+    $qualified = $confidence >= 72 && $confidence <= 74 && $awayGoals !== $homeGoals;
+    $response = $this->withToken($token)->getJson('/api/nhl-game-predictions?' . http_build_query([
+        'nhl_game_id' => 2026020001,
+        'source_season_id' => '20252026', 'target_season_id' => '20262027',
+        'projection_version' => 'skater-market', 'toi_projection_version' => 'toi-market',
+        'goalie_projection_version' => 'goalie-market', 'away_goalie_id' => 9001, 'home_goalie_id' => 9002,
+    ]))->assertOk()
+        ->assertJsonPath('prediction_available', true)
+        ->assertJsonPath('pick_qualified', $qualified)
+        ->assertJsonPath('prediction.confidence_score', $confidence)
+        ->assertJsonPath('prediction.predicted_score.away', (float) round($awayGoals, 2))
+        ->assertJsonPath('prediction.predicted_score.home', (float) round($homeGoals, 2))
+        ->assertJsonCount(2, 'market_probabilities');
+
+    expect($response->json('pick_qualified'))->toBeBool();
+    $this->assertDatabaseHas('nhl_goalie_season_projections', [
+        'goalie_player_id' => 9001, 'projection_version' => 'goalie-market',
+        'confidence_score' => $confidence / 100,
+    ]);
+    Http::assertNothingSent();
+    $this->travelBack();
+})->with([71, 72, 73, 74, 75])->with([
+    'home leads' => [2.4, 3.2],
+    'away leads' => [3.2, 2.4],
+    'exact tie' => [3.0, 3.0],
+    'home lead hidden by display rounding' => [3.0, 3.0001],
+    'away lead hidden by display rounding' => [3.0001, 3.0],
+]);
+
 it('returns evidence without a prediction when one preseason lineup is unresolved', function (): void {
     $token = ($this->seedPredictionInputs)();
     DB::table('nhl_games')->where('nhl_game_id', 2026020001)->update(['game_type' => 1]);
@@ -714,6 +756,7 @@ it('returns evidence without a prediction when one preseason lineup is unresolve
         ]))
         ->assertOk()
         ->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('pick_qualified', false)
         ->assertJsonPath('reason', 'preseason_lineup_unresolved')
         ->assertJsonPath('missing_lineups.0', 'HOM')
         ->assertJsonPath('inputs.away_lineup_source', 'anticipated_lineup')
@@ -746,6 +789,7 @@ it('returns both missing teams when neither preseason lineup is resolved', funct
         ]))
         ->assertOk()
         ->assertJsonPath('prediction_available', false)
+        ->assertJsonPath('pick_qualified', false)
         ->assertJsonPath('missing_lineups.0', 'AWY')
         ->assertJsonPath('missing_lineups.1', 'HOM')
         ->assertJsonPath('teams.away.lineup_source', 'projected_roster')

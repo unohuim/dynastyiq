@@ -11,6 +11,16 @@
     $excludedRate = data_get($trainingSummary ?? [], 'excluded_rate');
     $excludedSog = data_get($trainingSummary ?? [], 'excluded');
     $totalSog = data_get($trainingSummary ?? [], 'total');
+    $predictionBuild = data_get($run->metrics, 'prediction_build', []);
+    $predictionStage = $predictionBuild['stage'] ?? null;
+    $predictionStageLabel = ['profiles' => 'Profiles', 'rates' => '/60', 'toi' => 'TOI/GP'][$predictionStage] ?? '';
+    $predictionPrefix = ['profiles' => 'profile', 'rates' => 'rate_projection', 'toi' => 'toi_projection'][$predictionStage] ?? 'profile';
+    $predictionDone = (int) data_get($run->metrics, $predictionPrefix . '_entities_completed', 0);
+    $predictionQueued = (int) data_get($run->metrics, $predictionPrefix . '_entities_queued', 0);
+    if ($predictionStage === 'profiles') {
+        $predictionDone += (int) data_get($run->metrics, 'season_snapshot_entities_completed', 0);
+        $predictionQueued += (int) data_get($run->metrics, 'season_snapshot_entities_queued', 0);
+    }
     $canBuildRateComparison = (bool) data_get($comparisonState ?? [], 'can_build_rate_comparison', false);
     $canViewRateComparison = (bool) data_get($comparisonState ?? [], 'can_view_rate_comparison', false);
     $canViewTrainingDrift = (bool) data_get($trainingDriftState ?? [], 'can_view_training_drift', false);
@@ -41,6 +51,16 @@
         <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset {{ $statusClasses[$run->status] ?? 'bg-gray-100 text-gray-700 ring-gray-200' }}">
             {{ $label($run->status) }}
         </span>
+        @if(($predictionBuild['status'] ?? null) === 'running' && $run->status === 'running')
+            <div class="mt-1 text-xs text-gray-500" role="status" aria-live="polite">
+                Build Predictions · {{ $predictionStageLabel }} · {{ $predictionDone }}/{{ $predictionQueued }}
+            </div>
+        @elseif(($predictionBuild['status'] ?? null) === 'failed' && $run->status === 'failed')
+            <div class="mt-1 text-xs text-red-700">Build Predictions failed · {{ $predictionStageLabel }}</div>
+            <div class="mt-1 max-w-xs whitespace-normal text-xs text-red-700">{{ $predictionBuild['error'] ?? '' }}</div>
+        @elseif(($predictionBuild['status'] ?? null) === 'complete' && $run->status === 'complete')
+            <div class="mt-1 text-xs text-gray-500">Build Predictions complete</div>
+        @endif
     </td>
     <td class="whitespace-nowrap px-4 py-3 text-gray-500">{{ $run->updated_at?->format('Y-m-d H:i') }}</td>
     <td class="whitespace-nowrap px-4 py-3 text-right">
@@ -90,6 +110,12 @@
                     <input type="hidden" name="smoothing_prior_attempts" value="100">
                     <button type="submit" class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
                         Eval SAT
+                    </button>
+                </form>
+                <form method="POST" action="{{ route('admin.nhl-sat-models.predictions.build', $run) }}" data-sat-model-profile-build-form>
+                    @csrf
+                    <button type="submit" @disabled($run->status === 'running') class="block w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-950 disabled:cursor-not-allowed disabled:opacity-60" role="menuitem">
+                        Build Predictions
                     </button>
                 </form>
                 <form method="POST" action="{{ route('admin.nhl-sat-models.profiles.build', $run) }}" data-sat-model-profile-build-form>

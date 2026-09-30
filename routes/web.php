@@ -404,6 +404,9 @@ Route::middleware(GlobalFreshInstallGuard::class)->group(function () {
                 Route::post('/nhl-sat-models/{run}/train', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'train'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.train');
+                Route::post('/nhl-sat-models/{run}/predictions/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildPredictions'])
+                    ->whereNumber('run')
+                    ->name('admin.nhl-sat-models.predictions.build');
                 Route::post('/nhl-sat-models/{run}/profiles/build', [\App\Http\Controllers\Admin\NhlModelRunController::class, 'buildProfiles'])
                     ->whereNumber('run')
                     ->name('admin.nhl-sat-models.profiles.build');

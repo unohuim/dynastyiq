@@ -38,7 +38,7 @@ rules:
   - Shooter and goalie height, weight, and age-at-game may be snapshotted from canonical player records so historical facts do not drift when player records change.
   - Off-wing shot-attempt classification must use goalie-perspective side plus shooter handedness and remain nullable when side, handedness, or classified shot type is unavailable.
   - Bucket labels must remain deterministic feature labels and must not imply goal probability by themselves.
-  - Predictive bucket analysis must exclude unknown shot type buckets by default while preserving unknown shot type rows in raw fact storage.
+  - Predictive bucket analysis must retain unknown shot types under the existing unknown category, consistent with the model eligibility rules in NhlExpectedGoalsModel.yaml. Missing shot technique is not an attempt outcome; preserve the actual blocked, SOG, and goal flags.
   - Analysis and expected-goals model buckets must use NhlShotAttemptAnalysisBuckets fallback levels instead of raw one-to-one fact bucket combinations.
   - Analysis and expected-goals model buckets must not expose or score sparse combinations below the approved sample floor; sparse attempts must resolve to broader parent buckets, then to league baseline when needed.
   - Strength state, shot side, and off-wing context may remain raw facts and filters, but must not fragment primary expected-goals fallback buckets until validated with enough sample size.
